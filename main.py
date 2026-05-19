@@ -1,19 +1,24 @@
 """
-main.py  —  SmartBoard AI Backend v4.0
+main.py  —  SmartBoard AI Backend v4.1
 =======================================
-UPDATED: Added JWT authentication + cloud sync
+UPDATED: Fixed CORS + HEAD support + better error handling
 
-New in v4.0:
-  POST /auth/register          — create teacher account
-  POST /auth/login             — authenticate + get JWT
-  GET  /auth/verify            — auto-login token check
-  GET  /auth/me                — current user profile
-  POST /sync/animations        — save/update animation (upsert)
-  POST /sync/animations/batch  — bulk push from IndexedDB
-  GET  /sync/animations        — fetch all for this user
-  DELETE /sync/animations/{id} — delete one animation
+New in v4.1:
+  - CORS now covers all Vercel preview URLs via regex
+  - Root route handles HEAD (fixes Render health-check 405)
+  - /health returns 200 on GET and HEAD
+  - Startup errors are caught and logged cleanly
+  - Optional DEBUG_CORS env var to allow all origins during dev
 
-Preserved from v3.7 (UNCHANGED):
+Preserved from v4.0 (UNCHANGED):
+  POST /auth/register
+  POST /auth/login
+  GET  /auth/verify
+  GET  /auth/me
+  POST /sync/animations
+  POST /sync/animations/batch
+  GET  /sync/animations
+  DELETE /sync/animations/{id}
   GET  /health
   POST /generate-animation
   POST /generate-from-book
@@ -28,16 +33,18 @@ Environment variables (in .env):
     JWT_SECRET_KEY=<long random string>
     JWT_EXPIRE_DAYS=30
     DATABASE_URL=sqlite:///./genzet.db   (optional — default is SQLite)
+    DEBUG_CORS=true                       (optional — allows ALL origins, dev only)
 """
 
-import sys, io
+import sys, io, os
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -69,13 +76,20 @@ except ImportError:
 
 import json
 
+# ── Env flags ─────────────────────────────────────────────────────────
+DEBUG_CORS = os.getenv("DEBUG_CORS", "false").lower() == "true"
+
 # ── Startup / Shutdown lifecycle ───────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Runs once at startup: creates DB tables."""
     print("[STARTUP]  Initializing database…")
-    init_db()
-    print("[STARTUP]  ✅ GenZet v4.0 ready")
+    try:
+        init_db()
+        print("[STARTUP]  ✅ GenZet v4.1 ready")
+    except Exception as e:
+        print(f"[STARTUP]  ❌ DB init failed: {e}")
+        raise
     yield
     print("[SHUTDOWN] GenZet shutting down.")
 
@@ -83,30 +97,80 @@ async def lifespan(app: FastAPI):
 # ── App ────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="SmartBoard AI API",
-    version="4.0.0",
+    version="4.1.0",
     lifespan=lifespan,
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────
-app.add_middleware(
+# If DEBUG_CORS=true (local dev), allow everything.
+# In production, we list explicit origins + a regex for Vercel previews.
+if DEBUG_CORS:
+    print("[CORS] ⚠ DEBUG_CORS=true — allowing ALL origins (dev only)")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,   # credentials + wildcard is not allowed by spec
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+  app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://animind-gold.vercel.app",
+        "https://genzet-app.vercel.app",   # ✅ your actual frontend
         "http://localhost:3000",
-        "http://localhost:8000",
+        "http://localhost:5173",
     ],
+    allow_origin_regex=r"https://genzet.*\.vercel\.app",  # covers preview URLs too
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Register NEW routers ───────────────────────────────────────────────
+# ── Register routers ───────────────────────────────────────────────────
 app.include_router(auth_router)   # /auth/...
 app.include_router(sync_router)   # /sync/...
 
 
 # ══════════════════════════════════════════════════════════════════════
-# EXISTING ENDPOINTS — UNCHANGED FROM v3.7
+# HEALTH + ROOT
+# ══════════════════════════════════════════════════════════════════════
+
+@app.api_route("/", methods=["GET", "HEAD"])
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health(request: Request):
+    """
+    GET  → full JSON status
+    HEAD → 200 OK with no body (used by Render health checks)
+    """
+    if request.method == "HEAD":
+        return JSONResponse(content=None, status_code=200)
+    return {
+        "status":  "ok",
+        "version": "4.1.0",
+        "debug_cors": DEBUG_CORS,
+        "sub_topics_module": SUB_TOPICS_AVAILABLE,
+        "endpoints": {
+            # ── Auth endpoints ──
+            "register":            "POST /auth/register",
+            "login":               "POST /auth/login",
+            "verify":              "GET  /auth/verify",
+            "me":                  "GET  /auth/me",
+            # ── Sync endpoints ──
+            "sync_save":           "POST /sync/animations",
+            "sync_batch":          "POST /sync/animations/batch",
+            "sync_fetch":          "GET  /sync/animations",
+            "sync_delete":         "DELETE /sync/animations/{anim_id}",
+            # ── AI endpoints ──
+            "animation":           "POST /generate-animation",
+            "question_animation":  "POST /generate-question-animation",
+            "book_mode":           "POST /generate-from-book",
+            "skill_workflow":      "POST /generate-topic-content",
+        },
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# EXISTING ENDPOINTS — UNCHANGED FROM v3.7 / v4.0
 # ══════════════════════════════════════════════════════════════════════
 
 class AnimationRequest(BaseModel):
@@ -121,33 +185,6 @@ class SkillContentRequest(BaseModel):
     topic:        str
     subject:      Optional[str] = "Engineering"
     retry_failed: Optional[bool] = True
-
-
-@app.get("/")
-@app.get("/health")
-async def health():
-    return {
-        "status":  "ok",
-        "version": "4.0.0",
-        "sub_topics_module": SUB_TOPICS_AVAILABLE,
-        "endpoints": {
-            # ── NEW auth endpoints ──
-            "register":            "POST /auth/register",
-            "login":               "POST /auth/login",
-            "verify":              "GET  /auth/verify",
-            "me":                  "GET  /auth/me",
-            # ── NEW sync endpoints ──
-            "sync_save":           "POST /sync/animations",
-            "sync_batch":          "POST /sync/animations/batch",
-            "sync_fetch":          "GET  /sync/animations",
-            "sync_delete":         "DELETE /sync/animations/{anim_id}",
-            # ── Existing AI endpoints ──
-            "animation":           "POST /generate-animation",
-            "question_animation":  "POST /generate-question-animation",
-            "book_mode":           "POST /generate-from-book",
-            "skill_workflow":      "POST /generate-topic-content",
-        },
-    }
 
 
 @app.post("/generate-animation")
@@ -272,6 +309,6 @@ async def create_topic_content(request: SkillContentRequest):
 if __name__ == "__main__":
     import uvicorn
     print("=" * 65)
-    print("  SmartBoard AI API v4.0 — with Auth + Cloud Sync")
+    print("  SmartBoard AI API v4.1 — with Auth + Cloud Sync")
     print("=" * 65)
     uvicorn.run("main:app", host="0.0.0.0", port=8000)
