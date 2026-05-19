@@ -2,6 +2,5 @@ services:
   - type: web
     name: animind-backend
     runtime: python
-    pythonVersion: "3.11.0"
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt --prefer-binary
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
