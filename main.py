@@ -40,6 +40,19 @@ import sys, io, os
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+# ── Load Env Variables (.env) ──────────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    from pathlib import Path
+    _current_dir = Path(__file__).resolve().parent
+    # Attempt to load from script directory
+    load_dotenv(dotenv_path=_current_dir / ".env")
+    # Also load from parent directory in case of repo-root running environment
+    load_dotenv(dotenv_path=_current_dir.parent / ".env")
+    print(f"[STARTUP] ✅ Loaded environment variables from {_current_dir / '.env'} or parent")
+except Exception as env_err:
+    print(f"[STARTUP] ⚠ Could not run load_dotenv: {env_err}")
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
@@ -88,8 +101,10 @@ async def lifespan(app: FastAPI):
         init_db()
         print("[STARTUP]  ✅ GenZet v4.1 ready")
     except Exception as e:
-        print(f"[STARTUP]  ❌ DB init failed: {e}")
-        raise
+        # Non-fatal: log the error but keep the server alive.
+        # Users can still reach the health endpoint; DB-backed routes
+        # will return 500 until the DB is fixed, but the server won't crash.
+        print(f"[STARTUP]  ⚠  DB init warning (server still running): {e}")
     yield
     print("[SHUTDOWN] GenZet shutting down.")
 
@@ -104,6 +119,21 @@ app = FastAPI(
 # ── CORS ───────────────────────────────────────────────────────────────
 # If DEBUG_CORS=true (local dev), allow everything.
 # In production, we list explicit origins + a regex for Vercel previews.
+#
+# To add a new Vercel URL without redeploying, set EXTRA_ORIGINS env var:
+#   EXTRA_ORIGINS=https://your-app-abc123.vercel.app,https://other.vercel.app
+EXTRA_ORIGINS = [
+    o.strip() for o in os.getenv("EXTRA_ORIGINS", "").split(",") if o.strip()
+]
+
+BASE_ORIGINS = [
+    "https://genzet-app.vercel.app",       # ✅ genzet frontend
+    "https://animind-gold.vercel.app",     # ✅ animind frontend
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+] + EXTRA_ORIGINS
+
 if DEBUG_CORS:
     print("[CORS] ⚠ DEBUG_CORS=true — allowing ALL origins (dev only)")
     app.add_middleware(
@@ -114,18 +144,15 @@ if DEBUG_CORS:
         allow_headers=["*"],
     )
 else:
-  app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://genzet-app.vercel.app",   # ✅ your actual frontend
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ],
-    allow_origin_regex=r"https://genzet.*\.vercel\.app",  # covers preview URLs too
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    print(f"[CORS] Active origins: {BASE_ORIGINS}")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=BASE_ORIGINS,
+        allow_origin_regex=r"https://(genzet|animind)[\w-]*\.vercel\.app",  # all preview URLs
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 # ── Register routers ───────────────────────────────────────────────────
 app.include_router(auth_router)   # /auth/...
 app.include_router(sync_router)   # /sync/...
@@ -308,7 +335,8 @@ async def create_topic_content(request: SkillContentRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    _port = int(os.getenv("PORT", "8000"))
     print("=" * 65)
-    print("  SmartBoard AI API v4.1 — with Auth + Cloud Sync")
+    print(f"  SmartBoard AI API v4.1 — with Auth + Cloud Sync on port {_port}")
     print("=" * 65)
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=_port)
