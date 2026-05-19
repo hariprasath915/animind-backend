@@ -46,7 +46,7 @@ _sync_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # ─── Video Storage Directory ─────────────────────────────────────────────────
-VIDEO_STORAGE_DIR = Path("/mnt/user-data/outputs/videos")
+VIDEO_STORAGE_DIR = Path(os.getenv("VIDEO_STORAGE_DIR", "/tmp/videos"))
 VIDEO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ════════════════════════════════════════════════════════════════════════
