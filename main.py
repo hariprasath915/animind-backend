@@ -1,0 +1,277 @@
+"""
+main.py  —  SmartBoard AI Backend v4.0
+=======================================
+UPDATED: Added JWT authentication + cloud sync
+
+New in v4.0:
+  POST /auth/register          — create teacher account
+  POST /auth/login             — authenticate + get JWT
+  GET  /auth/verify            — auto-login token check
+  GET  /auth/me                — current user profile
+  POST /sync/animations        — save/update animation (upsert)
+  POST /sync/animations/batch  — bulk push from IndexedDB
+  GET  /sync/animations        — fetch all for this user
+  DELETE /sync/animations/{id} — delete one animation
+
+Preserved from v3.7 (UNCHANGED):
+  GET  /health
+  POST /generate-animation
+  POST /generate-from-book
+  POST /generate-topic-content
+  POST /generate-question-animation
+
+Run:
+    uvicorn main:app --host 0.0.0.0 --port 8000
+
+Environment variables (in .env):
+    ANTHROPIC_API_KEY=sk-ant-...
+    JWT_SECRET_KEY=<long random string>
+    JWT_EXPIRE_DAYS=30
+    DATABASE_URL=sqlite:///./genzet.db   (optional — default is SQLite)
+"""
+
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
+
+# ── NEW: Auth + Sync ──────────────────────────────────────────────────
+from database import init_db
+from auth_routes import router as auth_router
+from sync_routes import router as sync_router
+
+# ── Existing AI modules (unchanged) ───────────────────────────────────
+from claude_client import (
+    generate_animation,
+    generate_genzet_book_content,
+    subtopics_json_to_genzet_args,
+)
+from pdf_handler import (
+    extract_pdf_text,
+    find_subtopics_in_pdf,
+    build_subtopics_json,
+)
+from q_animation import generate_question_animation
+
+try:
+    from sub_topics import process_subtopics_json
+    SUB_TOPICS_AVAILABLE = True
+    print("[INFO]  sub_topics.py loaded OK")
+except ImportError:
+    SUB_TOPICS_AVAILABLE = False
+    print("[WARNING] sub_topics.py not found — falling back to pdf_handler output")
+
+import json
+
+# ── Startup / Shutdown lifecycle ───────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Runs once at startup: creates DB tables."""
+    print("[STARTUP]  Initializing database…")
+    init_db()
+    print("[STARTUP]  ✅ GenZet v4.0 ready")
+    yield
+    print("[SHUTDOWN] GenZet shutting down.")
+
+
+# ── App ────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="SmartBoard AI API",
+    version="4.0.0",
+    lifespan=lifespan,
+)
+
+# ── CORS ───────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://animind-gold.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Register NEW routers ───────────────────────────────────────────────
+app.include_router(auth_router)   # /auth/...
+app.include_router(sync_router)   # /sync/...
+
+
+# ══════════════════════════════════════════════════════════════════════
+# EXISTING ENDPOINTS — UNCHANGED FROM v3.7
+# ══════════════════════════════════════════════════════════════════════
+
+class AnimationRequest(BaseModel):
+    prompt: str
+
+
+class QuestionAnimRequest(BaseModel):
+    question: str
+
+
+class SkillContentRequest(BaseModel):
+    topic:        str
+    subject:      Optional[str] = "Engineering"
+    retry_failed: Optional[bool] = True
+
+
+@app.get("/")
+@app.get("/health")
+async def health():
+    return {
+        "status":  "ok",
+        "version": "4.0.0",
+        "sub_topics_module": SUB_TOPICS_AVAILABLE,
+        "endpoints": {
+            # ── NEW auth endpoints ──
+            "register":            "POST /auth/register",
+            "login":               "POST /auth/login",
+            "verify":              "GET  /auth/verify",
+            "me":                  "GET  /auth/me",
+            # ── NEW sync endpoints ──
+            "sync_save":           "POST /sync/animations",
+            "sync_batch":          "POST /sync/animations/batch",
+            "sync_fetch":          "GET  /sync/animations",
+            "sync_delete":         "DELETE /sync/animations/{anim_id}",
+            # ── Existing AI endpoints ──
+            "animation":           "POST /generate-animation",
+            "question_animation":  "POST /generate-question-animation",
+            "book_mode":           "POST /generate-from-book",
+            "skill_workflow":      "POST /generate-topic-content",
+        },
+    }
+
+
+@app.post("/generate-animation")
+async def create_animation(request: AnimationRequest):
+    if not request.prompt or not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    try:
+        result = await generate_animation(request.prompt.strip())
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/generate-question-animation")
+async def create_question_animation(request: QuestionAnimRequest):
+    question = (request.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="'question' field cannot be empty")
+    try:
+        result = await generate_question_animation(question)
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Question animation generation failed: {e}")
+
+
+@app.post("/generate-from-book")
+async def create_from_book(
+    topic:    str            = Form(...),
+    file:     UploadFile     = File(...),
+    subtopic: Optional[str]  = Form(default=None),
+):
+    topic    = (topic or "").strip()
+    subtopic = (subtopic or "").strip() or topic
+
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+
+    filename = (file.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail=f"Only PDF files accepted. Got: '{filename}'")
+
+    try:
+        pdf_bytes = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
+    if len(pdf_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty")
+
+    print(f"[BOOK]  topic='{topic}'  file='{filename}'  ({len(pdf_bytes):,} bytes)")
+
+    pdf_data = extract_pdf_text(pdf_bytes)
+    if not pdf_data["success"]:
+        raise HTTPException(status_code=400, detail=f"Could not read PDF: {pdf_data.get('error', 'Unknown')}")
+
+    full_text  = pdf_data["full_text"]
+    word_count = pdf_data["word_count"]
+
+    if word_count < 50:
+        raise HTTPException(status_code=400, detail="PDF has no readable text.")
+
+    topic_data = find_subtopics_in_pdf(full_text, topic)
+    pdf_context_json = build_subtopics_json(topic, topic_data)
+
+    pdf_context = (
+        f"Main topic: {topic}\nSubtopic focus: {subtopic}\n"
+        f"Section headings: {'; '.join(topic_data.get('main_headings', []))}\n"
+        f"Subtopics found: {', '.join(topic_data.get('all_subtopics', [])[:10])}\n\n"
+        f"--- PDF Content (first 6000 chars) ---\n{full_text[:6000]}"
+    )
+
+    subtopics_list = None
+    if SUB_TOPICS_AVAILABLE:
+        try:
+            formatted      = process_subtopics_json(pdf_context_json)
+            gz_args        = subtopics_json_to_genzet_args(json.dumps(formatted), subtopic)
+            subtopics_list = gz_args.get("subtopics_list") or None
+        except Exception as e:
+            print(f"[BOOK] ⚠ sub_topics failed: {e}")
+
+    if not subtopics_list:
+        grouped = topic_data.get("subtopics_by_query", {})
+        for qk, sl in grouped.items():
+            if subtopic.lower() in qk.lower():
+                subtopics_list = sl or None
+                break
+
+    if not subtopics_list:
+        subtopics_list = topic_data.get("all_subtopics") or None
+
+    try:
+        result = await generate_genzet_book_content(
+            topic=topic, subtopic=subtopic,
+            pdf_context=pdf_context, subtopics_list=subtopics_list,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
+
+
+@app.post("/generate-topic-content")
+async def create_topic_content(request: SkillContentRequest):
+    topic = (request.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+    try:
+        from claude_client import generate_skill_content
+        result = await generate_skill_content(
+            topic=topic,
+            subject=request.subject or "Engineering",
+            retry_failed=request.retry_failed if request.retry_failed is not None else True,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SKILL.md generation failed: {e}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    print("=" * 65)
+    print("  SmartBoard AI API v4.0 — with Auth + Cloud Sync")
+    print("=" * 65)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
