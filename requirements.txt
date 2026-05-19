@@ -37,7 +37,7 @@ pillow==12.2.0
 pyasn1==0.6.3
 pycparser==3.0
 pydantic==2.11.4
-pydantic_core==2.33.2
+pydantic_core>=2.18.0
 Pygments==2.20.0
 PyPDF2==3.0.1
 pypdfium2==5.8.0
