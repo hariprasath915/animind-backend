@@ -127,8 +127,9 @@ EXTRA_ORIGINS = [
 ]
 
 BASE_ORIGINS = [
-    "https://genzet-app.vercel.app",       # ✅ genzet frontend
-    "https://animind-gold.vercel.app",     # ✅ animind frontend
+    "https://genzet-app.vercel.app",                                              # ✅ genzet frontend (main)
+    "https://genzet-app-git-main-hari-prasath-genzet-web-project.vercel.app",    # ✅ genzet git-main preview
+    "https://animind-gold.vercel.app",                                            # ✅ animind frontend
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8000",
