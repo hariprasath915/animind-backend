@@ -242,6 +242,67 @@ async def health(request: Request):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# DEBUG: Auth diagnostic (remove after debugging)
+# ══════════════════════════════════════════════════════════════════════
+
+@app.get("/debug/auth-test")
+async def debug_auth_test():
+    """Diagnostic: test each auth subsystem and report exact errors."""
+    results = {}
+
+    # 1. Test bcrypt / passlib
+    try:
+        from auth_utils import hash_password, verify_password
+        h = hash_password("test123")
+        ok = verify_password("test123", h)
+        results["bcrypt"] = f"OK (hash={h[:20]}..., verify={ok})"
+    except Exception as e:
+        results["bcrypt"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # 2. Test database connection
+    try:
+        from database import get_db, engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        results["db_connection"] = "OK"
+    except Exception as e:
+        results["db_connection"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # 3. Test table existence
+    try:
+        from database import get_db
+        import models
+        db = next(get_db())
+        count = db.query(models.User).count()
+        results["users_table"] = f"OK ({count} users)"
+        db.close()
+    except Exception as e:
+        results["users_table"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # 4. Test JWT creation
+    try:
+        from auth_utils import create_access_token, decode_token
+        token = create_access_token("test-id", "test@test.com", "Test")
+        payload = decode_token(token)
+        results["jwt"] = f"OK (sub={payload.get('sub')})"
+    except Exception as e:
+        results["jwt"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # 5. Test email-validator
+    try:
+        from pydantic import BaseModel, EmailStr
+        class _T(BaseModel):
+            email: EmailStr
+        _T(email="test@test.com")
+        results["email_validator"] = "OK"
+    except Exception as e:
+        results["email_validator"] = f"FAIL: {type(e).__name__}: {e}"
+
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
 # EXISTING ENDPOINTS — UNCHANGED FROM v3.7 / v4.0
 # ══════════════════════════════════════════════════════════════════════
 
