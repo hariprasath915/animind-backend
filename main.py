@@ -1,9 +1,12 @@
 """
-main.py  —  SmartBoard AI Backend v4.1
+main.py  —  SmartBoard AI Backend v4.2
 =======================================
-UPDATED: Fixed CORS + HEAD support + better error handling
+UPDATED: Keep-alive pinger + CORS + HEAD support + better error handling
 
-New in v4.1:
+New in v4.2:
+  - Background self-ping every 10 minutes (prevents Render free-tier spin-down)
+
+From v4.1:
   - CORS now covers all Vercel preview URLs via regex
   - Root route handles HEAD (fixes Render health-check 405)
   - /health returns 200 on GET and HEAD
@@ -36,7 +39,7 @@ Environment variables (in .env):
     DEBUG_CORS=true                       (optional — allows ALL origins, dev only)
 """
 
-import sys, io, os
+import sys, io, os, asyncio
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
@@ -54,6 +57,7 @@ except Exception as env_err:
     print(f"[STARTUP] ⚠ Could not run load_dotenv: {env_err}")
 
 from contextlib import asynccontextmanager
+import httpx
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,27 +96,66 @@ import json
 # ── Env flags ─────────────────────────────────────────────────────────
 DEBUG_CORS = os.getenv("DEBUG_CORS", "false").lower() == "true"
 
+# ── Keep-alive interval (seconds) ─────────────────────────────────────
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))  # 10 min default
+
+
+async def _keep_alive_pinger():
+    """
+    Background task: pings our own /health endpoint every 10 minutes
+    to prevent Render free-tier from spinning down after 15 min idle.
+    Uses RENDER_EXTERNAL_URL (auto-set by Render) if available.
+    """
+    # Render sets this automatically; fallback to known URL
+    self_url = os.getenv(
+        "RENDER_EXTERNAL_URL",
+        "https://animind-backend-1.onrender.com"
+    )
+    health_url = f"{self_url.rstrip('/')}/health"
+    print(f"[KEEP-ALIVE] ✅ Pinger started → {health_url} every {KEEP_ALIVE_INTERVAL}s")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+            try:
+                r = await client.get(health_url)
+                print(f"[KEEP-ALIVE] ✅ Ping OK ({r.status_code})")
+            except Exception as e:
+                print(f"[KEEP-ALIVE] ⚠ Ping failed: {e}")
+
+
 # ── Startup / Shutdown lifecycle ───────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Runs once at startup: creates DB tables."""
+    """Runs once at startup: creates DB tables + starts keep-alive pinger."""
     print("[STARTUP]  Initializing database…")
     try:
         init_db()
-        print("[STARTUP]  ✅ GenZet v4.1 ready")
+        print("[STARTUP]  ✅ GenZet v4.2 ready")
     except Exception as e:
         # Non-fatal: log the error but keep the server alive.
         # Users can still reach the health endpoint; DB-backed routes
         # will return 500 until the DB is fixed, but the server won't crash.
         print(f"[STARTUP]  ⚠  DB init warning (server still running): {e}")
+
+    # Start the keep-alive background pinger
+    pinger_task = asyncio.create_task(_keep_alive_pinger())
+
     yield
+
+    # Graceful shutdown: cancel the pinger
+    pinger_task.cancel()
+    try:
+        await pinger_task
+    except asyncio.CancelledError:
+        pass
     print("[SHUTDOWN] GenZet shutting down.")
 
 
 # ── App ────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="SmartBoard AI API",
-    version="4.1.0",
+    version="4.2.0",
     lifespan=lifespan,
 )
 
@@ -127,8 +170,9 @@ EXTRA_ORIGINS = [
 ]
 
 BASE_ORIGINS = [
-    "https://genzet-app.vercel.app",       # ✅ genzet frontend
-    "https://animind-gold.vercel.app",     # ✅ animind frontend
+    "https://genzet-app.vercel.app",                                              # ✅ genzet frontend (main)
+    "https://genzet-app-git-main-hari-prasath-genzet-web-project.vercel.app",    # ✅ genzet git-main preview
+    "https://animind-gold.vercel.app",                                            # ✅ animind frontend
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8000",
@@ -173,8 +217,9 @@ async def health(request: Request):
         return JSONResponse(content=None, status_code=200)
     return {
         "status":  "ok",
-        "version": "4.1.0",
+        "version": "4.2.0",
         "debug_cors": DEBUG_CORS,
+        "keep_alive_interval": KEEP_ALIVE_INTERVAL,
         "sub_topics_module": SUB_TOPICS_AVAILABLE,
         "endpoints": {
             # ── Auth endpoints ──
@@ -337,6 +382,6 @@ if __name__ == "__main__":
     import uvicorn
     _port = int(os.getenv("PORT", "8000"))
     print("=" * 65)
-    print(f"  SmartBoard AI API v4.1 — with Auth + Cloud Sync on port {_port}")
+    print(f"  SmartBoard AI API v4.2 — with Auth + Cloud Sync + Keep-Alive on port {_port}")
     print("=" * 65)
     uvicorn.run("main:app", host="0.0.0.0", port=_port)
