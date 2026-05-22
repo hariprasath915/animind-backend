@@ -1,35 +1,50 @@
 """
-q_animation.py  —  QAnim Question Animation Generator  v8.0
+q_animation.py  —  QAnim Question Animation Generator  v9.0
 =============================================================
 ╔══════════════════════════════════════════════════════════════╗
-║  v8.0 — INTERACTIVE STEP-BASED CINEMATIC ENGINE             ║
+║  v9.0 — MULTI-MODEL ROUTING + TEXT HOOK + 15-Q QUIZ         ║
 ╠══════════════════════════════════════════════════════════════╣
-║  NEW IN v8.0 vs v7.0:                                       ║
-║  ✅ HookGate — "Start Learning" button gate on hook (NEW)   ║
-║  ✅ QuizGate — "Quiz Unlocked" intro screen (NEW)           ║
-║  ✅ StepController — manual-only step safety net (NEW)      ║
-║  ✅ NO auto-advance — all animations are fully manual (NEW) ║
-║  ✅ All v7.0 features fully preserved                       ║
+║  NEW IN v9.0 vs v8.0:                                       ║
+║  ✅ HOOK_MODEL / QUIZ_MODEL = claude-haiku-4-5  (NEW)       ║
+║  ✅ CONCEPT_MODEL / SOLUTION_MODEL = claude-sonnet-4-5      ║
+║  ✅ Text-only cinematic hook (no SVG, glassmorphism)  (NEW) ║
+║  ✅ 15 quiz questions with progressive difficulty   (NEW)   ║
+║  ✅ Retry Quiz → host postMessage regeneration     (NEW)    ║
+║  ✅ Brighter indigo theme (#2d2a6e / #3d3a91)     (NEW)    ║
+║  ✅ All v8.0 features fully preserved                       ║
 ╚══════════════════════════════════════════════════════════════╝
 
-PIPELINE (v8.0):
+PIPELINE (v9.0):
   Stage 0 — ToFind Extraction    (sync, no AI)
-  Stage 1 — Hook Animation       (AI, concurrent) + HookGate + StepController
-  Stage 2 — Concept Animation    (AI, concurrent) + StepController
-  Stage 3 — Solution Animation   (AI, concurrent) + StepController
-  Stage 4 — Quiz Generation      (AI, concurrent) + QuizGate
+  Stage 1 — Hook Animation       (claude-haiku-4-5)  + HookGate + StepController
+  Stage 2 — Concept Animation    (claude-sonnet-4-5) + StepController
+  Stage 3 — Solution Animation   (claude-sonnet-4-5) + StepController
+  Stage 4 — Quiz Generation      (claude-haiku-4-5)  + QuizGate + 15 questions
+
+MODEL ROUTING:
+  HOOK_MODEL     = "claude-haiku-4-5"   → Stage 1 hook generation
+  QUIZ_MODEL     = "claude-haiku-4-5"   → Stage 4 quiz generation (15 Qs)
+  CONCEPT_MODEL  = "claude-sonnet-4-5"  → Stage 2 concept SVG animation
+  SOLUTION_MODEL = "claude-sonnet-4-5"  → Stage 3 solution SVG animation
 
 STEP CONTROL ARCHITECTURE:
-  Hook:     Scene 1-4 via #nextbtn/#prevbtn → Scene 5 shows "✦ Start Learning"
+  Hook:     5 text scenes via #nextbtn/#prevbtn → Scene 5 shows "✦ Start Learning"
   Concept:  Scene navigation via #nextbtn/#prevbtn only (no auto-advance)
   Solution: Scene navigation via #nextbtn/#prevbtn only (no auto-advance)
-  Quiz:     QuizGate → one question at a time → score screen
+  Quiz:     QuizGate → one question at a time → score screen → retry postMessage
+
+RETRY QUIZ FLOW:
+  1. Student clicks "Retry Quiz" → JS fires postMessage({type:'qanim:retryQuiz', ...})
+  2. Host receives 'qanim:retryQuiz' → calls window.QAnimOnRetryQuiz(question, category)
+  3. App layer calls QuizGenerator.generate() → fresh 15 Qs via claude-haiku-4-5
+  4. App re-injects solution HTML with new quiz data
+  5. Fallback: if no host handler, JS shuffles existing questions locally
 
 RESULT DICT KEYS:
-  hook_animation_code     — cinematic curiosity hook HTML (+ HookGate + StepController)
+  hook_animation_code     — text-only cinematic hook HTML (+ HookGate + StepController)
   concept_animation_code  — concept teaching animation (+ StepController + Notes)
   animation_code          — solution animation (+ StepController + Notes + ToFind + Quiz btn)
-  quiz_html               — standalone interactive quiz HTML (+ QuizGate)
+  quiz_html               — standalone interactive quiz HTML (15 Qs + QuizGate)
   to_find                 — list of extracted target quantities
   solution_steps          — list of step strings
   final_answer            — complete answer string
@@ -44,9 +59,21 @@ import asyncio
 import html as html_module
 from typing import Optional
 
-# ── Client + model ──────────────────────────────────────────────────────
+# ── Client + model routing ──────────────────────────────────────────────
+# v9.0: Four dedicated model constants for precise cost/quality routing.
+#   Haiku 4.5  → Hook + Quiz  (fast, lightweight generative tasks)
+#   Sonnet 4.5 → Concept + Solution animations (complex, high-quality SVG)
 client        = anthropic.Anthropic()
-Q_MODEL       = "claude-sonnet-4-5"
+
+# ── Per-stage model constants ───────────────────────────────────────────
+HOOK_MODEL     = "claude-haiku-4-5"        # Stage 1 — cinematic hook text
+QUIZ_MODEL     = "claude-haiku-4-5"        # Stage 4 — quiz generation (15 Qs)
+CONCEPT_MODEL  = "claude-sonnet-4-5"       # Stage 2 — concept SVG animation
+SOLUTION_MODEL = "claude-sonnet-4-5"       # Stage 3 — solution SVG animation
+
+# Legacy alias kept for _classify_topic() which uses a tiny AI call
+Q_MODEL        = SOLUTION_MODEL
+
 MAX_TOK       = 16000
 MAX_TOK_CONCEPT = 12000
 MAX_TOK_HOOK  = 10000
@@ -60,7 +87,7 @@ MAX_TOK_QUIZ  = 16000
 class QAnimLogger:
     """Centralized logger. All lifecycle events go through here."""
 
-    PREFIX = "[QAnim v7]"
+    PREFIX = "[QAnim v9]"
 
     @classmethod
     def info(cls, stage: str, msg: str):
@@ -370,30 +397,30 @@ class RecoveryEngine:
   *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
   html, body {{
     width:100%; height:100%; overflow:hidden;
-    background:linear-gradient(135deg,#1e1b4b,#312e81);
+    background:linear-gradient(135deg,#2d2a6e,#3d3a91,#2a2760);
     font-family:-apple-system,'Segoe UI',Arial,sans-serif;
     display:flex; align-items:center; justify-content:center;
   }}
   .card {{
-    background:rgba(255,255,255,0.10);
-    border:1px solid rgba(124,58,237,0.45);
+    background:rgba(255,255,255,0.08);
+    border:1px solid rgba(139,92,246,0.45);
     border-radius:20px;
-    box-shadow:0 20px 60px rgba(0,0,0,0.35);
+    box-shadow:0 20px 60px rgba(0,0,0,0.30),0 0 0 1px rgba(139,92,246,0.12);
     padding:36px 40px; max-width:520px; text-align:center;
     backdrop-filter:blur(20px);
   }}
   .icon {{ font-size:40px; margin-bottom:16px; }}
   .title {{ font-size:17px; font-weight:800; color:#f1f5f9; margin-bottom:10px; }}
   .reason {{
-    font-size:11px; color:#94a3b8; background:rgba(255,255,255,0.04);
+    font-size:11px; color:#94a3b8; background:rgba(255,255,255,0.05);
     border-radius:10px; padding:10px 14px; margin:12px 0;
-    border:1px solid rgba(255,255,255,0.08); text-align:left;
+    border:1px solid rgba(255,255,255,0.09); text-align:left;
     line-height:1.6; font-family:monospace;
   }}
   .question {{ font-size:12px; color:#64748b; line-height:1.6; margin-top:10px; font-style:italic; }}
   .retry-hint {{
     margin-top:18px; font-size:11px; font-weight:700;
-    letter-spacing:1.5px; text-transform:uppercase; color:#7c3aed;
+    letter-spacing:1.5px; text-transform:uppercase; color:#a78bfa;
   }}
 </style>
 </head>
@@ -420,11 +447,11 @@ class RecoveryEngine:
 <style>
   html,body{{margin:0;padding:0;width:100%;height:100%;
     display:flex;align-items:center;justify-content:center;
-    background:#1e1b4b;font-family:-apple-system,sans-serif}}
+    background:linear-gradient(135deg,#2d2a6e,#3d3a91);font-family:-apple-system,sans-serif}}
 </style>
 </head>
 <body>
-<div style="font-size:11px;color:#64748b;position:fixed;top:8px;left:0;right:0;text-align:center">
+<div style="font-size:11px;color:#6d5fac;position:fixed;top:8px;left:0;right:0;text-align:center">
   {q_safe}
 </div>
 {animation_code}
@@ -581,6 +608,21 @@ IFRAME_RUNTIME_JS = r"""
         Log.warn('QAnimOnHookComplete not defined on host');
       }
     }
+
+    /* ── CHANGE 4: Quiz retry regeneration bridge ──────────────────
+       The inline quiz iframe fires 'qanim:retryQuiz' when the student
+       clicks "Retry Quiz". The host is responsible for calling
+       window.QAnimOnRetryQuiz(question, category) — which the
+       application layer must implement to call QuizGenerator.generate()
+       and re-inject a fresh solution HTML with new quiz data.          */
+    if (e.data && e.data.type === 'qanim:retryQuiz') {
+      Log.ok('Received retryQuiz signal — question=' + (e.data.question || '').slice(0, 60));
+      if (typeof window.QAnimOnRetryQuiz === 'function') {
+        window.QAnimOnRetryQuiz(e.data.question || '', e.data.category || '');
+      } else {
+        Log.warn('QAnimOnRetryQuiz not defined on host — retry ignored');
+      }
+    }
   });
 
   Log.ok('IframeLifecycleManager v7 initialized');
@@ -596,14 +638,14 @@ ERROR_BOUNDARY_HTML = """
 <!-- QAnim Error Fallback — hidden unless needed -->
 <div id="qanim-error-fallback" style="
   display:none; position:fixed; inset:0; z-index:9999;
-  background:rgba(30,27,75,0.92); backdrop-filter:blur(12px);
+  background:rgba(45,42,110,0.92); backdrop-filter:blur(12px);
   align-items:center; justify-content:center;
 ">
   <div style="
-    background:rgba(49,46,129,0.97); border-radius:20px; padding:32px 36px;
+    background:rgba(61,58,145,0.97); border-radius:20px; padding:32px 36px;
     max-width:440px; text-align:center;
-    border:1px solid rgba(124,58,237,0.45);
-    box-shadow:0 40px 100px rgba(0,0,0,0.4);
+    border:1px solid rgba(139,92,246,0.45);
+    box-shadow:0 40px 100px rgba(0,0,0,0.36);
   ">
     <div style="font-size:36px;margin-bottom:14px">⚠️</div>
     <div style="font-size:15px;font-weight:800;color:#f1f5f9;margin-bottom:8px">Animation Error</div>
@@ -1885,7 +1927,7 @@ def inject_notes_system(html: str, question: str = "") -> str:
 #  quiz HTML from the student's question + topic category.
 # ══════════════════════════════════════════════════════════════════════
 
-QUIZ_SYSTEM_PROMPT = """You are QAnim Quiz Engine v7 — an expert educational quiz designer.
+QUIZ_SYSTEM_PROMPT = """You are QAnim Quiz Engine v9 — an expert educational quiz designer.
 
 YOUR MISSION: Generate a premium self-contained interactive quiz HTML that:
 - Tests conceptual understanding of the given topic
@@ -1893,10 +1935,10 @@ YOUR MISSION: Generate a premium self-contained interactive quiz HTML that:
 - Provides immediate animated feedback
 - Explains why each answer is correct or wrong
 - Shows a final score with motivational message
-- Has a retry button that randomizes order
+- Has a retry button that requests fresh questions from the host
 
 VISUAL REQUIREMENTS:
-- Dark premium background (#1e1b4b)
+- Dark premium background (#2d2a6e → #3d3a91 gradient — slightly brighter than before)
 - Vivid accent colors (purple/blue/amber)
 - Smooth CSS animations on correct/wrong answers
 - Progress bar at top
@@ -1926,7 +1968,11 @@ CRITICAL RULES:
    - currentQ variable tracks active question index
    - After selecting an answer and seeing feedback, user clicks "Next Question" button
    - Last question's "Next" button shows the score screen instead
-✅ RETRY: "Retry Quiz" button calls regenerateQuiz() -- shuffles questions -- NEVER location.reload()"""
+✅ RETRY: "Retry Quiz" button calls regenerateQuiz() which:
+   1. Sends postMessage to parent: window.parent.postMessage({type:'qanim:retryQuiz', question: QUESTION_TEXT, category: CATEGORY_TEXT}, '*')
+   2. Shows a loading spinner while waiting for host to regenerate
+   3. Falls back to Fisher-Yates shuffle of masterQuestions if no host responds within 3s
+   Store original question and category in JS vars: var QUESTION_TEXT and var CATEGORY_TEXT"""
 
 QUIZ_PROMPT_TEMPLATE = """Generate a complete premium interactive quiz for this topic.
 
@@ -1953,7 +1999,7 @@ Q14 (MCQ, 2pts): Common exam trap question on this topic
 Q15 (MCQ, 2pts): Synthesis -- combine two concepts from this topic
 
 DESIGN:
-- Background: #1e1b4b
+- Background: #2d2a6e (brighter indigo — v9 theme)
 - Correct answer highlight: green (#10b981)
 - Wrong answer highlight: red (#ef4444)
 - Accent: purple (#7c3aed) / amber (#f59e0b)
@@ -2002,14 +2048,15 @@ class QuizGenerator:
         )
 
         try:
+            # QUIZ_MODEL = claude-haiku-4.5 — handles 15-Q quiz generation efficiently
             msg = client.messages.create(
-                model=Q_MODEL,
+                model=QUIZ_MODEL,
                 max_tokens=MAX_TOK_QUIZ,
                 system=QUIZ_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = msg.content[0].text.strip()
-            QAnimLogger.info("QuizGen", f"stop_reason={msg.stop_reason}  len={len(raw)}")
+            QAnimLogger.info("QuizGen", f"model={QUIZ_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
 
             # Extract HTML
             quiz_html = cls._extract_html(raw)
@@ -2064,7 +2111,7 @@ class QuizGenerator:
 <title>QAnim Quiz</title>
 <style>
   *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
-  html, body {{ width:100%; height:100%; overflow:auto; background:#1e1b4b;
+  html, body {{ width:100%; height:100%; overflow:auto; background:linear-gradient(135deg,#2d2a6e,#3d3a91);
     font-family:-apple-system,'Segoe UI',Arial,sans-serif;
     display:flex; align-items:flex-start; justify-content:center; padding:30px 16px; }}
   .card {{ background:rgba(49,46,129,0.9); border:1px solid rgba(124,58,237,0.45);
@@ -2192,35 +2239,41 @@ try {{
 #  Uses storytelling, real-world scenarios, dramatic reveals.
 # ══════════════════════════════════════════════════════════════════════
 
-HOOK_SYSTEM_PROMPT = """You are QAnim Hook Engine v7 — a cinematic storytelling animator.
+HOOK_SYSTEM_PROMPT = """You are QAnim Cinematic Hook Engine v9 — a premium educational storytelling designer.
 
-YOUR MISSION: Create a stunning 5-scene curiosity-driven HOOK animation that:
+YOUR MISSION: Create a stunning text-only cinematic hook experience that:
 1. Opens with a dramatic real-world scenario related to the question
-2. Builds suspense and emotional investment
-3. Poses the "Why does this happen?" question visually
+2. Builds suspense and emotional investment through typography
+3. Poses the "Why does this happen?" question with beautiful formatting
 4. Creates a strong "I need to know the answer" feeling
-5. Ends with an elegant transition into learning mode
+5. Ends with an elegant "Start Learning" invitation
 
-CRITICAL: NEVER reveal the answer, solution steps, or any numerical results.
+CRITICAL: NO SVG animations. NO moving objects. NO animation-heavy rendering.
+Instead: Beautiful typography, cinematic fade-in transitions, glassmorphism UI.
 
 THE HOOK MUST:
-- Feel like a Netflix intro / Apple product reveal
-- Use dramatic SVG motion graphics
-- Use animated typography (letters appearing one by one or sliding in)
-- Include particle/glow effects using SVG filters
-- Use countdown or suspense-building elements
+- Feel like a Netflix title card / Apple product page
+- Use dramatic large typography with gradient text
+- Use CSS fade-in / slide-up transitions ONLY (no SVG, no canvas)
 - Reference a real-world application or story
-- Create emotional resonance
-- End on a cliffhanger / open question
+- Create emotional resonance through words, not graphics
+- End on a cliffhanger / open question leading to "Start Learning"
 
 VISUAL STYLE:
-- Bright-dark background (#1e1b4b to #312e81 gradient)
-- Vivid accent: electric purple (#7c3aed), neon blue (#3b82f6), hot pink (#ec4899)
-- Cinematic SVG animations with JS setTimeout orchestration
-- Glow effects using SVG feGaussianBlur filters
-- Bold dramatic typography
-- Motion blur simulation via opacity+transform easing
-- 5 distinct scenes with smooth transitions
+- Background: slightly brighter indigo gradient (#2d2a6e → #3d3a91 → #2a2760)
+- Glassmorphism cards with soft violet glow borders
+- Large bold headline with purple→pink gradient text
+- Short suspenseful educational storytelling paragraphs
+- Minimal motion: smooth CSS fade-in only (opacity + translateY)
+- Scene structure: 4-5 text scenes, each fades in cleanly
+- Typography: -apple-system, 'Segoe UI', sans-serif; weights 300/400/700/900
+
+SCENE NARRATIVE STRUCTURE:
+Scene 1 — WORLD: One dramatic real-world sentence. Big. Bold.
+Scene 2 — INCIDENT: A surprising fact or paradox. Smaller, elegant.
+Scene 3 — MYSTERY: The "why?" question posed with tension.
+Scene 4 — STAKES: What mastering this unlocks.
+Scene 5 — INVITATION: "✦ Start Learning" gateway screen.
 
 OUTPUT FORMAT — STRICT:
 Return ONLY a complete <!DOCTYPE html>...</html> document.
@@ -2228,55 +2281,70 @@ No JSON. No markdown. No preamble. Just the raw HTML.
 
 TECHNICAL RULES:
 ✅ Self-contained: NO external fonts, NO CDN links
-✅ SVG viewBox="0 0 800 500"
+✅ NO SVG elements (except tiny inline icons if needed)
 ✅ NO document.write() anywhere
 ✅ NO backtick template literals
-✅ All <script> and <svg> tags must be balanced
+✅ All <script> and <style> tags must be balanced
 ✅ Include: #prevbtn, #nextbtn, #dots for scene navigation
-✅ Question strip: #qstrip .qtext
-✅ Progress: MANUAL user navigation only — NO auto-advance timers between scenes
-✅ SCENE TRANSITIONS: User clicks #nextbtn to advance; #prevbtn to go back
-✅ Each scene's INTERNAL animations (particles, glows, text reveals) run automatically
-   once that scene becomes active — but they must NOT trigger scene transitions
-✅ HOOK GATE — Scene 5 (final scene) must include a prominent "Start Learning" button:
+✅ Include: #qstrip .qtext for question display at top
+✅ Progress: MANUAL user navigation only — NO auto-advance
+✅ HOOK GATE — Scene 5 (final) must show "✦ Start Learning" button:
    - id="hook-start-btn"
-   - Style: large gradient pill, glowing purple/pink, centered on screen, subtle pulse animation
-   - Text: "✦ Start Learning"
-   - onclick: calls window.onHookComplete() if defined, else does nothing
-   - This button is the ONLY way to exit the hook — no auto-advance past Scene 5"""
+   - Large gradient pill, glowing purple/pink, centered, pulse animation
+   - onclick: if(window.onHookComplete) window.onHookComplete();
+✅ Background: linear-gradient(135deg, #2d2a6e 0%, #3d3a91 40%, #2a2760 100%)
+✅ Each scene: glassmorphism card, centered, max-width 680px, fade-in on activation"""
 
-HOOK_PROMPT_TEMPLATE = """Create a CINEMATIC HOOK animation for this question.
+HOOK_PROMPT_TEMPLATE = """Create a CINEMATIC TEXT-ONLY HOOK for this question.
 
 QUESTION: {question}
 CATEGORY: {category}
 
-HOOK NARRATIVE STRUCTURE:
-Scene 1 — WORLD: Show the real-world context where this matters. Use dramatic imagery.
-Scene 2 — INCIDENT: An unexpected thing happens. Something breaks, surprises, or fails.
-Scene 3 — MYSTERY: Pose the "Why?" visually. Show confusion/curiosity symbols.
-Scene 4 — STAKES: Show what understanding this could enable. Real impact.
-Scene 5 — INVITATION: "Let's find out together..." with elegant transition cue.
+HOOK NARRATIVE — 5 SCENES (text-only, glassmorphism cards, fade-in CSS only):
 
-ANIMATION SPECIFIC TO CATEGORY "{category}":
-- For VISUAL_PHYSICS: show dramatic motion/collision/force scenario
-- For MATHEMATICAL: show a surprising visual paradox or unexpected pattern
-- For PROCESS_BASED: show the inside of a machine/system in cinematic slow-motion
-- For BIOLOGICAL: show a microscopic world coming alive with beauty
-- For ABSTRACT: show two worlds colliding (society/freedom/power as visual metaphors)
-- For MIXED: show the human scale vs. machine scale contrast
+Scene 1 — WORLD (Big dramatic statement):
+  A single jaw-dropping real-world sentence about the topic. Large font. Bold gradient text.
+  Example feel: "Every second, 3 billion CPU transistors switch on and off."
 
-Make it emotionally compelling. This is the first thing the student sees.
+Scene 2 — INCIDENT (Surprising fact or paradox):
+  Something unexpected. Creates cognitive dissonance. Smaller elegant typography.
+  Subheadline + 1-2 sentence story.
+
+Scene 3 — MYSTERY (The "Why?" tension):
+  Pose the core question dramatically. Use suspense pacing.
+  "But why does this happen?" style. Add a glowing question mark visual.
+
+Scene 4 — STAKES (What this unlocks):
+  Show the real-world power of understanding this concept.
+  Engineers / scientists / professionals who rely on this.
+
+Scene 5 — INVITATION:
+  "Let's find out together."
+  Large "✦ Start Learning" button (id="hook-start-btn").
+
+CATEGORY-SPECIFIC STORYTELLING for "{category}":
+- VISUAL_PHYSICS: Lead with a dramatic physical event (crash, orbit, explosion)
+- MATHEMATICAL: Lead with a surprising number or pattern that defies intuition
+- PROCESS_BASED: Lead with what happens when the process fails catastrophically
+- BIOLOGICAL: Lead with the microscopic world being more dramatic than imagined
+- ABSTRACT: Lead with a historical moment where this concept changed society
+- MIXED: Lead with the human vs. machine scale contrast
+
+DESIGN REQUIREMENTS:
+- Background: linear-gradient(135deg, #2d2a6e 0%, #3d3a91 40%, #2a2760 100%)
+- Each scene: centered glassmorphism card (backdrop-filter:blur(20px), rgba white bg)
+- Scene headline: 2.8rem–3.6rem, font-weight:900, gradient text (purple→pink)
+- Body text: 1.05rem, color:#c4b5fd or #e2e8f0, line-height:1.8
+- Glow accent lines: thin horizontal rules with purple gradient
+- Navigation: small pill buttons #prevbtn / #nextbtn + dot indicators #dots
+- Scene transitions: CSS opacity 0→1 + translateY(24px)→0, 0.6s ease
+- NO SVG (except tiny inline icon if needed), NO canvas, NO heavy animation
 
 MANUAL STEP CONTROL — CRITICAL:
-- Remove ALL setTimeout/setInterval auto-advance timers that change scenes
-- User must click #nextbtn to advance to each new scene
-- Each scene may animate its OWN internal elements (particles, glow pulses, text reveals) automatically
-  once that scene becomes active — but SCENE TRANSITIONS happen only on #nextbtn click
-- Scene 5 (final scene) must display a large "✦ Start Learning" button
-  * id="hook-start-btn"
-  * Gradient pill style with glowing effect and subtle pulse animation
-  * onclick: if(window.onHookComplete) window.onHookComplete();
-  * This is the CTA that moves the student into the actual lesson
+- Remove ALL auto-advance timers between scenes
+- User clicks #nextbtn to advance; #prevbtn to go back
+- Each scene fades in automatically when it becomes active (CSS transition)
+- Scene 5 shows "✦ Start Learning" button: onclick calls window.onHookComplete if defined
 
 IMPORTANT: Return ONLY the raw <!DOCTYPE html>...</html>. Nothing else."""
 
@@ -2299,14 +2367,15 @@ class HookGenerator:
         )
 
         try:
+            # HOOK_MODEL = claude-haiku-4.5 — fast and sufficient for text hook
             msg = client.messages.create(
-                model=Q_MODEL,
+                model=HOOK_MODEL,
                 max_tokens=MAX_TOK_HOOK,
                 system=HOOK_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = msg.content[0].text.strip()
-            QAnimLogger.info("HookGen", f"stop_reason={msg.stop_reason}  len={len(raw)}")
+            QAnimLogger.info("HookGen", f"model={HOOK_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
 
             # Extract HTML
             hook_html = cls._extract_html(raw)
@@ -2314,9 +2383,9 @@ class HookGenerator:
                 QAnimLogger.warn("HookGen", "No HTML extracted — using fallback")
                 return cls._fallback_hook(question, category)
 
-            # Validate (hook doesn't need SVG strictly, but should have it)
+            # Validate — text-only hook: SVG is NOT required (Change 2: text-only redesign)
             try:
-                GenerationValidator.validate(hook_html, require_svg=True)
+                GenerationValidator.validate(hook_html, require_svg=False)
             except ValidationError as e:
                 QAnimLogger.warn("HookGen", f"Validation: {e}")
                 if '<html' in hook_html and len(hook_html) > 500:
@@ -2355,78 +2424,430 @@ class HookGenerator:
 
     @classmethod
     def _fallback_hook(cls, question: str, category: str) -> str:
-        """Minimal but compelling fallback hook animation."""
-        q_safe   = html_module.escape(question[:120])
+        """
+        Text-only cinematic fallback hook — 5 scenes, glassmorphism cards,
+        fade-in transitions only. No SVG required. (v9.0 redesign)
+        """
+        q_safe   = html_module.escape(question[:160])
         cat_safe = html_module.escape(category)
-        cat_emoji = {
-            "VISUAL_PHYSICS": "⚡", "MATHEMATICAL": "∞",
-            "PROCESS_BASED": "⚙️", "BIOLOGICAL": "🧬",
-            "ABSTRACT": "🌍", "MIXED": "🔬"
-        }.get(category, "🎯")
+
+        # Category-specific headlines and story beats
+        cat_data = {
+            "VISUAL_PHYSICS": {
+                "emoji": "⚡",
+                "headline": "The Universe Runs on Forces You Can't See",
+                "scene2_title": "Something Unexpected Happens",
+                "scene2_body": "At the exact moment forces balance — motion stops. Or does it? Physics hides its deepest secrets in plain sight, waiting for the right question to unlock them.",
+                "scene3_question": "Why does this system behave the way it does?",
+                "scene4_stakes": "Engineers design bridges, rockets, and microchips by mastering exactly this principle. One equation governs it all.",
+            },
+            "MATHEMATICAL": {
+                "emoji": "∞",
+                "headline": "The Pattern Was There All Along",
+                "scene2_title": "Numbers Reveal Hidden Structure",
+                "scene2_body": "Mathematics isn't invented — it's discovered. The relationship you're about to uncover has existed since the universe began. Mathematicians just learned to see it.",
+                "scene3_question": "What elegant principle connects these quantities?",
+                "scene4_stakes": "From cryptography to AI, from architecture to music — this mathematical relationship shapes everything modern civilization is built on.",
+            },
+            "PROCESS_BASED": {
+                "emoji": "⚙️",
+                "headline": "Every Machine Has a Secret Heartbeat",
+                "scene2_title": "When the Process Fails",
+                "scene2_body": "In 1986, a misunderstood process led to catastrophic failure. The engineers knew the components — but not how they worked together. Understanding process isn't optional.",
+                "scene3_question": "How does this system actually function step by step?",
+                "scene4_stakes": "The engineers, developers, and scientists who truly understand how systems work are the ones who build the future.",
+            },
+            "BIOLOGICAL": {
+                "emoji": "🧬",
+                "headline": "Inside You, a War Is Being Won Right Now",
+                "scene2_title": "The Microscopic World Is Stranger Than Fiction",
+                "scene2_body": "At this very moment, billions of molecular machines in your body are performing operations more complex than any computer — guided by principles discovered only in the last century.",
+                "scene3_question": "How does this biological process actually work?",
+                "scene4_stakes": "Every medical breakthrough — every vaccine, every targeted therapy — was built on understanding exactly this type of biological mechanism.",
+            },
+            "ABSTRACT": {
+                "emoji": "🌍",
+                "headline": "Ideas Have Shaped Civilizations",
+                "scene2_title": "When Concepts Collide",
+                "scene2_body": "The tension between these ideas has started revolutions, toppled governments, and redefined what it means to live in a society. Understanding the distinction matters more now than ever.",
+                "scene3_question": "What truly separates these concepts at their core?",
+                "scene4_stakes": "Political scientists, philosophers, and citizens who clearly understand this distinction make better decisions — and build more just societies.",
+            },
+            "MIXED": {
+                "emoji": "🔬",
+                "headline": "Where Human Meets Machine",
+                "scene2_title": "Two Scales, One Answer",
+                "scene2_body": "The phenomenon looks completely different depending on whether you view it from human scale or machine scale. Yet both perspectives are governed by the same underlying principle.",
+                "scene3_question": "What single principle unifies these perspectives?",
+                "scene4_stakes": "The innovators who master cross-domain thinking — connecting the physical and the theoretical — are the ones building tomorrow's breakthroughs.",
+            },
+        }
+        d = cat_data.get(category, cat_data["MIXED"])
 
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QAnim Hook</title>
+<title>QAnim Hook — {cat_safe}</title>
 <style>
-  *,*::before,*::after{{margin:0;padding:0;box-sizing:border-box}}
-  html,body{{width:100%;height:100%;overflow:hidden;background:#1e1b4b;
-    font-family:-apple-system,'Segoe UI',Arial,sans-serif;}}
-  #qstrip{{position:fixed;top:0;left:0;right:0;z-index:100;
-    background:rgba(10,10,26,0.85);backdrop-filter:blur(12px);
-    padding:10px 20px;border-bottom:1px solid rgba(124,58,237,0.2);}}
-  .qtext{{font-size:12px;color:#64748b;text-align:center;line-height:1.4;}}
-  svg{{width:100%;height:100%;position:fixed;top:0;left:0;}}
-  #hook-text{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-    text-align:center;pointer-events:none;}}
-  .hook-emoji{{font-size:72px;display:block;margin-bottom:20px;
-    animation:float 3s ease-in-out infinite;}}
-  .hook-title{{font-size:28px;font-weight:900;
-    background:linear-gradient(135deg,#a78bfa,#ec4899,#3b82f6);
-    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-    background-clip:text;letter-spacing:-0.5px;margin-bottom:12px;
-    opacity:0;animation:fadeRise 0.8s ease 0.5s forwards;}}
-  .hook-sub{{font-size:14px;color:#64748b;max-width:480px;line-height:1.7;
-    opacity:0;animation:fadeRise 0.8s ease 1.2s forwards;}}
-  .hook-cta{{margin-top:24px;font-size:12px;font-weight:700;letter-spacing:2px;
-    text-transform:uppercase;color:#7c3aed;
-    opacity:0;animation:fadeRise 0.8s ease 2.0s forwards;}}
-  @keyframes float{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-12px)}}}}
-  @keyframes fadeRise{{from{{opacity:0;transform:translateY(20px)}}to{{opacity:1;transform:translateY(0)}}}}
+/* ═══════════════════════════════════════════════════════
+   QAnim v9 Cinematic Text Hook — Text-Only Premium Design
+   ═══════════════════════════════════════════════════════ */
+*, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
+
+html, body {{
+  width:100%; height:100%;
+  background: linear-gradient(135deg, #2d2a6e 0%, #3d3a91 40%, #2a2760 100%);
+  font-family: -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  overflow: hidden;
+  color: #e2e8f0;
+}}
+
+/* ── Question strip ── */
+#qstrip {{
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(15, 12, 50, 0.80);
+  backdrop-filter: blur(16px);
+  padding: 10px 24px;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.25);
+}}
+.qtext {{
+  font-size: 11.5px; color: #7c6fac; text-align: center;
+  line-height: 1.5; max-width: 700px; margin: 0 auto;
+  font-weight: 400; letter-spacing: 0.2px;
+}}
+
+/* ── Scene wrapper ── */
+#scenes-container {{
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 60px 20px 80px;
+}}
+
+/* ── Individual scene ── */
+.hook-scene {{
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 60px 20px 80px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.65s ease, transform 0.65s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  transform: translateY(18px);
+}}
+.hook-scene.active {{
+  opacity: 1; pointer-events: auto; transform: translateY(0);
+}}
+
+/* ── Glassmorphism card ── */
+.hook-card {{
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(139, 92, 246, 0.30);
+  border-radius: 28px;
+  padding: 44px 48px;
+  max-width: 640px;
+  width: 100%;
+  text-align: center;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow:
+    0 0 0 1px rgba(139,92,246,0.12),
+    0 32px 80px rgba(0,0,0,0.38),
+    0 8px 32px rgba(109,40,217,0.20);
+  position: relative;
+  overflow: hidden;
+}}
+.hook-card::before {{
+  content: '';
+  position: absolute; top: 0; left: 15%; right: 15%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(167,139,250,0.6), transparent);
+}}
+
+/* ── Scene number badge ── */
+.scene-badge {{
+  display: inline-block;
+  font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
+  text-transform: uppercase; color: #7c3aed;
+  background: rgba(124,58,237,0.12);
+  border: 1px solid rgba(124,58,237,0.28);
+  border-radius: 50px; padding: 4px 14px;
+  margin-bottom: 22px;
+}}
+
+/* ── Emoji ── */
+.hook-emoji {{
+  font-size: 52px; display: block; margin-bottom: 20px;
+  filter: drop-shadow(0 4px 16px rgba(124,58,237,0.45));
+  animation: floatEmoji 4s ease-in-out infinite;
+}}
+@keyframes floatEmoji {{
+  0%,100% {{ transform: translateY(0); }}
+  50%      {{ transform: translateY(-8px); }}
+}}
+
+/* ── Headlines ── */
+.hook-headline {{
+  font-size: clamp(1.7rem, 4vw, 2.6rem);
+  font-weight: 900;
+  line-height: 1.18;
+  letter-spacing: -0.5px;
+  margin-bottom: 18px;
+  background: linear-gradient(135deg, #c4b5fd 0%, #a78bfa 40%, #ec4899 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}}
+
+/* ── Scene title (smaller) ── */
+.hook-scene-title {{
+  font-size: 1.05rem; font-weight: 700;
+  color: #a78bfa; margin-bottom: 14px;
+  letter-spacing: 0.3px;
+}}
+
+/* ── Body text ── */
+.hook-body {{
+  font-size: 1rem; line-height: 1.82;
+  color: #c4b5fd; font-weight: 300;
+  max-width: 520px; margin: 0 auto;
+}}
+.hook-body strong {{ color: #e9d5ff; font-weight: 700; }}
+
+/* ── Question highlight ── */
+.hook-question {{
+  font-size: 1.15rem; font-weight: 700; font-style: italic;
+  color: #f0abfc; margin: 16px 0;
+  padding: 14px 20px;
+  border-left: 3px solid rgba(216,180,254,0.5);
+  text-align: left;
+  background: rgba(124,58,237,0.10);
+  border-radius: 0 12px 12px 0;
+}}
+
+/* ── Glow divider ── */
+.hook-divider {{
+  width: 60px; height: 2px;
+  background: linear-gradient(90deg, #7c3aed, #ec4899);
+  border-radius: 2px; margin: 20px auto;
+  box-shadow: 0 0 12px rgba(124,58,237,0.6);
+}}
+
+/* ── Start Learning button (Scene 5) ── */
+#hook-start-btn {{
+  display: inline-flex; align-items: center; gap: 10px;
+  margin-top: 28px;
+  padding: 16px 44px; border-radius: 50px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #ec4899 100%);
+  color: #fff; font-size: 1rem; font-weight: 800; letter-spacing: 0.5px;
+  font-family: inherit;
+  box-shadow: 0 0 40px rgba(124,58,237,0.55), 0 8px 32px rgba(0,0,0,0.35);
+  animation: pulseCta 2.2s ease-in-out infinite;
+  transition: transform 0.2s, box-shadow 0.2s;
+  position: relative; z-index: 10;
+}}
+#hook-start-btn:hover {{
+  transform: scale(1.05) translateY(-2px);
+  box-shadow: 0 0 60px rgba(124,58,237,0.75), 0 12px 40px rgba(0,0,0,0.4);
+}}
+@keyframes pulseCta {{
+  0%,100% {{ box-shadow: 0 0 40px rgba(124,58,237,0.55), 0 8px 32px rgba(0,0,0,0.35); }}
+  50%      {{ box-shadow: 0 0 65px rgba(236,72,153,0.65), 0 8px 32px rgba(0,0,0,0.35); }}
+}}
+
+/* ── Navigation bar ── */
+#hook-nav {{
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center; gap: 20px;
+  padding: 14px 24px 18px;
+  background: rgba(15,12,50,0.70);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid rgba(139,92,246,0.18);
+}}
+#prevbtn, #nextbtn {{
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1.5px solid rgba(139,92,246,0.40);
+  background: rgba(124,58,237,0.14);
+  color: #a78bfa; font-size: 16px; cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
+  font-family: inherit;
+}}
+#prevbtn:hover:not(:disabled), #nextbtn:hover:not(:disabled) {{
+  background: rgba(124,58,237,0.28); border-color: rgba(139,92,246,0.70);
+  transform: scale(1.1);
+}}
+#prevbtn:disabled, #nextbtn:disabled {{ opacity: 0.28; cursor: not-allowed; }}
+#dots {{
+  display: flex; gap: 8px; align-items: center;
+}}
+.dot {{
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(139,92,246,0.30);
+  transition: background 0.3s, transform 0.3s;
+  cursor: pointer;
+}}
+.dot.active {{
+  background: #a78bfa; transform: scale(1.35);
+  box-shadow: 0 0 8px rgba(167,139,250,0.7);
+}}
+
+/* ── Ambient glow orbs (CSS only, no SVG) ── */
+.glow-orb {{
+  position: fixed; border-radius: 50%; pointer-events: none; z-index: 0;
+  animation: orbPulse 6s ease-in-out infinite;
+}}
+.glow-orb-1 {{
+  width: 340px; height: 340px; top: -80px; left: -80px;
+  background: radial-gradient(circle, rgba(124,58,237,0.18) 0%, transparent 70%);
+  animation-delay: 0s;
+}}
+.glow-orb-2 {{
+  width: 280px; height: 280px; bottom: -60px; right: -60px;
+  background: radial-gradient(circle, rgba(236,72,153,0.14) 0%, transparent 70%);
+  animation-delay: 2.5s;
+}}
+.glow-orb-3 {{
+  width: 200px; height: 200px; top: 40%; left: 50%; transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%);
+  animation-delay: 1.2s;
+}}
+@keyframes orbPulse {{
+  0%,100% {{ opacity:1; transform: scale(1); }}
+  50%      {{ opacity:0.6; transform: scale(1.15); }}
+}}
 </style>
 </head>
 <body>
-  <div id="qstrip"><div class="qtext">{q_safe}</div></div>
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500">
-    <defs>
-      <radialGradient id="glow-bg" cx="50%" cy="50%" r="60%">
-        <stop offset="0%" stop-color="#1a0a2e" stop-opacity="1"/>
-        <stop offset="100%" stop-color="#1e1b4b" stop-opacity="1"/>
-      </radialGradient>
-      <filter id="blur-filter">
-        <feGaussianBlur stdDeviation="3"/>
-      </filter>
-    </defs>
-    <rect width="800" height="500" fill="url(#glow-bg)"/>
-    <!-- Ambient glow orbs -->
-    <circle cx="200" cy="150" r="120" fill="#7c3aed" opacity="0.06" filter="url(#blur-filter)">
-      <animate attributeName="r" values="120;140;120" dur="4s" repeatCount="indefinite"/>
-    </circle>
-    <circle cx="600" cy="350" r="100" fill="#ec4899" opacity="0.06" filter="url(#blur-filter)">
-      <animate attributeName="r" values="100;120;100" dur="5s" repeatCount="indefinite"/>
-    </circle>
-    <circle cx="400" cy="250" r="80" fill="#3b82f6" opacity="0.08" filter="url(#blur-filter)">
-      <animate attributeName="r" values="80;100;80" dur="3.5s" repeatCount="indefinite"/>
-    </circle>
-  </svg>
-  <div id="hook-text">
-    <span class="hook-emoji">{cat_emoji}</span>
-    <div class="hook-title">Before You Solve This...</div>
-    <div class="hook-sub">Every great problem has a story behind it.<br>Let's explore what makes this one fascinating.</div>
-    <div class="hook-cta">▶ Animation Loading Below</div>
+
+<!-- Background ambient glow orbs (CSS-only, no SVG) -->
+<div class="glow-orb glow-orb-1"></div>
+<div class="glow-orb glow-orb-2"></div>
+<div class="glow-orb glow-orb-3"></div>
+
+<!-- Question strip -->
+<div id="qstrip">
+  <div class="qtext">{q_safe}</div>
+</div>
+
+<!-- Scenes container -->
+<div id="scenes-container">
+
+  <!-- Scene 1: WORLD -->
+  <div class="hook-scene active" id="scene-0">
+    <div class="hook-card">
+      <span class="scene-badge">Chapter 1 · The World</span>
+      <span class="hook-emoji">{d["emoji"]}</span>
+      <h1 class="hook-headline">{d["headline"]}</h1>
+      <div class="hook-divider"></div>
+      <p class="hook-body">The question in front of you is more than an exercise.<br>
+        It's a window into how the universe actually works.</p>
+    </div>
   </div>
+
+  <!-- Scene 2: INCIDENT -->
+  <div class="hook-scene" id="scene-1">
+    <div class="hook-card">
+      <span class="scene-badge">Chapter 2 · The Incident</span>
+      <div class="hook-scene-title">{d["scene2_title"]}</div>
+      <div class="hook-divider"></div>
+      <p class="hook-body">{d["scene2_body"]}</p>
+    </div>
+  </div>
+
+  <!-- Scene 3: MYSTERY -->
+  <div class="hook-scene" id="scene-2">
+    <div class="hook-card">
+      <span class="scene-badge">Chapter 3 · The Mystery</span>
+      <span class="hook-emoji">🔍</span>
+      <blockquote class="hook-question">{d["scene3_question"]}</blockquote>
+      <div class="hook-divider"></div>
+      <p class="hook-body">The answer isn't obvious. It requires understanding
+        the <strong>principles</strong> that govern this type of problem —
+        which is exactly what you're about to learn.</p>
+    </div>
+  </div>
+
+  <!-- Scene 4: STAKES -->
+  <div class="hook-scene" id="scene-3">
+    <div class="hook-card">
+      <span class="scene-badge">Chapter 4 · The Stakes</span>
+      <span class="hook-emoji">🚀</span>
+      <div class="hook-scene-title">Why This Actually Matters</div>
+      <div class="hook-divider"></div>
+      <p class="hook-body">{d["scene4_stakes"]}</p>
+    </div>
+  </div>
+
+  <!-- Scene 5: INVITATION -->
+  <div class="hook-scene" id="scene-4">
+    <div class="hook-card">
+      <span class="scene-badge">Chapter 5 · The Journey Begins</span>
+      <h1 class="hook-headline">Let's Find Out Together.</h1>
+      <div class="hook-divider"></div>
+      <p class="hook-body" style="margin-bottom:8px">
+        The animation ahead will build your intuition step by step.<br>
+        No shortcuts. Just deep understanding.
+      </p>
+      <button id="hook-start-btn"
+        onclick="if(window.onHookComplete) window.onHookComplete();">
+        ✦ Start Learning
+      </button>
+    </div>
+  </div>
+
+</div><!-- /scenes-container -->
+
+<!-- Navigation -->
+<div id="hook-nav">
+  <button id="prevbtn" disabled aria-label="Previous scene">&#8592;</button>
+  <div id="dots">
+    <div class="dot active" data-idx="0"></div>
+    <div class="dot" data-idx="1"></div>
+    <div class="dot" data-idx="2"></div>
+    <div class="dot" data-idx="3"></div>
+    <div class="dot" data-idx="4"></div>
+  </div>
+  <button id="nextbtn" aria-label="Next scene">&#8594;</button>
+</div>
+
+<script>
+/* QAnim v9 Text Hook — Manual Scene Controller */
+(function() {{
+  'use strict';
+  var scenes  = document.querySelectorAll('.hook-scene');
+  var dots    = document.querySelectorAll('#dots .dot');
+  var prevBtn = document.getElementById('prevbtn');
+  var nextBtn = document.getElementById('nextbtn');
+  var current = 0;
+
+  function showScene(idx) {{
+    if (idx < 0 || idx >= scenes.length) return;
+    scenes[current].classList.remove('active');
+    dots[current].classList.remove('active');
+    current = idx;
+    scenes[current].classList.add('active');
+    dots[current].classList.add('active');
+    prevBtn.disabled = (current === 0);
+    nextBtn.disabled = (current === scenes.length - 1);
+  }}
+
+  /* Wire nav buttons */
+  nextBtn.addEventListener('click', function() {{ if (current < scenes.length - 1) showScene(current + 1); }});
+  prevBtn.addEventListener('click', function() {{ if (current > 0) showScene(current - 1); }});
+
+  /* Dot navigation */
+  dots.forEach(function(dot) {{
+    dot.addEventListener('click', function() {{ showScene(parseInt(this.dataset.idx, 10)); }});
+  }});
+
+  /* Expose for StepController compatibility */
+  window.currentStep = current;
+  window.showScene   = showScene;
+
+  console.log('[QAnim Hook v9] Text-only cinematic hook initialized — 5 scenes');
+}})();
+</script>
+
 </body>
 </html>"""
 
@@ -2826,7 +3247,7 @@ def inject_hook_gate(html: str) -> str:
 _QUIZ_GATE_HTML = """
 <div id="qanim-quiz-gate" style="
   position:fixed;inset:0;z-index:800;
-  background:linear-gradient(135deg,#1e1b4b 0%,#312e81 100%);
+  background:linear-gradient(135deg,#2d2a6e 0%,#3d3a91 100%);
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   font-family:-apple-system,'Segoe UI',Arial,sans-serif;
   transition:opacity 0.6s ease;
@@ -2944,11 +3365,11 @@ _INLINE_QUIZ_CSS = """
   margin-bottom: 20px;
 }
 #qanim-inline-quiz .iq-card {
-  background: linear-gradient(145deg,rgba(20,20,45,0.98),rgba(10,10,28,0.99));
-  border: 1px solid rgba(124,58,237,0.35);
+  background: linear-gradient(145deg,rgba(45,42,110,0.97),rgba(35,32,90,0.99));
+  border: 1px solid rgba(139,92,246,0.35);
   border-radius: 24px; padding: 32px 36px;
   width: 100%; position: relative;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(124,58,237,0.12);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.38), 0 0 0 1px rgba(139,92,246,0.14);
 }
 #qanim-inline-quiz .iq-header {
   text-align: center; margin-bottom: 24px;
@@ -3166,7 +3587,57 @@ _INLINE_QUIZ_JS = r"""
   }
 
   function _resetQuiz() {
-    /* Shuffle question order and option order for a fresh retry */
+    /* ── CHANGE 4: Send postMessage to host for fresh question regeneration.
+       The host (QAnimILM / app layer) should listen for 'qanim:retryQuiz'
+       and trigger a new QuizGenerator.generate() call, then re-inject the
+       result into the iframe. While waiting, show a loading state.
+       If no host handler is registered (standalone usage), fall back to
+       local shuffle so the quiz remains functional in all contexts.       */
+    var hostRegenRequested = false;
+
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'qanim:retryQuiz',
+          question: (_iqData && _iqData.question) ? _iqData.question : '',
+          category: (_iqData && _iqData.category) ? _iqData.category : ''
+        }, '*');
+        hostRegenRequested = true;
+      }
+    } catch(e) { /* cross-origin parent — ignore */ }
+
+    if (hostRegenRequested) {
+      /* Show loading state while waiting for host to regenerate */
+      var panel3 = document.getElementById('qanim-inline-quiz');
+      var qWrap  = panel3 && panel3.querySelector('.iq-questions-wrap');
+      var scoreEl3 = panel3 && panel3.querySelector('.iq-score');
+      if (scoreEl3) scoreEl3.classList.remove('show');
+      if (qWrap) {
+        qWrap.innerHTML = '<div style="text-align:center;padding:32px 16px;">'
+          + '<div style="font-size:32px;margin-bottom:14px;animation:iq-spin 1s linear infinite;display:inline-block">⟳</div>'
+          + '<div style="color:#a78bfa;font-size:14px;font-weight:600">Generating fresh questions...</div>'
+          + '<div style="color:#64748b;font-size:11px;margin-top:6px">This takes a moment</div>'
+          + '</div>';
+      }
+      /* Reset progress dots */
+      for (var pp = 0; pp < totalQ; pp++) {
+        var pd2 = document.getElementById('iq-pd-' + pp);
+        if (pd2) { pd2.classList.remove('active', 'done'); }
+      }
+      /* Add spin keyframe if not present */
+      if (!document.getElementById('iq-spin-style')) {
+        var st = document.createElement('style');
+        st.id = 'iq-spin-style';
+        st.textContent = '@keyframes iq-spin { to { transform: rotate(360deg); } }';
+        document.head.appendChild(st);
+      }
+      return; /* Host will reload iframe with new quiz data */
+    }
+
+    /* ── Fallback: local shuffle when running standalone (no host) ──
+       Shuffles question ORDER and each question's OPTION ORDER.
+       This is intentionally different from the host-regenerated path
+       which produces entirely new AI-generated questions.             */
     var shuffled = _shuffle(questions.map(function(q) {
       var opts = q.options.slice();
       var correctAnswer = opts[q.correct];
@@ -3511,15 +3982,16 @@ async def _generate_concept_animation(question: str, category: str) -> str:
     prompt = _build_concept_prompt(question, category)
 
     try:
+        # CONCEPT_MODEL = claude-sonnet-4.5 — complex SVG animation generation
         msg = client.messages.create(
-            model=Q_MODEL,
+            model=CONCEPT_MODEL,
             max_tokens=MAX_TOK_CONCEPT,
             system=SYSTEM_CONCEPT,
             messages=[{"role": "user", "content": prompt}]
         )
         raw         = msg.content[0].text.strip()
         stop_reason = msg.stop_reason
-        QAnimLogger.info("ConceptAI", f"stop_reason={stop_reason}  raw_len={len(raw)}")
+        QAnimLogger.info("ConceptAI", f"model={CONCEPT_MODEL}  stop_reason={stop_reason}  raw_len={len(raw)}")
         if stop_reason == "max_tokens":
             QAnimLogger.warn("ConceptAI", "Hit max_tokens — may be truncated!")
     except Exception as e:
@@ -3588,8 +4060,8 @@ async def generate_question_animation(question: str) -> dict:
         raise ValueError("Question cannot be empty")
 
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v7 — '{short_q}'")
-    QAnimLogger.info("Pipeline", f"Model: {Q_MODEL}  MaxTokens: {MAX_TOK}")
+    QAnimLogger.info("Pipeline", f"START v9 — '{short_q}'")
+    QAnimLogger.info("Pipeline", f"Hook/Quiz: {HOOK_MODEL}  Concept/Solution: {SOLUTION_MODEL}  MaxTokens: {MAX_TOK}")
 
     # ── Stage 0: ToFind (sync) ──────────────────────────────────────
     to_find_targets = ToFindExtractor.extract(question)
@@ -3607,15 +4079,16 @@ async def generate_question_animation(question: str) -> dict:
 
     async def _run_solution_ai() -> str:
         try:
+            # SOLUTION_MODEL = claude-sonnet-4.5 — premium SVG animation quality
             msg = client.messages.create(
-                model=Q_MODEL,
+                model=SOLUTION_MODEL,
                 max_tokens=MAX_TOK,
                 system=SYSTEM,
                 messages=[{"role": "user", "content": solution_prompt}]
             )
             raw = msg.content[0].text.strip()
             QAnimLogger.info("SolutionAI",
-                             f"stop_reason={msg.stop_reason}  len={len(raw)}")
+                             f"model={SOLUTION_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
             if msg.stop_reason == "max_tokens":
                 QAnimLogger.warn("SolutionAI", "Hit max_tokens — may be truncated!")
             return raw
@@ -3637,7 +4110,7 @@ async def generate_question_animation(question: str) -> dict:
     # ── Parse solution ───────────────────────────────────────────────
     result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v8.0"
+    result["engine_version"]         = "v9.0"
     result["hook_animation_code"]    = hook_html      # NEW
     result["concept_animation_code"] = concept_html
     result["quiz_html"]              = quiz_html      # NEW
@@ -3698,7 +4171,7 @@ async def generate_question_animation(question: str) -> dict:
     result["render_order"]           = ["hook_animation_code", "concept_animation_code", "animation_code", "quiz_html"]
 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v7 — '{result['title']}' "
+        f"DONE v9 — '{result['title']}' "
         f"hook={len(hook_html):,} "
         f"concept={len(concept_html):,} "
         f"solution={len(html):,} "
@@ -3725,7 +4198,7 @@ def _build_failure_result(question: str, reason: str) -> dict:
         "key_insight":            "",
         "to_find":                [],
         "category":               "UNKNOWN",
-        "engine_version":         "v8.0",
+        "engine_version":         "v9.0",
         "render_status":          "error",
     }
 
@@ -3784,7 +4257,7 @@ CRITICAL SAFETY RULES FOR animation_code
 ═══════════════════════════════════════════════════════
 VISUAL STANDARDS — v7.0 CINEMATIC QUALITY
 ═══════════════════════════════════════════════════════
-BACKGROUND: Deep premium indigo (#1e1b4b or #312e81) — no flat gray/white
+BACKGROUND: Brighter premium indigo (#2d2a6e or #3d3a91) — DO NOT use #1e1b4b (too dark)
 TYPOGRAPHY: -apple-system, 'Segoe UI', Arial, sans-serif
 SVG: viewBox="0 0 800 500"
 COLOR PALETTES:
@@ -3863,7 +4336,7 @@ CRITICAL SAFETY RULES FOR concept_code
 ═══════════════════════════════════════════════════════
 CONCEPT ANIMATION RULES — CINEMATIC QUALITY
 ═══════════════════════════════════════════════════════
-✅ Deep premium indigo background (#1e1b4b or similar)
+✅ Brighter premium indigo background (#2d2a6e or #3d3a91 — do NOT use #1e1b4b)
 ✅ Vivid accent colors matching category palette
 ✅ 3-5 scenes of progressive conceptual revelation
 ✅ Scene 1: Establish visual context / "hook visual"
@@ -3889,11 +4362,14 @@ CONCEPT ANIMATION RULES — CINEMATIC QUALITY
 DESIGN_SYSTEM = """
 TYPOGRAPHY: font-family: -apple-system, 'Segoe UI', Arial, sans-serif
 SVG viewBox: "0 0 800 500"
-BACKGROUNDS: #1e1b4b (deep indigo), #312e81 (rich indigo), #2e1065 (deep violet)
+BACKGROUNDS: #2d2a6e (brighter indigo — v9 default), #3d3a91 (vivid indigo), #312e81 (rich indigo)
+  DO NOT use #1e1b4b — too dark. Use #2d2a6e or brighter as the base.
 COLOR PALETTES:
   PHYSICS=#3b5bdb/#e64980 | MATH=#7c3aed/#db2777
   BIOLOGY=#16a34a/#ca8a04 | PROCESS=#059669/#0284c7
   ABSTRACT=#d97706/#7c3aed | MIXED=#0284c7/#7c3aed
+GLASSMORPHISM: rgba(255,255,255,0.08) backgrounds, border rgba(139,92,246,0.30)
+GLOW: box-shadow 0 0 40px rgba(109,40,217,0.35) for cards
 """
 
 SVG_TECHNIQUES = """
@@ -3995,7 +4471,7 @@ REQUIRED HTML STRUCTURE (solution panel DOM must exist but be EMPTY):
 SOLUTION PANEL CSS TO INCLUDE (copy these styles):
 #sol-backdrop { display:none; position:fixed; inset:0; z-index:900; background:rgba(30,27,75,0.85); backdrop-filter:blur(12px); }
 #sol-backdrop.open { display:flex; align-items:center; justify-content:center; }
-#sol-panel { background:linear-gradient(145deg,rgba(49,46,129,0.98),rgba(30,27,75,0.99)); border-radius:24px; padding:28px; max-width:580px; width:90vw; max-height:85vh; overflow-y:auto; border:1px solid rgba(124,58,237,0.45); box-shadow:0 40px 100px rgba(0,0,0,0.4); opacity:0; transform:scale(0.96); transition:opacity 0.3s,transform 0.3s cubic-bezier(0.34,1.56,0.64,1); }
+#sol-panel { background:linear-gradient(145deg,rgba(61,58,145,0.98),rgba(45,42,110,0.99)); border-radius:24px; padding:28px; max-width:580px; width:90vw; max-height:85vh; overflow-y:auto; border:1px solid rgba(139,92,246,0.45); box-shadow:0 40px 100px rgba(0,0,0,0.36); opacity:0; transform:scale(0.96); transition:opacity 0.3s,transform 0.3s cubic-bezier(0.34,1.56,0.64,1); }
 #sol-panel.open { opacity:1; transform:scale(1); }
 .sol-step { display:flex; gap:14px; padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.06); opacity:0; transform:translateX(-16px); transition:opacity 0.35s ease,transform 0.35s ease; }
 .sol-step.visible { opacity:1; transform:translateX(0); }
@@ -4055,7 +4531,8 @@ VISUAL STRATEGY: {strategy}
 {FALLBACK_RULES}
 
 CONCEPT ANIMATION REQUIREMENTS:
-- Premium bright-dark background: #1e1b4b or #312e81 (deep indigo feel)
+- Premium bright-dark background: #2d2a6e or #3d3a91 (brighter indigo — do NOT use #1e1b4b)
+- Glassmorphism cards with rgba(255,255,255,0.08) bg and rgba(139,92,246,0.30) borders
 - Vivid accent colors matching category palette
 - 3-5 scenes of progressive conceptual revelation
 - Scene 1: Establish the visual context (cinematic world-building)
@@ -4125,7 +4602,7 @@ if __name__ == "__main__":
 
     for cat, q in questions_to_test.items():
         print("=" * 72)
-        print(f"  QAnim v8.0 — Interactive Step-Based Engine — Category: {cat}")
+        print(f"  QAnim v9.0 — Interactive Step-Based Engine — Category: {cat}")
         print(f"  Q: {q[:65]}...")
         print("=" * 72)
 
