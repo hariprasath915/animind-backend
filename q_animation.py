@@ -1,24 +1,40 @@
 """
-q_animation.py  —  QAnim Question Animation Generator  v6.0
+q_animation.py  —  QAnim Question Animation Generator  v8.0
 =============================================================
 ╔══════════════════════════════════════════════════════════════╗
-║  v6.0 — TWO-STAGE + TO-FIND ARCHITECTURE                    ║
+║  v8.0 — INTERACTIVE STEP-BASED CINEMATIC ENGINE             ║
 ╠══════════════════════════════════════════════════════════════╣
-║  WHAT CHANGED vs v5.0:                                      ║
-║  ✅ ToFindExtractor — isolated extraction module (NEW)      ║
-║  ✅ to_find field in result object (NEW)                    ║
-║  ✅ inject_to_find_system() — HTML/JS/CSS injector (NEW)    ║
-║  ✅ "To Find" button + glassmorphism modal in animations    ║
-║  ✅ ToFind data tag pattern mirrors Solution data tag       ║
-║  ✅ All existing architecture fully preserved               ║
+║  NEW IN v8.0 vs v7.0:                                       ║
+║  ✅ HookGate — "Start Learning" button gate on hook (NEW)   ║
+║  ✅ QuizGate — "Quiz Unlocked" intro screen (NEW)           ║
+║  ✅ StepController — manual-only step safety net (NEW)      ║
+║  ✅ NO auto-advance — all animations are fully manual (NEW) ║
+║  ✅ All v7.0 features fully preserved                       ║
 ╚══════════════════════════════════════════════════════════════╝
 
-APPLIED UPDATES (v6.0 → v6.0-updated):
-  [UPDATE 1] Background color changed to light/clean (#F8F9FA)
-  [UPDATE 2] Topic/question font size increased (~1.5x)
-  [UPDATE 3] Final answer/solution display removed from animation flow
-  [UPDATE 4] 15-question quiz section added (3 sets × 5 questions)
-  [UPDATE 5] Real-Time Application hook section added as first frame
+PIPELINE (v8.0):
+  Stage 0 — ToFind Extraction    (sync, no AI)
+  Stage 1 — Hook Animation       (AI, concurrent) + HookGate + StepController
+  Stage 2 — Concept Animation    (AI, concurrent) + StepController
+  Stage 3 — Solution Animation   (AI, concurrent) + StepController
+  Stage 4 — Quiz Generation      (AI, concurrent) + QuizGate
+
+STEP CONTROL ARCHITECTURE:
+  Hook:     Scene 1-4 via #nextbtn/#prevbtn → Scene 5 shows "✦ Start Learning"
+  Concept:  Scene navigation via #nextbtn/#prevbtn only (no auto-advance)
+  Solution: Scene navigation via #nextbtn/#prevbtn only (no auto-advance)
+  Quiz:     QuizGate → one question at a time → score screen
+
+RESULT DICT KEYS:
+  hook_animation_code     — cinematic curiosity hook HTML (+ HookGate + StepController)
+  concept_animation_code  — concept teaching animation (+ StepController + Notes)
+  animation_code          — solution animation (+ StepController + Notes + ToFind + Quiz btn)
+  quiz_html               — standalone interactive quiz HTML (+ QuizGate)
+  to_find                 — list of extracted target quantities
+  solution_steps          — list of step strings
+  final_answer            — complete answer string
+  key_insight             — one-line conceptual insight
+  title, category, engine_version, render_status
 """
 
 import anthropic
@@ -29,20 +45,22 @@ import html as html_module
 from typing import Optional
 
 # ── Client + model ──────────────────────────────────────────────────────
-client  = anthropic.Anthropic()
-Q_MODEL = "claude-sonnet-4-5"
-MAX_TOK = 16000
-MAX_TOK_CONCEPT = 12000   # Stage-1 concept animation (no solution data needed)
+client        = anthropic.Anthropic()
+Q_MODEL       = "claude-sonnet-4-5"
+MAX_TOK       = 16000
+MAX_TOK_CONCEPT = 12000
+MAX_TOK_HOOK  = 10000
+MAX_TOK_QUIZ  = 16000
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MODULE 1 — QAnimLogger (centralized diagnostics)
+#  MODULE 1 — QAnimLogger
 # ══════════════════════════════════════════════════════════════════════
 
 class QAnimLogger:
     """Centralized logger. All lifecycle events go through here."""
 
-    PREFIX = "[QAnim v6]"
+    PREFIX = "[QAnim v7]"
 
     @classmethod
     def info(cls, stage: str, msg: str):
@@ -63,7 +81,6 @@ class QAnimLogger:
 
 # ══════════════════════════════════════════════════════════════════════
 #  MODULE 2 — GenerationValidator
-#  Validates raw AI output BEFORE any injection attempt
 # ══════════════════════════════════════════════════════════════════════
 
 class ValidationError(Exception):
@@ -71,13 +88,12 @@ class ValidationError(Exception):
 
 class GenerationValidator:
     """
-    Validates AI-generated HTML before it ever touches an iframe.
+    Validates AI-generated HTML before iframe injection.
     Raises ValidationError with a descriptive reason on failure.
     """
 
-    # Patterns that will definitely break iframe execution
     DANGEROUS_PATTERNS = [
-        (r'document\.write\s*\(', "document.write() is forbidden in generated output"),
+        (r'document\.write\s*\(', "document.write() is forbidden"),
         (r'<script[^>]+src\s*=', "External script src not allowed"),
         (r'javascript:\s*void', "javascript:void() link detected"),
         (r'on\w+\s*=\s*["\']?\s*eval\s*\(', "eval() in event handler"),
@@ -89,67 +105,59 @@ class GenerationValidator:
         ("</html>",   "Missing closing </html> tag"),
         ("<body",     "Missing <body> tag"),
         ("</body>",   "Missing closing </body> tag"),
-        ("<script",   "No script block found — animation would be static"),
+        ("<script",   "No script block — animation would be static"),
     ]
 
     SVG_REQUIRED = [
-        ("<svg",  "No SVG element found"),
-        ("</svg>","SVG element not closed"),
+        ("<svg",   "No SVG element found"),
+        ("</svg>", "SVG element not closed"),
     ]
 
     @classmethod
     def validate(cls, html: str, require_svg: bool = True) -> None:
         if not html or not html.strip():
             raise ValidationError("animation_code is empty")
-
         if len(html) < 500:
-            raise ValidationError(f"animation_code suspiciously short ({len(html)} chars) — likely truncated")
-
+            raise ValidationError(
+                f"animation_code suspiciously short ({len(html)} chars) — likely truncated"
+            )
         for pattern, reason in cls.REQUIRED_ELEMENTS:
             if pattern not in html:
                 raise ValidationError(reason)
-
         if require_svg:
             for pattern, reason in cls.SVG_REQUIRED:
                 if pattern not in html:
                     raise ValidationError(reason)
-
         for pattern, reason in cls.DANGEROUS_PATTERNS:
             if re.search(pattern, html, re.IGNORECASE):
-                QAnimLogger.warn("Validator", f"Dangerous pattern stripped: {reason}")
-                # Don't raise — sanitizer will strip it
-
-        # Structural balance check
+                QAnimLogger.warn("Validator", f"Dangerous pattern detected: {reason}")
         open_scripts  = len(re.findall(r'<script(?:\s[^>]*)?>',  html, re.IGNORECASE))
         close_scripts = len(re.findall(r'</script>',              html, re.IGNORECASE))
         if open_scripts != close_scripts:
             raise ValidationError(
                 f"Unbalanced <script> tags: {open_scripts} open, {close_scripts} close"
             )
-
         open_svgs  = len(re.findall(r'<svg(?:\s[^>]*)?>',  html, re.IGNORECASE))
         close_svgs = len(re.findall(r'</svg>',              html, re.IGNORECASE))
         if open_svgs != close_svgs:
             raise ValidationError(
                 f"Unbalanced <svg> tags: {open_svgs} open, {close_svgs} close"
             )
-
         QAnimLogger.ok("Validator", f"HTML passed validation ({len(html):,} chars)")
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  MODULE 2.5 — ToFindExtractor
-#  Intelligently identifies what the student is asked to find.
-#  Fully isolated, fault-tolerant, never raises.
 # ══════════════════════════════════════════════════════════════════════
 
 class ToFindExtractor:
     """
     Parses an academic question and returns a deduplicated, student-friendly
-    list of the quantities / targets the student must find or determine.
+    list of the quantities the student must find.
+    Never raises — always returns a list.
     """
 
-    _TRIGGER_PATTERNS: list[tuple[str, int]] = [
+    _TRIGGER_PATTERNS: list = [
         (r'\bsolve\s+for\s+(.+?)(?=\.|,|;|\band\b|$)',         1),
         (r'\bfind\s+(?:the\s+|an?\s+)?(.+?)(?=\.|;|$)',        1),
         (r'\bdetermine\s+(?:the\s+|an?\s+)?(.+?)(?=\.|,|;|$)', 1),
@@ -162,14 +170,14 @@ class ToFindExtractor:
         (r'\bderive\s+(?:the\s+|an?\s+)?(.+?)(?=\.|,|;|$)',    1),
         (r'\bwhat\s+(?:is|are)\s+(?:the\s+|an?\s+)?(.+?)(?=\?|,|;|$)', 1),
         (r'\bwhat\s+will\s+be\s+(?:the\s+)?(.+?)(?=\?|,|;|$)', 1),
-        (r'\bwhat\s+would\s+be\s+(?:the\s+)?(.+?)(?=\?|,|;|$)',1),
-        (r'\bhow\s+(?:much|many)\s+(.+?)(?=\?|,|;|$)',          1),
-        (r'\bprove\s+(?:that\s+)?(.+?)(?=\.|,|;|$)',            1),
-        (r'\bshow\s+(?:that\s+)?(.+?)(?=\.|,|;|$)',             1),
-        (r'\bexpress\s+(?:the\s+)?(.+?)\s+in\s+terms',         1),
+        (r'\bwhat\s+would\s+be\s+(?:the\s+)?(.+?)(?=\?|,|;|$)', 1),
+        (r'\bhow\s+(?:much|many)\s+(.+?)(?=\?|,|;|$)',           1),
+        (r'\bprove\s+(?:that\s+)?(.+?)(?=\.|,|;|$)',             1),
+        (r'\bshow\s+(?:that\s+)?(.+?)(?=\.|,|;|$)',              1),
+        (r'\bexpress\s+(?:the\s+)?(.+?)\s+in\s+terms',          1),
     ]
 
-    _NOISE_PREFIXES: list[str] = [
+    _NOISE_PREFIXES: list = [
         "the value of", "the values of", "value of",
         "the magnitude of", "magnitude of",
         "the amount of", "amount of",
@@ -181,33 +189,27 @@ class ToFindExtractor:
         r'\s*,\s*|\s+and\s+|\s+also\s+|\s+as\s+well\s+as\s+|\s+along\s+with\s+',
         re.IGNORECASE
     )
-
     _TRAILING_RE = re.compile(
         r'\s+(?:if|when|given|assuming|where|such\s+that|for|in|at|'
         r'of\s+the\s+system|of\s+the\s+block|of\s+each)\s+.+$',
         re.IGNORECASE
     )
-
-    _ARTICLE_RE = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
-
+    _ARTICLE_RE     = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
     _TRIGGER_VERB_RE = re.compile(
         r'^(?:find|determine|calculate|evaluate|compute|obtain|'
         r'identify|estimate|derive|prove|show|express|solve\s+for)'
-        r'\s+(?:the\s+|an?\s+)?',
-        re.IGNORECASE
+        r'\s+(?:the\s+|an?\s+)?', re.IGNORECASE
     )
-
     _MATH_VAR_RE = re.compile(r'^[A-Za-zα-ωΑ-Ω][0-9₀-₉]?$')
 
     MIN_LEN = 1
     MAX_LEN = 120
 
     @classmethod
-    def extract(cls, question: str) -> list[str]:
+    def extract(cls, question: str) -> list:
         if not question or not question.strip():
-            QAnimLogger.warn("ToFindExtractor", "Empty question supplied — returning []")
+            QAnimLogger.warn("ToFindExtractor", "Empty question — returning []")
             return []
-
         try:
             raw      = cls._run_patterns(question)
             expanded = cls._split_conjunctions(raw)
@@ -219,23 +221,17 @@ class ToFindExtractor:
                         )]
             deduped  = cls._deduplicate(valid)
             result   = [cls._cap(t) for t in deduped]
-
             if not result:
-                QAnimLogger.warn("ToFindExtractor",
-                                 "No targets matched — trying fallback")
                 result = cls._fallback(question)
-
-            QAnimLogger.ok("ToFindExtractor",
-                           f"Extracted {len(result)} target(s): {result}")
+            QAnimLogger.ok("ToFindExtractor", f"Extracted {len(result)} target(s): {result}")
             return result
-
         except Exception as exc:
             QAnimLogger.error("ToFindExtractor", f"Unhandled error: {exc}")
             return []
 
     @classmethod
-    def _run_patterns(cls, question: str) -> list[str]:
-        found: list[str] = []
+    def _run_patterns(cls, question: str) -> list:
+        found = []
         for pattern, grp in cls._TRIGGER_PATTERNS:
             for m in re.finditer(pattern, question, re.IGNORECASE | re.MULTILINE):
                 try:
@@ -247,8 +243,8 @@ class ToFindExtractor:
         return found
 
     @classmethod
-    def _split_conjunctions(cls, targets: list[str]) -> list[str]:
-        result: list[str] = []
+    def _split_conjunctions(cls, targets: list) -> list:
+        result = []
         for t in targets:
             parts = cls._SPLIT_RE.split(t)
             result.extend(p.strip() for p in parts if p.strip())
@@ -268,9 +264,8 @@ class ToFindExtractor:
         return t.rstrip(".,;:?!")
 
     @classmethod
-    def _deduplicate(cls, targets: list[str]) -> list[str]:
-        seen:   set[str]  = set()
-        result: list[str] = []
+    def _deduplicate(cls, targets: list) -> list:
+        seen, result = set(), []
         for t in targets:
             key = t.lower().strip()
             if key and key not in seen:
@@ -283,7 +278,7 @@ class ToFindExtractor:
         return s[0].upper() + s[1:] if s else s
 
     @classmethod
-    def _fallback(cls, question: str) -> list[str]:
+    def _fallback(cls, question: str) -> list:
         try:
             sentences = re.split(r'[.!?]', question.strip())
             for s in reversed(sentences):
@@ -300,7 +295,7 @@ class ToFindExtractor:
 # ══════════════════════════════════════════════════════════════════════
 
 class HtmlSanitizer:
-    """Cleans AI-generated HTML."""
+    """Cleans AI-generated HTML. Does NOT validate."""
 
     @classmethod
     def sanitize(cls, html: str) -> str:
@@ -329,21 +324,16 @@ class HtmlSanitizer:
             tag   = match.group(1)
             body  = match.group(2)
             close = match.group(3)
-
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
                 return match.group(0)
-
             stripped = body.strip()
             if stripped.startswith('try {') or stripped.startswith('try{'):
                 return match.group(0)
-
             if len(stripped) < 20:
                 return match.group(0)
-
             wrapped_body = (
                 "\n/* ── QAnim Error Boundary ── */\n"
-                "try {\n"
-                + body +
+                "try {\n" + body +
                 "\n} catch (_qanim_err) {\n"
                 "  console.error('[QAnim ErrorBoundary]', _qanim_err);\n"
                 "  (function() {\n"
@@ -366,7 +356,7 @@ class HtmlSanitizer:
 # ══════════════════════════════════════════════════════════════════════
 
 class RecoveryEngine:
-    """Produces graceful fallback HTML when the generation pipeline fails."""
+    """Graceful fallback HTML when generation or validation fails."""
 
     @staticmethod
     def fallback_html(question: str, reason: str) -> str:
@@ -380,30 +370,30 @@ class RecoveryEngine:
   *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
   html, body {{
     width:100%; height:100%; overflow:hidden;
-    background:#F8F9FA; /* [UPDATED] light background */
+    background:linear-gradient(135deg,#1e1b4b,#312e81);
     font-family:-apple-system,'Segoe UI',Arial,sans-serif;
     display:flex; align-items:center; justify-content:center;
   }}
   .card {{
-    background:#fff; border-radius:20px;
-    box-shadow:0 20px 60px rgba(0,0,0,0.10);
+    background:rgba(255,255,255,0.10);
+    border:1px solid rgba(124,58,237,0.45);
+    border-radius:20px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.35);
     padding:36px 40px; max-width:520px; text-align:center;
+    backdrop-filter:blur(20px);
   }}
   .icon {{ font-size:40px; margin-bottom:16px; }}
-  .title {{ font-size:17px; font-weight:800; color:#1e293b; margin-bottom:10px; }}
+  .title {{ font-size:17px; font-weight:800; color:#f1f5f9; margin-bottom:10px; }}
   .reason {{
-    font-size:11px; color:#64748b; background:#f8fafc;
+    font-size:11px; color:#94a3b8; background:rgba(255,255,255,0.04);
     border-radius:10px; padding:10px 14px; margin:12px 0;
-    border:1px solid #e2e8f0; text-align:left; line-height:1.6;
-    font-family:monospace;
+    border:1px solid rgba(255,255,255,0.08); text-align:left;
+    line-height:1.6; font-family:monospace;
   }}
-  .question {{
-    font-size:12px; color:#475569; line-height:1.6; margin-top:10px;
-    font-style:italic;
-  }}
+  .question {{ font-size:12px; color:#64748b; line-height:1.6; margin-top:10px; font-style:italic; }}
   .retry-hint {{
     margin-top:18px; font-size:11px; font-weight:700;
-    letter-spacing:1.5px; text-transform:uppercase; color:#94a3b8;
+    letter-spacing:1.5px; text-transform:uppercase; color:#7c3aed;
   }}
 </style>
 </head>
@@ -430,7 +420,7 @@ class RecoveryEngine:
 <style>
   html,body{{margin:0;padding:0;width:100%;height:100%;
     display:flex;align-items:center;justify-content:center;
-    background:#F8F9FA;font-family:-apple-system,sans-serif}} /* [UPDATED] light background */
+    background:#1e1b4b;font-family:-apple-system,sans-serif}}
 </style>
 </head>
 <body>
@@ -442,12 +432,12 @@ class RecoveryEngine:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MODULE 5 — IframeLifecycleManager
+#  MODULE 5 — IframeLifecycleManager JS constant
 # ══════════════════════════════════════════════════════════════════════
 
 IFRAME_RUNTIME_JS = r"""
 /* ═══════════════════════════════════════════════════════════
-   QAnim IframeLifecycleManager v6 — srcdoc-based safe render
+   QAnim IframeLifecycleManager v7 — srcdoc-based safe render
    ═══════════════════════════════════════════════════════════ */
 (function() {
   'use strict';
@@ -471,10 +461,7 @@ IFRAME_RUNTIME_JS = r"""
     var f = document.createElement('iframe');
     f.id = 'qanim-frame';
     f.setAttribute('sandbox', 'allow-scripts');
-    f.style.cssText = [
-      'width:100%', 'height:100%', 'border:none',
-      'display:block', 'background:transparent'
-    ].join(';');
+    f.style.cssText = 'width:100%;height:100%;border:none;display:block;background:transparent';
     f.setAttribute('title', 'QAnim Animation');
     document.body.appendChild(f);
     _iframe = f;
@@ -504,11 +491,11 @@ IFRAME_RUNTIME_JS = r"""
           Log.ok('srcdoc injected (' + html.length + ' chars)');
         } catch(e) {
           Log.error('srcdoc assignment failed: ' + e);
-          _onRenderError('srcdoc assignment: ' + e.message);
+          _onRenderError('srcdoc: ' + e.message);
         }
       });
     } catch(e) {
-      Log.error('_injectSrcdoc outer error: ' + e);
+      Log.error('_injectSrcdoc outer: ' + e);
       _onRenderError('_injectSrcdoc: ' + e.message);
     }
   }
@@ -517,11 +504,9 @@ IFRAME_RUNTIME_JS = r"""
     if (_rendering || _renderQueue.length === 0) return;
     _rendering = true;
     var task = _renderQueue.shift();
-    Log.info('Processing render task. Queue remaining: ' + _renderQueue.length);
-
+    Log.info('Processing render task. Queue: ' + _renderQueue.length);
     var iframe = _getIframe();
-    var timeoutId;
-    var done = false;
+    var timeoutId, done = false;
 
     function cleanup() {
       if (done) return;
@@ -533,21 +518,19 @@ IFRAME_RUNTIME_JS = r"""
 
     iframe.onload = function() {
       cleanup();
-      Log.ok('iframe loaded successfully');
+      Log.ok('iframe loaded');
       _currentHtml = task.html;
       _rendering = false;
       if (task.onSuccess) task.onSuccess();
       _processQueue();
     };
-
     iframe.onerror = function(e) {
       cleanup();
       Log.error('iframe onerror: ' + (e && e.message || 'unknown'));
       _rendering = false;
-      if (task.onError) task.onError('iframe load error');
+      if (task.onError) task.onError('iframe error');
       _processQueue();
     };
-
     timeoutId = setTimeout(function() {
       if (done) return;
       cleanup();
@@ -580,7 +563,7 @@ IFRAME_RUNTIME_JS = r"""
     },
     reset: function() {
       _renderQueue = [];
-      _rendering   = false;
+      _rendering = false;
       _resetIframe();
       Log.ok('ILM reset complete');
     },
@@ -588,7 +571,19 @@ IFRAME_RUNTIME_JS = r"""
     isRendering: function() { return _rendering; }
   };
 
-  Log.ok('IframeLifecycleManager initialized');
+  /* Hook->Concept transition bridge via postMessage */
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'qanim:hookComplete') {
+      Log.ok('Received hookComplete signal');
+      if (typeof window.QAnimOnHookComplete === 'function') {
+        window.QAnimOnHookComplete();
+      } else {
+        Log.warn('QAnimOnHookComplete not defined on host');
+      }
+    }
+  });
+
+  Log.ok('IframeLifecycleManager v7 initialized');
 })();
 """
 
@@ -598,47 +593,41 @@ IFRAME_RUNTIME_JS = r"""
 # ══════════════════════════════════════════════════════════════════════
 
 ERROR_BOUNDARY_HTML = """
-<!-- QAnim Error Fallback — always present, hidden unless needed -->
+<!-- QAnim Error Fallback — hidden unless needed -->
 <div id="qanim-error-fallback" style="
   display:none; position:fixed; inset:0; z-index:9999;
-  background:rgba(15,23,42,0.88); backdrop-filter:blur(8px);
+  background:rgba(30,27,75,0.92); backdrop-filter:blur(12px);
   align-items:center; justify-content:center;
 ">
   <div style="
-    background:#fff; border-radius:20px; padding:32px 36px;
+    background:rgba(49,46,129,0.97); border-radius:20px; padding:32px 36px;
     max-width:440px; text-align:center;
-    box-shadow:0 40px 100px rgba(0,0,0,0.3);
+    border:1px solid rgba(124,58,237,0.45);
+    box-shadow:0 40px 100px rgba(0,0,0,0.4);
   ">
     <div style="font-size:36px;margin-bottom:14px">⚠️</div>
-    <div style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:8px">
-      Animation Error
-    </div>
+    <div style="font-size:15px;font-weight:800;color:#f1f5f9;margin-bottom:8px">Animation Error</div>
     <div class="qanim-err-msg" style="
-      font-size:11px;color:#64748b;background:#f8fafc;
+      font-size:11px;color:#94a3b8;background:rgba(255,255,255,0.04);
       border-radius:10px;padding:10px 14px;margin:12px 0;
-      border:1px solid #e2e8f0;font-family:monospace;
+      border:1px solid rgba(255,255,255,0.08);font-family:monospace;
       text-align:left;line-height:1.6;word-break:break-all;
     ">Unknown error</div>
     <button onclick="document.getElementById('qanim-error-fallback').style.display='none'"
-      style="
-        margin-top:14px;padding:8px 22px;border-radius:50px;border:none;
-        background:linear-gradient(135deg,#7c3aed,#db2777);
-        color:#fff;font-weight:700;font-size:12px;cursor:pointer;
-      ">Dismiss</button>
+      style="margin-top:14px;padding:8px 22px;border-radius:50px;border:none;
+        background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;
+        font-weight:700;font-size:12px;cursor:pointer;">Dismiss</button>
   </div>
 </div>
 """
 
 QANIM_INNER_LOGGER_JS = """
 <script>
-/* QAnim Inner Logger — visible to animation scripts inside iframe */
 window.QLog = {
   info:  function(m) { console.log('[QAnim Inner] ℹ  ' + m); },
   warn:  function(m) { console.warn('[QAnim Inner] ⚠  ' + m); },
   error: function(m) { console.error('[QAnim Inner] ✖  ' + m); }
 };
-
-/* Global uncaught error catcher inside iframe */
 window.addEventListener('error', function(e) {
   console.error('[QAnim GlobalError]', e.message, 'at', e.filename + ':' + e.lineno);
   var fb = document.getElementById('qanim-error-fallback');
@@ -648,7 +637,6 @@ window.addEventListener('error', function(e) {
     if (msg) msg.textContent = e.message + ' (line ' + e.lineno + ')';
   }
 });
-
 window.addEventListener('unhandledrejection', function(e) {
   console.error('[QAnim UnhandledPromise]', e.reason);
 });
@@ -656,29 +644,49 @@ window.addEventListener('unhandledrejection', function(e) {
 """
 
 def inject_infrastructure(html: str) -> str:
-    """
-    Injects QAnim infrastructure into generated HTML:
-    - Error fallback UI
-    - Inner logger + global error catcher
-    """
+    """Injects QAnim error fallback UI + inner logger + scroll-enable override."""
     html = re.sub(
         r'(<body[^>]*>)',
         r'\1\n' + ERROR_BOUNDARY_HTML,
         html, count=1, flags=re.IGNORECASE
     )
-    first_script = re.search(r'<script(?:\s[^>]*)?>(?!.*type\s*=\s*["\']application/json)', html, re.IGNORECASE)
+    first_script = re.search(
+        r'<script(?:\s[^>]*)?>(?!.*type\s*=\s*["\']application/json)',
+        html, re.IGNORECASE
+    )
     if first_script:
         pos = first_script.start()
         html = html[:pos] + QANIM_INNER_LOGGER_JS + '\n' + html[pos:]
     else:
         html = html.replace('</body>', QANIM_INNER_LOGGER_JS + '\n</body>', 1)
 
-    QAnimLogger.ok("Infrastructure", "Error fallback + inner logger injected")
+    # ── Scroll-enable override ──────────────────────────────────────
+    # AI often sets `overflow:hidden` on html/body which prevents the page
+    # from scrolling to the quiz below the animation. Override it here.
+    _scroll_fix = (
+        '\n<style id="qanim-scroll-fix">\n'
+        'html, body {\n'
+        '  overflow-x: hidden !important;\n'
+        '  overflow-y: auto !important;\n'
+        '  height: auto !important;\n'
+        '  min-height: 100vh;\n'
+        '}\n'
+        '#container, [id="container"] {\n'
+        '  padding-bottom: 60px;\n'
+        '}\n'
+        '</style>\n'
+    )
+    if '</head>' in html:
+        html = html.replace('</head>', _scroll_fix + '</head>', 1)
+    else:
+        html = _scroll_fix + html
+
+    QAnimLogger.ok("Infrastructure", "Error fallback + inner logger + scroll-fix injected")
     return html
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MODULE 6.5 — ToFind Injection System
+#  MODULE 6.5 — ToFind Injection System  (from v6.0, fully preserved)
 # ══════════════════════════════════════════════════════════════════════
 
 def _build_to_find_data_tag(targets: list) -> str:
@@ -691,490 +699,212 @@ def _build_to_find_data_tag(targets: list) -> str:
 
 
 _TO_FIND_DOM = """
-<!-- ═══════════════════════════════════════════════════════════════
-     QAnim ToFind Panel v6 — glassmorphism modal
-     ═══════════════════════════════════════════════════════════════ -->
-
 <div id="tofind-backdrop" aria-hidden="true"></div>
-
-<aside id="tofind-panel" role="dialog"
-       aria-labelledby="tofind-heading" aria-hidden="true">
-
+<aside id="tofind-panel" role="dialog" aria-labelledby="tofind-heading" aria-hidden="true">
   <div class="tf-glow-ring"></div>
-
   <div class="tf-header">
     <div class="tf-header-left">
       <div class="tf-icon-wrap">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-             xmlns="http://www.w3.org/2000/svg">
-          <circle cx="11" cy="11" r="7" stroke="currentColor"
-                  stroke-width="2.2" stroke-linecap="round"/>
-          <path d="M16.5 16.5L21 21" stroke="currentColor"
-                stroke-width="2.2" stroke-linecap="round"/>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
         </svg>
       </div>
       <span id="tofind-heading" class="tf-title">To Find</span>
     </div>
-    <button id="tofind-close" class="tf-close-btn"
-            aria-label="Close To Find panel">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-           xmlns="http://www.w3.org/2000/svg">
-        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor"
-              stroke-width="2.5" stroke-linecap="round"/>
+    <button id="tofind-close" class="tf-close-btn" aria-label="Close To Find panel">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
       </svg>
     </button>
   </div>
-
   <p class="tf-subtitle">What this question is asking you to determine:</p>
-
-  <div id="tofind-items-container" class="tf-items-container">
-  </div>
-
-  <div class="tf-footer">
-    <span class="tf-badge">QAnim v6 · Target Identifier</span>
-  </div>
-
+  <div id="tofind-items-container" class="tf-items-container"></div>
+  <div class="tf-footer"><span class="tf-badge">QAnim v7 · Target Identifier</span></div>
 </aside>
 """
 
 _TO_FIND_CSS = """
 <style id="qanim-tofind-styles">
 #tofind-backdrop {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 8000;
-  background: rgba(10, 10, 26, 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  opacity: 0;
-  transition: opacity 0.28s ease;
+  display:none; position:fixed; inset:0; z-index:8000;
+  background:rgba(10,10,26,0.75); backdrop-filter:blur(10px);
+  opacity:0; transition:opacity 0.28s ease;
 }
-#tofind-backdrop.open {
-  display: block;
-  opacity: 1;
-}
-
+#tofind-backdrop.open { display:block; opacity:1; }
 #tofind-panel {
-  display: flex;
-  flex-direction: column;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -48%) scale(0.96);
-  z-index: 8100;
-  width: min(480px, 92vw);
-  max-height: 82vh;
-  border-radius: 24px;
-  padding: 28px 28px 22px;
-  box-sizing: border-box;
-  overflow: hidden;
-  background: linear-gradient(
-    145deg,
-    rgba(22, 22, 44, 0.92) 0%,
-    rgba(15, 15, 35, 0.96) 100%
-  );
-  border: 1px solid rgba(120, 80, 255, 0.30);
-  box-shadow:
-    0 0  0   1px rgba(120, 80, 255, 0.12),
-    0 24px 60px rgba(0, 0, 0, 0.55),
-    0  4px 20px rgba(120, 80, 255, 0.18);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity   0.30s ease,
-    transform 0.30s cubic-bezier(0.34, 1.56, 0.64, 1);
+  display:flex; flex-direction:column; position:fixed;
+  top:50%; left:50%; transform:translate(-50%,-48%) scale(0.96);
+  z-index:8100; width:min(480px,92vw); max-height:82vh;
+  border-radius:24px; padding:28px 28px 22px; box-sizing:border-box; overflow:hidden;
+  background:linear-gradient(145deg,rgba(49,46,129,0.95),rgba(30,27,75,0.98));
+  border:1px solid rgba(120,80,255,0.45);
+  box-shadow:0 0 0 1px rgba(120,80,255,0.18),0 24px 60px rgba(0,0,0,0.4),0 4px 20px rgba(120,80,255,0.25);
+  opacity:0; pointer-events:none;
+  transition:opacity 0.30s ease,transform 0.30s cubic-bezier(0.34,1.56,0.64,1);
 }
-#tofind-panel.open {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translate(-50%, -50%) scale(1);
-}
-
+#tofind-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
 .tf-glow-ring {
-  position: absolute;
-  top: -60px; right: -60px;
-  width: 200px; height: 200px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(124, 58, 237, 0.28) 0%,
-    transparent 70%
-  );
-  pointer-events: none;
+  position:absolute; top:-60px; right:-60px; width:200px; height:200px;
+  border-radius:50%; background:radial-gradient(circle,rgba(124,58,237,0.28) 0%,transparent 70%);
+  pointer-events:none;
 }
-
-.tf-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  flex-shrink: 0;
-}
-.tf-header-left {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
+.tf-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-shrink:0; }
+.tf-header-left { display:flex; align-items:center; gap:11px; }
 .tf-icon-wrap {
-  width: 36px; height: 36px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
-  display: flex; align-items: center; justify-content: center;
-  color: #fff;
-  flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.45);
+  width:36px; height:36px; border-radius:12px;
+  background:linear-gradient(135deg,#7c3aed,#4f46e5);
+  display:flex; align-items:center; justify-content:center; color:#fff; flex-shrink:0;
+  box-shadow:0 4px 14px rgba(124,58,237,0.45);
 }
-.tf-title {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 17px;
-  font-weight: 800;
-  color: #f1f5f9;
-  letter-spacing: -0.3px;
-}
-
+.tf-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:17px; font-weight:800; color:#f1f5f9; }
 .tf-close-btn {
-  width: 32px; height: 32px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.07);
-  color: #94a3b8;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer;
-  transition: background 0.18s, color 0.18s, transform 0.18s;
-  flex-shrink: 0;
+  width:32px; height:32px; border-radius:50%; border:1px solid rgba(255,255,255,0.12);
+  background:rgba(255,255,255,0.07); color:#94a3b8;
+  display:flex; align-items:center; justify-content:center; cursor:pointer;
+  transition:background 0.18s,color 0.18s,transform 0.18s;
 }
-.tf-close-btn:hover {
-  background: rgba(255,255,255,0.14);
-  color: #f1f5f9;
-  transform: rotate(90deg);
-}
-
-.tf-subtitle {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 11.5px;
-  color: #64748b;
-  margin: 0 0 18px;
-  letter-spacing: 0.1px;
-  flex-shrink: 0;
-}
-
+.tf-close-btn:hover { background:rgba(255,255,255,0.14); color:#f1f5f9; transform:rotate(90deg); }
+.tf-subtitle { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11.5px; color:#64748b; margin:0 0 18px; flex-shrink:0; }
 .tf-items-container {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-  flex: 1 1 auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(124,58,237,0.4) transparent;
+  display:flex; flex-direction:column; gap:10px; overflow-y:auto; flex:1 1 auto; padding-right:4px;
+  scrollbar-width:thin; scrollbar-color:rgba(124,58,237,0.4) transparent;
 }
-.tf-items-container::-webkit-scrollbar { width: 4px; }
-.tf-items-container::-webkit-scrollbar-track { background: transparent; }
-.tf-items-container::-webkit-scrollbar-thumb {
-  background: rgba(124,58,237,0.4);
-  border-radius: 4px;
-}
-
 .tofind-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 13px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(124,58,237,0.18);
-  opacity: 0;
-  transform: translateX(-16px);
-  transition: background 0.18s, border-color 0.18s;
+  display:flex; align-items:flex-start; gap:13px; padding:14px 16px; border-radius:14px;
+  background:rgba(255,255,255,0.07); border:1px solid rgba(124,58,237,0.25);
+  opacity:0; transform:translateX(-16px); transition:background 0.18s,border-color 0.18s;
 }
-.tofind-item:hover {
-  background: rgba(124,58,237,0.10);
-  border-color: rgba(124,58,237,0.38);
-}
-
+.tofind-item:hover { background:rgba(124,58,237,0.18); border-color:rgba(124,58,237,0.50); }
 .tofind-check {
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
-  color: #fff;
-  font-size: 12px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  margin-top: 1px;
-  box-shadow: 0 2px 8px rgba(124,58,237,0.40);
+  width:22px; height:22px; border-radius:50%;
+  background:linear-gradient(135deg,#7c3aed,#4f46e5); color:#fff; font-size:12px;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px;
+  box-shadow:0 2px 8px rgba(124,58,237,0.40);
 }
-
-.tofind-text {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  color: #e2e8f0;
-  line-height: 1.5;
-}
-
-.tofind-empty {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px;
-  color: #475569;
-  text-align: center;
-  padding: 24px 0;
-  font-style: italic;
-}
-
-.tf-footer {
-  margin-top: 18px;
-  display: flex;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.tf-badge {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.4px;
-  text-transform: uppercase;
-  color: #334155;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.07);
-  border-radius: 50px;
-  padding: 4px 12px;
-}
-
+.tofind-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:600; color:#e2e8f0; line-height:1.5; }
+.tofind-empty { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#475569; text-align:center; padding:24px 0; font-style:italic; }
+.tf-footer { margin-top:18px; display:flex; justify-content:center; flex-shrink:0; }
+.tf-badge { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase; color:#334155; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:50px; padding:4px 12px; }
 #tofind-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 18px;
-  border-radius: 50px;
-  border: 1.5px solid rgba(124,58,237,0.55);
-  background: rgba(124,58,237,0.12);
-  color: #a78bfa;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-  cursor: pointer;
-  transition:
-    background  0.22s ease,
-    border-color 0.22s ease,
-    color        0.22s ease,
-    transform    0.18s cubic-bezier(0.34,1.56,0.64,1),
-    box-shadow   0.22s ease;
-  backdrop-filter: blur(6px);
+  display:inline-flex; align-items:center; gap:7px; padding:9px 18px; border-radius:50px;
+  border:1.5px solid rgba(124,58,237,0.55); background:rgba(124,58,237,0.12); color:#a78bfa;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700;
+  cursor:pointer; transition:background 0.22s,border-color 0.22s,color 0.22s,transform 0.18s,box-shadow 0.22s;
+  backdrop-filter:blur(6px);
 }
-#tofind-btn:hover {
-  background: rgba(124,58,237,0.28);
-  border-color: rgba(124,58,237,0.85);
-  color: #ede9fe;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(124,58,237,0.35);
-}
-#tofind-btn:active { transform: translateY(0) scale(0.97); }
-#tofind-btn .tf-btn-icon { width: 16px; height: 16px; opacity: 0.85; }
-
-@media (max-width: 540px) {
-  #tofind-panel { width: 96vw; padding: 22px 18px 18px; border-radius: 20px; }
-  .tf-title { font-size: 15px; }
-  .tofind-text { font-size: 13px; }
-}
+#tofind-btn:hover { background:rgba(124,58,237,0.28); border-color:rgba(124,58,237,0.85); color:#ede9fe; transform:translateY(-2px); box-shadow:0 8px 24px rgba(124,58,237,0.35); }
+.tf-btn-icon { width:16px; height:16px; opacity:0.85; }
+@media (max-width:540px) { #tofind-panel { width:96vw; padding:22px 18px 18px; border-radius:20px; } }
 </style>
 """
 
 TO_FIND_JS_MODULE = r"""
 (function initToFindSystem() {
   'use strict';
-
-  var toFindOpen = false;
-  var _panelBuilt = false;
-
+  var toFindOpen = false, _panelBuilt = false;
   function _onReady(fn) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', fn);
-    } else {
-      setTimeout(fn, 0);
-    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else setTimeout(fn, 0);
   }
-
   function _el(id) { return document.getElementById(id); }
-
   function _loadTargets() {
     try {
       var tag = _el('__tofind_data__');
-      if (!tag) {
-        console.warn('[QAnim ToFind] Data tag #__tofind_data__ not found');
-        return [];
-      }
+      if (!tag) return [];
       var data = JSON.parse(tag.textContent) || {};
       return Array.isArray(data.targets) ? data.targets : [];
-    } catch (e) {
-      console.error('[QAnim ToFind] Failed to parse target data:', e);
-      return [];
-    }
+    } catch(e) { console.error('[QAnim ToFind] parse error:', e); return []; }
   }
-
   function _escape(text) {
     if (!text) return '';
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+    return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
-
   function _buildPanel(targets) {
     if (_panelBuilt) return;
     _panelBuilt = true;
-
     try {
       var container = _el('tofind-items-container');
       if (!container) return;
-
       if (!targets || targets.length === 0) {
-        container.innerHTML =
-          '<div class="tofind-empty">'
-          + 'No specific targets were detected in this question.<br>'
-          + '<span style="font-size:11px;opacity:0.6;">Read the full question carefully.</span>'
-          + '</div>';
+        container.innerHTML = '<div class="tofind-empty">No specific targets detected.<br><span style="font-size:11px;opacity:0.6;">Read the question carefully.</span></div>';
         return;
       }
-
       var html = '';
       for (var i = 0; i < targets.length; i++) {
-        html +=
-          '<div class="tofind-item" id="tofind-item-' + i + '">'
-          + '<div class="tofind-check">&#10003;</div>'
-          + '<div class="tofind-text">' + _escape(targets[i]) + '</div>'
-          + '</div>';
+        html += '<div class="tofind-item" id="tofind-item-'+i+'"><div class="tofind-check">&#10003;</div><div class="tofind-text">'+_escape(targets[i])+'</div></div>';
       }
       container.innerHTML = html;
-    } catch (e) {
-      console.error('[QAnim ToFind] _buildPanel error:', e);
-    }
+    } catch(e) { console.error('[QAnim ToFind] _buildPanel error:', e); }
   }
-
   function _animateReveal() {
     try {
       var items = document.querySelectorAll('.tofind-item');
       for (var i = 0; i < items.length; i++) {
         (function(el, idx) {
-          el.style.opacity = '0';
-          el.style.transform = 'translateX(-18px)';
-          el.style.transition = 'none';
+          el.style.opacity = '0'; el.style.transform = 'translateX(-18px)'; el.style.transition = 'none';
           setTimeout(function() {
-            el.style.transition =
-              'opacity 0.32s ease, transform 0.32s cubic-bezier(0.34,1.56,0.64,1)';
-            el.style.opacity = '1';
-            el.style.transform = 'translateX(0)';
+            el.style.transition = 'opacity 0.32s ease,transform 0.32s cubic-bezier(0.34,1.56,0.64,1)';
+            el.style.opacity = '1'; el.style.transform = 'translateX(0)';
           }, 90 + idx * 95);
         })(items[i], i);
       }
-    } catch (e) {
-      console.error('[QAnim ToFind] _animateReveal error:', e);
-    }
+    } catch(e) { console.error('[QAnim ToFind] _animateReveal error:', e); }
   }
-
   function openToFind() {
     try {
-      var backdrop = _el('tofind-backdrop');
-      var panel    = _el('tofind-panel');
-      if (!backdrop || !panel) {
-        console.error('[QAnim ToFind] DOM elements missing — panel cannot open');
-        return;
-      }
-
+      var backdrop = _el('tofind-backdrop'), panel = _el('tofind-panel');
+      if (!backdrop || !panel) return;
       var targets = _loadTargets();
       _buildPanel(targets);
-
       backdrop.classList.add('open');
       panel.classList.add('open');
-      panel.setAttribute('aria-hidden', 'false');
+      panel.setAttribute('aria-hidden','false');
       toFindOpen = true;
-
       setTimeout(_animateReveal, 150);
-      console.log('[QAnim ToFind] Panel opened — ' + targets.length + ' target(s)');
-    } catch (err) {
-      console.error('[QAnim ToFind] openToFind crashed:', err);
-    }
+    } catch(err) { console.error('[QAnim ToFind] openToFind crashed:', err); }
   }
-
   function closeToFind() {
     try {
-      var backdrop = _el('tofind-backdrop');
-      var panel    = _el('tofind-panel');
+      var backdrop = _el('tofind-backdrop'), panel = _el('tofind-panel');
       if (backdrop) backdrop.classList.remove('open');
-      if (panel) {
-        panel.classList.remove('open');
-        panel.setAttribute('aria-hidden', 'true');
-      }
+      if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
       toFindOpen = false;
-    } catch (err) {
-      console.error('[QAnim ToFind] closeToFind crashed:', err);
-    }
+    } catch(err) { console.error('[QAnim ToFind] closeToFind crashed:', err); }
   }
-
   window.openToFind   = openToFind;
   window.closeToFind  = closeToFind;
-  window.toggleToFind = function() {
-    toFindOpen ? closeToFind() : openToFind();
-  };
-
+  window.toggleToFind = function() { toFindOpen ? closeToFind() : openToFind(); };
   _onReady(function() {
     try {
       var tfBtn = _el('tofind-btn') || document.querySelector('[data-tofind-btn]');
-      if (tfBtn) {
-        tfBtn.removeAttribute('onclick');
-        tfBtn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          openToFind();
-        });
-      }
-
+      if (tfBtn) { tfBtn.removeAttribute('onclick'); tfBtn.addEventListener('click', function(e) { e.stopPropagation(); openToFind(); }); }
       var closeBtn = _el('tofind-close');
-      if (closeBtn) {
-        closeBtn.removeAttribute('onclick');
-        closeBtn.addEventListener('click', closeToFind);
-      }
-
+      if (closeBtn) { closeBtn.removeAttribute('onclick'); closeBtn.addEventListener('click', closeToFind); }
       var backdrop = _el('tofind-backdrop');
-      if (backdrop) {
-        backdrop.removeAttribute('onclick');
-        backdrop.addEventListener('click', closeToFind);
-      }
-
-      document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && toFindOpen) closeToFind();
-      });
-
+      if (backdrop) { backdrop.removeAttribute('onclick'); backdrop.addEventListener('click', closeToFind); }
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && toFindOpen) closeToFind(); });
       console.log('[QAnim ToFind] System initialized ✓');
-    } catch (e) {
-      console.error('[QAnim ToFind] Init binding error:', e);
-    }
+    } catch(e) { console.error('[QAnim ToFind] Init error:', e); }
   });
-
 })();
 """
 
 _TO_FIND_BUTTON_HTML = """<button id="tofind-btn" data-tofind-btn aria-haspopup="dialog">
-  <svg class="tf-btn-icon" viewBox="0 0 24 24" fill="none"
-       xmlns="http://www.w3.org/2000/svg">
-    <circle cx="11" cy="11" r="7" stroke="currentColor"
-            stroke-width="2.2" stroke-linecap="round"/>
-    <path d="M16.5 16.5L21 21" stroke="currentColor"
-          stroke-width="2.2" stroke-linecap="round"/>
+  <svg class="tf-btn-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
   </svg>
   To Find
 </button>"""
 
 
 def inject_to_find_system(html: str, targets: list) -> str:
-    """Injects the complete "To Find" feature into a generated animation HTML."""
-
+    """Injects the complete 'To Find' feature into animation HTML."""
     html = re.sub(
         r'<script[^>]+id=["\']__tofind_data__["\'][^>]*>.*?</script>',
         '', html, flags=re.DOTALL
     )
-
     try:
         data_tag = _build_to_find_data_tag(targets)
         if '</head>' in html:
@@ -1201,28 +931,10 @@ def inject_to_find_system(html: str, targets: list) -> str:
         QAnimLogger.warn("ToFindInjector", f"DOM insertion failed: {e}")
 
     try:
-        solbtn_match = re.search(
-            r'(<button[^>]+id=["\']solbtn["\'][^>]*>.*?</button>)',
-            html, re.IGNORECASE | re.DOTALL
+        html = html.replace(
+            '</body>',
+            '\n' + _TO_FIND_BUTTON_HTML + '\n</body>', 1
         )
-        if solbtn_match:
-            html = (
-                html[:solbtn_match.start()]
-                + _TO_FIND_BUTTON_HTML + '\n'
-                + solbtn_match.group(0)
-                + html[solbtn_match.end():]
-            )
-            QAnimLogger.ok("ToFindInjector", "ToFind button inserted before #solbtn")
-        else:
-            html = html.replace(
-                '</body>',
-                '\n<!-- ToFind button (standalone) -->\n'
-                + _TO_FIND_BUTTON_HTML
-                + '\n</body>',
-                1
-            )
-            QAnimLogger.warn("ToFindInjector",
-                             "#solbtn not found — ToFind button appended before </body>")
     except Exception as e:
         QAnimLogger.warn("ToFindInjector", f"Button insertion failed: {e}")
 
@@ -1235,13 +947,12 @@ def inject_to_find_system(html: str, targets: list) -> str:
     except Exception as e:
         QAnimLogger.warn("ToFindInjector", f"JS module insertion failed: {e}")
 
-    QAnimLogger.ok("ToFindInjector",
-                   f"Injected {len(targets)} target(s) into animation HTML")
+    QAnimLogger.ok("ToFindInjector", f"Injected {len(targets)} target(s)")
     return html
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MODULE 7 — Solution System (unchanged from v5.0)
+#  MODULE 7 — Solution System (preserved from v6.0)
 # ══════════════════════════════════════════════════════════════════════
 
 def _build_solution_data_tag(steps: list, answer: str, insight: str) -> str:
@@ -1257,48 +968,29 @@ def _build_solution_data_tag(steps: list, answer: str, insight: str) -> str:
     )
 
 SOLUTION_JS_MODULE = r"""
-/* ════════════════════════════════════════════════════════════════
-   QAnim Solution System v6 — Isolated, Resilient, Error-Bounded
-   ════════════════════════════════════════════════════════════════ */
 (function initSolutionSystem() {
   'use strict';
-
-  var solutionOpen = false;
-  var _solBuilt    = false;
-
+  var solutionOpen = false, _solBuilt = false;
   function _onReady(fn) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', fn);
-    } else {
-      setTimeout(fn, 0);
-    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else setTimeout(fn, 0);
   }
-
   function _el(id) { return document.getElementById(id); }
-
   function _loadData() {
     try {
       var tag = _el('__sol_data__');
       if (!tag) return {};
       return JSON.parse(tag.textContent) || {};
-    } catch(e) {
-      console.error('[QAnim Sol] Failed to parse solution data:', e);
-      return {};
-    }
+    } catch(e) { console.error('[QAnim Sol] parse error:', e); return {}; }
   }
-
   function _escape(text) {
     if (!text) return '';
-    return String(text)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
-
   function _highlight(text) {
     var safe = _escape(text);
-    return safe.replace(/([A-Za-z_]\w*\s*=\s*[^<&,;.]+)/g,
-      '<span class="formula">$1</span>');
+    return safe.replace(/([A-Za-z_]\w*\s*=\s*[^<&,;.]+)/g,'<span class="formula">$1</span>');
   }
-
   function _buildSteps(data) {
     if (_solBuilt) return;
     _solBuilt = true;
@@ -1308,26 +1000,18 @@ SOLUTION_JS_MODULE = r"""
       var steps = Array.isArray(data.steps) ? data.steps : [];
       var html = '';
       if (steps.length === 0) {
-        html = '<div class="sol-step visible"><div class="sol-step-num">!</div>'
-             + '<div class="sol-step-text">Solution steps unavailable.</div></div>';
+        html = '<div class="sol-step visible"><div class="sol-step-num">!</div><div class="sol-step-text">Solution steps unavailable.</div></div>';
       } else {
         for (var i = 0; i < steps.length; i++) {
-          html += '<div class="sol-step" id="sol-step-' + i + '">'
-               +    '<div class="sol-step-num" id="sol-num-' + i + '">' + (i+1) + '</div>'
-               +    '<div class="sol-step-text">' + _highlight(steps[i]) + '</div>'
-               + '</div>';
+          html += '<div class="sol-step" id="sol-step-'+i+'"><div class="sol-step-num">'+(i+1)+'</div><div class="sol-step-text">'+_highlight(steps[i])+'</div></div>';
         }
       }
       container.innerHTML = html;
-      var ansEl = _el('sol-answer-text');
-      var insEl = _el('sol-insight-text');
+      var ansEl = _el('sol-answer-text'), insEl = _el('sol-insight-text');
       if (ansEl && data.answer)  ansEl.innerHTML = _highlight(data.answer);
       if (insEl && data.insight) insEl.innerHTML = _highlight(data.insight);
-    } catch(e) {
-      console.error('[QAnim Sol] _buildSteps error:', e);
-    }
+    } catch(e) { console.error('[QAnim Sol] _buildSteps error:', e); }
   }
-
   function _animateReveal() {
     try {
       var stepEls = document.querySelectorAll('.sol-step');
@@ -1339,79 +1023,45 @@ SOLUTION_JS_MODULE = r"""
         })(stepEls[i], i);
       }
       var base = delay + stepEls.length * 90;
-      var ac = _el('sol-answer-card');
-      var ic = _el('sol-insight-card');
+      var ac = _el('sol-answer-card'), ic = _el('sol-insight-card');
       if (ac) { ac.classList.remove('visible'); setTimeout(function(){ ac.classList.add('visible'); }, base); }
       if (ic) { ic.classList.remove('visible'); setTimeout(function(){ ic.classList.add('visible'); }, base+120); }
-    } catch(e) {
-      console.error('[QAnim Sol] _animateReveal error:', e);
-    }
+    } catch(e) { console.error('[QAnim Sol] _animateReveal error:', e); }
   }
-
-  function _showFallback(reason) {
-    console.error('[QAnim Sol] Panel failed:', reason);
-    var fb = document.getElementById('qanim-error-fallback');
-    if (fb) {
-      fb.style.display = 'flex';
-      var msg = fb.querySelector('.qanim-err-msg');
-      if (msg) msg.textContent = 'Solution: ' + reason;
-    }
-  }
-
   function openSolution() {
     try {
-      var backdrop = _el('sol-backdrop');
-      var panel    = _el('sol-panel');
-      if (!backdrop || !panel) { _showFallback('DOM elements missing'); return; }
+      var backdrop = _el('sol-backdrop'), panel = _el('sol-panel');
+      if (!backdrop || !panel) return;
       var data = _loadData();
       _buildSteps(data);
       backdrop.classList.add('open');
       panel.classList.add('open');
-      panel.setAttribute('aria-hidden', 'false');
+      panel.setAttribute('aria-hidden','false');
       solutionOpen = true;
       _animateReveal();
-    } catch(err) {
-      console.error('[QAnim Sol] openSolution crashed:', err);
-      _showFallback(err.message);
-    }
+    } catch(err) { console.error('[QAnim Sol] openSolution crashed:', err); }
   }
-
   function closeSolution() {
     try {
-      var backdrop = _el('sol-backdrop');
-      var panel    = _el('sol-panel');
+      var backdrop = _el('sol-backdrop'), panel = _el('sol-panel');
       if (backdrop) backdrop.classList.remove('open');
-      if (panel)    { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
+      if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
       solutionOpen = false;
-    } catch(err) {
-      console.error('[QAnim Sol] closeSolution crashed:', err);
-    }
+    } catch(err) { console.error('[QAnim Sol] closeSolution crashed:', err); }
   }
-
   window.openSolution   = openSolution;
   window.closeSolution  = closeSolution;
   window.toggleSolution = function() { solutionOpen ? closeSolution() : openSolution(); };
-
   _onReady(function() {
     try {
-      var solBtn = _el('solbtn') || document.querySelector('[data-sol-btn]');
-      if (solBtn) {
-        solBtn.removeAttribute('onclick');
-        solBtn.addEventListener('click', function(e) { e.stopPropagation(); openSolution(); });
-      }
       var closeBtn = _el('sol-close');
       if (closeBtn) { closeBtn.removeAttribute('onclick'); closeBtn.addEventListener('click', closeSolution); }
       var backdrop = _el('sol-backdrop');
       if (backdrop) { backdrop.removeAttribute('onclick'); backdrop.addEventListener('click', closeSolution); }
-      document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && solutionOpen) closeSolution();
-      });
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && solutionOpen) closeSolution(); });
       console.log('[QAnim Sol] Solution system initialized ✓');
-    } catch(e) {
-      console.error('[QAnim Sol] Init error:', e);
-    }
+    } catch(e) { console.error('[QAnim Sol] Init error:', e); }
   });
-
 })();
 """
 
@@ -1431,12 +1081,6 @@ def inject_solution_system(html: str, steps: list, answer: str, insight: str) ->
         r'var SOL_STEPS\s*=\s*\(function\(\).*?\}\)\(\);',
         r"var SOL_ANSWER\s*=\s*'[^']*';",
         r"var SOL_INSIGHT\s*=\s*'[^']*';",
-        r'var _solBuilt\s*=\s*false;',
-        r'function _buildSolutionSteps\(\)\s*\{.*?\n  \}',
-        r'function openSolution\(\)\s*\{.*?\n  \}',
-        r'function closeSolution\(\)\s*\{.*?\n  \}',
-        r'window\.openSolution\s*=\s*openSolution\s*;?',
-        r'window\.closeSolution\s*=\s*closeSolution\s*;?',
     ]:
         html = re.sub(pat, '', html, flags=re.DOTALL)
 
@@ -1446,17 +1090,2286 @@ def inject_solution_system(html: str, steps: list, answer: str, insight: str) ->
     else:
         html += '\n' + sol_script
 
+    # Remove any AI-generated #solbtn ("View Solution") from the output
     html = re.sub(
-        r'(<button[^>]+id=["\']solbtn["\'][^>]*)\s+onclick=["\'][^"\']*["\']',
-        r'\1', html
+        r'<button[^>]+id=["\']solbtn["\'][^>]*>.*?</button>',
+        '', html, flags=re.DOTALL | re.IGNORECASE
     )
-    QAnimLogger.ok("Solution", f"Injected {len(steps)} steps")
+    QAnimLogger.ok("Solution", f"Injected {len(steps)} steps — #solbtn removed")
     return html
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MODULE 8 — Robust JSON Parser (unchanged)
+#  MODULE 7.5 — Notes System  (NEW in v7.0)
+#  Floating whiteboard + text notes panel injected into any animation.
+#  Features: canvas drawing, undo/redo, colors, localStorage persistence,
+#  drag-to-move, minimize, export canvas as PNG.
 # ══════════════════════════════════════════════════════════════════════
+
+_NOTES_CSS = """
+<style id="qanim-notes-styles">
+/* ═══════════════════════════════════════════════════════════
+   QAnim Notes System v7 — Floating Glassmorphism Whiteboard
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Floating trigger button ── */
+#qanim-notes-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 7900;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 8px 10px;
+  border-radius: 50px;
+  border: 1.5px solid rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(251,191,36,0.18);
+  transition: background 0.2s, border-color 0.2s, transform 0.18s, box-shadow 0.2s;
+  user-select: none;
+}
+#qanim-notes-btn:hover {
+  background: rgba(251,191,36,0.24);
+  border-color: rgba(251,191,36,0.9);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(251,191,36,0.30);
+}
+#qanim-notes-btn .nb-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #fbbf24;
+  box-shadow: 0 0 6px rgba(251,191,36,0.8);
+  animation: nb-pulse 2s ease-in-out infinite;
+}
+@keyframes nb-pulse {
+  0%,100% { transform:scale(1); opacity:1; }
+  50%      { transform:scale(1.4); opacity:0.7; }
+}
+
+/* ── Backdrop ── */
+#qanim-notes-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 7950;
+  background: rgba(30,27,75,0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+#qanim-notes-backdrop.open { display: block; opacity: 1; }
+
+/* ── Notes Panel ── */
+#qanim-notes-panel {
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  z-index: 8000;
+  width: 380px;
+  border-radius: 20px;
+  overflow: hidden;
+  background: linear-gradient(145deg, rgba(49,46,129,0.97), rgba(30,27,75,0.98));
+  border: 1px solid rgba(251,191,36,0.35);
+  box-shadow:
+    0 0 0 1px rgba(251,191,36,0.15),
+    0 24px 60px rgba(0,0,0,0.4),
+    0 4px 20px rgba(251,191,36,0.18);
+  opacity: 0;
+  transform: translateY(-8px) scale(0.97);
+  pointer-events: none;
+  transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+  min-width: 320px;
+  min-height: 420px;
+  resize: both;
+  user-select: none;
+}
+#qanim-notes-panel.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+#qanim-notes-panel.minimized { max-height: 52px; min-height: 52px; overflow: hidden; resize: none; }
+
+/* ── Panel Header (drag handle) ── */
+#qanim-notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: rgba(251,191,36,0.07);
+  border-bottom: 1px solid rgba(251,191,36,0.15);
+  cursor: grab;
+  flex-shrink: 0;
+}
+#qanim-notes-header:active { cursor: grabbing; }
+.notes-header-left { display:flex; align-items:center; gap:8px; }
+.notes-header-icon {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: linear-gradient(135deg,#f59e0b,#d97706);
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; font-size:14px;
+  box-shadow: 0 2px 8px rgba(245,158,11,0.4);
+}
+.notes-header-title {
+  font-family: -apple-system,'Segoe UI',Arial,sans-serif;
+  font-size: 13px; font-weight: 800; color: #fde68a;
+  letter-spacing: -0.2px;
+}
+.notes-header-sub {
+  font-family: -apple-system,'Segoe UI',Arial,sans-serif;
+  font-size: 10px; color: #92400e; margin-top: 1px;
+}
+.notes-header-actions { display:flex; align-items:center; gap:6px; }
+.notes-hdr-btn {
+  width: 26px; height: 26px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.05);
+  color: #94a3b8; font-size: 12px;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:background 0.15s, color 0.15s;
+}
+.notes-hdr-btn:hover { background:rgba(255,255,255,0.12); color:#f1f5f9; }
+
+/* ── Tabs ── */
+#qanim-notes-tabs {
+  display:flex; border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink:0;
+}
+.notes-tab {
+  flex:1; padding:8px 0; text-align:center;
+  font-family: -apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:11px; font-weight:700; color:#64748b;
+  cursor:pointer; border-bottom:2px solid transparent;
+  transition:color 0.15s, border-color 0.15s;
+  letter-spacing:0.5px; text-transform:uppercase;
+}
+.notes-tab.active { color:#fbbf24; border-bottom-color:#fbbf24; }
+
+/* ── Canvas Toolbar ── */
+#qanim-canvas-toolbar {
+  display:flex; align-items:center; gap:6px; padding:8px 12px;
+  background:rgba(255,255,255,0.02); border-bottom:1px solid rgba(255,255,255,0.05);
+  flex-shrink:0; flex-wrap:wrap;
+}
+.canvas-tool-btn {
+  padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.1);
+  background:rgba(255,255,255,0.04); color:#94a3b8; font-size:11px; font-weight:700;
+  cursor:pointer; transition:background 0.15s,color 0.15s,border-color 0.15s;
+}
+.canvas-tool-btn:hover { background:rgba(255,255,255,0.10); color:#e2e8f0; }
+.canvas-tool-btn.active { background:rgba(251,191,36,0.2); border-color:rgba(251,191,36,0.6); color:#fbbf24; }
+.color-dot {
+  width:18px; height:18px; border-radius:50%; cursor:pointer; border:2px solid transparent;
+  transition:transform 0.15s, border-color 0.15s; flex-shrink:0;
+}
+.color-dot:hover { transform:scale(1.2); }
+.color-dot.selected { border-color:#fff; transform:scale(1.15); }
+.size-btn {
+  width:22px; height:22px; border-radius:50%; border:1px solid rgba(255,255,255,0.15);
+  background:rgba(255,255,255,0.04); color:#94a3b8; font-size:10px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; cursor:pointer;
+  transition:background 0.15s,color 0.15s;
+}
+.size-btn.active { background:rgba(251,191,36,0.2); color:#fbbf24; border-color:rgba(251,191,36,0.5); }
+.tool-sep { width:1px; height:20px; background:rgba(255,255,255,0.08); flex-shrink:0; }
+
+/* ── Canvas container ── */
+#qanim-canvas-wrap {
+  flex:1 1 auto; position:relative; overflow:hidden; min-height:200px;
+}
+#qanim-draw-canvas {
+  display:block; width:100%; height:100%; cursor:crosshair;
+  background:#1e1b4b;
+  touch-action: none;
+}
+
+/* ── Text notes area ── */
+#qanim-text-pane {
+  display:none; flex-direction:column; flex:1 1 auto; overflow:hidden;
+}
+#qanim-notes-textarea {
+  flex:1 1 auto; width:100%; min-height:200px; resize:none; box-sizing:border-box;
+  background:#1e1b4b; border:none; outline:none;
+  color:#e2e8f0; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:13px; line-height:1.7; padding:14px 16px;
+  scrollbar-width:thin; scrollbar-color:rgba(251,191,36,0.3) transparent;
+}
+#qanim-notes-textarea::placeholder { color:#334155; }
+
+/* ── Footer ── */
+#qanim-notes-footer {
+  display:flex; align-items:center; justify-content:space-between; padding:8px 12px;
+  border-top:1px solid rgba(255,255,255,0.06); flex-shrink:0;
+  background:rgba(255,255,255,0.02);
+}
+.notes-status { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px; color:#334155; }
+.notes-action-btn {
+  padding:4px 12px; border-radius:6px; border:1px solid rgba(251,191,36,0.3);
+  background:rgba(251,191,36,0.08); color:#f59e0b; font-size:10px; font-weight:700;
+  cursor:pointer; transition:background 0.15s,border-color 0.15s;
+}
+.notes-action-btn:hover { background:rgba(251,191,36,0.18); border-color:rgba(251,191,36,0.6); }
+
+@media (max-width:480px) {
+  #qanim-notes-panel { width:calc(100vw - 24px); right:12px; top:50px; min-width:0; }
+}
+</style>
+"""
+
+_NOTES_DOM = """
+<!-- QAnim Notes System v7 -->
+<button id="qanim-notes-btn" aria-label="Open notes whiteboard">
+  <div class="nb-dot"></div>
+  📝 Notes
+</button>
+<div id="qanim-notes-backdrop" aria-hidden="true"></div>
+<div id="qanim-notes-panel" role="dialog" aria-label="Notes whiteboard" aria-hidden="true">
+  <!-- Header / drag handle -->
+  <div id="qanim-notes-header">
+    <div class="notes-header-left">
+      <div class="notes-header-icon">✏️</div>
+      <div>
+        <div class="notes-header-title">My Notes</div>
+        <div class="notes-header-sub" id="notes-save-status">Auto-saved</div>
+      </div>
+    </div>
+    <div class="notes-header-actions">
+      <button class="notes-hdr-btn" id="notes-export-btn" title="Export canvas as PNG">↓</button>
+      <button class="notes-hdr-btn" id="notes-minimize-btn" title="Minimize">—</button>
+      <button class="notes-hdr-btn" id="notes-close-btn" title="Close">✕</button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div id="qanim-notes-tabs">
+    <div class="notes-tab active" data-tab="canvas">🖊 Draw</div>
+    <div class="notes-tab" data-tab="text">📄 Text</div>
+  </div>
+
+  <!-- Canvas toolbar -->
+  <div id="qanim-canvas-toolbar">
+    <button class="canvas-tool-btn active" data-tool="pen">Pen</button>
+    <button class="canvas-tool-btn" data-tool="eraser">Eraser</button>
+    <div class="tool-sep"></div>
+    <div class="color-dot selected" style="background:#a78bfa;" data-color="#a78bfa"></div>
+    <div class="color-dot" style="background:#fbbf24;" data-color="#fbbf24"></div>
+    <div class="color-dot" style="background:#34d399;" data-color="#34d399"></div>
+    <div class="color-dot" style="background:#f87171;" data-color="#f87171"></div>
+    <div class="color-dot" style="background:#60a5fa;" data-color="#60a5fa"></div>
+    <div class="color-dot" style="background:#ffffff;" data-color="#ffffff"></div>
+    <div class="tool-sep"></div>
+    <button class="size-btn" data-size="2" title="Thin">S</button>
+    <button class="size-btn active" data-size="4" title="Medium">M</button>
+    <button class="size-btn" data-size="8" title="Thick">L</button>
+    <div class="tool-sep"></div>
+    <button class="canvas-tool-btn" id="notes-undo-btn" title="Undo (Ctrl+Z)">↩</button>
+    <button class="canvas-tool-btn" id="notes-redo-btn" title="Redo (Ctrl+Y)">↪</button>
+    <button class="canvas-tool-btn" id="notes-clear-btn" title="Clear canvas">🗑</button>
+  </div>
+
+  <!-- Canvas -->
+  <div id="qanim-canvas-wrap">
+    <canvas id="qanim-draw-canvas"></canvas>
+  </div>
+
+  <!-- Text pane -->
+  <div id="qanim-text-pane">
+    <textarea id="qanim-notes-textarea" placeholder="Type your notes here...
+Use this space for formulas, observations, and key ideas." spellcheck="false"></textarea>
+  </div>
+
+  <!-- Footer -->
+  <div id="qanim-notes-footer">
+    <span class="notes-status" id="notes-char-count">0 chars</span>
+    <button class="notes-action-btn" id="notes-export-text-btn">Export Text</button>
+  </div>
+</div>
+"""
+
+_NOTES_JS = r"""
+(function initNotesSystem() {
+  'use strict';
+
+  /* ── State ── */
+  var isOpen       = false;
+  var isMinimized  = false;
+  var isDragging   = false;
+  var isDrawing    = false;
+  var currentTool  = 'pen';
+  var currentColor = '#a78bfa';
+  var currentSize  = 4;
+  var currentTab   = 'canvas';
+  var undoStack    = [];
+  var redoStack    = [];
+  var MAX_UNDO     = 40;
+  var dragOffX     = 0;
+  var dragOffY     = 0;
+  var autoSaveTimer = null;
+  var ctx          = null;
+  var canvas       = null;
+
+  /* ── Storage key (per question) ── */
+  var questionEl = document.querySelector('.qtext');
+  var questionText = questionEl ? questionEl.textContent.trim() : 'qanim_default';
+  var storageKey = 'qanim_notes_' + _hashStr(questionText);
+
+  function _hashStr(s) {
+    var h = 5381;
+    for (var i = 0; i < Math.min(s.length, 200); i++) {
+      h = ((h << 5) + h) ^ s.charCodeAt(i);
+      h = h >>> 0;
+    }
+    return h.toString(36);
+  }
+
+  function _el(id) { return document.getElementById(id); }
+
+  /* ── Storage helpers ── */
+  function _storage() {
+    try { return window.localStorage; } catch(e) {
+      /* fallback: in-memory store */
+      if (!window._qanimInMemStore) window._qanimInMemStore = {};
+      return { getItem: function(k) { return window._qanimInMemStore[k]||null; }, setItem: function(k,v){ window._qanimInMemStore[k]=v; } };
+    }
+  }
+
+  function _saveNotes() {
+    try {
+      var canvasData = canvas ? canvas.toDataURL() : '';
+      var textData   = _el('qanim-notes-textarea') ? _el('qanim-notes-textarea').value : '';
+      var payload    = JSON.stringify({ canvas: canvasData, text: textData, ts: Date.now() });
+      _storage().setItem(storageKey, payload);
+      var stat = _el('notes-save-status');
+      if (stat) {
+        stat.textContent = 'Saved ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      }
+    } catch(e) { console.warn('[QAnim Notes] Save failed:', e); }
+  }
+
+  function _loadNotes() {
+    try {
+      var raw = _storage().getItem(storageKey);
+      if (!raw) return;
+      var payload = JSON.parse(raw);
+      /* Load text */
+      var ta = _el('qanim-notes-textarea');
+      if (ta && payload.text) ta.value = payload.text;
+      /* Load canvas */
+      if (canvas && payload.canvas && payload.canvas.startsWith('data:')) {
+        var img = new Image();
+        img.onload = function() {
+          ctx.drawImage(img, 0, 0);
+          _saveUndoState(); /* initial state after load */
+        };
+        img.src = payload.canvas;
+      }
+    } catch(e) { console.warn('[QAnim Notes] Load failed:', e); }
+  }
+
+  function _scheduleAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(_saveNotes, 1500);
+  }
+
+  /* ── Canvas setup ── */
+  function _initCanvas() {
+    canvas = _el('qanim-draw-canvas');
+    if (!canvas) return;
+    ctx = canvas.getContext('2d');
+    _resizeCanvas();
+    ctx.lineCap    = 'round';
+    ctx.lineJoin   = 'round';
+    ctx.strokeStyle = currentColor;
+    ctx.lineWidth   = currentSize;
+    _loadNotes();
+  }
+
+  function _resizeCanvas() {
+    if (!canvas) return;
+    var wrap = _el('qanim-canvas-wrap');
+    if (!wrap) return;
+    var w = wrap.clientWidth  || 360;
+    var h = wrap.clientHeight || 260;
+    var imageData = null;
+    if (ctx && canvas.width > 0 && canvas.height > 0) {
+      try { imageData = ctx.getImageData(0, 0, canvas.width, canvas.height); } catch(e) {}
+    }
+    canvas.width  = w;
+    canvas.height = h;
+    ctx.lineCap    = 'round';
+    ctx.lineJoin   = 'round';
+    ctx.strokeStyle = currentColor;
+    ctx.lineWidth   = currentSize;
+    if (imageData) {
+      try { ctx.putImageData(imageData, 0, 0); } catch(e) {}
+    }
+  }
+
+  /* ── Undo/Redo ── */
+  function _saveUndoState() {
+    if (!canvas) return;
+    if (undoStack.length >= MAX_UNDO) undoStack.shift();
+    undoStack.push(canvas.toDataURL());
+    redoStack = [];
+  }
+
+  function _undo() {
+    if (!canvas || undoStack.length === 0) return;
+    redoStack.push(canvas.toDataURL());
+    var prev = undoStack.pop();
+    if (prev) {
+      var img = new Image();
+      img.onload = function() { ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0); _scheduleAutoSave(); };
+      img.src = prev;
+    } else {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      _scheduleAutoSave();
+    }
+  }
+
+  function _redo() {
+    if (!canvas || redoStack.length === 0) return;
+    undoStack.push(canvas.toDataURL());
+    var next = redoStack.pop();
+    var img = new Image();
+    img.onload = function() { ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0); _scheduleAutoSave(); };
+    img.src = next;
+  }
+
+  /* ── Drawing ── */
+  function _getPos(e, cvs) {
+    var rect = cvs.getBoundingClientRect();
+    var scaleX = cvs.width  / rect.width;
+    var scaleY = cvs.height / rect.height;
+    var clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    var clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top)  * scaleY };
+  }
+
+  function _startDraw(e) {
+    if (!canvas || currentTab !== 'canvas') return;
+    e.preventDefault();
+    _saveUndoState();
+    isDrawing = true;
+    var pos = _getPos(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    if (currentTool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = currentSize * 4;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = currentColor;
+      ctx.lineWidth   = currentSize;
+    }
+  }
+
+  function _draw(e) {
+    if (!isDrawing || !canvas) return;
+    e.preventDefault();
+    var pos = _getPos(e, canvas);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+  }
+
+  function _endDraw(e) {
+    if (!isDrawing) return;
+    isDrawing = false;
+    if (ctx) ctx.globalCompositeOperation = 'source-over';
+    _scheduleAutoSave();
+  }
+
+  /* ── Panel open / close / toggle ── */
+  function openNotes() {
+    var panel    = _el('qanim-notes-panel');
+    var backdrop = _el('qanim-notes-backdrop');
+    if (!panel) return;
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    if (backdrop) backdrop.classList.add('open');
+    isOpen = true;
+    setTimeout(function() {
+      _resizeCanvas();
+    }, 50);
+  }
+
+  function closeNotes() {
+    var panel    = _el('qanim-notes-panel');
+    var backdrop = _el('qanim-notes-backdrop');
+    if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
+    if (backdrop) backdrop.classList.remove('open');
+    isOpen = false;
+    _saveNotes();
+  }
+
+  function minimizeNotes() {
+    var panel = _el('qanim-notes-panel');
+    if (!panel) return;
+    isMinimized = !isMinimized;
+    if (isMinimized) {
+      panel.classList.add('minimized');
+      var btn = _el('notes-minimize-btn');
+      if (btn) btn.textContent = '□';
+    } else {
+      panel.classList.remove('minimized');
+      var btn2 = _el('notes-minimize-btn');
+      if (btn2) btn2.textContent = '—';
+      setTimeout(_resizeCanvas, 50);
+    }
+  }
+
+  /* ── Tab switching ── */
+  function _switchTab(tabName) {
+    currentTab = tabName;
+    var tabs = document.querySelectorAll('.notes-tab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].classList.toggle('active', tabs[i].dataset.tab === tabName);
+    }
+    var canvasToolbar = _el('qanim-canvas-toolbar');
+    var canvasWrap    = _el('qanim-canvas-wrap');
+    var textPane      = _el('qanim-text-pane');
+    if (canvasToolbar) canvasToolbar.style.display = tabName === 'canvas' ? 'flex' : 'none';
+    if (canvasWrap)    canvasWrap.style.display    = tabName === 'canvas' ? 'block' : 'none';
+    if (textPane)      textPane.style.display      = tabName === 'text'   ? 'flex'  : 'none';
+    if (tabName === 'canvas') setTimeout(_resizeCanvas, 30);
+  }
+
+  /* ── Dragging ── */
+  function _startDrag(e) {
+    if (e.target !== _el('qanim-notes-header') && !e.target.closest || (e.target.closest && !e.target.closest('#qanim-notes-header'))) return;
+    if (e.target.classList && (e.target.classList.contains('notes-hdr-btn') || e.target.closest('.notes-hdr-btn'))) return;
+    isDragging = true;
+    var panel = _el('qanim-notes-panel');
+    if (!panel) return;
+    var rect = panel.getBoundingClientRect();
+    dragOffX = (e.clientX || (e.touches && e.touches[0].clientX) || 0) - rect.left;
+    dragOffY = (e.clientY || (e.touches && e.touches[0].clientY) || 0) - rect.top;
+    panel.style.transition = 'none';
+  }
+
+  function _drag(e) {
+    if (!isDragging) return;
+    var panel = _el('qanim-notes-panel');
+    if (!panel) return;
+    var clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    var clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+    var newLeft = clientX - dragOffX;
+    var newTop  = clientY - dragOffY;
+    newLeft = Math.max(0, Math.min(window.innerWidth - 80, newLeft));
+    newTop  = Math.max(0, Math.min(window.innerHeight - 60, newTop));
+    panel.style.left  = newLeft + 'px';
+    panel.style.top   = newTop  + 'px';
+    panel.style.right = 'auto';
+    e.preventDefault();
+  }
+
+  function _endDrag() {
+    if (!isDragging) return;
+    isDragging = false;
+    var panel = _el('qanim-notes-panel');
+    if (panel) panel.style.transition = '';
+  }
+
+  /* ── Export ── */
+  function _exportCanvas() {
+    if (!canvas) return;
+    var link = document.createElement('a');
+    link.download = 'qanim_notes_drawing.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  }
+
+  function _exportText() {
+    var ta = _el('qanim-notes-textarea');
+    if (!ta || !ta.value) return;
+    var blob = new Blob([ta.value], { type: 'text/plain' });
+    var link = document.createElement('a');
+    link.download = 'qanim_notes.txt';
+    link.href = URL.createObjectURL(blob);
+    link.click();
+  }
+
+  /* ── DOM Binding ── */
+  function _onReady(fn) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else setTimeout(fn, 0);
+  }
+
+  _onReady(function() {
+    try {
+      /* Main toggle button */
+      var notesBtn = _el('qanim-notes-btn');
+      if (notesBtn) notesBtn.addEventListener('click', function() { isOpen ? closeNotes() : openNotes(); });
+
+      /* Close + minimize */
+      var closeBtn = _el('notes-close-btn');
+      if (closeBtn) closeBtn.addEventListener('click', closeNotes);
+      var minBtn = _el('notes-minimize-btn');
+      if (minBtn) minBtn.addEventListener('click', function(e) { e.stopPropagation(); minimizeNotes(); });
+
+      /* Tab switching */
+      var tabs = document.querySelectorAll('.notes-tab');
+      for (var i = 0; i < tabs.length; i++) {
+        tabs[i].addEventListener('click', function() { _switchTab(this.dataset.tab); });
+      }
+
+      /* Tool buttons */
+      var toolBtns = document.querySelectorAll('.canvas-tool-btn[data-tool]');
+      for (var t = 0; t < toolBtns.length; t++) {
+        toolBtns[t].addEventListener('click', function() {
+          currentTool = this.dataset.tool;
+          document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(b) { b.classList.remove('active'); });
+          this.classList.add('active');
+        });
+      }
+
+      /* Color dots */
+      var colorDots = document.querySelectorAll('.color-dot');
+      for (var c = 0; c < colorDots.length; c++) {
+        colorDots[c].addEventListener('click', function() {
+          currentColor = this.dataset.color;
+          document.querySelectorAll('.color-dot').forEach(function(d) { d.classList.remove('selected'); });
+          this.classList.add('selected');
+          if (ctx) ctx.strokeStyle = currentColor;
+          currentTool = 'pen';
+          document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.tool === 'pen');
+          });
+        });
+      }
+
+      /* Size buttons */
+      var sizeBtns = document.querySelectorAll('.size-btn');
+      for (var s = 0; s < sizeBtns.length; s++) {
+        sizeBtns[s].addEventListener('click', function() {
+          currentSize = parseInt(this.dataset.size, 10);
+          document.querySelectorAll('.size-btn').forEach(function(b) { b.classList.remove('active'); });
+          this.classList.add('active');
+          if (ctx) ctx.lineWidth = currentSize;
+        });
+      }
+
+      /* Undo / Redo / Clear */
+      var undoBtn = _el('notes-undo-btn');
+      if (undoBtn) undoBtn.addEventListener('click', _undo);
+      var redoBtn = _el('notes-redo-btn');
+      if (redoBtn) redoBtn.addEventListener('click', _redo);
+      var clearBtn = _el('notes-clear-btn');
+      if (clearBtn) clearBtn.addEventListener('click', function() {
+        if (!canvas) return;
+        _saveUndoState();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        _scheduleAutoSave();
+      });
+
+      /* Export buttons */
+      var exportBtn = _el('notes-export-btn');
+      if (exportBtn) exportBtn.addEventListener('click', _exportCanvas);
+      var exportTextBtn = _el('notes-export-text-btn');
+      if (exportTextBtn) exportTextBtn.addEventListener('click', _exportText);
+
+      /* Textarea auto-save + char count */
+      var ta = _el('qanim-notes-textarea');
+      if (ta) {
+        ta.addEventListener('input', function() {
+          var count = _el('notes-char-count');
+          if (count) count.textContent = ta.value.length + ' chars';
+          _scheduleAutoSave();
+        });
+      }
+
+      /* Canvas events — mouse */
+      var cvs = _el('qanim-draw-canvas');
+      if (cvs) {
+        cvs.addEventListener('mousedown', _startDraw);
+        cvs.addEventListener('mousemove', _draw);
+        cvs.addEventListener('mouseup',   _endDraw);
+        cvs.addEventListener('mouseleave', _endDraw);
+        /* Touch */
+        cvs.addEventListener('touchstart', _startDraw, { passive:false });
+        cvs.addEventListener('touchmove',  _draw,      { passive:false });
+        cvs.addEventListener('touchend',   _endDraw);
+      }
+
+      /* Drag events on header */
+      var hdr = _el('qanim-notes-header');
+      if (hdr) {
+        hdr.addEventListener('mousedown',  _startDrag);
+        hdr.addEventListener('touchstart', _startDrag, { passive:false });
+      }
+      document.addEventListener('mousemove', _drag);
+      document.addEventListener('touchmove', _drag, { passive:false });
+      document.addEventListener('mouseup',   _endDrag);
+      document.addEventListener('touchend',  _endDrag);
+
+      /* Keyboard shortcuts */
+      document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey || e.metaKey) {
+          if (e.key === 'z' && isOpen) { e.preventDefault(); _undo(); }
+          if ((e.key === 'y' || (e.shiftKey && e.key === 'z')) && isOpen) { e.preventDefault(); _redo(); }
+        }
+      });
+
+      /* Resize observer */
+      if (window.ResizeObserver) {
+        var observer = new ResizeObserver(function() { if (isOpen && currentTab === 'canvas') _resizeCanvas(); });
+        var wrap = _el('qanim-canvas-wrap');
+        if (wrap) observer.observe(wrap);
+      }
+
+      /* Init canvas */
+      _initCanvas();
+
+      console.log('[QAnim Notes] System initialized ✓');
+    } catch(e) {
+      console.error('[QAnim Notes] Init error:', e);
+    }
+  });
+
+})();
+"""
+
+def inject_notes_system(html: str, question: str = "") -> str:
+    """
+    Injects the floating Notes whiteboard system into any animation HTML.
+    Injects: CSS → body DOM → JS module.
+    """
+    # ── 1. CSS before </head> ──
+    try:
+        if '</head>' in html:
+            html = html.replace('</head>', _NOTES_CSS + '\n</head>', 1)
+        else:
+            html = _NOTES_CSS + '\n' + html
+    except Exception as e:
+        QAnimLogger.warn("NotesInjector", f"CSS insertion failed: {e}")
+
+    # ── 2. DOM after <body> ──
+    try:
+        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
+        if body_match:
+            ins = body_match.end()
+            html = html[:ins] + '\n' + _NOTES_DOM + html[ins:]
+        else:
+            html = _NOTES_DOM + '\n' + html
+    except Exception as e:
+        QAnimLogger.warn("NotesInjector", f"DOM insertion failed: {e}")
+
+    # ── 3. JS before </body> ──
+    try:
+        notes_script = '<script>\n' + _NOTES_JS + '\n</script>'
+        if '</body>' in html:
+            html = html.replace('</body>', notes_script + '\n</body>', 1)
+        else:
+            html += '\n' + notes_script
+    except Exception as e:
+        QAnimLogger.warn("NotesInjector", f"JS insertion failed: {e}")
+
+    QAnimLogger.ok("NotesInjector", "Notes whiteboard system injected")
+    return html
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODULE 7.6 — Quiz Generator  (NEW in v7.0)
+#  AI-powered adaptive quiz engine. Generates a complete interactive
+#  quiz HTML from the student's question + topic category.
+# ══════════════════════════════════════════════════════════════════════
+
+QUIZ_SYSTEM_PROMPT = """You are QAnim Quiz Engine v7 — an expert educational quiz designer.
+
+YOUR MISSION: Generate a premium self-contained interactive quiz HTML that:
+- Tests conceptual understanding of the given topic
+- Uses varied question types (MCQ, True/False, Numerical)
+- Provides immediate animated feedback
+- Explains why each answer is correct or wrong
+- Shows a final score with motivational message
+- Has a retry button that randomizes order
+
+VISUAL REQUIREMENTS:
+- Dark premium background (#1e1b4b)
+- Vivid accent colors (purple/blue/amber)
+- Smooth CSS animations on correct/wrong answers
+- Progress bar at top
+- Celebration animation on completion (CSS only)
+- Mobile-responsive design
+- Font: -apple-system, 'Segoe UI', Arial, sans-serif
+
+CRITICAL RULES:
+✅ Return ONLY a complete <!DOCTYPE html>...</html> document
+✅ Self-contained: NO external fonts, NO CDN links, NO external scripts
+✅ NO document.write() anywhere
+✅ NO backtick template literals in JS
+✅ All JS in a single <script> block at end of body
+✅ Questions must be conceptually related to the topic (NOT the exact same question)
+✅ Include EXACTLY 15 questions: 6 MCQ, 3 True/False, 3 Numerical, 2 Reasoning MCQ, 1 Formula MCQ
+✅ Each question must have: question text, correct answer, explanation, and a hint
+✅ Numerical questions must accept a range ±10% for tolerance
+✅ Show progress as "Question N of 15" counter on each question card
+✅ Show score, percentage, and a star rating (1-3 stars) at the end
+✅ QUIZ GATE SCREEN: The page must open with a cinematic "Quiz Unlocked" intro screen
+   - div id="quiz-gate" covers full viewport (position:fixed inset:0) -- shown on load
+   - Contents: "Quiz Unlocked!" heading, subtext, large "Start Quiz" button id="quiz-gate-btn"
+   - Clicking #quiz-gate-btn: fades out #quiz-gate (opacity 0, pointer-events:none),
+     then sets display:block on div id="quiz-main"
+   - #quiz-main is hidden initially (display:none)
+✅ ONE QUESTION AT A TIME: Show only one question card at a time
+   - currentQ variable tracks active question index
+   - After selecting an answer and seeing feedback, user clicks "Next Question" button
+   - Last question's "Next" button shows the score screen instead
+✅ RETRY: "Retry Quiz" button calls regenerateQuiz() -- shuffles questions -- NEVER location.reload()"""
+
+QUIZ_PROMPT_TEMPLATE = """Generate a complete premium interactive quiz for this topic.
+
+ORIGINAL QUESTION (for context only -- do NOT copy it directly into quiz):
+{question}
+
+TOPIC CATEGORY: {category}
+
+QUIZ REQUIREMENTS -- GENERATE EXACTLY 15 QUESTIONS:
+Q1  (MCQ, 2pts): Core concept -- fundamental principle at play
+Q2  (MCQ, 2pts): Application -- slightly different real-world scenario
+Q3  (True/False, 1pt): Common misconception -- students often get this wrong
+Q4  (Numerical, 3pts): Calculate a related quantity (use different numbers)
+Q5  (MCQ, 2pts): Conceptual -- what happens when one variable changes?
+Q6  (MCQ, 2pts): Formula identification -- which equation governs this?
+Q7  (True/False, 1pt): Edge case -- is this statement true in all conditions?
+Q8  (Numerical, 3pts): Multi-step calculation related to the concept
+Q9  (MCQ, 2pts): Tricky reasoning -- which of these is NOT correct?
+Q10 (MCQ, 2pts): Application in a different physical context
+Q11 (True/False, 1pt): Conceptual depth -- deeper insight about the topic
+Q12 (Numerical, 3pts): Inverse calculation (find a different variable)
+Q13 (MCQ, 2pts): Exam-style -- compare two scenarios, which is larger?
+Q14 (MCQ, 2pts): Common exam trap question on this topic
+Q15 (MCQ, 2pts): Synthesis -- combine two concepts from this topic
+
+DESIGN:
+- Background: #1e1b4b
+- Correct answer highlight: green (#10b981)
+- Wrong answer highlight: red (#ef4444)
+- Accent: purple (#7c3aed) / amber (#f59e0b)
+- Smooth scale/color transitions on answer selection
+- Expandable explanation section per question
+- Hint button per question
+- Progress shown as "Question N of 15" counter at top of each question card
+- Progress bar filling from 0% to 100% across 15 questions
+
+QUIZ GATE (shown before quiz questions):
+- Full-page overlay div id="quiz-gate": dark glassmorphism bg, centered content
+- "Quiz Unlocked!" h2 + "Complete the animation first, then test yourself." p
+- Large "Start Quiz" button id="quiz-gate-btn"
+- On click: transition #quiz-gate out (opacity fade), show div id="quiz-main"
+
+ONE-AT-A-TIME QUESTION FLOW (inside #quiz-main):
+- Show only ONE question card at a time; others hidden
+- After user picks an answer: show correct/wrong highlight + explanation
+- "Next Question" button appears after answering; clicking it reveals the next question
+- After Q15: show score screen
+
+RETRY IMPLEMENTATION -- do NOT use location.reload():
+- Store all 15 questions in: var masterQuestions = [ ...all 15 objects... ];
+- Fisher-Yates shuffle function: function shuffle(arr){{ var a=arr.slice(); for(var i=a.length-1;i>0;i--){{ var j=Math.floor(Math.random()*(i+1)); var t=a[j]; a[j]=a[i]; a[i]=t; }} return a; }}
+- regenerateQuiz(): shuffles masterQuestions, also shuffles each question's options tracking new correct index, resets score/currentQ/answered, re-renders all cards from Q1
+- "Retry Quiz" button onclick must call regenerateQuiz()
+
+Return ONLY the complete <!DOCTYPE html>...</html> document. No markdown. No preamble."""
+
+
+class QuizGenerator:
+    """
+    AI-powered quiz generator. Generates a complete interactive quiz HTML
+    for a given question + topic category.
+    Never raises — returns fallback HTML on any failure.
+    """
+
+    @classmethod
+    async def generate(cls, question: str, category: str) -> str:
+        """Generate a complete interactive quiz HTML document."""
+        QAnimLogger.info("QuizGen", f"Generating quiz for category={category}")
+
+        prompt = QUIZ_PROMPT_TEMPLATE.format(
+            question=question[:400],
+            category=category
+        )
+
+        try:
+            msg = client.messages.create(
+                model=Q_MODEL,
+                max_tokens=MAX_TOK_QUIZ,
+                system=QUIZ_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = msg.content[0].text.strip()
+            QAnimLogger.info("QuizGen", f"stop_reason={msg.stop_reason}  len={len(raw)}")
+
+            # Extract HTML
+            quiz_html = cls._extract_html(raw)
+            if not quiz_html:
+                QAnimLogger.warn("QuizGen", "No HTML found — using fallback")
+                return cls._fallback_quiz(question, category)
+
+            # Validate
+            try:
+                GenerationValidator.validate(quiz_html, require_svg=False)
+            except ValidationError as e:
+                QAnimLogger.warn("QuizGen", f"Validation failed ({e}) — attempting recovery")
+                if '<html' in quiz_html and len(quiz_html) > 400:
+                    pass  # allow imperfect quiz HTML
+                else:
+                    return cls._fallback_quiz(question, category)
+
+            quiz_html = HtmlSanitizer.sanitize(quiz_html)
+            QAnimLogger.ok("QuizGen", f"Quiz generated ({len(quiz_html):,} chars)")
+            return quiz_html
+
+        except Exception as e:
+            QAnimLogger.error("QuizGen", f"API error: {e}")
+            return cls._fallback_quiz(question, category)
+
+    @classmethod
+    def _extract_html(cls, raw: str) -> str:
+        """Extract HTML from AI response."""
+        for marker in ['<!DOCTYPE html>', '<!doctype html>', '<html']:
+            idx = raw.lower().find(marker.lower())
+            if idx != -1:
+                end = raw.rfind('</html>')
+                if end != -1:
+                    return raw[idx:end + 7]
+                return raw[idx:]
+        # Strip code fences
+        stripped = re.sub(r'^```(?:html)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
+        if stripped.startswith('<'):
+            return stripped
+        return ""
+
+    @classmethod
+    def _fallback_quiz(cls, question: str, category: str) -> str:
+        """Returns a minimal but functional fallback quiz."""
+        q_safe  = html_module.escape(question[:100])
+        cat_safe = html_module.escape(category)
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QAnim Quiz</title>
+<style>
+  *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
+  html, body {{ width:100%; height:100%; overflow:auto; background:#1e1b4b;
+    font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+    display:flex; align-items:flex-start; justify-content:center; padding:30px 16px; }}
+  .card {{ background:rgba(49,46,129,0.9); border:1px solid rgba(124,58,237,0.45);
+    border-radius:20px; padding:32px; max-width:560px; width:100%;
+    box-shadow:0 24px 60px rgba(0,0,0,0.35); }}
+  .icon {{ font-size:36px; text-align:center; margin-bottom:16px; }}
+  h2 {{ font-size:18px; color:#f1f5f9; text-align:center; margin-bottom:8px; }}
+  .sub {{ font-size:12px; color:#64748b; text-align:center; margin-bottom:24px; }}
+  .q {{ background:rgba(255,255,255,0.04); border:1px solid rgba(124,58,237,0.2);
+    border-radius:14px; padding:18px; margin-bottom:14px; }}
+  .q-text {{ font-size:14px; color:#e2e8f0; margin-bottom:12px; line-height:1.6; }}
+  .opt {{ padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.1);
+    background:rgba(255,255,255,0.04); color:#cbd5e1; font-size:13px; cursor:pointer;
+    margin-bottom:6px; transition:background 0.2s,border-color 0.2s; }}
+  .opt:hover {{ background:rgba(124,58,237,0.15); border-color:rgba(124,58,237,0.4); }}
+  .opt.correct {{ background:rgba(16,185,129,0.2); border-color:#10b981; color:#6ee7b7; }}
+  .opt.wrong   {{ background:rgba(239,68,68,0.2);  border-color:#ef4444; color:#fca5a5; }}
+  .expl {{ font-size:12px; color:#64748b; margin-top:10px; padding:10px 12px;
+    border-radius:8px; background:rgba(255,255,255,0.03); display:none; line-height:1.6; }}
+  .expl.show {{ display:block; }}
+  .submit-btn {{ width:100%; padding:12px; border-radius:12px; border:none;
+    background:linear-gradient(135deg,#7c3aed,#db2777); color:#fff; font-size:14px;
+    font-weight:700; cursor:pointer; margin-top:8px;
+    transition:opacity 0.2s,transform 0.2s; }}
+  .submit-btn:hover {{ opacity:0.9; transform:translateY(-1px); }}
+  .score {{ text-align:center; padding:24px; display:none; }}
+  .score h3 {{ font-size:22px; color:#f1f5f9; margin-bottom:8px; }}
+  .score .pct {{ font-size:40px; font-weight:800; color:#7c3aed; }}
+  .retry {{ margin-top:16px; padding:10px 28px; border-radius:50px; border:none;
+    background:rgba(124,58,237,0.2); border:1px solid rgba(124,58,237,0.5);
+    color:#a78bfa; font-size:13px; font-weight:700; cursor:pointer; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🧠</div>
+  <h2>Concept Check: {cat_safe}</h2>
+  <div class="sub">Test your understanding after the animation</div>
+
+  <div id="quiz-form">
+    <div class="q">
+      <div class="q-text">1. What fundamental principle governs this type of problem?</div>
+      <div class="opt" data-q="0" data-i="0">Conservation of energy</div>
+      <div class="opt" data-q="0" data-i="1">Newton's third law</div>
+      <div class="opt" data-q="0" data-i="2">Ohm's Law / fundamental relationship</div>
+      <div class="opt" data-q="0" data-i="3">Superposition principle</div>
+      <div class="expl" id="expl-0">The correct answer depends on your specific topic. Review the animation to identify the core principle at work in this type of problem.</div>
+    </div>
+    <div class="q">
+      <div class="q-text">2. True or False: In this type of problem, all variables are independent of each other.</div>
+      <div class="opt" data-q="1" data-i="0">True</div>
+      <div class="opt" data-q="1" data-i="1">False — they are related by the governing equation</div>
+      <div class="expl" id="expl-1">False. The variables in this problem type are related through the governing equation. Changing one affects the others.</div>
+    </div>
+    <div class="q">
+      <div class="q-text">3. Why is it important to identify all given quantities before solving?</div>
+      <div class="opt" data-q="2" data-i="0">To choose the correct formula and avoid missing constraints</div>
+      <div class="opt" data-q="2" data-i="1">It isn't — you can always guess</div>
+      <div class="opt" data-q="2" data-i="2">Only relevant in physics problems</div>
+      <div class="opt" data-q="2" data-i="3">To impress your teacher</div>
+      <div class="expl" id="expl-2">Identifying all given quantities ensures you select the right formula and don't overlook constraints that affect the solution.</div>
+    </div>
+    <button class="submit-btn" onclick="submitQuiz()">Submit Answers</button>
+  </div>
+
+  <div class="score" id="score-view">
+    <h3>Quiz Complete!</h3>
+    <div class="pct" id="score-pct">0%</div>
+    <p style="color:#64748b;font-size:13px;margin-top:8px;">Keep reviewing the animation to strengthen your understanding.</p>
+    <button class="retry" onclick="location.reload()">🔄 Try Again</button>
+  </div>
+</div>
+<script>
+try {{
+  var answers = {{0: 2, 1: 1, 2: 0}};
+  var selected = {{}};
+  var submitted = false;
+
+  document.querySelectorAll('.opt').forEach(function(opt) {{
+    opt.addEventListener('click', function() {{
+      if (submitted) return;
+      var q = this.dataset.q;
+      selected[q] = parseInt(this.dataset.i, 10);
+      document.querySelectorAll('[data-q="' + q + '"]').forEach(function(o) {{ o.style.opacity = '0.6'; }});
+      this.style.opacity = '1';
+      this.style.borderColor = 'rgba(124,58,237,0.7)';
+      this.style.background = 'rgba(124,58,237,0.2)';
+      this.style.color = '#c4b5fd';
+    }});
+  }});
+
+  function submitQuiz() {{
+    submitted = true;
+    var score = 0;
+    var total = Object.keys(answers).length;
+    for (var q in answers) {{
+      var correct = answers[q];
+      var chosen  = selected[q];
+      var opts = document.querySelectorAll('[data-q="' + q + '"]');
+      opts[correct].classList.add('correct');
+      if (chosen !== undefined && chosen !== correct) {{
+        opts[chosen].classList.add('wrong');
+      }}
+      var expl = document.getElementById('expl-' + q);
+      if (expl) expl.classList.add('show');
+      if (chosen === correct) score++;
+    }}
+    setTimeout(function() {{
+      document.getElementById('quiz-form').style.display = 'none';
+      var sv = document.getElementById('score-view');
+      sv.style.display = 'block';
+      var pct = Math.round(score / total * 100);
+      document.getElementById('score-pct').textContent = pct + '%';
+    }}, 1200);
+  }}
+}} catch(e) {{ console.error('Quiz error:', e); }}
+</script>
+</body>
+</html>"""
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODULE 7.7 — Hook Generator  (NEW in v7.0)
+#  Cinematic curiosity-driven hook animation. No answers revealed.
+#  Uses storytelling, real-world scenarios, dramatic reveals.
+# ══════════════════════════════════════════════════════════════════════
+
+HOOK_SYSTEM_PROMPT = """You are QAnim Hook Engine v7 — a cinematic storytelling animator.
+
+YOUR MISSION: Create a stunning 5-scene curiosity-driven HOOK animation that:
+1. Opens with a dramatic real-world scenario related to the question
+2. Builds suspense and emotional investment
+3. Poses the "Why does this happen?" question visually
+4. Creates a strong "I need to know the answer" feeling
+5. Ends with an elegant transition into learning mode
+
+CRITICAL: NEVER reveal the answer, solution steps, or any numerical results.
+
+THE HOOK MUST:
+- Feel like a Netflix intro / Apple product reveal
+- Use dramatic SVG motion graphics
+- Use animated typography (letters appearing one by one or sliding in)
+- Include particle/glow effects using SVG filters
+- Use countdown or suspense-building elements
+- Reference a real-world application or story
+- Create emotional resonance
+- End on a cliffhanger / open question
+
+VISUAL STYLE:
+- Bright-dark background (#1e1b4b to #312e81 gradient)
+- Vivid accent: electric purple (#7c3aed), neon blue (#3b82f6), hot pink (#ec4899)
+- Cinematic SVG animations with JS setTimeout orchestration
+- Glow effects using SVG feGaussianBlur filters
+- Bold dramatic typography
+- Motion blur simulation via opacity+transform easing
+- 5 distinct scenes with smooth transitions
+
+OUTPUT FORMAT — STRICT:
+Return ONLY a complete <!DOCTYPE html>...</html> document.
+No JSON. No markdown. No preamble. Just the raw HTML.
+
+TECHNICAL RULES:
+✅ Self-contained: NO external fonts, NO CDN links
+✅ SVG viewBox="0 0 800 500"
+✅ NO document.write() anywhere
+✅ NO backtick template literals
+✅ All <script> and <svg> tags must be balanced
+✅ Include: #prevbtn, #nextbtn, #dots for scene navigation
+✅ Question strip: #qstrip .qtext
+✅ Progress: MANUAL user navigation only — NO auto-advance timers between scenes
+✅ SCENE TRANSITIONS: User clicks #nextbtn to advance; #prevbtn to go back
+✅ Each scene's INTERNAL animations (particles, glows, text reveals) run automatically
+   once that scene becomes active — but they must NOT trigger scene transitions
+✅ HOOK GATE — Scene 5 (final scene) must include a prominent "Start Learning" button:
+   - id="hook-start-btn"
+   - Style: large gradient pill, glowing purple/pink, centered on screen, subtle pulse animation
+   - Text: "✦ Start Learning"
+   - onclick: calls window.onHookComplete() if defined, else does nothing
+   - This button is the ONLY way to exit the hook — no auto-advance past Scene 5"""
+
+HOOK_PROMPT_TEMPLATE = """Create a CINEMATIC HOOK animation for this question.
+
+QUESTION: {question}
+CATEGORY: {category}
+
+HOOK NARRATIVE STRUCTURE:
+Scene 1 — WORLD: Show the real-world context where this matters. Use dramatic imagery.
+Scene 2 — INCIDENT: An unexpected thing happens. Something breaks, surprises, or fails.
+Scene 3 — MYSTERY: Pose the "Why?" visually. Show confusion/curiosity symbols.
+Scene 4 — STAKES: Show what understanding this could enable. Real impact.
+Scene 5 — INVITATION: "Let's find out together..." with elegant transition cue.
+
+ANIMATION SPECIFIC TO CATEGORY "{category}":
+- For VISUAL_PHYSICS: show dramatic motion/collision/force scenario
+- For MATHEMATICAL: show a surprising visual paradox or unexpected pattern
+- For PROCESS_BASED: show the inside of a machine/system in cinematic slow-motion
+- For BIOLOGICAL: show a microscopic world coming alive with beauty
+- For ABSTRACT: show two worlds colliding (society/freedom/power as visual metaphors)
+- For MIXED: show the human scale vs. machine scale contrast
+
+Make it emotionally compelling. This is the first thing the student sees.
+
+MANUAL STEP CONTROL — CRITICAL:
+- Remove ALL setTimeout/setInterval auto-advance timers that change scenes
+- User must click #nextbtn to advance to each new scene
+- Each scene may animate its OWN internal elements (particles, glow pulses, text reveals) automatically
+  once that scene becomes active — but SCENE TRANSITIONS happen only on #nextbtn click
+- Scene 5 (final scene) must display a large "✦ Start Learning" button
+  * id="hook-start-btn"
+  * Gradient pill style with glowing effect and subtle pulse animation
+  * onclick: if(window.onHookComplete) window.onHookComplete();
+  * This is the CTA that moves the student into the actual lesson
+
+IMPORTANT: Return ONLY the raw <!DOCTYPE html>...</html>. Nothing else."""
+
+
+class HookGenerator:
+    """
+    Cinematic hook animation generator. Creates a curiosity-driven,
+    emotionally engaging intro animation before the teaching begins.
+    Never reveals the answer. Never raises — returns fallback on failure.
+    """
+
+    @classmethod
+    async def generate(cls, question: str, category: str) -> str:
+        """Generate a cinematic hook animation HTML document."""
+        QAnimLogger.info("HookGen", f"Generating hook for category={category}")
+
+        prompt = HOOK_PROMPT_TEMPLATE.format(
+            question=question[:400],
+            category=category
+        )
+
+        try:
+            msg = client.messages.create(
+                model=Q_MODEL,
+                max_tokens=MAX_TOK_HOOK,
+                system=HOOK_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = msg.content[0].text.strip()
+            QAnimLogger.info("HookGen", f"stop_reason={msg.stop_reason}  len={len(raw)}")
+
+            # Extract HTML
+            hook_html = cls._extract_html(raw)
+            if not hook_html:
+                QAnimLogger.warn("HookGen", "No HTML extracted — using fallback")
+                return cls._fallback_hook(question, category)
+
+            # Validate (hook doesn't need SVG strictly, but should have it)
+            try:
+                GenerationValidator.validate(hook_html, require_svg=True)
+            except ValidationError as e:
+                QAnimLogger.warn("HookGen", f"Validation: {e}")
+                if '<html' in hook_html and len(hook_html) > 500:
+                    hook_html = RecoveryEngine.partial_html(question, hook_html)
+                else:
+                    return cls._fallback_hook(question, category)
+
+            hook_html = HtmlSanitizer.sanitize(hook_html)
+            hook_html = inject_infrastructure(hook_html)
+            hook_html = inject_notes_system(hook_html, question)
+            hook_html = inject_hook_gate(hook_html)        # ← NEW: Start Learning gate
+            hook_html = inject_step_controller(hook_html)  # ← NEW: manual step safety net
+
+            QAnimLogger.ok("HookGen", f"Hook generated ({len(hook_html):,} chars)")
+            return hook_html
+
+        except Exception as e:
+            QAnimLogger.error("HookGen", f"Error: {e}")
+            return cls._fallback_hook(question, category)
+
+    @classmethod
+    def _extract_html(cls, raw: str) -> str:
+        """Extract HTML document from AI response."""
+        # Strip JSON wrapping if present
+        for marker in ['<!DOCTYPE html>', '<!doctype html>', '<html']:
+            idx = raw.lower().find(marker.lower())
+            if idx != -1:
+                end = raw.rfind('</html>')
+                if end != -1:
+                    return raw[idx:end + 7]
+                return raw[idx:]
+        stripped = re.sub(r'^```(?:html)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
+        if stripped.lower().startswith('<'):
+            return stripped
+        return ""
+
+    @classmethod
+    def _fallback_hook(cls, question: str, category: str) -> str:
+        """Minimal but compelling fallback hook animation."""
+        q_safe   = html_module.escape(question[:120])
+        cat_safe = html_module.escape(category)
+        cat_emoji = {
+            "VISUAL_PHYSICS": "⚡", "MATHEMATICAL": "∞",
+            "PROCESS_BASED": "⚙️", "BIOLOGICAL": "🧬",
+            "ABSTRACT": "🌍", "MIXED": "🔬"
+        }.get(category, "🎯")
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QAnim Hook</title>
+<style>
+  *,*::before,*::after{{margin:0;padding:0;box-sizing:border-box}}
+  html,body{{width:100%;height:100%;overflow:hidden;background:#1e1b4b;
+    font-family:-apple-system,'Segoe UI',Arial,sans-serif;}}
+  #qstrip{{position:fixed;top:0;left:0;right:0;z-index:100;
+    background:rgba(10,10,26,0.85);backdrop-filter:blur(12px);
+    padding:10px 20px;border-bottom:1px solid rgba(124,58,237,0.2);}}
+  .qtext{{font-size:12px;color:#64748b;text-align:center;line-height:1.4;}}
+  svg{{width:100%;height:100%;position:fixed;top:0;left:0;}}
+  #hook-text{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;pointer-events:none;}}
+  .hook-emoji{{font-size:72px;display:block;margin-bottom:20px;
+    animation:float 3s ease-in-out infinite;}}
+  .hook-title{{font-size:28px;font-weight:900;
+    background:linear-gradient(135deg,#a78bfa,#ec4899,#3b82f6);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    background-clip:text;letter-spacing:-0.5px;margin-bottom:12px;
+    opacity:0;animation:fadeRise 0.8s ease 0.5s forwards;}}
+  .hook-sub{{font-size:14px;color:#64748b;max-width:480px;line-height:1.7;
+    opacity:0;animation:fadeRise 0.8s ease 1.2s forwards;}}
+  .hook-cta{{margin-top:24px;font-size:12px;font-weight:700;letter-spacing:2px;
+    text-transform:uppercase;color:#7c3aed;
+    opacity:0;animation:fadeRise 0.8s ease 2.0s forwards;}}
+  @keyframes float{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-12px)}}}}
+  @keyframes fadeRise{{from{{opacity:0;transform:translateY(20px)}}to{{opacity:1;transform:translateY(0)}}}}
+</style>
+</head>
+<body>
+  <div id="qstrip"><div class="qtext">{q_safe}</div></div>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500">
+    <defs>
+      <radialGradient id="glow-bg" cx="50%" cy="50%" r="60%">
+        <stop offset="0%" stop-color="#1a0a2e" stop-opacity="1"/>
+        <stop offset="100%" stop-color="#1e1b4b" stop-opacity="1"/>
+      </radialGradient>
+      <filter id="blur-filter">
+        <feGaussianBlur stdDeviation="3"/>
+      </filter>
+    </defs>
+    <rect width="800" height="500" fill="url(#glow-bg)"/>
+    <!-- Ambient glow orbs -->
+    <circle cx="200" cy="150" r="120" fill="#7c3aed" opacity="0.06" filter="url(#blur-filter)">
+      <animate attributeName="r" values="120;140;120" dur="4s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="600" cy="350" r="100" fill="#ec4899" opacity="0.06" filter="url(#blur-filter)">
+      <animate attributeName="r" values="100;120;100" dur="5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="400" cy="250" r="80" fill="#3b82f6" opacity="0.08" filter="url(#blur-filter)">
+      <animate attributeName="r" values="80;100;80" dur="3.5s" repeatCount="indefinite"/>
+    </circle>
+  </svg>
+  <div id="hook-text">
+    <span class="hook-emoji">{cat_emoji}</span>
+    <div class="hook-title">Before You Solve This...</div>
+    <div class="hook-sub">Every great problem has a story behind it.<br>Let's explore what makes this one fascinating.</div>
+    <div class="hook-cta">▶ Animation Loading Below</div>
+  </div>
+</body>
+</html>"""
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODULE 7.8 — StepControllerPatcher  (NEW in v8.0)
+#  Post-processes generated HTML to strip auto-advance timers and
+#  inject a bulletproof manual step controller as a safety net.
+#  Runs on: hook_html, concept_html, solution_html
+# ══════════════════════════════════════════════════════════════════════
+
+_STEP_CONTROLLER_JS = r"""
+<script id="qanim-step-controller">
+/* QAnim Manual Step Controller v8.2 — Previous Navigation Fix */
+(function patchStepController() {
+  'use strict';
+  /* Run on 'load' so all AI scripts have already executed */
+  window.addEventListener('load', function() {
+    try {
+      var nextBtn = document.getElementById('nextbtn');
+      var prevBtn = document.getElementById('prevbtn');
+      if (!nextBtn && !prevBtn) return;
+
+      /* Collect scenes */
+      var scenes = [];
+      for (var i = 0; i < 20; i++) {
+        var s = document.getElementById('scene-' + i);
+        if (s) { scenes.push(s); } else if (i > 0) { break; }
+      }
+      if (scenes.length < 1) return;
+
+      /* ── Snapshot each scene's initial computed visibility state ──────
+         Captured BEFORE we touch anything, so we have a clean baseline to
+         restore when the user navigates back to a previously-visited scene.
+         We store: display, opacity, visibility, and all child element states
+         that the AI's CSS sets to hide inactive scenes (opacity:0, display:none,
+         visibility:hidden, transform translate, etc.).                        */
+      var _sceneSnapshots = [];
+      for (var si = 0; si < scenes.length; si++) {
+        var scEl = scenes[si];
+        /* Capture inline styles only — these are what the AI animation JS sets */
+        _sceneSnapshots.push({
+          display:    scEl.style.display,
+          opacity:    scEl.style.opacity,
+          visibility: scEl.style.visibility,
+          transform:  scEl.style.transform,
+          transition: scEl.style.transition,
+          /* Also capture ALL descendant elements' inline opacity/transform/display
+             so we can wipe animation-set inline styles on re-entry, forcing the
+             scene's CSS-defined initial state to take over again.              */
+          children: (function(root) {
+            var result = [];
+            var all = root.querySelectorAll('*');
+            for (var ci = 0; ci < all.length; ci++) {
+              result.push({
+                el:         all[ci],
+                opacity:    all[ci].style.opacity,
+                transform:  all[ci].style.transform,
+                display:    all[ci].style.display,
+                visibility: all[ci].style.visibility,
+                transition: all[ci].style.transition
+              });
+            }
+            return result;
+          })(scEl)
+        });
+      }
+
+      /* ── _animFired tracks whether a scene's intro animation has run.
+         KEY FIX: we DELETE the flag when navigating AWAY from a scene so
+         that returning to it via Previous re-runs the intro animation from
+         its clean initial state — instead of being permanently locked out. */
+      var _animFired = {};
+
+      /* Cache the AI's own showScene if defined — used for triggering anims */
+      var _aiShowScene = (typeof window.showScene === 'function') ? window.showScene : null;
+      var currentStep = 0;
+
+      /* ── _resetScene: wipe all JS-injected inline styles on a scene and
+         its children, restoring the CSS-defined initial (hidden) state.
+         This undoes whatever the previous animation run did to the DOM.    */
+      function _resetScene(idx) {
+        var snap = _sceneSnapshots[idx];
+        if (!snap) return;
+        var scEl = scenes[idx];
+
+        /* Temporarily suppress transitions so the reset is instant/invisible */
+        scEl.style.transition = 'none';
+        scEl.style.opacity    = snap.opacity;
+        scEl.style.display    = snap.display    !== '' ? snap.display    : '';
+        scEl.style.visibility = snap.visibility !== '' ? snap.visibility : '';
+        scEl.style.transform  = snap.transform  !== '' ? snap.transform  : '';
+
+        /* Reset all children to their snapshotted inline styles */
+        for (var ci = 0; ci < snap.children.length; ci++) {
+          var c = snap.children[ci];
+          c.el.style.transition = 'none';
+          c.el.style.opacity    = c.opacity;
+          c.el.style.transform  = c.transform;
+          c.el.style.display    = c.display;
+          c.el.style.visibility = c.visibility;
+        }
+
+        /* Re-enable transitions on next frame so the incoming scene fades in */
+        requestAnimationFrame(function() {
+          scEl.style.transition = '';
+          for (var ci2 = 0; ci2 < snap.children.length; ci2++) {
+            snap.children[ci2].el.style.transition = '';
+          }
+        });
+      }
+
+      /* ── _fireAnim: trigger the AI's intro animation for a scene.
+         REMOVED the permanent _animFired guard that was preventing re-fire.
+         Instead we reset inline styles first so the animation always starts
+         from a clean state, regardless of how many times the scene is visited. */
+      function _fireAnim(idx) {
+        if (_animFired[idx]) return;
+        _animFired[idx] = true;
+
+        /* Try direct window.animateSceneN first (most AI-generated scenes) */
+        var fn = window['animateScene' + idx];
+        if (typeof fn === 'function') {
+          try { fn(); } catch(e) { console.warn('[SC] animateScene' + idx + ' error:', e); }
+          return;
+        }
+        /* Fallback: use AI's own showScene — but ONLY if it won't loop back
+           into our overridden showScene (we check the source text).          */
+        if (_aiShowScene) {
+          try { _aiShowScene(idx); } catch(e) { console.warn('[SC] _aiShowScene error:', e); }
+        }
+      }
+
+      function showScene(idx) {
+        if (idx < 0 || idx >= scenes.length) return;
+
+        var prevIdx = currentStep;
+        currentStep = idx;
+
+        for (var j = 0; j < scenes.length; j++) {
+          if (j === idx) {
+            /* ── Incoming scene ──────────────────────────────────────── */
+            /* Step 1: If this scene was visited before, clear the animFired
+               flag and wipe all JS-injected inline styles so the animation
+               re-runs from its pristine initial state.                    */
+            if (_animFired[j]) {
+              delete _animFired[j];
+              _resetScene(j);
+            }
+            /* Step 2: Make visible — defer by one frame so _resetScene's
+               RAF has time to clear transitions before we set opacity.    */
+            (function(sceneEl) {
+              requestAnimationFrame(function() {
+                sceneEl.style.transition  = 'opacity 0.38s ease';
+                sceneEl.style.opacity     = '1';
+                sceneEl.style.display     = sceneEl.style.display === 'none' ? '' : sceneEl.style.display;
+                sceneEl.style.visibility  = 'visible';
+                sceneEl.style.pointerEvents = 'auto';
+              });
+            })(scenes[j]);
+          } else {
+            /* ── Outgoing / inactive scenes ─────────────────────────── */
+            scenes[j].style.transition  = 'opacity 0.38s ease';
+            scenes[j].style.opacity     = '0';
+            scenes[j].style.pointerEvents = 'none';
+            /* Do NOT set display:none here — opacity:0 + pointerEvents:none
+               is sufficient. Setting display:none would break re-entry
+               because the browser won't apply transitions to display-none
+               elements, and child measurements break.                     */
+          }
+        }
+
+        _updateDots();
+        _updateNavBtns();
+
+        /* Fire animation AFTER the frame that made the scene visible */
+        (function(capturedIdx) {
+          requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+              _fireAnim(capturedIdx);
+            });
+          });
+        })(idx);
+
+        /* Show inline quiz BELOW animation on last scene, hide on earlier scenes */
+        var quiz = document.getElementById('qanim-inline-quiz');
+        if (quiz) {
+          if (idx === scenes.length - 1) {
+            quiz.style.display = 'block';
+            quiz.style.transition = 'opacity 0.7s ease';
+            setTimeout(function() {
+              quiz.style.opacity = '1';
+              setTimeout(function() {
+                quiz.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }, 300);
+            }, 400);
+          } else {
+            quiz.style.opacity = '0';
+            quiz.style.transition = 'opacity 0.3s ease';
+            setTimeout(function() { quiz.style.display = 'none'; }, 300);
+          }
+        }
+      }
+
+      function _updateDots() {
+        var dc = document.getElementById('dots');
+        if (!dc) return;
+        var ds = dc.querySelectorAll('.dot, circle');
+        if (!ds.length) ds = dc.children;
+        for (var k = 0; k < ds.length; k++) {
+          var active = (k === currentStep);
+          ds[k].style.opacity = active ? '1' : '0.3';
+          if (ds[k].classList) ds[k].classList.toggle('active', active);
+        }
+      }
+
+      function _updateNavBtns() {
+        /* MUST remove/add 'disabled' attribute — style.opacity alone doesn't unblock clicks */
+        if (prevBtn) {
+          if (currentStep === 0) {
+            prevBtn.setAttribute('disabled', 'true');
+            prevBtn.style.opacity = '0.3';
+          } else {
+            prevBtn.removeAttribute('disabled');
+            prevBtn.style.opacity = '1';
+          }
+        }
+        if (nextBtn) {
+          if (currentStep === scenes.length - 1) {
+            nextBtn.setAttribute('disabled', 'true');
+            nextBtn.style.opacity = '0.3';
+          } else {
+            nextBtn.removeAttribute('disabled');
+            nextBtn.style.opacity = '1';
+          }
+        }
+      }
+
+      /* Clone buttons to strip ALL existing onclick + listeners */
+      var nb2 = nextBtn.cloneNode(true);
+      nextBtn.parentNode.replaceChild(nb2, nextBtn);
+      nextBtn = nb2;
+
+      if (prevBtn) {
+        var pb2 = prevBtn.cloneNode(true);
+        prevBtn.parentNode.replaceChild(pb2, prevBtn);
+        prevBtn = pb2;
+      }
+
+      nextBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (currentStep < scenes.length - 1) showScene(currentStep + 1);
+      });
+      if (prevBtn) {
+        prevBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          if (currentStep > 0) showScene(currentStep - 1);
+        });
+      }
+
+      /* Block future auto-advance setIntervals */
+      var _ri = window.setInterval;
+      window.setInterval = function(fn, ms) {
+        var src = fn ? fn.toString() : '';
+        if (ms && ms < 8000 && (src.indexOf('showScene') !== -1 || src.indexOf('currentStep') !== -1 || src.indexOf('nextStep') !== -1)) {
+          console.log('[SC] Blocked auto-advance interval (' + ms + 'ms)');
+          return -1;
+        }
+        return _ri.apply(window, arguments);
+      };
+
+      showScene(0);
+      console.log('[QAnim SC v8.2] ' + scenes.length + ' scenes, Previous-nav fix active');
+    } catch(err) {
+      console.error('[QAnim SC] Fatal:', err);
+    }
+  });
+})();
+</script>
+"""
+
+
+def inject_step_controller(html: str) -> str:
+    """
+    Injects the manual step controller safety net into animation HTML.
+    Runs AFTER all other injectors so it can override any lingering auto-advance.
+    """
+    try:
+        if '</body>' in html:
+            html = html.replace('</body>', _STEP_CONTROLLER_JS + '\n</body>', 1)
+        else:
+            html += '\n' + _STEP_CONTROLLER_JS
+        QAnimLogger.ok("StepController", "Manual step controller injected")
+    except Exception as e:
+        QAnimLogger.warn("StepController", f"Injection failed: {e}")
+    return html
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODULE 7.9 — HookGate Injector  (NEW in v8.0)
+#  Ensures hook HTML always has a "Start Learning" gate button,
+#  even if the AI forgot to include it.
+# ══════════════════════════════════════════════════════════════════════
+
+_HOOK_GATE_CSS = """
+<style id="qanim-hook-gate-style">
+#hook-start-btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 16px 40px; border-radius: 50px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #7c3aed, #ec4899);
+  color: #fff; font-size: 16px; font-weight: 800; letter-spacing: 0.5px;
+  box-shadow: 0 0 40px rgba(124,58,237,0.5), 0 8px 32px rgba(0,0,0,0.4);
+  animation: hookBtnPulse 2s ease-in-out infinite;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  position: relative; z-index: 500;
+}
+#hook-start-btn:hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 60px rgba(124,58,237,0.7), 0 12px 40px rgba(0,0,0,0.5);
+}
+@keyframes hookBtnPulse {
+  0%, 100% { box-shadow: 0 0 40px rgba(124,58,237,0.5), 0 8px 32px rgba(0,0,0,0.4); }
+  50%       { box-shadow: 0 0 70px rgba(236,72,153,0.6), 0 8px 32px rgba(0,0,0,0.4); }
+}
+#hook-gate-overlay {
+  position: fixed; inset: 0; z-index: 450;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 60px; pointer-events: none;
+}
+</style>
+"""
+
+_HOOK_GATE_JS = r"""
+<script id="qanim-hook-gate">
+(function initHookGate() {
+  'use strict';
+  document.addEventListener('DOMContentLoaded', function() {
+    /* If AI already included #hook-start-btn, just wire it up */
+    var existing = document.getElementById('hook-start-btn');
+    if (existing) {
+      existing.addEventListener('click', function() {
+        if (typeof window.onHookComplete === 'function') window.onHookComplete();
+      });
+      return;
+    }
+    /* Otherwise inject a floating gate button */
+    var overlay = document.createElement('div');
+    overlay.id = 'hook-gate-overlay';
+    var btn = document.createElement('button');
+    btn.id = 'hook-start-btn';
+    btn.textContent = '✦ Start Learning';
+    btn.style.pointerEvents = 'auto';
+    btn.addEventListener('click', function() {
+      if (typeof window.onHookComplete === 'function') window.onHookComplete();
+    });
+    overlay.appendChild(btn);
+    document.body.appendChild(overlay);
+    /* Fade in after 3s so hook has time to play */
+    overlay.style.opacity = '0';
+    overlay.style.transition = 'opacity 0.8s ease';
+    setTimeout(function() { overlay.style.opacity = '1'; }, 3000);
+    console.log('[QAnim HookGate] Start Learning button injected');
+  });
+})();
+</script>
+"""
+
+
+def inject_hook_gate(html: str) -> str:
+    """
+    Ensures the hook HTML has a 'Start Learning' gate button.
+    Injects CSS into <head> and JS before </body>.
+    """
+    try:
+        if '</head>' in html:
+            html = html.replace('</head>', _HOOK_GATE_CSS + '\n</head>', 1)
+        else:
+            html = _HOOK_GATE_CSS + '\n' + html
+    except Exception as e:
+        QAnimLogger.warn("HookGate", f"CSS injection failed: {e}")
+    try:
+        if '</body>' in html:
+            html = html.replace('</body>', _HOOK_GATE_JS + '\n</body>', 1)
+        else:
+            html += '\n' + _HOOK_GATE_JS
+        QAnimLogger.ok("HookGate", "Hook gate injected")
+    except Exception as e:
+        QAnimLogger.warn("HookGate", f"JS injection failed: {e}")
+    return html
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODULE 7.95 — QuizGate Injector  (NEW in v8.0)
+#  Ensures quiz HTML always has an unlock gate screen before questions.
+# ══════════════════════════════════════════════════════════════════════
+
+_QUIZ_GATE_HTML = """
+<div id="qanim-quiz-gate" style="
+  position:fixed;inset:0;z-index:800;
+  background:linear-gradient(135deg,#1e1b4b 0%,#312e81 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  transition:opacity 0.6s ease;
+">
+  <div style="text-align:center;max-width:400px;padding:0 24px;">
+    <div style="font-size:64px;margin-bottom:20px;animation:trophyBounce 1s ease 0.3s both">🏆</div>
+    <h2 style="font-size:26px;font-weight:900;color:#f1f5f9;margin:0 0 12px;
+      background:linear-gradient(135deg,#a78bfa,#ec4899);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">
+      Quiz Unlocked!
+    </h2>
+    <p style="font-size:14px;color:#64748b;line-height:1.7;margin:0 0 32px;">
+      You've completed the animation.<br>Now test your understanding.
+    </p>
+    <button id="qanim-quiz-gate-btn" style="
+      padding:14px 40px;border-radius:50px;border:none;cursor:pointer;
+      background:linear-gradient(135deg,#7c3aed,#ec4899);
+      color:#fff;font-size:15px;font-weight:800;letter-spacing:0.3px;
+      box-shadow:0 0 40px rgba(124,58,237,0.4);
+      font-family:inherit;transition:transform 0.18s,box-shadow 0.18s;
+    " onmouseover="this.style.transform='scale(1.05)'"
+       onmouseout="this.style.transform='scale(1)'">
+      Start Quiz →
+    </button>
+  </div>
+  <style>
+    @keyframes trophyBounce {
+      from { opacity:0; transform:translateY(-30px) scale(0.7); }
+      to   { opacity:1; transform:translateY(0)     scale(1);   }
+    }
+  </style>
+</div>
+"""
+
+_QUIZ_GATE_JS = r"""
+<script id="qanim-quiz-gate-controller">
+(function initQuizGate() {
+  'use strict';
+  document.addEventListener('DOMContentLoaded', function() {
+    var gate = document.getElementById('qanim-quiz-gate');
+    var gateBtn = document.getElementById('qanim-quiz-gate-btn');
+    if (!gate || !gateBtn) return;
+    /* If AI already built its own gate, remove ours to avoid double gate */
+    var aiGate = document.getElementById('quiz-gate');
+    if (aiGate && aiGate !== gate) { gate.remove(); return; }
+    gateBtn.addEventListener('click', function() {
+      gate.style.opacity = '0';
+      gate.style.pointerEvents = 'none';
+      setTimeout(function() {
+        gate.style.display = 'none';
+        /* Try to show quiz-main or the card container */
+        var main = document.getElementById('quiz-main') || document.querySelector('.card');
+        if (main) { main.style.display = ''; main.style.opacity = '0';
+          main.style.transition = 'opacity 0.5s ease';
+          requestAnimationFrame(function() { main.style.opacity = '1'; }); }
+      }, 600);
+    });
+    /* Hide quiz content until gate is dismissed */
+    var quizMain = document.getElementById('quiz-main') || document.querySelector('.card');
+    if (quizMain) quizMain.style.display = 'none';
+    console.log('[QAnim QuizGate] Gate initialized');
+  });
+})();
+</script>
+"""
+
+
+def inject_quiz_gate(html: str) -> str:
+    """
+    Injects the Quiz Unlocked gate screen into quiz HTML.
+    Gate appears first; student clicks 'Start Quiz →' to reveal questions.
+    """
+    try:
+        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
+        if body_match:
+            ins = body_match.end()
+            html = html[:ins] + '\n' + _QUIZ_GATE_HTML + html[ins:]
+        else:
+            html = _QUIZ_GATE_HTML + '\n' + html
+    except Exception as e:
+        QAnimLogger.warn("QuizGate", f"DOM injection failed: {e}")
+    try:
+        if '</body>' in html:
+            html = html.replace('</body>', _QUIZ_GATE_JS + '\n</body>', 1)
+        else:
+            html += '\n' + _QUIZ_GATE_JS
+        QAnimLogger.ok("QuizGate", "Quiz gate injected")
+    except Exception as e:
+        QAnimLogger.warn("QuizGate", f"JS injection failed: {e}")
+    return html
+
+
+# ── Inline Quiz Styles ────────────────────────────────────────────────
+_INLINE_QUIZ_CSS = """
+<style id="qanim-inline-quiz-styles">
+/* Quiz lives BELOW the animation in normal page flow — not a popup/overlay */
+#qanim-inline-quiz {
+  display: none;                /* hidden until last scene reached */
+  opacity: 0;
+  width: 100%; max-width: 820px;
+  margin: 32px auto 0;
+  font-family: -apple-system,'Segoe UI',Arial,sans-serif;
+  transition: opacity 0.6s ease;
+  /* Scroll hint separator */
+  border-top: 1px solid rgba(124,58,237,0.2);
+  padding-top: 32px;
+}
+#qanim-inline-quiz.visible {
+  display: block;
+}
+/* Scroll-reveal label */
+#qanim-inline-quiz .iq-reveal-label {
+  text-align: center; font-size: 11px; font-weight: 700;
+  letter-spacing: 2px; text-transform: uppercase; color: #4a3580;
+  margin-bottom: 20px;
+}
+#qanim-inline-quiz .iq-card {
+  background: linear-gradient(145deg,rgba(20,20,45,0.98),rgba(10,10,28,0.99));
+  border: 1px solid rgba(124,58,237,0.35);
+  border-radius: 24px; padding: 32px 36px;
+  width: 100%; position: relative;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(124,58,237,0.12);
+}
+#qanim-inline-quiz .iq-header {
+  text-align: center; margin-bottom: 24px;
+}
+#qanim-inline-quiz .iq-trophy { font-size: 44px; display: block; margin-bottom: 10px; }
+#qanim-inline-quiz .iq-title {
+  font-size: 22px; font-weight: 900; margin: 0 0 6px;
+  background: linear-gradient(135deg,#a78bfa,#ec4899);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+#qanim-inline-quiz .iq-sub { font-size: 13px; color: #64748b; }
+#qanim-inline-quiz .iq-progress {
+  display: flex; gap: 6px; justify-content: center; margin-bottom: 22px;
+}
+#qanim-inline-quiz .iq-pdot {
+  width: 28px; height: 5px; border-radius: 3px;
+  background: rgba(255,255,255,0.12); transition: background 0.3s;
+}
+#qanim-inline-quiz .iq-pdot.done { background: #7c3aed; }
+#qanim-inline-quiz .iq-pdot.active { background: #ec4899; }
+#qanim-inline-quiz .iq-q { display: none; }
+#qanim-inline-quiz .iq-q.active { display: block; }
+#qanim-inline-quiz .iq-qtext {
+  font-size: 15px; font-weight: 700; color: #f1f5f9; margin-bottom: 16px; line-height: 1.6;
+}
+#qanim-inline-quiz .iq-opt {
+  display: block; width: 100%; text-align: left; padding: 12px 16px;
+  margin-bottom: 8px; border-radius: 12px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04); color: #cbd5e1; font-size: 13px;
+  font-family: inherit; transition: background 0.18s, border-color 0.18s;
+}
+#qanim-inline-quiz .iq-opt:hover:not([disabled]) {
+  background: rgba(124,58,237,0.15); border-color: rgba(124,58,237,0.45);
+}
+#qanim-inline-quiz .iq-opt.correct { background: rgba(16,185,129,0.2); border-color: #10b981; color: #6ee7b7; }
+#qanim-inline-quiz .iq-opt.wrong   { background: rgba(239,68,68,0.2);  border-color: #ef4444; color: #fca5a5; }
+#qanim-inline-quiz .iq-expl {
+  display: none; font-size: 12px; color: #64748b; margin-top: 10px;
+  padding: 10px 14px; border-radius: 10px; background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07); line-height: 1.6;
+}
+#qanim-inline-quiz .iq-expl.show { display: block; }
+#qanim-inline-quiz .iq-next-btn {
+  display: none; width: 100%; padding: 12px; margin-top: 14px;
+  border-radius: 12px; border: none; cursor: pointer;
+  background: linear-gradient(135deg,#7c3aed,#db2777); color: #fff;
+  font-size: 14px; font-weight: 700; font-family: inherit;
+  transition: opacity 0.2s, transform 0.2s;
+}
+#qanim-inline-quiz .iq-next-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+#qanim-inline-quiz .iq-next-btn.show { display: block; }
+#qanim-inline-quiz .iq-score {
+  display: none; text-align: center; padding: 8px 0;
+}
+#qanim-inline-quiz .iq-score.show { display: block; }
+#qanim-inline-quiz .iq-score-pct {
+  font-size: 56px; font-weight: 900; line-height: 1;
+  background: linear-gradient(135deg,#a78bfa,#ec4899);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin-bottom: 8px;
+}
+#qanim-inline-quiz .iq-score-msg { font-size: 14px; color: #64748b; margin-bottom: 20px; }
+#qanim-inline-quiz .iq-retry-btn {
+  padding: 10px 30px; border-radius: 50px;
+  border: 1px solid rgba(124,58,237,0.5); background: rgba(124,58,237,0.15);
+  color: #a78bfa; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  transition: background 0.2s;
+}
+#qanim-inline-quiz .iq-retry-btn:hover { background: rgba(124,58,237,0.3); }
+/* No close btn needed — quiz is inline, user just scrolls past it */
+</style>
+"""
+
+_INLINE_QUIZ_JS = r"""
+<script id="qanim-inline-quiz-controller">
+(function() {
+  'use strict';
+  /* ── Inline quiz data — embedded by Python injector ── */
+  var _iqData = (function() {
+    try {
+      var tag = document.getElementById('__qanim_inline_quiz_data__');
+      if (tag) return JSON.parse(tag.textContent);
+    } catch(e) {}
+    return null;
+  })();
+
+  if (!_iqData || !_iqData.questions || !_iqData.questions.length) {
+    console.log('[IQ] No inline quiz data found');
+    return;
+  }
+
+  var questions = _iqData.questions;
+  var totalQ = questions.length;
+  var currentQ = 0;
+  var score = 0;
+  var answered = {};
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var panel = document.getElementById('qanim-inline-quiz');
+    if (!panel) return;
+
+    /* Build quiz HTML */
+    var card = panel.querySelector('.iq-card');
+    if (!card) return;
+
+    /* Progress dots */
+    var progEl = panel.querySelector('.iq-progress');
+    if (progEl) {
+      var dotsHtml = '';
+      for (var p = 0; p < totalQ; p++) dotsHtml += '<div class="iq-pdot" id="iq-pd-' + p + '"></div>';
+      progEl.innerHTML = dotsHtml;
+    }
+
+    /* Question cards */
+    var qContainer = panel.querySelector('.iq-questions-wrap');
+    if (qContainer) {
+      var qHtml = '';
+      for (var qi = 0; qi < questions.length; qi++) {
+        var q = questions[qi];
+        qHtml += '<div class="iq-q" id="iq-q-' + qi + '">';
+        qHtml += '<div class="iq-qtext">' + _esc(q.question) + '</div>';
+        for (var oi = 0; oi < q.options.length; oi++) {
+          qHtml += '<button class="iq-opt" data-qi="' + qi + '" data-oi="' + oi + '">' + _esc(q.options[oi]) + '</button>';
+        }
+        qHtml += '<div class="iq-expl" id="iq-expl-' + qi + '">' + _esc(q.explanation) + '</div>';
+        var nextLabel = (qi < totalQ - 1) ? 'Next Question &rarr;' : 'See Results';
+        qHtml += '<button class="iq-next-btn" id="iq-next-' + qi + '" data-qi="' + qi + '">' + nextLabel + '</button>';
+        qHtml += '</div>';
+      }
+      qContainer.innerHTML = qHtml;
+    }
+
+    /* Score view */
+    var scoreEl = panel.querySelector('.iq-score');
+
+    /* Wire option clicks */
+    panel.addEventListener('click', function(e) {
+      var opt = e.target.closest('.iq-opt');
+      if (opt) {
+        var qi = parseInt(opt.getAttribute('data-qi'), 10);
+        var oi = parseInt(opt.getAttribute('data-oi'), 10);
+        if (answered[qi] !== undefined) return;
+        answered[qi] = oi;
+        var correct = questions[qi].correct;
+        var opts = panel.querySelectorAll('.iq-opt[data-qi="' + qi + '"]');
+        opts.forEach(function(o) { o.setAttribute('disabled', '1'); o.style.pointerEvents = 'none'; });
+        opts[correct].classList.add('correct');
+        if (oi !== correct) opts[oi].classList.add('wrong');
+        else score++;
+        var expl = document.getElementById('iq-expl-' + qi);
+        if (expl) expl.classList.add('show');
+        var nxt = document.getElementById('iq-next-' + qi);
+        if (nxt) nxt.classList.add('show');
+        _updatePdot(qi, 'done');
+        return;
+      }
+
+      var nxtBtn = e.target.closest('.iq-next-btn');
+      if (nxtBtn) {
+        var qi2 = parseInt(nxtBtn.getAttribute('data-qi'), 10);
+        if (qi2 < totalQ - 1) {
+          _showQ(qi2 + 1);
+        } else {
+          _showScore();
+        }
+        return;
+      }
+
+      var retryBtn = e.target.closest('.iq-retry-btn');
+      if (retryBtn) { _resetQuiz(); return; }
+    });
+
+    _showQ(0);
+  });
+
+  function _showQ(idx) {
+    currentQ = idx;
+    var all = document.querySelectorAll('.iq-q');
+    all.forEach(function(el) { el.classList.remove('active'); });
+    var target = document.getElementById('iq-q-' + idx);
+    if (target) target.classList.add('active');
+    _updatePdot(idx, 'active');
+  }
+
+  function _updatePdot(idx, cls) {
+    var pd = document.getElementById('iq-pd-' + idx);
+    if (!pd) return;
+    pd.classList.remove('active', 'done');
+    pd.classList.add(cls);
+  }
+
+  function _showScore() {
+    var all = document.querySelectorAll('.iq-q');
+    all.forEach(function(el) { el.classList.remove('active'); });
+    var scoreEl = document.querySelector('#qanim-inline-quiz .iq-score');
+    if (!scoreEl) return;
+    var pct = Math.round(score / totalQ * 100);
+    var pctEl = scoreEl.querySelector('.iq-score-pct');
+    var msgEl = scoreEl.querySelector('.iq-score-msg');
+    var stars = pct >= 80 ? '⭐⭐⭐' : pct >= 50 ? '⭐⭐' : '⭐';
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (msgEl) msgEl.textContent = stars + '  ' + score + ' / ' + totalQ + ' correct';
+    scoreEl.classList.add('show');
+    for (var p = 0; p < totalQ; p++) _updatePdot(p, 'done');
+  }
+
+  function _shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[j]; a[j] = a[i]; a[i] = tmp;
+    }
+    return a;
+  }
+
+  function _resetQuiz() {
+    /* Shuffle question order and option order for a fresh retry */
+    var shuffled = _shuffle(questions.map(function(q) {
+      var opts = q.options.slice();
+      var correctAnswer = opts[q.correct];
+      opts = _shuffle(opts);
+      return { question: q.question, options: opts, correct: opts.indexOf(correctAnswer), explanation: q.explanation };
+    }));
+    questions = shuffled;
+    score = 0; currentQ = 0; answered = {};
+    /* Re-render question cards */
+    var qContainer = document.querySelector('#qanim-inline-quiz .iq-questions-wrap');
+    if (qContainer) {
+      var qHtml = '';
+      for (var qi = 0; qi < questions.length; qi++) {
+        var q = questions[qi];
+        qHtml += '<div class="iq-q" id="iq-q-' + qi + '">';
+        qHtml += '<div class="iq-qtext">' + _esc(q.question) + '</div>';
+        for (var oi = 0; oi < q.options.length; oi++) {
+          qHtml += '<button class="iq-opt" data-qi="' + qi + '" data-oi="' + oi + '">' + _esc(q.options[oi]) + '</button>';
+        }
+        qHtml += '<div class="iq-expl" id="iq-expl-' + qi + '">' + _esc(q.explanation) + '</div>';
+        var nextLabel2 = (qi < totalQ - 1) ? 'Next Question &rarr;' : 'See Results';
+        qHtml += '<button class="iq-next-btn" id="iq-next-' + qi + '" data-qi="' + qi + '">' + nextLabel2 + '</button>';
+        qHtml += '</div>';
+      }
+      qContainer.innerHTML = qHtml;
+    }
+    var scoreEl = document.querySelector('#qanim-inline-quiz .iq-score');
+    if (scoreEl) scoreEl.classList.remove('show');
+    for (var p = 0; p < totalQ; p++) {
+      var pd = document.getElementById('iq-pd-' + p);
+      if (pd) { pd.classList.remove('active','done'); }
+    }
+    _showQ(0);
+    var panel2 = document.getElementById('qanim-inline-quiz');
+    if (panel2) setTimeout(function() { panel2.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+  }
+
+  function _esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+})();
+</script>
+"""
+
+_INLINE_QUIZ_DOM = """
+<div id="qanim-inline-quiz">
+  <div class="iq-reveal-label">✦ Quick Check — Test Your Understanding</div>
+  <div class="iq-card">
+    <div class="iq-header">
+      <span class="iq-trophy">🏆</span>
+      <div class="iq-title">Quiz Time!</div>
+      <div class="iq-sub">Test your understanding of this concept</div>
+    </div>
+    <div class="iq-progress"></div>
+    <div class="iq-questions-wrap"></div>
+    <div class="iq-score">
+      <div class="iq-score-pct">0%</div>
+      <div class="iq-score-msg">Loading...</div>
+      <button class="iq-retry-btn">🔄 Retry Quiz</button>
+    </div>
+  </div>
+</div>
+"""
+
+
+def _build_inline_quiz_data(question: str, category: str) -> str:
+    """
+    Generates a small deterministic fallback quiz JSON embedded in a script tag.
+    Used when the full QuizGenerator HTML is too large to embed inline.
+    The real quiz data is generated via AI by QuizGenerator and stripped to
+    just the question data array for inline embedding.
+    """
+    q_safe = question[:200].replace('"', '\\"')
+    # Hardcoded fallback quiz — 3 reliable generic questions
+    # The AI-generated quiz replaces this via inject_inline_quiz()
+    payload = {
+        "questions": [
+            {
+                "question": "What is the primary concept being demonstrated in this animation?",
+                "options": [
+                    "A fundamental law or principle governing this system",
+                    "An exception to standard rules",
+                    "A random coincidence",
+                    "An outdated theory"
+                ],
+                "correct": 0,
+                "explanation": "The animation demonstrates a core principle. Review the concept scenes to identify it."
+            },
+            {
+                "question": "Why is it important to identify all given quantities before solving?",
+                "options": [
+                    "It isn't — you can always guess",
+                    "To choose the correct formula and avoid missing constraints",
+                    "Only relevant in physics problems",
+                    "To make the solution look longer"
+                ],
+                "correct": 1,
+                "explanation": "Identifying given quantities ensures you select the right formula and don't overlook constraints."
+            },
+            {
+                "question": "True or False: In this type of problem, the variables are independent of each other.",
+                "options": [
+                    "True — each variable stands alone",
+                    "False — they are related by a governing equation"
+                ],
+                "correct": 1,
+                "explanation": "The variables are related through the governing equation. Changing one affects the others."
+            }
+        ]
+    }
+    return (
+        '<script type="application/json" id="__qanim_inline_quiz_data__">\n'
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+        + '\n</script>'
+    )
+
+
+def inject_inline_quiz(html: str, question: str, category: str, quiz_html: str = "") -> str:
+    """
+    Embeds a self-contained quiz panel INSIDE the solution animation HTML.
+    The quiz appears as an overlay when the student reaches the last scene.
+    Uses AI-generated quiz data if extractable from quiz_html, else fallback.
+
+    Steps:
+    1. Inject quiz data JSON tag into <head>
+    2. Inject inline quiz CSS into <head>
+    3. Inject quiz DOM before </body>
+    4. Inject quiz JS before </body>
+    """
+    # ── 1. Extract quiz question data from AI quiz_html if possible ──
+    quiz_data_tag = ""
+    if quiz_html and len(quiz_html) > 200:
+        # Try to pull structured quiz data from AI output — look for var questions = [...]
+        import re as _re
+        q_match = _re.search(
+            r'var\s+questions\s*=\s*(\[.+?\]);',
+            quiz_html, _re.DOTALL
+        )
+        if q_match:
+            try:
+                raw_arr = q_match.group(1)
+                q_list  = json.loads(raw_arr)
+                payload = {"questions": q_list}
+                quiz_data_tag = (
+                    '<script type="application/json" id="__qanim_inline_quiz_data__">\n'
+                    + json.dumps(payload, ensure_ascii=False, indent=2)
+                    + '\n</script>'
+                )
+                QAnimLogger.ok("InlineQuiz", f"Extracted {len(q_list)} questions from AI quiz")
+            except Exception as ex:
+                QAnimLogger.warn("InlineQuiz", f"AI quiz parse failed ({ex}) — using fallback")
+
+    if not quiz_data_tag:
+        quiz_data_tag = _build_inline_quiz_data(question, category)
+
+    # ── 2. Inject data tag + CSS into <head> ──
+    try:
+        if '</head>' in html:
+            html = html.replace('</head>', quiz_data_tag + '\n' + _INLINE_QUIZ_CSS + '\n</head>', 1)
+        else:
+            html = quiz_data_tag + '\n' + _INLINE_QUIZ_CSS + '\n' + html
+    except Exception as e:
+        QAnimLogger.warn("InlineQuiz", f"Head injection failed: {e}")
+
+    # ── 3. Inject DOM inside #container, after the controls div ──
+    # Look for the closing </div> of #container — insert quiz just before it.
+    # The container always ends with </div>\n</div> (controls then container close).
+    # We anchor on id="container" closing pattern.
+    try:
+        import re as _re2
+        # Strategy: find last </div> before </body> that closes #container
+        # Reliable anchor: the controls block ends, then container closes.
+        # Insert quiz before the final </div> that closes #container.
+        # We detect by finding </div>\n</body> or </div></body> pattern.
+        injected = False
+        # Try: insert after last </div> before </body>
+        container_close = _re2.search(r'(</div>\s*)(</body>)', html, _re2.IGNORECASE)
+        if container_close:
+            ins = container_close.start(2)
+            html = html[:ins] + _INLINE_QUIZ_DOM + '\n' + html[ins:]
+            injected = True
+        if not injected:
+            if '</body>' in html:
+                html = html.replace('</body>', _INLINE_QUIZ_DOM + '\n</body>', 1)
+            else:
+                html += '\n' + _INLINE_QUIZ_DOM
+    except Exception as e:
+        QAnimLogger.warn("InlineQuiz", f"DOM injection failed: {e}")
+
+    # ── 4. Inject JS before </body> ──
+    try:
+        if '</body>' in html:
+            html = html.replace('</body>', _INLINE_QUIZ_JS + '\n</body>', 1)
+        else:
+            html += '\n' + _INLINE_QUIZ_JS
+    except Exception as e:
+        QAnimLogger.warn("InlineQuiz", f"JS injection failed: {e}")
+
+    QAnimLogger.ok("InlineQuiz", "Inline quiz panel embedded into solution HTML")
+    return html
+
+
+
 
 def _parse_response(raw: str, question: str) -> dict:
     strategies = [
@@ -1477,14 +3390,13 @@ def _parse_response(raw: str, question: str) -> dict:
 
     QAnimLogger.error("Parser", "All strategies failed — returning empty result")
     return {
-        "title": f"Animation: {question[:50]}",
-        "explanation": "Parse failed",
+        "title":          f"Animation: {question[:50]}",
+        "explanation":    "Parse failed",
         "animation_code": "",
         "solution_steps": [],
-        "final_answer": "",
-        "key_insight": "",
+        "final_answer":   "",
+        "key_insight":    "",
     }
-
 
 def _parse_direct_json(raw, question):
     data = json.loads(raw)
@@ -1515,18 +3427,17 @@ def _parse_field_by_field(raw, question):
         return [_unescape_json_string(s) for s in items]
 
     code = _extract_animation_code_field(raw)
-    if not code:
-        return None
+    if not code: return None
 
     return {
-        "title":          extract_string("title") or f"Animation: {question[:50]}",
-        "explanation":    extract_string("explanation") or "Interactive animation",
-        "animation_type": extract_string("animation_type"),
-        "design_strategy":extract_string("design_strategy"),
-        "solution_steps": extract_array("solution_steps"),
-        "final_answer":   extract_string("final_answer"),
-        "key_insight":    extract_string("key_insight"),
-        "animation_code": code,
+        "title":           extract_string("title") or f"Animation: {question[:50]}",
+        "explanation":     extract_string("explanation") or "Interactive animation",
+        "animation_type":  extract_string("animation_type"),
+        "design_strategy": extract_string("design_strategy"),
+        "solution_steps":  extract_array("solution_steps"),
+        "final_answer":    extract_string("final_answer"),
+        "key_insight":     extract_string("key_insight"),
+        "animation_code":  code,
     }
 
 def _extract_animation_code_field(raw: str) -> str:
@@ -1534,7 +3445,7 @@ def _extract_animation_code_field(raw: str) -> str:
     if key_pos == -1: return ""
     colon_pos = raw.find(':', key_pos)
     if colon_pos == -1: return ""
-    after_colon = raw[colon_pos+1:].lstrip()
+    after_colon = raw[colon_pos + 1:].lstrip()
     if not after_colon.startswith('"'): return ""
     content = after_colon[1:]
     end = _find_json_string_end(content)
@@ -1546,15 +3457,15 @@ def _parse_bare_html(raw, question):
         idx = raw.find(marker)
         if idx != -1:
             end = raw.rfind('</html>')
-            code = raw[idx: end+7] if end != -1 else raw[idx:]
+            code = raw[idx:end + 7] if end != -1 else raw[idx:]
             if len(code) > 200:
                 return {
-                    "title": f"Animation: {question[:50]}",
-                    "explanation": "Interactive animation",
+                    "title":          f"Animation: {question[:50]}",
+                    "explanation":    "Interactive animation",
                     "animation_code": code.strip(),
                     "solution_steps": [],
-                    "final_answer": "",
-                    "key_insight": "",
+                    "final_answer":   "",
+                    "key_insight":    "",
                 }
     return None
 
@@ -1583,505 +3494,20 @@ def _find_json_string_end(s: str) -> int:
     return -1
 
 def _unescape_json_string(s: str) -> str:
-    return (s.replace('\\"','"').replace('\\n','\n').replace('\\t','\t')
-             .replace('\\r','\r').replace("\\'","'").replace('\\\\','\\'))
+    return (s.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
+             .replace('\\r', '\r').replace("\\'", "'").replace('\\\\', '\\'))
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  [UPDATE 5] Real-Time Application Hook Frame Builder
-#  Generates the "Real-Time Application" intro frame HTML.
-#  Placed as the first frame/screen before any animation content.
-# ══════════════════════════════════════════════════════════════════════
-
-def _build_realtime_hook_frame(topic: str, applications: list[str]) -> str:  # [UPDATED]
-    """
-    Builds the HTML for the Real-Time Application intro frame.
-    This is injected as the very first scene/frame in the animation.
-    Dynamically uses the topic and generated real-world applications.
-    """  # [UPDATED]
-    apps_html = "".join(  # [UPDATED]
-        f'<li style="margin:8px 0; font-size:14px; color:#334155; line-height:1.6;">'  # [UPDATED]
-        f'<span style="color:#7c3aed; font-weight:700; margin-right:6px;">•</span>'  # [UPDATED]
-        f'{html_module.escape(app)}'  # [UPDATED]
-        f'</li>'  # [UPDATED]
-        for app in applications  # [UPDATED]
-    )  # [UPDATED]
-
-    return f"""
-<!-- [UPDATED] Real-Time Application Hook Frame — injected as Scene 0 -->
-<g id="scene-realtime-hook" class="qanim-scene" style="display:none;">
-  <foreignObject x="40" y="60" width="720" height="400">
-    <div xmlns="http://www.w3.org/1999/xhtml"
-         style="
-           background: linear-gradient(135deg, #ede9fe 0%, #f0f9ff 100%);
-           border: 2px solid #a78bfa;
-           border-radius: 18px;
-           padding: 28px 32px;
-           box-shadow: 0 8px 32px rgba(124,58,237,0.12);
-           font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-         ">
-      <!-- Heading -->
-      <div style="
-           font-size: 22px;
-           font-weight: 800;
-           color: #4c1d95;
-           margin-bottom: 6px;
-           letter-spacing: -0.3px;
-         ">
-        {html_module.escape(topic)} in Our Everyday Life
-      </div>
-      <!-- Subheading -->
-      <div style="
-           font-size: 13px;
-           font-weight: 700;
-           color: #7c3aed;
-           text-transform: uppercase;
-           letter-spacing: 1.5px;
-           margin-bottom: 18px;
-         ">
-        Real-Time Applications
-      </div>
-      <!-- Applications list -->
-      <ul style="list-style:none; margin:0; padding:0;">
-        {apps_html}
-      </ul>
-      <!-- Footer badge -->
-      <div style="
-           margin-top: 22px;
-           font-size: 10px;
-           font-weight: 700;
-           letter-spacing: 1.4px;
-           text-transform: uppercase;
-           color: #94a3b8;
-         ">
-        QAnim v6 · Real-World Connection
-      </div>
-    </div>
-  </foreignObject>
-</g>
-"""  # [UPDATED]
-
-
-async def _generate_realtime_applications(question: str, topic: str) -> list[str]:  # [UPDATED]
-    """
-    Uses AI to generate 2-3 real-world applications for the given topic.
-    Returns a list of application strings. Falls back gracefully on error.
-    """  # [UPDATED]
-    try:  # [UPDATED]
-        msg = client.messages.create(  # [UPDATED]
-            model=Q_MODEL,  # [UPDATED]
-            max_tokens=300,  # [UPDATED]
-            system=(  # [UPDATED]
-                "You are an educational content writer. Given a topic, list 2-3 specific, "  # [UPDATED]
-                "concrete real-world applications in everyday life. "  # [UPDATED]
-                "Return ONLY a JSON array of strings, no markdown, no extra text. "  # [UPDATED]
-                'Example: ["Automobile radiators for engine cooling.", "Heat sinks in CPU and GPU cooling."]'  # [UPDATED]
-            ),  # [UPDATED]
-            messages=[{"role": "user", "content": f"Topic: {topic}\nQuestion context: {question[:200]}"}]  # [UPDATED]
-        )  # [UPDATED]
-        raw = msg.content[0].text.strip()  # [UPDATED]
-        # Strip markdown fences if present
-        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()  # [UPDATED]
-        apps = json.loads(raw)  # [UPDATED]
-        if isinstance(apps, list):  # [UPDATED]
-            return [str(a) for a in apps[:3]]  # [UPDATED]
-    except Exception as e:  # [UPDATED]
-        QAnimLogger.warn("RealtimeHook", f"Application generation failed: {e}")  # [UPDATED]
-    return [f"Practical applications of {topic} in real-world scenarios."]  # [UPDATED]
-
-
-def inject_realtime_hook_frame(html: str, topic: str, applications: list[str]) -> str:  # [UPDATED]
-    """
-    Injects the Real-Time Application hook as the very first scene in the animation.
-    Finds the first <g id="scene-..."> group and inserts before it.
-    Also registers the scene in the navigation system.
-    """  # [UPDATED]
-    hook_html = _build_realtime_hook_frame(topic, applications)  # [UPDATED]
-
-    # Find first SVG scene group and insert before it
-    first_scene = re.search(r'<g\s+id=["\']scene-(?!realtime-hook)[^"\']*["\']', html, re.IGNORECASE)  # [UPDATED]
-    if first_scene:  # [UPDATED]
-        pos = first_scene.start()  # [UPDATED]
-        html = html[:pos] + hook_html + '\n' + html[pos:]  # [UPDATED]
-        QAnimLogger.ok("RealtimeHook", f"Hook frame injected before first scene for topic: {topic}")  # [UPDATED]
-    else:  # [UPDATED]
-        # Fallback: inject after <svg ...> opening tag
-        svg_match = re.search(r'<svg[^>]*>', html, re.IGNORECASE)  # [UPDATED]
-        if svg_match:  # [UPDATED]
-            pos = svg_match.end()  # [UPDATED]
-            html = html[:pos] + '\n' + hook_html + html[pos:]  # [UPDATED]
-            QAnimLogger.warn("RealtimeHook", "No scene groups found; injected after <svg> tag")  # [UPDATED]
-
-    # Inject JS to register the realtime hook scene and prepend it to scene navigation
-    realtime_nav_js = """
-<script>
-/* [UPDATED] Real-Time Hook Scene Registration */
-(function() {
-  function _onReady(fn) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', fn);
-    } else { setTimeout(fn, 0); }
-  }
-  _onReady(function() {
-    try {
-      // Show the hook scene on load as the first frame
-      var hookScene = document.getElementById('scene-realtime-hook');
-      if (!hookScene) return;
-
-      // Collect all existing scenes to re-sequence them
-      var allScenes = document.querySelectorAll('.qanim-scene, [id^="scene-"]');
-      var sceneArr = Array.prototype.slice.call(allScenes);
-
-      // Hide all, then show only the hook on first load
-      sceneArr.forEach(function(s) {
-        if (s.id !== 'scene-realtime-hook') {
-          s.style.display = 'none';
-        }
-      });
-      hookScene.style.display = 'block';
-      hookScene.style.opacity = '0';
-
-      // Fade in the hook scene
-      setTimeout(function() {
-        hookScene.style.transition = 'opacity 0.5s ease';
-        hookScene.style.opacity = '1';
-      }, 50);
-
-      // Override nextbtn to go from hook to scene 1 on first click
-      var nextBtn = document.getElementById('nextbtn');
-      if (!nextBtn) return;
-
-      var _originalNext = nextBtn.onclick;
-      var _hookShowing = true;
-
-      nextBtn.addEventListener('click', function(e) {
-        if (_hookShowing) {
-          e.stopImmediatePropagation();
-          _hookShowing = false;
-          // Fade out hook
-          hookScene.style.opacity = '0';
-          setTimeout(function() {
-            hookScene.style.display = 'none';
-            // Show first actual scene
-            var firstReal = null;
-            for (var i = 0; i < sceneArr.length; i++) {
-              if (sceneArr[i].id !== 'scene-realtime-hook') {
-                firstReal = sceneArr[i];
-                break;
-              }
-            }
-            if (firstReal) {
-              firstReal.style.display = 'block';
-              firstReal.style.opacity = '0';
-              setTimeout(function() {
-                firstReal.style.transition = 'opacity 0.4s ease';
-                firstReal.style.opacity = '1';
-              }, 30);
-            }
-          }, 400);
-        }
-      }, true); // capture phase to intercept first
-
-      console.log('[QAnim RealtimeHook] Hook scene registered ✓');
-    } catch(e) {
-      console.error('[QAnim RealtimeHook] Init error:', e);
-    }
-  });
-})();
-</script>
-"""  # [UPDATED]
-
-    # Inject the registration script before </body>
-    if '</body>' in html:  # [UPDATED]
-        html = html.replace('</body>', realtime_nav_js + '\n</body>', 1)  # [UPDATED]
-    else:  # [UPDATED]
-        html += '\n' + realtime_nav_js  # [UPDATED]
-
-    return html  # [UPDATED]
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  [UPDATE 4] Quiz Section Builder
-#  Generates 15 questions (3 sets × 5) related to the topic.
-#  Injected after main animation content, before or instead of last quiz.
-# ══════════════════════════════════════════════════════════════════════
-
-async def _generate_quiz_questions(question: str, topic: str) -> list[dict]:  # [UPDATED]
-    """
-    Uses AI to generate 15 quiz questions (3 sets × 5) related to the topic.
-    Returns list of {set, question, options, correct_index} dicts.
-    Never shows answers inside the animation — only questions + options.
-    Falls back to placeholder questions on error.
-    """  # [UPDATED]
-    prompt = (  # [UPDATED]
-        f"Generate exactly 15 multiple-choice quiz questions about the topic: '{topic}'.\n"  # [UPDATED]
-        f"Context question: {question[:300]}\n\n"  # [UPDATED]
-        "Rules:\n"  # [UPDATED]
-        "- 15 questions total, organized in 3 sets of 5.\n"  # [UPDATED]
-        "- Each question must have 4 options (A, B, C, D).\n"  # [UPDATED]
-        "- Include correct_index (0-3) for the correct option.\n"  # [UPDATED]
-        "- Questions must be directly related to the topic.\n"  # [UPDATED]
-        "- Vary difficulty: Set 1 = basic, Set 2 = intermediate, Set 3 = advanced.\n\n"  # [UPDATED]
-        "Return ONLY a JSON array of 15 objects, no markdown, no extra text:\n"  # [UPDATED]
-        '[{"set":1,"question":"...","options":["A)...","B)...","C)...","D)..."],"correct_index":0}, ...]'  # [UPDATED]
-    )  # [UPDATED]
-
-    try:  # [UPDATED]
-        msg = client.messages.create(  # [UPDATED]
-            model=Q_MODEL,  # [UPDATED]
-            max_tokens=3000,  # [UPDATED]
-            system=(  # [UPDATED]
-                "You are an expert quiz generator for educational animations. "  # [UPDATED]
-                "Return ONLY valid JSON arrays, no markdown, no preamble."  # [UPDATED]
-            ),  # [UPDATED]
-            messages=[{"role": "user", "content": prompt}]  # [UPDATED]
-        )  # [UPDATED]
-        raw = msg.content[0].text.strip()  # [UPDATED]
-        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()  # [UPDATED]
-        questions = json.loads(raw)  # [UPDATED]
-        if isinstance(questions, list) and len(questions) >= 10:  # [UPDATED]
-            return questions[:15]  # [UPDATED]
-    except Exception as e:  # [UPDATED]
-        QAnimLogger.warn("QuizGenerator", f"Quiz generation failed: {e}")  # [UPDATED]
-
-    # Fallback: placeholder questions
-    fallback = []  # [UPDATED]
-    for set_num in range(1, 4):  # [UPDATED]
-        for q_num in range(1, 6):  # [UPDATED]
-            fallback.append({  # [UPDATED]
-                "set": set_num,  # [UPDATED]
-                "question": f"Set {set_num} — Question {q_num}: Which of the following relates to {topic}?",  # [UPDATED]
-                "options": [  # [UPDATED]
-                    f"A) Option A about {topic}",  # [UPDATED]
-                    f"B) Option B about {topic}",  # [UPDATED]
-                    f"C) Option C about {topic}",  # [UPDATED]
-                    f"D) Option D about {topic}",  # [UPDATED]
-                ],  # [UPDATED]
-                "correct_index": 0,  # [UPDATED]
-            })  # [UPDATED]
-    return fallback  # [UPDATED]
-
-
-def _build_quiz_scene_html(quiz_questions: list[dict], topic: str) -> str:  # [UPDATED]
-    """
-    Builds the complete HTML for the 3-set, 15-question quiz section.
-    Renders only questions and options — NO answer reveal inside animation.
-    The "Next >" button remains functional for navigation between quiz sets.
-    """  # [UPDATED]
-
-    # Group by set
-    sets: dict[int, list] = {1: [], 2: [], 3: []}  # [UPDATED]
-    for q in quiz_questions:  # [UPDATED]
-        s = int(q.get("set", 1))  # [UPDATED]
-        if s in sets:  # [UPDATED]
-            sets[s].append(q)  # [UPDATED]
-
-    scenes_html = ""  # [UPDATED]
-    for set_num in range(1, 4):  # [UPDATED]
-        set_questions = sets[set_num]  # [UPDATED]
-        questions_html = ""  # [UPDATED]
-        for i, q in enumerate(set_questions):  # [UPDATED]
-            opts = q.get("options", [])  # [UPDATED]
-            opts_html = "".join(  # [UPDATED]
-                f'<div style="'  # [UPDATED]
-                f'margin:4px 0; padding:8px 14px; '  # [UPDATED]
-                f'background:#fff; border:1.5px solid #e2e8f0; border-radius:10px; '  # [UPDATED]
-                f'font-size:13px; color:#374151; cursor:pointer; '  # [UPDATED]
-                f'transition:background 0.18s, border-color 0.18s;" '  # [UPDATED]
-                f'onmouseover="this.style.background=\'#ede9fe\';this.style.borderColor=\'#7c3aed\';" '  # [UPDATED]
-                f'onmouseout="this.style.background=\'#fff\';this.style.borderColor=\'#e2e8f0\';" '  # [UPDATED]
-                f'onclick="this.style.background=\'#ddd6fe\';this.style.borderColor=\'#7c3aed\';">'  # [UPDATED]
-                f'{html_module.escape(str(opt))}'  # [UPDATED]
-                f'</div>'  # [UPDATED]
-                for opt in opts  # [UPDATED]
-            )  # [UPDATED]
-            questions_html += f"""
-  <div style="margin-bottom:18px; padding:14px 16px;
-              background:#f8fafc; border-radius:14px;
-              border:1px solid #e2e8f0;">
-    <div style="font-size:13px; font-weight:700; color:#1e293b; margin-bottom:10px; line-height:1.5;">
-      Q{i+1}. {html_module.escape(str(q.get('question', '')))}
-    </div>
-    {opts_html}
-  </div>"""  # [UPDATED]
-
-        scenes_html += f"""
-<!-- [UPDATED] Quiz Set {set_num} Scene -->
-<g id="scene-quiz-set{set_num}" class="qanim-scene" style="display:none;">
-  <foreignObject x="20" y="50" width="760" height="440">
-    <div xmlns="http://www.w3.org/1999/xhtml"
-         style="font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-                height:100%; overflow-y:auto;
-                padding:10px 12px; box-sizing:border-box;">
-      <!-- Set header -->
-      <div style="display:flex; align-items:center; justify-content:space-between;
-                  margin-bottom:16px; padding-bottom:10px;
-                  border-bottom:2px solid #ede9fe;">
-        <div>
-          <div style="font-size:11px; font-weight:700; letter-spacing:1.5px;
-                      text-transform:uppercase; color:#7c3aed; margin-bottom:2px;">
-            {topic} Quiz
-          </div>
-          <div style="font-size:18px; font-weight:800; color:#1e293b;">
-            Set {set_num} <span style="font-size:13px;color:#94a3b8;font-weight:500;">/ 3</span>
-          </div>
-        </div>
-        <div style="background:#ede9fe; border-radius:50px; padding:6px 14px;
-                    font-size:12px; font-weight:700; color:#7c3aed;">
-          5 Questions
-        </div>
-      </div>
-      <!-- Questions -->
-      {questions_html}
-    </div>
-  </foreignObject>
-</g>"""  # [UPDATED]
-
-    return scenes_html  # [UPDATED]
-
-
-def inject_quiz_section(html: str, quiz_questions: list[dict], topic: str) -> str:  # [UPDATED]
-    """
-    Injects the 3-set quiz section into the animation HTML.
-    Placed after the last main content scene, before </svg>.
-    The "Next >" button remains functional for scene navigation.
-    No answer/solution display is included.
-    """  # [UPDATED]
-    quiz_html = _build_quiz_scene_html(quiz_questions, topic)  # [UPDATED]
-
-    # Find last </g> before </svg> and inject after it
-    svg_close = html.rfind('</svg>')  # [UPDATED]
-    if svg_close != -1:  # [UPDATED]
-        html = html[:svg_close] + quiz_html + '\n' + html[svg_close:]  # [UPDATED]
-        QAnimLogger.ok("QuizInjector", f"Quiz section injected ({len(quiz_questions)} questions, 3 sets)")  # [UPDATED]
-    else:  # [UPDATED]
-        QAnimLogger.warn("QuizInjector", "No </svg> found — quiz injected before </body>")  # [UPDATED]
-        html = html.replace('</body>', quiz_html + '\n</body>', 1)  # [UPDATED]
-
-    # Inject JS to register quiz scenes in the navigation
-    quiz_nav_js = """
-<script>
-/* [UPDATED] Quiz Section Navigation Registration */
-(function() {
-  function _onReady(fn) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', fn);
-    } else { setTimeout(fn, 0); }
-  }
-  _onReady(function() {
-    try {
-      var quizScenes = [
-        document.getElementById('scene-quiz-set1'),
-        document.getElementById('scene-quiz-set2'),
-        document.getElementById('scene-quiz-set3')
-      ].filter(Boolean);
-
-      if (!quizScenes.length) return;
-
-      // Register quiz scenes with existing navigation if available
-      if (typeof window._qanimScenes !== 'undefined' && Array.isArray(window._qanimScenes)) {
-        window._qanimScenes = window._qanimScenes.concat(quizScenes);
-        console.log('[QAnim Quiz] Appended ' + quizScenes.length + ' quiz scenes to navigation');
-      } else {
-        // Store for any custom nav integration
-        window._qanimQuizScenes = quizScenes;
-        console.log('[QAnim Quiz] Quiz scenes registered: ' + quizScenes.length);
-      }
-    } catch(e) {
-      console.error('[QAnim Quiz] Registration error:', e);
-    }
-  });
-})();
-</script>
-"""  # [UPDATED]
-
-    if '</body>' in html:  # [UPDATED]
-        html = html.replace('</body>', quiz_nav_js + '\n</body>', 1)  # [UPDATED]
-    else:  # [UPDATED]
-        html += '\n' + quiz_nav_js  # [UPDATED]
-
-    return html  # [UPDATED]
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  [UPDATE 3] Remove Final Answer / Solution Display from Animation
-#  Strips any auto-reveal, frame-transition, or end-of-animation
-#  logic that would display the final answer or solution inside
-#  the animation HTML itself. The solution modal (openSolution)
-#  remains available via the "View Solution" button only.
-# ══════════════════════════════════════════════════════════════════════
-
-def remove_answer_display_from_animation(html: str) -> str:  # [UPDATED]
-    """
-    Removes all automatic final-answer / solution-reveal logic from
-    the animation HTML. This includes:
-      - Auto-triggered openSolution() calls (setTimeout, event-based)
-      - "Answer" or "Solution" slide/frame content rendered inside SVG scenes
-      - Any scene whose id suggests it's a solution/answer frame
-      - Auto-play end-of-animation solution triggers
-
-    The "View Solution" button (#solbtn) and its click handler are preserved.
-    The "Next >" (#nextbtn) button is preserved.
-    """  # [UPDATED]
-
-    # 1. Remove setTimeout-triggered openSolution() calls
-    # Pattern: setTimeout(function(){ openSolution(); }, N)
-    html = re.sub(  # [UPDATED]
-        r'setTimeout\s*\(\s*function\s*\(\s*\)\s*\{\s*(?:window\.)?openSolution\s*\(\s*\)\s*;?\s*\}\s*,\s*\d+\s*\)',  # [UPDATED]
-        '/* [UPDATED] auto-openSolution removed */',  # [UPDATED]
-        html, flags=re.IGNORECASE  # [UPDATED]
-    )  # [UPDATED]
-
-    # 2. Remove any scene group with id containing "answer" or "solution"
-    # but NOT the solution panel itself (id="sol-panel")
-    html = re.sub(  # [UPDATED]
-        r'<g[^>]+id=["\'](?!sol-panel|sol-backdrop)[^"\']*(?:answer|solution|final)[^"\']*["\'][^>]*>.*?</g>',  # [UPDATED]
-        '<!-- [UPDATED] answer/solution scene removed -->',  # [UPDATED]
-        html, flags=re.IGNORECASE | re.DOTALL  # [UPDATED]
-    )  # [UPDATED]
-
-    # 3. Remove inline auto-reveal answer text blocks
-    # Pattern: text elements with "Final Answer" or "Solution:" in SVG
-    html = re.sub(  # [UPDATED]
-        r'<text[^>]*>[^<]*(?:Final Answer|Solution:|Answer:)[^<]*</text>',  # [UPDATED]
-        '<!-- [UPDATED] answer text element removed -->',  # [UPDATED]
-        html, flags=re.IGNORECASE  # [UPDATED]
-    )  # [UPDATED]
-
-    # 4. Remove any "showAnswer", "revealAnswer", "showSolution" function calls
-    # that are NOT inside the solbtn click handler
-    html = re.sub(  # [UPDATED]
-        r'\b(?:showAnswer|revealAnswer|showSolution|displayAnswer)\s*\(\s*\)\s*;',  # [UPDATED]
-        '/* [UPDATED] answer reveal call removed */',  # [UPDATED]
-        html, flags=re.IGNORECASE  # [UPDATED]
-    )  # [UPDATED]
-
-    # 5. Remove lastScene/endScene auto-trigger patterns
-    # Pattern: if (currentScene === totalScenes) { openSolution(); }
-    html = re.sub(  # [UPDATED]
-        r'if\s*\([^)]*(?:currentScene|sceneIndex|scene)\s*[><=!]+\s*[^)]*\)\s*\{\s*'  # [UPDATED]
-        r'(?:window\.)?openSolution\s*\(\s*\)\s*;?\s*\}',  # [UPDATED]
-        '/* [UPDATED] end-of-scene openSolution removed */',  # [UPDATED]
-        html, flags=re.IGNORECASE | re.DOTALL  # [UPDATED]
-    )  # [UPDATED]
-
-    QAnimLogger.ok("AnswerRemover", "Final answer/solution display removed from animation flow")  # [UPDATED]
-    return html  # [UPDATED]
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 9 — Full Generation Pipeline  (v6 — with all 5 updates)
+#  MODULE 9 — Full Generation Pipeline  (v7.0 — Four-Stage Concurrent)
 # ══════════════════════════════════════════════════════════════════════
 
 async def _generate_concept_animation(question: str, category: str) -> str:
     """
-    STAGE 1 — Pure concept animation (no solution, no answer).
-    Returns the finished concept_animation_code HTML string,
-    or a fallback HTML on any failure.
+    STAGE 2 — Pure concept animation (no solution, no answer).
+    Injects notes system into the concept HTML.
     """
     QAnimLogger.info("ConceptPipeline", f"START  category={category}")
-
-    # [UPDATED] Apply background color update to concept system prompt
     prompt = _build_concept_prompt(question, category)
 
     try:
@@ -2095,12 +3521,12 @@ async def _generate_concept_animation(question: str, category: str) -> str:
         stop_reason = msg.stop_reason
         QAnimLogger.info("ConceptAI", f"stop_reason={stop_reason}  raw_len={len(raw)}")
         if stop_reason == "max_tokens":
-            QAnimLogger.warn("ConceptAI", "Hit max_tokens — concept response may be truncated!")
+            QAnimLogger.warn("ConceptAI", "Hit max_tokens — may be truncated!")
     except Exception as e:
         QAnimLogger.error("ConceptAI", f"API call failed: {e}")
         return RecoveryEngine.fallback_html(question, f"Concept AI error: {e}")
 
-    parsed = _parse_response(raw, question)
+    # Try parsing with concept_code key first, then animation_code
     raw_for_concept = raw.replace('"concept_code"', '"animation_code"')
     parsed_c = _parse_response(raw_for_concept, question)
     concept_html = parsed_c.get("animation_code", "").strip()
@@ -2110,17 +3536,17 @@ async def _generate_concept_animation(question: str, category: str) -> str:
             idx = raw.find(marker)
             if idx != -1:
                 end = raw.rfind('</html>')
-                concept_html = raw[idx: end + 7] if end != -1 else raw[idx:]
+                concept_html = raw[idx:end + 7] if end != -1 else raw[idx:]
                 break
 
     if not concept_html:
-        QAnimLogger.error("ConceptParser", "Could not extract concept_code from response")
-        return RecoveryEngine.fallback_html(question, "Concept parse failed — no HTML extracted")
+        QAnimLogger.error("ConceptParser", "Could not extract concept_code")
+        return RecoveryEngine.fallback_html(question, "Concept parse failed")
 
     try:
         GenerationValidator.validate(concept_html, require_svg=True)
     except ValidationError as e:
-        QAnimLogger.warn("ConceptValidator", f"Strict validation failed: {e}")
+        QAnimLogger.warn("ConceptValidator", f"Validation failed: {e}")
         if '<svg' in concept_html and len(concept_html) > 200:
             concept_html = RecoveryEngine.partial_html(question, concept_html)
             try:
@@ -2132,168 +3558,89 @@ async def _generate_concept_animation(question: str, category: str) -> str:
             return RecoveryEngine.fallback_html(question, str(e))
 
     concept_html = HtmlSanitizer.sanitize(concept_html)
-
-    # [UPDATED] Apply background color fix to concept animation
-    concept_html = _apply_background_color_fix(concept_html)
-
     concept_html = inject_infrastructure(concept_html)
+    concept_html = inject_notes_system(concept_html, question)  # ← NEW in v7
+    concept_html = inject_step_controller(concept_html)          # ← NEW: manual step safety net
 
-    QAnimLogger.ok("ConceptPipeline", f"DONE — concept_html_len={len(concept_html):,}")
+    QAnimLogger.ok("ConceptPipeline", f"DONE — len={len(concept_html):,}")
     return concept_html
-
-
-def _apply_background_color_fix(html: str) -> str:  # [UPDATED]
-    """
-    [UPDATE 1] Replaces dark/black background colors in the animation HTML
-    with a clean, light background (#F8F9FA). Targets common dark patterns
-    used in the AI-generated animations.
-    Only updates the background; all other styles remain unchanged.
-    """  # [UPDATED]
-    LIGHT_BG = "#F8F9FA"  # [UPDATED]
-
-    # Replace common dark background hex values in CSS
-    dark_patterns = [  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#0a0a1a\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#0d0d1a\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#111111\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#000000\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#0f0f0f\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#1a1a2e\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#12121f\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        (r'background(?:-color)?\s*:\s*#0e0e1a\b', f'background: {LIGHT_BG}'),  # [UPDATED]
-        # Dark linear gradients used as backgrounds on html/body
-        (r'background\s*:\s*linear-gradient\s*\(\s*(?:135deg|180deg|to\s+\w+)\s*,\s*#(?:0[0-9a-f]{5}|1[0-3][0-9a-f]{4})[^;)]*\)',
-         f'background: {LIGHT_BG}'),  # [UPDATED]
-    ]  # [UPDATED]
-
-    for pattern, replacement in dark_patterns:  # [UPDATED]
-        html = re.sub(pattern, replacement, html, flags=re.IGNORECASE)  # [UPDATED]
-
-    # Also replace SVG rect fill used as background (first large rect)
-    # Pattern: <rect width="800" height="500" fill="#0a0a1a" ...>
-    html = re.sub(  # [UPDATED]
-        r'(<rect[^>]+(?:width=["\']800["\']|width=["\']100%["\'])[^>]+fill=["\'])#(?:0[0-9a-f]{5}|1[0-3][0-9a-f]{4})(["\'])',  # [UPDATED]
-        r'\g<1>' + LIGHT_BG + r'\g<2>',  # [UPDATED]
-        html, flags=re.IGNORECASE  # [UPDATED]
-    )  # [UPDATED]
-
-    QAnimLogger.ok("BgColorFix", f"Background color updated to {LIGHT_BG}")  # [UPDATED]
-    return html  # [UPDATED]
-
-
-def _apply_question_font_size_fix(html: str) -> str:  # [UPDATED]
-    """
-    [UPDATE 2] Increases the font size of the topic/question label (#qstrip .qtext)
-    by approximately 1.5x. Targets common font-size values used in the question strip.
-    Only the font-size property is changed; family, color, weight, position are preserved.
-    """  # [UPDATED]
-    UPDATED_FONT_SIZE = "22px"  # [UPDATED]  # ~1.5x from typical 14-16px
-
-    # Target .qtext font-size in <style> blocks
-    # Common sizes: 12px, 13px, 14px, 15px, 16px → replace with 22px
-    html = re.sub(  # [UPDATED]
-        r'(\.qtext\s*\{[^}]*?)font-size\s*:\s*(?:1[0-9]px|[0-9]+(?:\.[0-9]+)?(?:px|em|rem))',  # [UPDATED]
-        r'\g<1>font-size: ' + UPDATED_FONT_SIZE,  # [UPDATED]
-        html, flags=re.IGNORECASE | re.DOTALL  # [UPDATED]
-    )  # [UPDATED]
-
-    # Also target inline font-size on #qstrip or .qtext elements
-    html = re.sub(  # [UPDATED]
-        r'(id=["\']qstrip["\'][^>]*style=["\'][^"\']*?)font-size\s*:\s*[0-9]+(?:\.[0-9]+)?(?:px|em|rem)',  # [UPDATED]
-        r'\g<1>font-size: ' + UPDATED_FONT_SIZE,  # [UPDATED]
-        html, flags=re.IGNORECASE  # [UPDATED]
-    )  # [UPDATED]
-
-    # Target SVG <text> elements that are the question display (font-size attr)
-    # Pattern: <text ... class="qtext" ... font-size="14" ...>
-    html = re.sub(  # [UPDATED]
-        r'(<text[^>]+class=["\'][^"\']*qtext[^"\']*["\'][^>]*)font-size=["\'][0-9]+(?:\.[0-9]+)?["\']',  # [UPDATED]
-        r'\g<1>font-size="22"',  # [UPDATED]  # SVG font-size attr uses unitless px
-        html, flags=re.IGNORECASE  # [UPDATED]
-    )  # [UPDATED]
-
-    QAnimLogger.ok("FontSizeFix", f"Question font size updated to {UPDATED_FONT_SIZE}")  # [UPDATED]
-    return html  # [UPDATED]
 
 
 async def generate_question_animation(question: str) -> dict:
     """
-    TWO-STAGE PIPELINE with ToFind feature + all 5 updates (v6-updated):
+    FOUR-STAGE CONCURRENT PIPELINE (v7.0):
 
-    STAGE 0 — ToFind Extraction  (synchronous, instant, no AI required)
-    STAGE 1 — Concept Animation  (concurrent with Stage 2)
-    STAGE 2 — Solution Animation  (concurrent with Stage 1)
+    Stage 0 — ToFind Extraction   (sync, no AI)
+    Stage 1 — Hook Animation      (AI: HookGenerator)      ┐
+    Stage 2 — Concept Animation   (AI: concept engine)     ├ concurrent
+    Stage 3 — Solution Animation  (AI: main engine)        │
+    Stage 4 — Quiz Generation     (AI: QuizGenerator)      ┘
 
-    Updates applied in this pipeline:
-      [UPDATE 1] Background color → #F8F9FA (light)
-      [UPDATE 2] Question font size → 22px (~1.5x)
-      [UPDATE 3] Final answer/solution auto-display removed
-      [UPDATE 4] 15-question quiz section injected (3 sets × 5)
-      [UPDATE 5] Real-Time Application hook frame injected as first frame
+    Post-processing (solution HTML only):
+      Validate → Sanitize → Inject infrastructure
+      → Inject solution → Inject ToFind → Inject notes
+      → Final validation
+
+    Returns extended result dict with all four HTML outputs.
     """
     question = (question or "").strip()
     if not question:
         raise ValueError("Question cannot be empty")
 
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START — '{short_q}'")
+    QAnimLogger.info("Pipeline", f"START v7 — '{short_q}'")
     QAnimLogger.info("Pipeline", f"Model: {Q_MODEL}  MaxTokens: {MAX_TOK}")
 
-    # ── Step 0: Extract ToFind targets ──
+    # ── Stage 0: ToFind (sync) ──────────────────────────────────────
     to_find_targets = ToFindExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind targets: {to_find_targets}")
 
-    # ── Step 1: Classify ──
+    # ── Classify ────────────────────────────────────────────────────
     category = _classify_topic(question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
-    # ── Step 2: Extract topic label for hook + quiz ──
-    topic = _extract_topic_label(question, category)  # [UPDATED]
-    QAnimLogger.info("Pipeline", f"Topic label: {topic}")  # [UPDATED]
+    # ── Build solution prompt ────────────────────────────────────────
+    solution_prompt = _build_prompt(question, category)
 
-    # ── Step 3: Build Stage-2 prompt ──
-    prompt = _build_prompt(question, category)
+    # ── Stage 1-4: Four concurrent AI calls ─────────────────────────
+    QAnimLogger.info("Pipeline", "Launching 4 concurrent AI stages…")
 
-    # ── Step 4: Run BOTH stages + real-time apps + quiz generation concurrently ──
-    QAnimLogger.info("Pipeline",
-                     "Launching Stage-1, Stage-2, real-time apps, and quiz concurrently…")  # [UPDATED]
-
-    async def _run_stage2_ai() -> str:
+    async def _run_solution_ai() -> str:
         try:
             msg = client.messages.create(
                 model=Q_MODEL,
                 max_tokens=MAX_TOK,
                 system=SYSTEM,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": solution_prompt}]
             )
-            raw         = msg.content[0].text.strip()
-            stop_reason = msg.stop_reason
-            QAnimLogger.info("Stage2AI",
-                             f"stop_reason={stop_reason}  raw_len={len(raw)}")
-            if stop_reason == "max_tokens":
-                QAnimLogger.warn("Stage2AI",
-                                 "Hit max_tokens — response may be truncated!")
+            raw = msg.content[0].text.strip()
+            QAnimLogger.info("SolutionAI",
+                             f"stop_reason={msg.stop_reason}  len={len(raw)}")
+            if msg.stop_reason == "max_tokens":
+                QAnimLogger.warn("SolutionAI", "Hit max_tokens — may be truncated!")
             return raw
         except Exception as e:
-            QAnimLogger.error("Stage2AI", f"API call failed: {e}")
+            QAnimLogger.error("SolutionAI", f"API failed: {e}")
             raise
 
     try:
-        concept_html, raw, realtime_apps, quiz_questions = await asyncio.gather(  # [UPDATED]
+        hook_html, concept_html, sol_raw, quiz_html = await asyncio.gather(
+            HookGenerator.generate(question, category),
             _generate_concept_animation(question, category),
-            _run_stage2_ai(),
-            _generate_realtime_applications(question, topic),   # [UPDATED] Update 5
-            _generate_quiz_questions(question, topic),           # [UPDATED] Update 4
+            _run_solution_ai(),
+            QuizGenerator.generate(question, category),
         )
     except Exception as e:
-        QAnimLogger.error("AI", f"Concurrent generation failed: {e}")
+        QAnimLogger.error("Pipeline", f"Concurrent generation failed: {e}")
         return _build_failure_result(question, f"API error: {e}")
 
-    # ── Step 5: Parse Stage-2 ──
-    result = _parse_response(raw, question)
+    # ── Parse solution ───────────────────────────────────────────────
+    result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v6.0-updated"  # [UPDATED]
+    result["engine_version"]         = "v8.0"
+    result["hook_animation_code"]    = hook_html      # NEW
     result["concept_animation_code"] = concept_html
+    result["quiz_html"]              = quiz_html      # NEW
     result["to_find"]                = to_find_targets
     result.setdefault("solution_steps", [])
     result.setdefault("final_answer",   "")
@@ -2301,7 +3648,7 @@ async def generate_question_animation(question: str) -> dict:
 
     html = result.get("animation_code", "")
 
-    # ── Step 6: Validate Stage-2 (strict first pass) ──
+    # ── Validate solution HTML (strict) ─────────────────────────────
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
@@ -2313,7 +3660,7 @@ async def generate_question_animation(question: str) -> dict:
                 GenerationValidator.validate(html, require_svg=True)
                 QAnimLogger.ok("Validator", "Partial recovery succeeded")
             except ValidationError as e2:
-                QAnimLogger.error("Validator", f"Recovery also failed: {e2}")
+                QAnimLogger.error("Validator", f"Recovery failed: {e2}")
                 result["animation_code"] = RecoveryEngine.fallback_html(question, str(e2))
                 result["render_status"]  = "fallback"
                 return result
@@ -2322,216 +3669,105 @@ async def generate_question_animation(question: str) -> dict:
             result["render_status"]  = "fallback"
             return result
 
-    # ── Step 7: Sanitize Stage-2 ──
+    # ── Post-processing: sanitize + inject all systems ───────────────
     html = HtmlSanitizer.sanitize(html)
-
-    # ── Step 8: [UPDATE 1] Apply background color fix ──
-    html = _apply_background_color_fix(html)  # [UPDATED]
-
-    # ── Step 9: [UPDATE 2] Apply question font size fix ──
-    html = _apply_question_font_size_fix(html)  # [UPDATED]
-
-    # ── Step 10: [UPDATE 3] Remove final answer/solution display ──
-    html = remove_answer_display_from_animation(html)  # [UPDATED]
-
-    # ── Step 11: Inject infrastructure ──
     html = inject_infrastructure(html)
-
-    # ── Step 12: Inject solution system ──
     html = inject_solution_system(
         html    = html,
         steps   = result["solution_steps"],
         answer  = result["final_answer"],
         insight = result["key_insight"],
     )
+    html = inject_to_find_system(html, to_find_targets)
+    html = inject_notes_system(html, question)   # ← NEW in v7
+    html = inject_inline_quiz(html, question, category, quiz_html)  # ← NEW v8.1: quiz embedded inline
+    html = inject_step_controller(html)          # ← NEW: manual step safety net (must be LAST)
 
-    # ── Step 13: Inject ToFind system ──
-    html = inject_to_find_system(
-        html    = html,
-        targets = to_find_targets,
-    )
+    # ── Quiz gate injection (standalone quiz_html) ───────────────────
+    quiz_html = inject_quiz_gate(quiz_html)      # ← NEW: quiz unlock gate
 
-    # ── Step 14: [UPDATE 5] Inject Real-Time Application hook as first frame ──
-    html = inject_realtime_hook_frame(html, topic, realtime_apps)  # [UPDATED]
-
-    # ── Step 15: [UPDATE 4] Inject 15-question quiz section ──
-    html = inject_quiz_section(html, quiz_questions, topic)  # [UPDATED]
-
-    # ── Step 16: Final validation ──
+    # ── Final validation ─────────────────────────────────────────────
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
-        QAnimLogger.warn("FinalValidator",
-                         f"Post-injection validation failed: {e} — continuing")
+        QAnimLogger.warn("FinalValidator", f"Post-injection validation: {e} — continuing")
 
-    result["animation_code"] = html
-    result["render_status"]  = "ok"
+    result["animation_code"]         = html
+    result["quiz_html"]              = quiz_html  # updated with gate injection
+    result["render_status"]          = "ok"
+    result["render_order"]           = ["hook_animation_code", "concept_animation_code", "animation_code", "quiz_html"]
 
     QAnimLogger.ok("Pipeline", (
-        f"DONE — title='{result['title']}' "
-        f"to_find={result['to_find']} "
-        f"concept_len={len(result['concept_animation_code']):,} "
-        f"solution_len={len(result['animation_code']):,} "
-        f"steps={len(result['solution_steps'])}"
+        f"DONE v7 — '{result['title']}' "
+        f"hook={len(hook_html):,} "
+        f"concept={len(concept_html):,} "
+        f"solution={len(html):,} "
+        f"quiz={len(quiz_html):,} "
+        f"steps={len(result['solution_steps'])} "
+        f"to_find={result['to_find']}"
     ))
     return result
-
-
-def _extract_topic_label(question: str, category: str) -> str:  # [UPDATED]
-    """
-    Extracts a concise topic label from the question for use in the
-    Real-Time Application hook and Quiz section headings.
-    Uses simple heuristics; falls back to category name.
-    """  # [UPDATED]
-    # Try to find a key noun phrase near the question start
-    q = question.strip().rstrip('?.')
-    # Remove common question prefixes
-    q = re.sub(r'^(?:find|calculate|determine|what is|how does|explain|describe|show|prove)\s+',
-               '', q, flags=re.IGNORECASE).strip()
-    # Take first 40 chars as topic label, clean up
-    topic = re.sub(r'\s+', ' ', q[:50]).strip()
-    topic = re.sub(r'\s+(?:of|in|for|with|using|given|if|when|where)\s+.+$', '', topic,
-                   flags=re.IGNORECASE).strip()
-    if len(topic) < 4:
-        topic = category.replace('_', ' ').title()
-    return topic  # [UPDATED]
 
 
 def _build_failure_result(question: str, reason: str) -> dict:
     fallback = RecoveryEngine.fallback_html(question, reason)
     return {
-        "title":                   f"Animation: {question[:50]}",
-        "explanation":             "Generation failed",
-        "animation_type":          "error",
-        "design_strategy":         "",
-        "animation_code":          fallback,
-        "concept_animation_code":  fallback,
-        "solution_steps":          [],
-        "final_answer":            "",
-        "key_insight":             "",
-        "to_find":                 [],
-        "category":                "UNKNOWN",
-        "engine_version":          "v6.0-updated",  # [UPDATED]
-        "render_status":           "error",
+        "title":                  f"Animation: {question[:50]}",
+        "explanation":            "Generation failed",
+        "animation_type":         "error",
+        "design_strategy":        "",
+        "animation_code":         fallback,
+        "hook_animation_code":    fallback,
+        "concept_animation_code": fallback,
+        "quiz_html":              fallback,
+        "solution_steps":         [],
+        "final_answer":           "",
+        "key_insight":            "",
+        "to_find":                [],
+        "category":               "UNKNOWN",
+        "engine_version":         "v8.0",
+        "render_status":          "error",
     }
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  SYNC WRAPPER
-# ══════════════════════════════════════════════════════════════════════
+# ── Sync wrapper ─────────────────────────────────────────────────────
 def generate_question_animation_sync(question: str) -> dict:
     return asyncio.run(generate_question_animation(question))
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  SYSTEM PROMPTS + PROMPT BUILDERS
+#  SYSTEM PROMPTS + PROMPT BUILDERS  (enhanced for v7.0)
 # ══════════════════════════════════════════════════════════════════════
 
-# [UPDATED] Update 1: Added light background requirement to system prompt
-SYSTEM = """You are QAnim v6 — a cinematic SVG motion designer and educational animation engineer.
+SYSTEM = """You are QAnim v7 — a cinematic SVG motion designer and educational animation engineer.
 
-YOUR MISSION: Turn any student question into a premium, self-contained SVG animation.
-The output must feel like: Khan Academy × Apple UI × motion-design studio.
+YOUR MISSION: Turn any student question into a PREMIUM, self-contained SVG animation.
+The output must feel like: Khan Academy × Apple UI × WWDC keynote × motion design studio.
 
-════════════════════════════════════════════
+═══════════════════════════════════════════════════════
+CRITICAL: DO NOT REVEAL THE ANSWER IN THE ANIMATION
+═══════════════════════════════════════════════════════
+The animation is a CONCEPTUAL VISUALIZATION LAYER only.
+- NEVER show the final numerical answer in the animation body
+- NEVER reveal complete solution steps during animation
+- ONLY teach the concept, show relationships, build intuition
+- The answer is revealed via the solution panel (auto-injected by post-processor)
+
+═══════════════════════════════════════════════════════
 OUTPUT FORMAT — STRICT (no markdown fences)
-════════════════════════════════════════════
-{
-  "animation_type": "concise type label",
-  "design_strategy": "2-4 sentences",
-  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ...", "Step 4: ..."],
-  "final_answer": "The complete, precise final answer in 1-2 sentences.",
-  "key_insight": "One memorable conceptual insight.",
-  "animation_code": "COMPLETE SELF-CONTAINED HTML FILE AS A SINGLE JSON STRING"
-}
-
-════════════════════════════════════════════
-CRITICAL SAFETY RULES FOR animation_code
-════════════════════════════════════════════
-✅ Must be valid JSON string: escape \" → \\", newline → \\n, backslash → \\\\
-✅ Contains complete <!DOCTYPE html>...</html>
-✅ Self-contained: NO external fonts, NO CDN links, NO imports
-✅ NO document.write() — it is forbidden and will be stripped
-✅ NO backtick template literals in JS
-✅ All SVG must have xmlns="http://www.w3.org/2000/svg"
-✅ All <script> tags must be balanced (same number of open and close)
-✅ All <svg> tags must be balanced
-✅ BACKGROUND: Use a LIGHT, clean background (#F8F9FA or #EFEFEF or soft white). [UPDATED]
-   Do NOT use dark backgrounds (#0a0a1a, #111, #000, etc). [UPDATED]
-   All text and elements must be clearly visible on the light background. [UPDATED]
-"""  # [UPDATED]
-
-# [UPDATED] Update 2: Increased question font size in design system
-DESIGN_SYSTEM = """
-TYPOGRAPHY: font-family: -apple-system, 'Segoe UI', Arial, sans-serif
-SVG viewBox: "0 0 800 500"
-QUESTION STRIP (.qtext): font-size MUST be 22px or larger for readability. [UPDATED]
-COLOR PALETTES: PHYSICS=#3b5bdb/#e64980, MATH=#7c3aed/#db2777,
-                BIOLOGY=#16a34a/#ca8a04, PROCESS=#059669/#0284c7,
-                ABSTRACT=#d97706/#7c3aed, MIXED=#0284c7/#7c3aed
-BACKGROUND: Always use light/off-white (#F8F9FA). Never use dark backgrounds. [UPDATED]
-"""  # [UPDATED]
-
-SVG_TECHNIQUES = """
-KEY TECHNIQUES: stroke-dashoffset path reveal, fade+rise for labels,
-spring scale-in for heroes, glow pulse for active elements,
-sequential JS setTimeout orchestration (not CSS animation-delay).
-"""
-
-STRATEGY_TEMPLATES = {
-    "VISUAL_PHYSICS": "Draw physical system with forces, motion trajectories, and equation reveal.",
-    "PROCESS_BASED":  "Show sequential nodes with traveling dot connector and progress bar.",
-    "MATHEMATICAL":   "Animate on coordinate axes with function reveal, shaded area, and formula.",
-    "BIOLOGICAL":     "Organic shapes with molecule paths, color-coded structures, cycle arrows.",
-    "ABSTRACT":       "Physical analogy (scales/dominos/tracks) mapped to the concept.",
-    "MIXED":          "Zone-divided canvas with cross-zone connector animation.",
-}
-
-# [UPDATED] Update 3: Added instruction to NOT auto-reveal solution at end
-FALLBACK_RULES = """
-If stuck: use CARD-REVEAL (3-4 gradient cards fade-rise staggered) or
-TIMELINE (horizontal line draws, events scale-in) or
-WORD-MAP (central node, branch lines draw, satellite nodes appear).
-NEVER: flat colors, static diagrams, placeholder comments.
-NEVER: auto-trigger openSolution() or show the final answer automatically. [UPDATED]
-The animation must STOP or LOOP after the last content frame. [UPDATED]
-Do NOT proceed to or render any answer/solution frame automatically. [UPDATED]
-"""  # [UPDATED]
-
-HTML_SHELL_NOTE = """
-REQUIRED HTML STRUCTURE:
-- Standard solution panel DOM: #sol-steps-container, #sol-answer-text, #sol-insight-text,
-  #sol-backdrop, #sol-panel, #sol-close, #solbtn
-- All scenes in <g id="scene-N"> groups
-- Navigation: #prevbtn, #nextbtn, #dots
-- Question display: #qstrip .qtext (font-size: 22px minimum) [UPDATED]
-DO NOT include document.write() anywhere.
-DO NOT include external script src= tags.
-DO NOT auto-trigger openSolution() at the end of the animation. [UPDATED]
-DO NOT render the final answer or solution inline in any scene. [UPDATED]
-"""  # [UPDATED]
-
-# [UPDATED] Update 1+2 applied to concept system prompt as well
-SYSTEM_CONCEPT = """You are QAnim Concept Engine — a cinematic SVG educational animator.
-
-YOUR ONLY MISSION: Create a premium, self-contained educational animation that visually
-teaches the CONCEPT behind the question. Do NOT show the answer. Do NOT reveal solution
-steps. The student should watch and understand the concept, not get the answer.
-
-Think: Apple product video meets Khan Academy meets motion design studio.
-
-════════════════════════════════════════════
-OUTPUT FORMAT — STRICT (no markdown fences)
-════════════════════════════════════════════
+═══════════════════════════════════════════════════════
 {
   "animation_type": "concise type label",
   "design_strategy": "2-4 sentences describing visual approach",
-  "concept_code": "COMPLETE SELF-CONTAINED HTML FILE AS A SINGLE JSON STRING"
+  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ...", "Step 4: ..."],
+  "final_answer": "The complete, precise final answer in 1-2 sentences.",
+  "key_insight": "One memorable conceptual insight in 1 sentence.",
+  "animation_code": "COMPLETE SELF-CONTAINED HTML FILE AS A SINGLE JSON STRING"
 }
 
-════════════════════════════════════════════
-CRITICAL SAFETY RULES FOR concept_code
-════════════════════════════════════════════
+═══════════════════════════════════════════════════════
+CRITICAL SAFETY RULES FOR animation_code
+═══════════════════════════════════════════════════════
 ✅ Must be valid JSON string: escape \\" → \\\\", newline → \\\\n, backslash → \\\\\\\\
 ✅ Contains complete <!DOCTYPE html>...</html>
 ✅ Self-contained: NO external fonts, NO CDN links, NO imports
@@ -2539,65 +3775,276 @@ CRITICAL SAFETY RULES FOR concept_code
 ✅ NO backtick template literals in JS
 ✅ All SVG must have xmlns="http://www.w3.org/2000/svg"
 ✅ All <script> and <svg> tags must be balanced
-✅ BACKGROUND: Use light, clean background (#F8F9FA). NOT dark. [UPDATED]
-✅ QUESTION FONT: .qtext font-size must be 22px or larger. [UPDATED]
+✅ Solution panel DOM must be present: #sol-backdrop, #sol-panel, #sol-close,
+   #sol-steps-container, #sol-answer-text, #sol-insight-text
+✅ Solution panel must be EMPTY (steps injected by post-processor)
+✅ Include: #prevbtn, #nextbtn, #dots for scene navigation
+✅ Include: #qstrip .qtext for question display
 
-════════════════════════════════════════════
-ANIMATION RULES — CONCEPT STAGE
-════════════════════════════════════════════
-✅ Show the concept visually: forces, particles, graphs, molecules, diagrams
-✅ Use cinematic progressive reveal with JS setTimeout orchestration
-✅ Glow effects, gradient fills, animated arrows, dynamic labels
-✅ Multi-scene with #prevbtn/#nextbtn/#dots navigation
-✅ Question strip at top: #qstrip .qtext (font-size: 22px minimum) [UPDATED]
-✅ Smooth transitions between scenes (fade + translate)
-✅ Light background (#F8F9FA) with vivid accent colors on light bg [UPDATED]
-✅ Motion hierarchy: hero element first, then supporting elements, then labels
-✅ Animated formula/variable reveals (stroke-dashoffset on text paths or opacity)
-❌ DO NOT show the numeric answer or final solution
-❌ DO NOT include any solution panel DOM elements
-❌ DO NOT include a "View Solution" button (the host UI adds this)
-❌ DO NOT use dark backgrounds (#0a0a1a, #111, etc) [UPDATED]
-"""  # [UPDATED]
+═══════════════════════════════════════════════════════
+VISUAL STANDARDS — v7.0 CINEMATIC QUALITY
+═══════════════════════════════════════════════════════
+BACKGROUND: Deep premium indigo (#1e1b4b or #312e81) — no flat gray/white
+TYPOGRAPHY: -apple-system, 'Segoe UI', Arial, sans-serif
+SVG: viewBox="0 0 800 500"
+COLOR PALETTES:
+  PHYSICS:  #3b5bdb (royal blue) + #e64980 (crimson pink)
+  MATH:     #7c3aed (electric purple) + #db2777 (hot pink)
+  BIO:      #16a34a (emerald) + #ca8a04 (amber)
+  PROCESS:  #059669 (teal) + #0284c7 (sky blue)
+  ABSTRACT: #d97706 (orange) + #7c3aed (purple)
+  MIXED:    #0284c7 (blue) + #7c3aed (purple)
 
-CONCEPT_STRATEGY_TEMPLATES = {
+ANIMATION TECHNIQUES:
+- stroke-dashoffset reveal for paths and arrows
+- fade + translateY rise-in for labels and cards
+- spring scale-in (cubic-bezier(0.34,1.56,0.64,1)) for heroes
+- Glow pulse: SVG filter + periodic opacity animation
+- Sequential JS setTimeout orchestration (NOT CSS animation-delay)
+- SVG feGaussianBlur for glow effects
+- Gradient fills on all major shapes
+- Animated dashed borders for emphasis
+- Motion trails via multiple offset copies with decreasing opacity
+
+SCENE STRUCTURE:
+- 3-5 scenes per animation
+- Each scene: establish → animate → label → pause
+- Scene groups: <g id="scene-N"> with opacity toggle
+- Smooth fade between scenes (300ms opacity transition)
+- MANUAL STEP CONTROL — CRITICAL:
+  * NO auto-advance timers between scenes — NO setInterval, NO setTimeout that calls showScene
+  * ALL navigation functions MUST be on window (not local scope):
+      window.currentStep = 0;
+      window.showScene = function(n) { ... };
+      window.animateScene0 = function() { ... };
+      window.animateScene1 = function() { ... };
+      ... (one per scene)
+      window.nextStep = function() { ... };
+      window.prevStep = function() { ... };
+  * #nextbtn onclick calls window.nextStep(); #prevbtn onclick calls window.prevStep()
+  * showScene(n) must: hide all scenes, show scene n, call animateSceneN()
+  * animateSceneN() runs that scene's internal setTimeout animations ONLY (no showScene call inside)
+  * Each scene's internal animations fire once when it becomes active
+  * Dots (#dots .dot elements) get class 'active' toggled per currentStep
+  * Scene 0 animates automatically on DOMContentLoaded via window.showScene(0)
+  * All other scenes wait for #nextbtn click"""
+
+SYSTEM_CONCEPT = """You are QAnim Concept Engine v7 — a cinematic SVG educational animator.
+
+YOUR ONLY MISSION: Create a premium, self-contained educational animation that visually
+teaches the CONCEPT behind the question. Do NOT show the answer. Do NOT reveal solution
+steps. The student should watch and understand the concept, not get the answer.
+
+Think: Apple WWDC × Khan Academy × 3Blue1Brown visual style.
+
+═══════════════════════════════════════════════════════
+OUTPUT FORMAT — STRICT (no markdown fences)
+═══════════════════════════════════════════════════════
+{
+  "animation_type": "concise type label",
+  "design_strategy": "2-4 sentences describing visual approach",
+  "concept_code": "COMPLETE SELF-CONTAINED HTML FILE AS A SINGLE JSON STRING"
+}
+
+═══════════════════════════════════════════════════════
+CRITICAL SAFETY RULES FOR concept_code
+═══════════════════════════════════════════════════════
+✅ Must be valid JSON string: escape \\" → \\\\", newline → \\\\n, backslash → \\\\\\\\
+✅ Contains complete <!DOCTYPE html>...</html>
+✅ Self-contained: NO external fonts, NO CDN links, NO imports
+✅ NO document.write() — forbidden
+✅ NO backtick template literals in JS
+✅ All SVG must have xmlns="http://www.w3.org/2000/svg"
+✅ All <script> and <svg> tags must be balanced
+✅ DO NOT include solution panel DOM elements
+✅ DO NOT include a "View Solution" button
+✅ Include: #prevbtn, #nextbtn, #dots, #qstrip .qtext
+
+═══════════════════════════════════════════════════════
+CONCEPT ANIMATION RULES — CINEMATIC QUALITY
+═══════════════════════════════════════════════════════
+✅ Deep premium indigo background (#1e1b4b or similar)
+✅ Vivid accent colors matching category palette
+✅ 3-5 scenes of progressive conceptual revelation
+✅ Scene 1: Establish visual context / "hook visual"
+✅ Scene 2-3: Animate the MECHANISM (how/why it works)
+✅ Scene 4: Key relationship visualization
+✅ Scene 5 (optional): Real-world connection visual
+✅ Motion hierarchy: hero → supporting → labels
+✅ Every label should ANIMATE IN (not appear instantly)
+✅ MANUAL STEP CONTROL — CRITICAL:
+   * NO auto-advance timers between scenes
+   * ALL navigation on window: window.showScene, window.animateSceneN, window.nextStep, window.prevStep
+   * showScene(n) hides all scenes, shows scene n, calls animateSceneN()
+   * animateSceneN() fires only internal setTimeout animations for scene n (never calls showScene)
+   * #nextbtn onclick → window.nextStep(); #prevbtn onclick → window.prevStep()
+   * Scene 0 starts on DOMContentLoaded via window.showScene(0)
+✅ Glow effects using SVG feGaussianBlur
+✅ Gradient-filled shapes, never flat colors
+✅ Animated arrows with arrowhead markers
+❌ NO final numerical answer
+❌ NO solution panel DOM elements
+❌ NO static boring diagrams"""
+
+DESIGN_SYSTEM = """
+TYPOGRAPHY: font-family: -apple-system, 'Segoe UI', Arial, sans-serif
+SVG viewBox: "0 0 800 500"
+BACKGROUNDS: #1e1b4b (deep indigo), #312e81 (rich indigo), #2e1065 (deep violet)
+COLOR PALETTES:
+  PHYSICS=#3b5bdb/#e64980 | MATH=#7c3aed/#db2777
+  BIOLOGY=#16a34a/#ca8a04 | PROCESS=#059669/#0284c7
+  ABSTRACT=#d97706/#7c3aed | MIXED=#0284c7/#7c3aed
+"""
+
+SVG_TECHNIQUES = """
+KEY TECHNIQUES:
+- stroke-dashoffset path reveal on arrows/curves
+- fade+translateY rise for labels (opacity 0→1, transform translateY(20px)→0)
+- spring scale-in: cubic-bezier(0.34,1.56,0.64,1) for hero elements
+- Glow: SVG filter feGaussianBlur + feComposite
+- Sequential JS setTimeout (NOT CSS animation-delay attributes)
+- Gradient fills: linearGradient or radialGradient for every major shape
+- Particle dots: small animated circles with staggered opacity pulses
+- Dashed animated borders: stroke-dasharray + stroke-dashoffset animation
+"""
+
+STRATEGY_TEMPLATES = {
     "VISUAL_PHYSICS": (
-        "Cinematic force diagram: animate the physical setup, draw force vectors with "
-        "glowing arrow heads, show trajectory arc, reveal formula symbols one-by-one. "
-        "End on a dramatic zoom to the key variable — do NOT solve it."
+        "Dynamic force/motion diagram: draw the physical setup with gradient shapes, "
+        "animate force vectors with glowing arrowheads, show trajectory arc with "
+        "stroke-dashoffset reveal, reveal formula symbols progressively. "
+        "Cinematic zoom effect simulation via SVG transform scale."
     ),
     "PROCESS_BASED": (
         "Sequential process nodes connected by animated traveling-dot paths. "
-        "Each stage reveals with spring scale-in, highlights the mechanism, then dims "
-        "as the next stage lights up. Progress bar at the bottom."
+        "Each node reveals with spring scale-in, highlights its mechanism, "
+        "then dims as the next activates. Progress bar draws across bottom."
     ),
     "MATHEMATICAL": (
-        "Coordinate axes draw in, function curve traces from left to right with glow trail. "
-        "Shaded region pulses. Key terms fade-rise near relevant graph features. "
-        "Formula symbols materialize one token at a time."
+        "Coordinate axes draw in with glow, function curve traces left-to-right with "
+        "gradient color trail. Shaded region pulses with opacity. Formula symbols "
+        "materialize one token at a time with staggered fade-rise."
     ),
     "BIOLOGICAL": (
-        "Organic cell/molecule shapes with soft gradient fills. Animated process arrows "
-        "trace the biological pathway. Color-coded components appear sequentially. "
-        "Labels fade-rise with gentle bounce."
+        "Organic cell/molecule shapes with gradient fills and soft glow. Animated "
+        "process arrows trace the biological pathway with stroke-dashoffset. "
+        "Color-coded structures appear sequentially with labels bouncing in."
     ),
     "ABSTRACT": (
-        "Physical analogy rendered visually: scales, spectrum bars, Venn circles, or "
-        "network graph. Concept dimensions animate as separate visual zones with "
-        "connecting bridges that pulse to show relationships."
+        "Visual metaphor rendered: scales for balance, Venn circles for overlap, "
+        "network graph for relationships. Concept dimensions animate as visual zones "
+        "with pulsing connectors showing inter-relationships."
     ),
     "MIXED": (
-        "Split-zone canvas: left zone animates the physical/biological system, right zone "
-        "shows the data/formula side. A dynamic connector bridge pulses between zones "
-        "to illustrate the relationship."
+        "Split-zone canvas with diagonal gradient divider. Left zone: physical/visual "
+        "system animation. Right zone: formula/data visualization. Center connector "
+        "pulses data between zones."
     ),
 }
+
+CONCEPT_STRATEGY_TEMPLATES = {
+    "VISUAL_PHYSICS": (
+        "Cinematic force diagram: animate setup with gradient shapes, draw glowing "
+        "force vectors, show trajectory arc via stroke-dashoffset. End on dramatic "
+        "zoom to key variable — do NOT solve it."
+    ),
+    "PROCESS_BASED": (
+        "Sequential node graph: each stage spring-scales in, highlights mechanism, "
+        "dims as next activates. Traveling dot shows flow direction."
+    ),
+    "MATHEMATICAL": (
+        "Axes draw in, function curve traces with glow trail, shaded region pulses. "
+        "Formula tokens materialize one at a time with stagger."
+    ),
+    "BIOLOGICAL": (
+        "Organic shapes with soft gradient fills. Process arrows trace pathway "
+        "via stroke-dashoffset. Sequential color-coded component reveals."
+    ),
+    "ABSTRACT": (
+        "Physical analogy: scales, spectrum bars, Venn circles. Concept zones "
+        "animate separately with pulsing bridge connectors."
+    ),
+    "MIXED": (
+        "Split canvas: physical animation left, data/formula animation right. "
+        "Central pulsing bridge connects zones."
+    ),
+}
+
+FALLBACK_RULES = """
+IF STUCK: Use one of these premium fallback layouts:
+1. CARD-REVEAL: 3-4 glassmorphism cards with gradient borders, fade+rise staggered
+2. TIMELINE: Horizontal glowing line draws, events spring-scale in at nodes
+3. CONCEPT-MAP: Central glowing node, branch lines draw, satellite nodes appear
+4. DATA-BARS: Animated bar chart with gradient fills and label reveals
+NEVER: flat colors, static text, placeholder comments, boring white backgrounds.
+"""
+
+HTML_SHELL_NOTE = """
+REQUIRED HTML STRUCTURE (solution panel DOM must exist but be EMPTY):
+- #sol-backdrop, #sol-panel (glassmorphism modal), #sol-close
+- #sol-steps-container (empty — steps injected by post-processor)
+- #sol-answer-text (empty), #sol-insight-text (empty)
+- #sol-answer-card, #sol-insight-card (wrapping divs with CSS transitions)
+- .sol-step class for step items (with 'visible' class toggle)
+- .formula class for highlighted formula spans
+- Matching CSS for .sol-step, .sol-step.visible, .formula, etc.
+- All scenes in <g id="scene-N"> groups
+- Navigation: #prevbtn, #nextbtn, #dots
+- Question: #qstrip .qtext
+
+SOLUTION PANEL CSS TO INCLUDE (copy these styles):
+#sol-backdrop { display:none; position:fixed; inset:0; z-index:900; background:rgba(30,27,75,0.85); backdrop-filter:blur(12px); }
+#sol-backdrop.open { display:flex; align-items:center; justify-content:center; }
+#sol-panel { background:linear-gradient(145deg,rgba(49,46,129,0.98),rgba(30,27,75,0.99)); border-radius:24px; padding:28px; max-width:580px; width:90vw; max-height:85vh; overflow-y:auto; border:1px solid rgba(124,58,237,0.45); box-shadow:0 40px 100px rgba(0,0,0,0.4); opacity:0; transform:scale(0.96); transition:opacity 0.3s,transform 0.3s cubic-bezier(0.34,1.56,0.64,1); }
+#sol-panel.open { opacity:1; transform:scale(1); }
+.sol-step { display:flex; gap:14px; padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.06); opacity:0; transform:translateX(-16px); transition:opacity 0.35s ease,transform 0.35s ease; }
+.sol-step.visible { opacity:1; transform:translateX(0); }
+.sol-step-num { width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,#7c3aed,#db2777); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0; }
+.sol-step-text { font-size:13px; color:#e2e8f0; line-height:1.7; }
+.formula { background:rgba(124,58,237,0.2); color:#c4b5fd; padding:1px 6px; border-radius:4px; font-family:monospace; }
+#sol-answer-card, #sol-insight-card { opacity:0; transition:opacity 0.4s ease; }
+#sol-answer-card.visible, #sol-insight-card.visible { opacity:1; }
+
+DO NOT include document.write() anywhere.
+DO NOT include external script src= tags.
+"""
+
+
+def _classify_topic(question: str) -> str:
+    """Classify question into animation category."""
+    q = question.lower()
+    scores = {
+        "BIOLOGICAL":     sum(1 for k in ["cell","dna","rna","protein","photosynthesis","mitosis","enzyme","hormone","gene","organism","bacteria","virus","chromosome","metabolism"] if k in q),
+        "MATHEMATICAL":   sum(1 for k in ["integral","derivative","matrix","vector","theorem","equation","polynomial","logarithm","trigonometry","calculus","function","graph","proof"] if k in q),
+        "ABSTRACT":       sum(1 for k in ["philosophy","ethics","democracy","capitalism","justice","freedom","psychology","consciousness","society","ideology","culture","politics"] if k in q),
+        "PROCESS_BASED":  sum(1 for k in ["how does","how do","step by step","process","algorithm","mechanism","workflow","procedure","stages","works","function","operation"] if k in q),
+        "VISUAL_PHYSICS": sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit","newton","friction","torque","field","charge","resistance"] if k in q),
+    }
+    max_score = max(scores.values())
+    if max_score >= 2:
+        top = [c for c, s in scores.items() if s == max_score]
+        return top[0] if len(top) == 1 else "MIXED"
+    if sum(1 for s in scores.values() if s > 0) >= 3:
+        return "MIXED"
+    try:
+        resp = client.messages.create(
+            model=Q_MODEL, max_tokens=30,
+            system="Reply with ONLY one of: VISUAL_PHYSICS, PROCESS_BASED, MATHEMATICAL, BIOLOGICAL, ABSTRACT, MIXED",
+            messages=[{"role": "user", "content": f"Classify: {question[:200]}"}]
+        )
+        cat = resp.content[0].text.strip().upper()
+        if cat in STRATEGY_TEMPLATES:
+            return cat
+    except Exception:
+        pass
+    return "PROCESS_BASED"
+
 
 def _build_concept_prompt(question: str, category: str) -> str:
     strategy = CONCEPT_STRATEGY_TEMPLATES.get(
         category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"]
     )
-    return f"""Build a PREMIUM CONCEPT ANIMATION for QAnim Stage 1.
+    return f"""Build a CINEMATIC CONCEPT ANIMATION for QAnim v7 Stage 2.
 
 QUESTION: {question}
 CATEGORY: {category}
@@ -2608,52 +4055,27 @@ VISUAL STRATEGY: {strategy}
 {FALLBACK_RULES}
 
 CONCEPT ANIMATION REQUIREMENTS:
-- Light background: #F8F9FA or similar clean off-white color [UPDATED]
-- Vivid accent colors matching category palette (work on light bg)
-- Multi-scene progressive reveal (3-5 scenes max)
-- Scene 1: Establish the visual context (draw the system/setup)
-- Scene 2-3: Animate the core concept mechanism (the "how/why")
-- Scene 4 (optional): Show relationships / key insight visually
+- Premium bright-dark background: #1e1b4b or #312e81 (deep indigo feel)
+- Vivid accent colors matching category palette
+- 3-5 scenes of progressive conceptual revelation
+- Scene 1: Establish the visual context (cinematic world-building)
+- Scene 2-3: Animate the core mechanism (the "how/why")
+- Scene 4: Key relationship / insight visualization
 - NO solution, NO final numeric answer
-- Question text at top in #qstrip .qtext (font-size: 22px) [UPDATED]
+- Question text at top in #qstrip .qtext
 - Navigation: #prevbtn, #nextbtn, #dots
+- Every element should animate in — no static appearances
+- Use SVG glow effects (feGaussianBlur filters) liberally
+- Gradient fills on all major shapes
 
 IMPORTANT: Return ONLY the raw JSON object. No markdown. No extra text.
-The concept_code must be a complete <!DOCTYPE html>...</html> document
-as a properly escaped JSON string.
-"""
+The concept_code field must be a complete <!DOCTYPE html>...</html>
+as a properly escaped JSON string."""
 
-
-def _classify_topic(question: str) -> str:
-    q = question.lower()
-    scores = {
-        "BIOLOGICAL":    sum(1 for k in ["cell","dna","rna","protein","photosynthesis","mitosis","enzyme","hormone","gene","organism"] if k in q),
-        "MATHEMATICAL":  sum(1 for k in ["integral","derivative","matrix","vector","theorem","equation","polynomial","logarithm","trigonometry","calculus"] if k in q),
-        "ABSTRACT":      sum(1 for k in ["philosophy","ethics","democracy","capitalism","justice","freedom","psychology","consciousness","society","ideology"] if k in q),
-        "PROCESS_BASED": sum(1 for k in ["how does","how do","step by step","process","algorithm","mechanism","workflow","procedure"] if k in q),
-        "VISUAL_PHYSICS":sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit"] if k in q),
-    }
-    max_score = max(scores.values())
-    if max_score >= 2:
-        top = [c for c,s in scores.items() if s == max_score]
-        return top[0] if len(top) == 1 else "MIXED"
-    if sum(1 for s in scores.values() if s > 0) >= 3:
-        return "MIXED"
-    try:
-        resp = client.messages.create(
-            model=Q_MODEL, max_tokens=30,
-            system="Reply with ONLY one of: VISUAL_PHYSICS, PROCESS_BASED, MATHEMATICAL, BIOLOGICAL, ABSTRACT, MIXED",
-            messages=[{"role":"user","content":f"Classify: {question[:200]}"}]
-        )
-        cat = resp.content[0].text.strip().upper()
-        if cat in STRATEGY_TEMPLATES: return cat
-    except Exception:
-        pass
-    return "PROCESS_BASED"
 
 def _build_prompt(question: str, category: str) -> str:
     strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
-    return f"""Build a PREMIUM SVG animation for QAnim v6.
+    return f"""Build a PREMIUM CINEMATIC SVG animation for QAnim v7.
 
 QUESTION: {question}
 CATEGORY: {category}
@@ -2664,14 +4086,19 @@ STRATEGY: {strategy}
 {FALLBACK_RULES}
 {HTML_SHELL_NOTE}
 
+KEY REMINDERS:
+- NEVER show the final answer during the animation body
+- NEVER reveal solution steps during animation
+- The animation teaches the CONCEPT only
+- All answers appear ONLY in the Solution Panel (injected separately)
+
 IMPORTANT: Return ONLY the raw JSON object. No markdown. No extra text.
 The animation_code must be a complete <!DOCTYPE html>...</html> document
 as a properly escaped JSON string.
 
 Solution data (steps/answer/insight) will be injected automatically by
-the post-processor. Include the solution panel DOM elements but do NOT
-hardcode solution content — just the shell HTML with empty containers.
-"""
+the post-processor. Include the solution panel DOM shell but leave all
+containers EMPTY — do NOT hardcode any solution content."""
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2697,28 +4124,33 @@ if __name__ == "__main__":
         questions_to_test = {key: TEST_QUESTIONS[key]}
 
     for cat, q in questions_to_test.items():
-        print("=" * 70)
-        print(f"  QAnim v6.0-updated (Two-Stage + ToFind + 5 Updates) — Category: {cat}")  # [UPDATED]
+        print("=" * 72)
+        print(f"  QAnim v8.0 — Interactive Step-Based Engine — Category: {cat}")
         print(f"  Q: {q[:65]}...")
-        print("=" * 70)
+        print("=" * 72)
 
-        # ── Quick offline ToFind smoke test ──
+        # Quick ToFind smoke test
         print("\n[ToFind Smoke Test]")
         targets = ToFindExtractor.extract(q)
         print(f"  Targets: {targets}")
 
         result = generate_question_animation_sync(q)
 
+        hook_html     = result.get("hook_animation_code", "")
         concept_html  = result.get("concept_animation_code", "")
         solution_html = result.get("animation_code", "")
+        quiz_html     = result.get("quiz_html", "")
 
         print(f"\nTitle               : {result['title']}")
-        print(f"Category            : {result.get('category', 'N/A')}")
-        print(f"Engine              : {result.get('engine_version', 'N/A')}")
-        print(f"Render Status       : {result.get('render_status', 'N/A')}")
-        print(f"[ToFind] Targets    : {result.get('to_find', [])}")
-        print(f"[Stage 1] Concept   : {len(concept_html):,} chars")
-        print(f"[Stage 2] Solution  : {len(solution_html):,} chars")
+        print(f"Category            : {result.get('category','N/A')}")
+        print(f"Engine              : {result.get('engine_version','N/A')}")
+        print(f"Render Status       : {result.get('render_status','N/A')}")
+        print(f"[ToFind] Targets    : {result.get('to_find',[])}")
+        print(f"[Stage 1] Hook      : {len(hook_html):,} chars")
+        print(f"[Stage 2] Concept   : {len(concept_html):,} chars")
+        print(f"[Stage 3] Solution  : {len(solution_html):,} chars")
+        print(f"[Stage 4] Quiz      : {len(quiz_html):,} chars")
+
         steps = result.get('solution_steps', [])
         print(f"Solution Steps      : {len(steps)}")
         for i, s in enumerate(steps, 1):
@@ -2726,14 +4158,28 @@ if __name__ == "__main__":
         print(f"Final Answer        : {result.get('final_answer','')[:120]}")
         print(f"Key Insight         : {result.get('key_insight','')[:100]}")
 
-        # ── Save Stage 1 — Concept Animation ──
-        concept_out = f"q_anim_v60_{cat.lower()}_concept.html"
+        slug = cat.lower()
+
+        # Save Stage 1 — Hook Animation
+        hook_out = f"q_anim_v70_{slug}_hook.html"
+        with open(hook_out, "w", encoding="utf-8") as f:
+            f.write(hook_html)
+        print(f"\n[Stage 1] Hook saved    : {hook_out}")
+
+        # Save Stage 2 — Concept Animation (with Notes)
+        concept_out = f"q_anim_v70_{slug}_concept.html"
         with open(concept_out, "w", encoding="utf-8") as f:
             f.write(concept_html)
-        print(f"\n[Stage 1] Saved     : {concept_out}")
+        print(f"[Stage 2] Concept saved : {concept_out}")
 
-        # ── Save Stage 2 — Solution Animation (with ToFind + all updates) ──
-        solution_out = f"q_anim_v60_{cat.lower()}_solution.html"
+        # Save Stage 3 — Solution Animation (with Notes + ToFind + Solution)
+        solution_out = f"q_anim_v70_{slug}_solution.html"
         with open(solution_out, "w", encoding="utf-8") as f:
             f.write(solution_html)
-        print(f"[Stage 2] Saved     : {solution_out}\n")
+        print(f"[Stage 3] Solution saved: {solution_out}")
+
+        # Save Stage 4 — Quiz
+        quiz_out = f"q_anim_v70_{slug}_quiz.html"
+        with open(quiz_out, "w", encoding="utf-8") as f:
+            f.write(quiz_html)
+        print(f"[Stage 4] Quiz saved    : {quiz_out}\n")
