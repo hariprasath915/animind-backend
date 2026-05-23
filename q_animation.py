@@ -307,6 +307,7 @@ class HtmlSanitizer:
             r'<script[^>]+src\s*=\s*["\'][^"\']*["\'][^>]*>\s*</script>',
             '', html, flags=re.IGNORECASE | re.DOTALL
         )
+        html = cls._fix_template_literals(html)      # ← ADD THIS LINE
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(
             r'<svg(?![^>]*xmlns)',
@@ -348,6 +349,32 @@ class HtmlSanitizer:
 
         pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
         return re.sub(pattern, wrap_script, html, flags=re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def _fix_template_literals(cls, html: str) -> str:
+        """Replace backtick template literals with string concatenation."""
+        def process_script(script_match: re.Match) -> str:
+            tag   = script_match.group(1)
+            body  = script_match.group(2)
+            close = script_match.group(3)
+            # Skip JSON data blocks
+            if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
+                return script_match.group(0)
+            # Replace `...${expr}...` template literals
+            def replace_template(m: re.Match) -> str:
+                content = m.group(1)
+                # Replace ${expr} with ' + expr + '
+                content = re.sub(r'\$\{([^}]+)\}', r"' + \1 + '", content)
+                # Escape any unescaped single quotes inside
+                content = content.replace("\\'", "'")
+                return "'" + content + "'"
+            fixed = re.sub(r'`((?:[^`\\]|\\.)*)`', replace_template, body)
+            if fixed != body:
+                QAnimLogger.warn("Sanitizer", "Backtick template literals detected and replaced")
+            return f"{tag}{fixed}{close}"
+
+        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
+        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3205,7 +3232,9 @@ CRITICAL SAFETY RULES FOR animation_code
 ✅ Contains complete <!DOCTYPE html>...</html>
 ✅ Self-contained: NO external fonts, NO CDN links
 ✅ NO document.write()
-✅ NO backtick template literals in JS
+✅ ABSOLUTELY NO backtick template literals — use only single/double quoted strings with + concatenation
+   WRONG:  `Hello ${name}`
+   RIGHT:  'Hello ' + name
 ✅ All SVG must have xmlns="http://www.w3.org/2000/svg"
 ✅ All <script> and <svg> tags must be balanced
 ✅ Solution panel DOM must be present: #sol-backdrop, #sol-panel, #sol-close,
