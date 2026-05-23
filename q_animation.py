@@ -3229,8 +3229,8 @@ async def generate_question_animation(question: str) -> dict:
         raise ValueError("Question cannot be empty")
 
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v9 — '{short_q}'")
-    QAnimLogger.info("Pipeline", f"Hook/Quiz: {HOOK_MODEL}  Concept/Solution: {SOLUTION_MODEL}  MaxTokens: {MAX_TOK}")
+    QAnimLogger.info("Pipeline", f"START v10 — '{short_q}'")
+    QAnimLogger.info("Pipeline", f"Quiz: {QUIZ_MODEL}  Concept/Solution: {SOLUTION_MODEL}  MaxTokens: {MAX_TOK}")
 
     # ── Stage 0: ToFind (sync) ──────────────────────────────────────
     to_find_targets = ToFindExtractor.extract(question)
@@ -3336,7 +3336,7 @@ async def generate_question_animation(question: str) -> dict:
     result["render_order"]           = ["concept_animation_code", "animation_code", "quiz_html"]
 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v9 — '{result['title']}' "
+        f"DONE v10 — '{result['title']}' "
         f"concept={len(concept_html):,} "
         f"solution={len(html):,} "
         f"quiz={len(quiz_html):,} "
