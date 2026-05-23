@@ -1,50 +1,39 @@
 """
-q_animation.py  —  QAnim Question Animation Generator  v9.0
+q_animation.py  —  QAnim Question Animation Generator  v10.0
 =============================================================
 ╔══════════════════════════════════════════════════════════════╗
-║  v9.0 — MULTI-MODEL ROUTING + TEXT HOOK + 15-Q QUIZ         ║
+║  v10.0 — LIGHT THEME + NEW QUIZ + SOLUTION + ANSWER BOX     ║
 ╠══════════════════════════════════════════════════════════════╣
-║  NEW IN v9.0 vs v8.0:                                       ║
-║  ✅ HOOK_MODEL / QUIZ_MODEL = claude-haiku-4-5  (NEW)       ║
-║  ✅ CONCEPT_MODEL / SOLUTION_MODEL = claude-sonnet-4-5      ║
-║  ✅ Text-only cinematic hook (no SVG, glassmorphism)  (NEW) ║
-║  ✅ 15 quiz questions with progressive difficulty   (NEW)   ║
-║  ✅ Retry Quiz → host postMessage regeneration     (NEW)    ║
-║  ✅ Brighter indigo theme (#2d2a6e / #3d3a91)     (NEW)    ║
-║  ✅ All v8.0 features fully preserved                       ║
+║  NEW IN v10.0:                                               ║
+║  ✅ Clean, modern, light-theme educational UI                ║
+║  ✅ Hook system REMOVED entirely                             ║
+║  ✅ New 3-set × 5-question quiz system (15 Qs total)         ║
+║  ✅ New step-by-step solution viewer (card/timeline style)   ║
+║  ✅ New Answer Box with smart validation & feedback          ║
+║  ✅ Numeric tolerance comparison (±0.01)                     ║
+║  ✅ All concept/solution animation features preserved        ║
 ╚══════════════════════════════════════════════════════════════╝
 
-PIPELINE (v9.0):
+PIPELINE (v10.0):
   Stage 0 — ToFind Extraction    (sync, no AI)
-  Stage 1 — Hook Animation       (claude-haiku-4-5)  + HookGate + StepController
-  Stage 2 — Concept Animation    (claude-sonnet-4-5) + StepController
-  Stage 3 — Solution Animation   (claude-sonnet-4-5) + StepController
-  Stage 4 — Quiz Generation      (claude-haiku-4-5)  + QuizGate + 15 questions
+  Stage 1 — Concept Animation    (claude-sonnet-4-5) + StepController
+  Stage 2 — Solution Animation   (claude-sonnet-4-5) + StepController
+  Stage 3 — Quiz Generation      (claude-haiku-4-5)  + 3 sets × 5 Qs
 
 MODEL ROUTING:
-  HOOK_MODEL     = "claude-haiku-4-5"   → Stage 1 hook generation
-  QUIZ_MODEL     = "claude-haiku-4-5"   → Stage 4 quiz generation (15 Qs)
-  CONCEPT_MODEL  = "claude-sonnet-4-5"  → Stage 2 concept SVG animation
-  SOLUTION_MODEL = "claude-sonnet-4-5"  → Stage 3 solution SVG animation
+  QUIZ_MODEL     = "claude-haiku-4-5"   → Stage 3 quiz generation (15 Qs)
+  CONCEPT_MODEL  = "claude-sonnet-4-5"  → Stage 1 concept SVG animation
+  SOLUTION_MODEL = "claude-sonnet-4-5"  → Stage 2 solution SVG animation
 
 STEP CONTROL ARCHITECTURE:
-  Hook:     5 text scenes via #nextbtn/#prevbtn → Scene 5 shows "✦ Start Learning"
   Concept:  Scene navigation via #nextbtn/#prevbtn only (no auto-advance)
   Solution: Scene navigation via #nextbtn/#prevbtn only (no auto-advance)
-  Quiz:     QuizGate → one question at a time → score screen → retry postMessage
-
-RETRY QUIZ FLOW:
-  1. Student clicks "Retry Quiz" → JS fires postMessage({type:'qanim:retryQuiz', ...})
-  2. Host receives 'qanim:retryQuiz' → calls window.QAnimOnRetryQuiz(question, category)
-  3. App layer calls QuizGenerator.generate() → fresh 15 Qs via claude-haiku-4-5
-  4. App re-injects solution HTML with new quiz data
-  5. Fallback: if no host handler, JS shuffles existing questions locally
+  Quiz:     3 sets of 5 questions displayed in separate cards
 
 RESULT DICT KEYS:
-  hook_animation_code     — text-only cinematic hook HTML (+ HookGate + StepController)
   concept_animation_code  — concept teaching animation (+ StepController + Notes)
-  animation_code          — solution animation (+ StepController + Notes + ToFind + Quiz btn)
-  quiz_html               — standalone interactive quiz HTML (15 Qs + QuizGate)
+  animation_code          — solution animation (+ StepController + Notes + ToFind)
+  quiz_html               — new 3-set quiz HTML (light theme)
   to_find                 — list of extracted target quantities
   solution_steps          — list of step strings
   final_answer            — complete answer string
@@ -58,25 +47,27 @@ import re
 import asyncio
 import html as html_module
 from typing import Optional
+import math
 
 # ── Client + model routing ──────────────────────────────────────────────
-# v9.0: Four dedicated model constants for precise cost/quality routing.
-#   Haiku 4.5  → Hook + Quiz  (fast, lightweight generative tasks)
+# v10.0: Three dedicated model constants for precise cost/quality routing.
+#   Haiku 4.5  → Quiz  (fast, lightweight generative tasks)
 #   Sonnet 4.5 → Concept + Solution animations (complex, high-quality SVG)
 client        = anthropic.Anthropic()
 
 # ── Per-stage model constants ───────────────────────────────────────────
-HOOK_MODEL     = "claude-haiku-4-5"        # Stage 1 — cinematic hook text
-QUIZ_MODEL     = "claude-haiku-4-5"        # Stage 4 — quiz generation (15 Qs)
-CONCEPT_MODEL  = "claude-sonnet-4-5"       # Stage 2 — concept SVG animation
-SOLUTION_MODEL = "claude-sonnet-4-5"       # Stage 3 — solution SVG animation
+QUIZ_MODEL     = "claude-haiku-4-5"        # Stage 3 — quiz generation (15 Qs)
+CONCEPT_MODEL  = "claude-sonnet-4-5"       # Stage 1 — concept SVG animation
+SOLUTION_MODEL = "claude-sonnet-4-5"       # Stage 2 — solution SVG animation
 
 # Legacy alias kept for _classify_topic() which uses a tiny AI call
 Q_MODEL        = SOLUTION_MODEL
 
+# ── Answer validation tolerance ─────────────────────────────────────────
+ANSWER_TOLERANCE = 0.01  # ±0.01 for numeric comparison
+
 MAX_TOK       = 16000
 MAX_TOK_CONCEPT = 12000
-MAX_TOK_HOOK  = 10000
 MAX_TOK_QUIZ  = 16000
 
 
@@ -87,7 +78,7 @@ MAX_TOK_QUIZ  = 16000
 class QAnimLogger:
     """Centralized logger. All lifecycle events go through here."""
 
-    PREFIX = "[QAnim v9]"
+    PREFIX = "[QAnim v10]"
 
     @classmethod
     def info(cls, stage: str, msg: str):
@@ -397,30 +388,29 @@ class RecoveryEngine:
   *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
   html, body {{
     width:100%; height:100%; overflow:hidden;
-    background:linear-gradient(135deg,#2d2a6e,#3d3a91,#2a2760);
-    font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+    background:#f8fafc;
+    font-family:'Segoe UI',-apple-system,Arial,sans-serif;
     display:flex; align-items:center; justify-content:center;
   }}
   .card {{
-    background:rgba(255,255,255,0.08);
-    border:1px solid rgba(139,92,246,0.45);
-    border-radius:20px;
-    box-shadow:0 20px 60px rgba(0,0,0,0.30),0 0 0 1px rgba(139,92,246,0.12);
+    background:#ffffff;
+    border:1px solid #e2e8f0;
+    border-radius:16px;
+    box-shadow:0 4px 24px rgba(0,0,0,0.06);
     padding:36px 40px; max-width:520px; text-align:center;
-    backdrop-filter:blur(20px);
   }}
   .icon {{ font-size:40px; margin-bottom:16px; }}
-  .title {{ font-size:17px; font-weight:800; color:#f1f5f9; margin-bottom:10px; }}
+  .title {{ font-size:17px; font-weight:700; color:#1e293b; margin-bottom:10px; }}
   .reason {{
-    font-size:11px; color:#94a3b8; background:rgba(255,255,255,0.05);
+    font-size:11px; color:#64748b; background:#f1f5f9;
     border-radius:10px; padding:10px 14px; margin:12px 0;
-    border:1px solid rgba(255,255,255,0.09); text-align:left;
+    border:1px solid #e2e8f0; text-align:left;
     line-height:1.6; font-family:monospace;
   }}
-  .question {{ font-size:12px; color:#64748b; line-height:1.6; margin-top:10px; font-style:italic; }}
+  .question {{ font-size:12px; color:#94a3b8; line-height:1.6; margin-top:10px; font-style:italic; }}
   .retry-hint {{
     margin-top:18px; font-size:11px; font-weight:700;
-    letter-spacing:1.5px; text-transform:uppercase; color:#a78bfa;
+    letter-spacing:1.5px; text-transform:uppercase; color:#6366f1;
   }}
 </style>
 </head>
@@ -447,11 +437,11 @@ class RecoveryEngine:
 <style>
   html,body{{margin:0;padding:0;width:100%;height:100%;
     display:flex;align-items:center;justify-content:center;
-    background:linear-gradient(135deg,#2d2a6e,#3d3a91);font-family:-apple-system,sans-serif}}
+    background:#f8fafc;font-family:'Segoe UI',-apple-system,sans-serif}}
 </style>
 </head>
 <body>
-<div style="font-size:11px;color:#6d5fac;position:fixed;top:8px;left:0;right:0;text-align:center">
+<div style="font-size:11px;color:#64748b;position:fixed;top:8px;left:0;right:0;text-align:center">
   {q_safe}
 </div>
 {animation_code}
@@ -598,29 +588,14 @@ IFRAME_RUNTIME_JS = r"""
     isRendering: function() { return _rendering; }
   };
 
-  /* Hook->Concept transition bridge via postMessage */
+  /* postMessage bridge for cross-frame communication */
   window.addEventListener('message', function(e) {
-    if (e.data && e.data.type === 'qanim:hookComplete') {
-      Log.ok('Received hookComplete signal');
-      if (typeof window.QAnimOnHookComplete === 'function') {
-        window.QAnimOnHookComplete();
-      } else {
-        Log.warn('QAnimOnHookComplete not defined on host');
-      }
-    }
-
-    /* ── CHANGE 4: Quiz retry regeneration bridge ──────────────────
-       The inline quiz iframe fires 'qanim:retryQuiz' when the student
-       clicks "Retry Quiz". The host is responsible for calling
-       window.QAnimOnRetryQuiz(question, category) — which the
-       application layer must implement to call QuizGenerator.generate()
-       and re-inject a fresh solution HTML with new quiz data.          */
     if (e.data && e.data.type === 'qanim:retryQuiz') {
-      Log.ok('Received retryQuiz signal — question=' + (e.data.question || '').slice(0, 60));
+      Log.ok('Received retryQuiz signal');
       if (typeof window.QAnimOnRetryQuiz === 'function') {
         window.QAnimOnRetryQuiz(e.data.question || '', e.data.category || '');
       } else {
-        Log.warn('QAnimOnRetryQuiz not defined on host — retry ignored');
+        Log.warn('QAnimOnRetryQuiz not defined on host');
       }
     }
   });
@@ -638,26 +613,26 @@ ERROR_BOUNDARY_HTML = """
 <!-- QAnim Error Fallback — hidden unless needed -->
 <div id="qanim-error-fallback" style="
   display:none; position:fixed; inset:0; z-index:9999;
-  background:rgba(45,42,110,0.92); backdrop-filter:blur(12px);
+  background:rgba(248,250,252,0.95); backdrop-filter:blur(12px);
   align-items:center; justify-content:center;
 ">
   <div style="
-    background:rgba(61,58,145,0.97); border-radius:20px; padding:32px 36px;
+    background:#ffffff; border-radius:16px; padding:32px 36px;
     max-width:440px; text-align:center;
-    border:1px solid rgba(139,92,246,0.45);
-    box-shadow:0 40px 100px rgba(0,0,0,0.36);
+    border:1px solid #e2e8f0;
+    box-shadow:0 8px 32px rgba(0,0,0,0.08);
   ">
     <div style="font-size:36px;margin-bottom:14px">⚠️</div>
-    <div style="font-size:15px;font-weight:800;color:#f1f5f9;margin-bottom:8px">Animation Error</div>
+    <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:8px">Animation Error</div>
     <div class="qanim-err-msg" style="
-      font-size:11px;color:#94a3b8;background:rgba(255,255,255,0.04);
+      font-size:11px;color:#64748b;background:#f1f5f9;
       border-radius:10px;padding:10px 14px;margin:12px 0;
-      border:1px solid rgba(255,255,255,0.08);font-family:monospace;
+      border:1px solid #e2e8f0;font-family:monospace;
       text-align:left;line-height:1.6;word-break:break-all;
     ">Unknown error</div>
     <button onclick="document.getElementById('qanim-error-fallback').style.display='none'"
       style="margin-top:14px;padding:8px 22px;border-radius:50px;border:none;
-        background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;
+        background:#6366f1;color:#fff;
         font-weight:700;font-size:12px;cursor:pointer;">Dismiss</button>
   </div>
 </div>
@@ -2233,630 +2208,19 @@ try {{
 </html>"""
 
 
+
 # ══════════════════════════════════════════════════════════════════════
-#  MODULE 7.7 — Hook Generator  (NEW in v7.0)
-#  Cinematic curiosity-driven hook animation. No answers revealed.
-#  Uses storytelling, real-world scenarios, dramatic reveals.
+#  MODULE 7.7 — REMOVED (Hook Generator was here in v9.0)
+#  Hook system completely removed in v10.0 per requirements.
 # ══════════════════════════════════════════════════════════════════════
 
-HOOK_SYSTEM_PROMPT = """You are QAnim Cinematic Hook Engine v9 — a premium educational storytelling designer.
-
-YOUR MISSION: Create a stunning text-only cinematic hook experience that:
-1. Opens with a dramatic real-world scenario related to the question
-2. Builds suspense and emotional investment through typography
-3. Poses the "Why does this happen?" question with beautiful formatting
-4. Creates a strong "I need to know the answer" feeling
-5. Ends with an elegant "Start Learning" invitation
-
-CRITICAL: NO SVG animations. NO moving objects. NO animation-heavy rendering.
-Instead: Beautiful typography, cinematic fade-in transitions, glassmorphism UI.
-
-THE HOOK MUST:
-- Feel like a Netflix title card / Apple product page
-- Use dramatic large typography with gradient text
-- Use CSS fade-in / slide-up transitions ONLY (no SVG, no canvas)
-- Reference a real-world application or story
-- Create emotional resonance through words, not graphics
-- End on a cliffhanger / open question leading to "Start Learning"
-
-VISUAL STYLE:
-- Background: slightly brighter indigo gradient (#2d2a6e → #3d3a91 → #2a2760)
-- Glassmorphism cards with soft violet glow borders
-- Large bold headline with purple→pink gradient text
-- Short suspenseful educational storytelling paragraphs
-- Minimal motion: smooth CSS fade-in only (opacity + translateY)
-- Scene structure: 4-5 text scenes, each fades in cleanly
-- Typography: -apple-system, 'Segoe UI', sans-serif; weights 300/400/700/900
-
-SCENE NARRATIVE STRUCTURE:
-Scene 1 — WORLD: One dramatic real-world sentence. Big. Bold.
-Scene 2 — INCIDENT: A surprising fact or paradox. Smaller, elegant.
-Scene 3 — MYSTERY: The "why?" question posed with tension.
-Scene 4 — STAKES: What mastering this unlocks.
-Scene 5 — INVITATION: "✦ Start Learning" gateway screen.
-
-OUTPUT FORMAT — STRICT:
-Return ONLY a complete <!DOCTYPE html>...</html> document.
-No JSON. No markdown. No preamble. Just the raw HTML.
-
-TECHNICAL RULES:
-✅ Self-contained: NO external fonts, NO CDN links
-✅ NO SVG elements (except tiny inline icons if needed)
-✅ NO document.write() anywhere
-✅ NO backtick template literals
-✅ All <script> and <style> tags must be balanced
-✅ Include: #prevbtn, #nextbtn, #dots for scene navigation
-✅ Include: #qstrip .qtext for question display at top
-✅ Progress: MANUAL user navigation only — NO auto-advance
-✅ HOOK GATE — Scene 5 (final) must show "✦ Start Learning" button:
-   - id="hook-start-btn"
-   - Large gradient pill, glowing purple/pink, centered, pulse animation
-   - onclick: if(window.onHookComplete) window.onHookComplete();
-✅ Background: linear-gradient(135deg, #2d2a6e 0%, #3d3a91 40%, #2a2760 100%)
-✅ Each scene: glassmorphism card, centered, max-width 680px, fade-in on activation"""
-
-HOOK_PROMPT_TEMPLATE = """Create a CINEMATIC TEXT-ONLY HOOK for this question.
-
-QUESTION: {question}
-CATEGORY: {category}
-
-HOOK NARRATIVE — 5 SCENES (text-only, glassmorphism cards, fade-in CSS only):
-
-Scene 1 — WORLD (Big dramatic statement):
-  A single jaw-dropping real-world sentence about the topic. Large font. Bold gradient text.
-  Example feel: "Every second, 3 billion CPU transistors switch on and off."
-
-Scene 2 — INCIDENT (Surprising fact or paradox):
-  Something unexpected. Creates cognitive dissonance. Smaller elegant typography.
-  Subheadline + 1-2 sentence story.
-
-Scene 3 — MYSTERY (The "Why?" tension):
-  Pose the core question dramatically. Use suspense pacing.
-  "But why does this happen?" style. Add a glowing question mark visual.
-
-Scene 4 — STAKES (What this unlocks):
-  Show the real-world power of understanding this concept.
-  Engineers / scientists / professionals who rely on this.
-
-Scene 5 — INVITATION:
-  "Let's find out together."
-  Large "✦ Start Learning" button (id="hook-start-btn").
-
-CATEGORY-SPECIFIC STORYTELLING for "{category}":
-- VISUAL_PHYSICS: Lead with a dramatic physical event (crash, orbit, explosion)
-- MATHEMATICAL: Lead with a surprising number or pattern that defies intuition
-- PROCESS_BASED: Lead with what happens when the process fails catastrophically
-- BIOLOGICAL: Lead with the microscopic world being more dramatic than imagined
-- ABSTRACT: Lead with a historical moment where this concept changed society
-- MIXED: Lead with the human vs. machine scale contrast
-
-DESIGN REQUIREMENTS:
-- Background: linear-gradient(135deg, #2d2a6e 0%, #3d3a91 40%, #2a2760 100%)
-- Each scene: centered glassmorphism card (backdrop-filter:blur(20px), rgba white bg)
-- Scene headline: 2.8rem–3.6rem, font-weight:900, gradient text (purple→pink)
-- Body text: 1.05rem, color:#c4b5fd or #e2e8f0, line-height:1.8
-- Glow accent lines: thin horizontal rules with purple gradient
-- Navigation: small pill buttons #prevbtn / #nextbtn + dot indicators #dots
-- Scene transitions: CSS opacity 0→1 + translateY(24px)→0, 0.6s ease
-- NO SVG (except tiny inline icon if needed), NO canvas, NO heavy animation
-
-MANUAL STEP CONTROL — CRITICAL:
-- Remove ALL auto-advance timers between scenes
-- User clicks #nextbtn to advance; #prevbtn to go back
-- Each scene fades in automatically when it becomes active (CSS transition)
-- Scene 5 shows "✦ Start Learning" button: onclick calls window.onHookComplete if defined
-
-IMPORTANT: Return ONLY the raw <!DOCTYPE html>...</html>. Nothing else."""
-
-
-class HookGenerator:
-    """
-    Cinematic hook animation generator. Creates a curiosity-driven,
-    emotionally engaging intro animation before the teaching begins.
-    Never reveals the answer. Never raises — returns fallback on failure.
-    """
-
-    @classmethod
-    async def generate(cls, question: str, category: str) -> str:
-        """Generate a cinematic hook animation HTML document."""
-        QAnimLogger.info("HookGen", f"Generating hook for category={category}")
-
-        prompt = HOOK_PROMPT_TEMPLATE.format(
-            question=question[:400],
-            category=category
-        )
-
-        try:
-            # HOOK_MODEL = claude-haiku-4.5 — fast and sufficient for text hook
-            msg = client.messages.create(
-                model=HOOK_MODEL,
-                max_tokens=MAX_TOK_HOOK,
-                system=HOOK_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw = msg.content[0].text.strip()
-            QAnimLogger.info("HookGen", f"model={HOOK_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
-
-            # Extract HTML
-            hook_html = cls._extract_html(raw)
-            if not hook_html:
-                QAnimLogger.warn("HookGen", "No HTML extracted — using fallback")
-                return cls._fallback_hook(question, category)
-
-            # Validate — text-only hook: SVG is NOT required (Change 2: text-only redesign)
-            try:
-                GenerationValidator.validate(hook_html, require_svg=False)
-            except ValidationError as e:
-                QAnimLogger.warn("HookGen", f"Validation: {e}")
-                if '<html' in hook_html and len(hook_html) > 500:
-                    hook_html = RecoveryEngine.partial_html(question, hook_html)
-                else:
-                    return cls._fallback_hook(question, category)
-
-            hook_html = HtmlSanitizer.sanitize(hook_html)
-            hook_html = inject_infrastructure(hook_html)
-            hook_html = inject_notes_system(hook_html, question)
-            hook_html = inject_hook_gate(hook_html)        # ← NEW: Start Learning gate
-            hook_html = inject_step_controller(hook_html)  # ← NEW: manual step safety net
-
-            QAnimLogger.ok("HookGen", f"Hook generated ({len(hook_html):,} chars)")
-            return hook_html
-
-        except Exception as e:
-            QAnimLogger.error("HookGen", f"Error: {e}")
-            return cls._fallback_hook(question, category)
-
-    @classmethod
-    def _extract_html(cls, raw: str) -> str:
-        """Extract HTML document from AI response."""
-        # Strip JSON wrapping if present
-        for marker in ['<!DOCTYPE html>', '<!doctype html>', '<html']:
-            idx = raw.lower().find(marker.lower())
-            if idx != -1:
-                end = raw.rfind('</html>')
-                if end != -1:
-                    return raw[idx:end + 7]
-                return raw[idx:]
-        stripped = re.sub(r'^```(?:html)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
-        if stripped.lower().startswith('<'):
-            return stripped
-        return ""
-
-    @classmethod
-    def _fallback_hook(cls, question: str, category: str) -> str:
-        """
-        Text-only cinematic fallback hook — 5 scenes, glassmorphism cards,
-        fade-in transitions only. No SVG required. (v9.0 redesign)
-        """
-        q_safe   = html_module.escape(question[:160])
-        cat_safe = html_module.escape(category)
-
-        # Category-specific headlines and story beats
-        cat_data = {
-            "VISUAL_PHYSICS": {
-                "emoji": "⚡",
-                "headline": "The Universe Runs on Forces You Can't See",
-                "scene2_title": "Something Unexpected Happens",
-                "scene2_body": "At the exact moment forces balance — motion stops. Or does it? Physics hides its deepest secrets in plain sight, waiting for the right question to unlock them.",
-                "scene3_question": "Why does this system behave the way it does?",
-                "scene4_stakes": "Engineers design bridges, rockets, and microchips by mastering exactly this principle. One equation governs it all.",
-            },
-            "MATHEMATICAL": {
-                "emoji": "∞",
-                "headline": "The Pattern Was There All Along",
-                "scene2_title": "Numbers Reveal Hidden Structure",
-                "scene2_body": "Mathematics isn't invented — it's discovered. The relationship you're about to uncover has existed since the universe began. Mathematicians just learned to see it.",
-                "scene3_question": "What elegant principle connects these quantities?",
-                "scene4_stakes": "From cryptography to AI, from architecture to music — this mathematical relationship shapes everything modern civilization is built on.",
-            },
-            "PROCESS_BASED": {
-                "emoji": "⚙️",
-                "headline": "Every Machine Has a Secret Heartbeat",
-                "scene2_title": "When the Process Fails",
-                "scene2_body": "In 1986, a misunderstood process led to catastrophic failure. The engineers knew the components — but not how they worked together. Understanding process isn't optional.",
-                "scene3_question": "How does this system actually function step by step?",
-                "scene4_stakes": "The engineers, developers, and scientists who truly understand how systems work are the ones who build the future.",
-            },
-            "BIOLOGICAL": {
-                "emoji": "🧬",
-                "headline": "Inside You, a War Is Being Won Right Now",
-                "scene2_title": "The Microscopic World Is Stranger Than Fiction",
-                "scene2_body": "At this very moment, billions of molecular machines in your body are performing operations more complex than any computer — guided by principles discovered only in the last century.",
-                "scene3_question": "How does this biological process actually work?",
-                "scene4_stakes": "Every medical breakthrough — every vaccine, every targeted therapy — was built on understanding exactly this type of biological mechanism.",
-            },
-            "ABSTRACT": {
-                "emoji": "🌍",
-                "headline": "Ideas Have Shaped Civilizations",
-                "scene2_title": "When Concepts Collide",
-                "scene2_body": "The tension between these ideas has started revolutions, toppled governments, and redefined what it means to live in a society. Understanding the distinction matters more now than ever.",
-                "scene3_question": "What truly separates these concepts at their core?",
-                "scene4_stakes": "Political scientists, philosophers, and citizens who clearly understand this distinction make better decisions — and build more just societies.",
-            },
-            "MIXED": {
-                "emoji": "🔬",
-                "headline": "Where Human Meets Machine",
-                "scene2_title": "Two Scales, One Answer",
-                "scene2_body": "The phenomenon looks completely different depending on whether you view it from human scale or machine scale. Yet both perspectives are governed by the same underlying principle.",
-                "scene3_question": "What single principle unifies these perspectives?",
-                "scene4_stakes": "The innovators who master cross-domain thinking — connecting the physical and the theoretical — are the ones building tomorrow's breakthroughs.",
-            },
-        }
-        d = cat_data.get(category, cat_data["MIXED"])
-
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QAnim Hook — {cat_safe}</title>
-<style>
-/* ═══════════════════════════════════════════════════════
-   QAnim v9 Cinematic Text Hook — Text-Only Premium Design
-   ═══════════════════════════════════════════════════════ */
-*, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
-
-html, body {{
-  width:100%; height:100%;
-  background: linear-gradient(135deg, #2d2a6e 0%, #3d3a91 40%, #2a2760 100%);
-  font-family: -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-  overflow: hidden;
-  color: #e2e8f0;
-}}
-
-/* ── Question strip ── */
-#qstrip {{
-  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-  background: rgba(15, 12, 50, 0.80);
-  backdrop-filter: blur(16px);
-  padding: 10px 24px;
-  border-bottom: 1px solid rgba(139, 92, 246, 0.25);
-}}
-.qtext {{
-  font-size: 11.5px; color: #7c6fac; text-align: center;
-  line-height: 1.5; max-width: 700px; margin: 0 auto;
-  font-weight: 400; letter-spacing: 0.2px;
-}}
-
-/* ── Scene wrapper ── */
-#scenes-container {{
-  position: fixed; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  padding: 60px 20px 80px;
-}}
-
-/* ── Individual scene ── */
-.hook-scene {{
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  padding: 60px 20px 80px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.65s ease, transform 0.65s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  transform: translateY(18px);
-}}
-.hook-scene.active {{
-  opacity: 1; pointer-events: auto; transform: translateY(0);
-}}
-
-/* ── Glassmorphism card ── */
-.hook-card {{
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(139, 92, 246, 0.30);
-  border-radius: 28px;
-  padding: 44px 48px;
-  max-width: 640px;
-  width: 100%;
-  text-align: center;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  box-shadow:
-    0 0 0 1px rgba(139,92,246,0.12),
-    0 32px 80px rgba(0,0,0,0.38),
-    0 8px 32px rgba(109,40,217,0.20);
-  position: relative;
-  overflow: hidden;
-}}
-.hook-card::before {{
-  content: '';
-  position: absolute; top: 0; left: 15%; right: 15%; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(167,139,250,0.6), transparent);
-}}
-
-/* ── Scene number badge ── */
-.scene-badge {{
-  display: inline-block;
-  font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
-  text-transform: uppercase; color: #7c3aed;
-  background: rgba(124,58,237,0.12);
-  border: 1px solid rgba(124,58,237,0.28);
-  border-radius: 50px; padding: 4px 14px;
-  margin-bottom: 22px;
-}}
-
-/* ── Emoji ── */
-.hook-emoji {{
-  font-size: 52px; display: block; margin-bottom: 20px;
-  filter: drop-shadow(0 4px 16px rgba(124,58,237,0.45));
-  animation: floatEmoji 4s ease-in-out infinite;
-}}
-@keyframes floatEmoji {{
-  0%,100% {{ transform: translateY(0); }}
-  50%      {{ transform: translateY(-8px); }}
-}}
-
-/* ── Headlines ── */
-.hook-headline {{
-  font-size: clamp(1.7rem, 4vw, 2.6rem);
-  font-weight: 900;
-  line-height: 1.18;
-  letter-spacing: -0.5px;
-  margin-bottom: 18px;
-  background: linear-gradient(135deg, #c4b5fd 0%, #a78bfa 40%, #ec4899 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}}
-
-/* ── Scene title (smaller) ── */
-.hook-scene-title {{
-  font-size: 1.05rem; font-weight: 700;
-  color: #a78bfa; margin-bottom: 14px;
-  letter-spacing: 0.3px;
-}}
-
-/* ── Body text ── */
-.hook-body {{
-  font-size: 1rem; line-height: 1.82;
-  color: #c4b5fd; font-weight: 300;
-  max-width: 520px; margin: 0 auto;
-}}
-.hook-body strong {{ color: #e9d5ff; font-weight: 700; }}
-
-/* ── Question highlight ── */
-.hook-question {{
-  font-size: 1.15rem; font-weight: 700; font-style: italic;
-  color: #f0abfc; margin: 16px 0;
-  padding: 14px 20px;
-  border-left: 3px solid rgba(216,180,254,0.5);
-  text-align: left;
-  background: rgba(124,58,237,0.10);
-  border-radius: 0 12px 12px 0;
-}}
-
-/* ── Glow divider ── */
-.hook-divider {{
-  width: 60px; height: 2px;
-  background: linear-gradient(90deg, #7c3aed, #ec4899);
-  border-radius: 2px; margin: 20px auto;
-  box-shadow: 0 0 12px rgba(124,58,237,0.6);
-}}
-
-/* ── Start Learning button (Scene 5) ── */
-#hook-start-btn {{
-  display: inline-flex; align-items: center; gap: 10px;
-  margin-top: 28px;
-  padding: 16px 44px; border-radius: 50px; border: none; cursor: pointer;
-  background: linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #ec4899 100%);
-  color: #fff; font-size: 1rem; font-weight: 800; letter-spacing: 0.5px;
-  font-family: inherit;
-  box-shadow: 0 0 40px rgba(124,58,237,0.55), 0 8px 32px rgba(0,0,0,0.35);
-  animation: pulseCta 2.2s ease-in-out infinite;
-  transition: transform 0.2s, box-shadow 0.2s;
-  position: relative; z-index: 10;
-}}
-#hook-start-btn:hover {{
-  transform: scale(1.05) translateY(-2px);
-  box-shadow: 0 0 60px rgba(124,58,237,0.75), 0 12px 40px rgba(0,0,0,0.4);
-}}
-@keyframes pulseCta {{
-  0%,100% {{ box-shadow: 0 0 40px rgba(124,58,237,0.55), 0 8px 32px rgba(0,0,0,0.35); }}
-  50%      {{ box-shadow: 0 0 65px rgba(236,72,153,0.65), 0 8px 32px rgba(0,0,0,0.35); }}
-}}
-
-/* ── Navigation bar ── */
-#hook-nav {{
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
-  display: flex; align-items: center; justify-content: center; gap: 20px;
-  padding: 14px 24px 18px;
-  background: rgba(15,12,50,0.70);
-  backdrop-filter: blur(14px);
-  border-top: 1px solid rgba(139,92,246,0.18);
-}}
-#prevbtn, #nextbtn {{
-  display: flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; border-radius: 50%;
-  border: 1.5px solid rgba(139,92,246,0.40);
-  background: rgba(124,58,237,0.14);
-  color: #a78bfa; font-size: 16px; cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, transform 0.15s;
-  font-family: inherit;
-}}
-#prevbtn:hover:not(:disabled), #nextbtn:hover:not(:disabled) {{
-  background: rgba(124,58,237,0.28); border-color: rgba(139,92,246,0.70);
-  transform: scale(1.1);
-}}
-#prevbtn:disabled, #nextbtn:disabled {{ opacity: 0.28; cursor: not-allowed; }}
-#dots {{
-  display: flex; gap: 8px; align-items: center;
-}}
-.dot {{
-  width: 8px; height: 8px; border-radius: 50%;
-  background: rgba(139,92,246,0.30);
-  transition: background 0.3s, transform 0.3s;
-  cursor: pointer;
-}}
-.dot.active {{
-  background: #a78bfa; transform: scale(1.35);
-  box-shadow: 0 0 8px rgba(167,139,250,0.7);
-}}
-
-/* ── Ambient glow orbs (CSS only, no SVG) ── */
-.glow-orb {{
-  position: fixed; border-radius: 50%; pointer-events: none; z-index: 0;
-  animation: orbPulse 6s ease-in-out infinite;
-}}
-.glow-orb-1 {{
-  width: 340px; height: 340px; top: -80px; left: -80px;
-  background: radial-gradient(circle, rgba(124,58,237,0.18) 0%, transparent 70%);
-  animation-delay: 0s;
-}}
-.glow-orb-2 {{
-  width: 280px; height: 280px; bottom: -60px; right: -60px;
-  background: radial-gradient(circle, rgba(236,72,153,0.14) 0%, transparent 70%);
-  animation-delay: 2.5s;
-}}
-.glow-orb-3 {{
-  width: 200px; height: 200px; top: 40%; left: 50%; transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%);
-  animation-delay: 1.2s;
-}}
-@keyframes orbPulse {{
-  0%,100% {{ opacity:1; transform: scale(1); }}
-  50%      {{ opacity:0.6; transform: scale(1.15); }}
-}}
-</style>
-</head>
-<body>
-
-<!-- Background ambient glow orbs (CSS-only, no SVG) -->
-<div class="glow-orb glow-orb-1"></div>
-<div class="glow-orb glow-orb-2"></div>
-<div class="glow-orb glow-orb-3"></div>
-
-<!-- Question strip -->
-<div id="qstrip">
-  <div class="qtext">{q_safe}</div>
-</div>
-
-<!-- Scenes container -->
-<div id="scenes-container">
-
-  <!-- Scene 1: WORLD -->
-  <div class="hook-scene active" id="scene-0">
-    <div class="hook-card">
-      <span class="scene-badge">Chapter 1 · The World</span>
-      <span class="hook-emoji">{d["emoji"]}</span>
-      <h1 class="hook-headline">{d["headline"]}</h1>
-      <div class="hook-divider"></div>
-      <p class="hook-body">The question in front of you is more than an exercise.<br>
-        It's a window into how the universe actually works.</p>
-    </div>
-  </div>
-
-  <!-- Scene 2: INCIDENT -->
-  <div class="hook-scene" id="scene-1">
-    <div class="hook-card">
-      <span class="scene-badge">Chapter 2 · The Incident</span>
-      <div class="hook-scene-title">{d["scene2_title"]}</div>
-      <div class="hook-divider"></div>
-      <p class="hook-body">{d["scene2_body"]}</p>
-    </div>
-  </div>
-
-  <!-- Scene 3: MYSTERY -->
-  <div class="hook-scene" id="scene-2">
-    <div class="hook-card">
-      <span class="scene-badge">Chapter 3 · The Mystery</span>
-      <span class="hook-emoji">🔍</span>
-      <blockquote class="hook-question">{d["scene3_question"]}</blockquote>
-      <div class="hook-divider"></div>
-      <p class="hook-body">The answer isn't obvious. It requires understanding
-        the <strong>principles</strong> that govern this type of problem —
-        which is exactly what you're about to learn.</p>
-    </div>
-  </div>
-
-  <!-- Scene 4: STAKES -->
-  <div class="hook-scene" id="scene-3">
-    <div class="hook-card">
-      <span class="scene-badge">Chapter 4 · The Stakes</span>
-      <span class="hook-emoji">🚀</span>
-      <div class="hook-scene-title">Why This Actually Matters</div>
-      <div class="hook-divider"></div>
-      <p class="hook-body">{d["scene4_stakes"]}</p>
-    </div>
-  </div>
-
-  <!-- Scene 5: INVITATION -->
-  <div class="hook-scene" id="scene-4">
-    <div class="hook-card">
-      <span class="scene-badge">Chapter 5 · The Journey Begins</span>
-      <h1 class="hook-headline">Let's Find Out Together.</h1>
-      <div class="hook-divider"></div>
-      <p class="hook-body" style="margin-bottom:8px">
-        The animation ahead will build your intuition step by step.<br>
-        No shortcuts. Just deep understanding.
-      </p>
-      <button id="hook-start-btn"
-        onclick="if(window.onHookComplete) window.onHookComplete();">
-        ✦ Start Learning
-      </button>
-    </div>
-  </div>
-
-</div><!-- /scenes-container -->
-
-<!-- Navigation -->
-<div id="hook-nav">
-  <button id="prevbtn" disabled aria-label="Previous scene">&#8592;</button>
-  <div id="dots">
-    <div class="dot active" data-idx="0"></div>
-    <div class="dot" data-idx="1"></div>
-    <div class="dot" data-idx="2"></div>
-    <div class="dot" data-idx="3"></div>
-    <div class="dot" data-idx="4"></div>
-  </div>
-  <button id="nextbtn" aria-label="Next scene">&#8594;</button>
-</div>
-
-<script>
-/* QAnim v9 Text Hook — Manual Scene Controller */
-(function() {{
-  'use strict';
-  var scenes  = document.querySelectorAll('.hook-scene');
-  var dots    = document.querySelectorAll('#dots .dot');
-  var prevBtn = document.getElementById('prevbtn');
-  var nextBtn = document.getElementById('nextbtn');
-  var current = 0;
-
-  function showScene(idx) {{
-    if (idx < 0 || idx >= scenes.length) return;
-    scenes[current].classList.remove('active');
-    dots[current].classList.remove('active');
-    current = idx;
-    scenes[current].classList.add('active');
-    dots[current].classList.add('active');
-    prevBtn.disabled = (current === 0);
-    nextBtn.disabled = (current === scenes.length - 1);
-  }}
-
-  /* Wire nav buttons */
-  nextBtn.addEventListener('click', function() {{ if (current < scenes.length - 1) showScene(current + 1); }});
-  prevBtn.addEventListener('click', function() {{ if (current > 0) showScene(current - 1); }});
-
-  /* Dot navigation */
-  dots.forEach(function(dot) {{
-    dot.addEventListener('click', function() {{ showScene(parseInt(this.dataset.idx, 10)); }});
-  }});
-
-  /* Expose for StepController compatibility */
-  window.currentStep = current;
-  window.showScene   = showScene;
-
-  console.log('[QAnim Hook v9] Text-only cinematic hook initialized — 5 scenes');
-}})();
-</script>
-
-</body>
-</html>"""
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  MODULE 7.8 — StepControllerPatcher  (NEW in v8.0)
 #  Post-processes generated HTML to strip auto-advance timers and
 #  inject a bulletproof manual step controller as a safety net.
-#  Runs on: hook_html, concept_html, solution_html
+#  Runs on: concept_html, solution_html
 # ══════════════════════════════════════════════════════════════════════
 
 _STEP_CONTROLLER_JS = r"""
@@ -3143,200 +2507,6 @@ def inject_step_controller(html: str) -> str:
         QAnimLogger.ok("StepController", "Manual step controller injected")
     except Exception as e:
         QAnimLogger.warn("StepController", f"Injection failed: {e}")
-    return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 7.9 — HookGate Injector  (NEW in v8.0)
-#  Ensures hook HTML always has a "Start Learning" gate button,
-#  even if the AI forgot to include it.
-# ══════════════════════════════════════════════════════════════════════
-
-_HOOK_GATE_CSS = """
-<style id="qanim-hook-gate-style">
-#hook-start-btn {
-  display: inline-flex; align-items: center; gap: 10px;
-  padding: 16px 40px; border-radius: 50px; border: none; cursor: pointer;
-  background: linear-gradient(135deg, #7c3aed, #ec4899);
-  color: #fff; font-size: 16px; font-weight: 800; letter-spacing: 0.5px;
-  box-shadow: 0 0 40px rgba(124,58,237,0.5), 0 8px 32px rgba(0,0,0,0.4);
-  animation: hookBtnPulse 2s ease-in-out infinite;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  position: relative; z-index: 500;
-}
-#hook-start-btn:hover {
-  transform: scale(1.06);
-  box-shadow: 0 0 60px rgba(124,58,237,0.7), 0 12px 40px rgba(0,0,0,0.5);
-}
-@keyframes hookBtnPulse {
-  0%, 100% { box-shadow: 0 0 40px rgba(124,58,237,0.5), 0 8px 32px rgba(0,0,0,0.4); }
-  50%       { box-shadow: 0 0 70px rgba(236,72,153,0.6), 0 8px 32px rgba(0,0,0,0.4); }
-}
-#hook-gate-overlay {
-  position: fixed; inset: 0; z-index: 450;
-  display: flex; align-items: flex-end; justify-content: center;
-  padding-bottom: 60px; pointer-events: none;
-}
-</style>
-"""
-
-_HOOK_GATE_JS = r"""
-<script id="qanim-hook-gate">
-(function initHookGate() {
-  'use strict';
-  document.addEventListener('DOMContentLoaded', function() {
-    /* If AI already included #hook-start-btn, just wire it up */
-    var existing = document.getElementById('hook-start-btn');
-    if (existing) {
-      existing.addEventListener('click', function() {
-        if (typeof window.onHookComplete === 'function') window.onHookComplete();
-      });
-      return;
-    }
-    /* Otherwise inject a floating gate button */
-    var overlay = document.createElement('div');
-    overlay.id = 'hook-gate-overlay';
-    var btn = document.createElement('button');
-    btn.id = 'hook-start-btn';
-    btn.textContent = '✦ Start Learning';
-    btn.style.pointerEvents = 'auto';
-    btn.addEventListener('click', function() {
-      if (typeof window.onHookComplete === 'function') window.onHookComplete();
-    });
-    overlay.appendChild(btn);
-    document.body.appendChild(overlay);
-    /* Fade in after 3s so hook has time to play */
-    overlay.style.opacity = '0';
-    overlay.style.transition = 'opacity 0.8s ease';
-    setTimeout(function() { overlay.style.opacity = '1'; }, 3000);
-    console.log('[QAnim HookGate] Start Learning button injected');
-  });
-})();
-</script>
-"""
-
-
-def inject_hook_gate(html: str) -> str:
-    """
-    Ensures the hook HTML has a 'Start Learning' gate button.
-    Injects CSS into <head> and JS before </body>.
-    """
-    try:
-        if '</head>' in html:
-            html = html.replace('</head>', _HOOK_GATE_CSS + '\n</head>', 1)
-        else:
-            html = _HOOK_GATE_CSS + '\n' + html
-    except Exception as e:
-        QAnimLogger.warn("HookGate", f"CSS injection failed: {e}")
-    try:
-        if '</body>' in html:
-            html = html.replace('</body>', _HOOK_GATE_JS + '\n</body>', 1)
-        else:
-            html += '\n' + _HOOK_GATE_JS
-        QAnimLogger.ok("HookGate", "Hook gate injected")
-    except Exception as e:
-        QAnimLogger.warn("HookGate", f"JS injection failed: {e}")
-    return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 7.95 — QuizGate Injector  (NEW in v8.0)
-#  Ensures quiz HTML always has an unlock gate screen before questions.
-# ══════════════════════════════════════════════════════════════════════
-
-_QUIZ_GATE_HTML = """
-<div id="qanim-quiz-gate" style="
-  position:fixed;inset:0;z-index:800;
-  background:linear-gradient(135deg,#2d2a6e 0%,#3d3a91 100%);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  transition:opacity 0.6s ease;
-">
-  <div style="text-align:center;max-width:400px;padding:0 24px;">
-    <div style="font-size:64px;margin-bottom:20px;animation:trophyBounce 1s ease 0.3s both">🏆</div>
-    <h2 style="font-size:26px;font-weight:900;color:#f1f5f9;margin:0 0 12px;
-      background:linear-gradient(135deg,#a78bfa,#ec4899);
-      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">
-      Quiz Unlocked!
-    </h2>
-    <p style="font-size:14px;color:#64748b;line-height:1.7;margin:0 0 32px;">
-      You've completed the animation.<br>Now test your understanding.
-    </p>
-    <button id="qanim-quiz-gate-btn" style="
-      padding:14px 40px;border-radius:50px;border:none;cursor:pointer;
-      background:linear-gradient(135deg,#7c3aed,#ec4899);
-      color:#fff;font-size:15px;font-weight:800;letter-spacing:0.3px;
-      box-shadow:0 0 40px rgba(124,58,237,0.4);
-      font-family:inherit;transition:transform 0.18s,box-shadow 0.18s;
-    " onmouseover="this.style.transform='scale(1.05)'"
-       onmouseout="this.style.transform='scale(1)'">
-      Start Quiz →
-    </button>
-  </div>
-  <style>
-    @keyframes trophyBounce {
-      from { opacity:0; transform:translateY(-30px) scale(0.7); }
-      to   { opacity:1; transform:translateY(0)     scale(1);   }
-    }
-  </style>
-</div>
-"""
-
-_QUIZ_GATE_JS = r"""
-<script id="qanim-quiz-gate-controller">
-(function initQuizGate() {
-  'use strict';
-  document.addEventListener('DOMContentLoaded', function() {
-    var gate = document.getElementById('qanim-quiz-gate');
-    var gateBtn = document.getElementById('qanim-quiz-gate-btn');
-    if (!gate || !gateBtn) return;
-    /* If AI already built its own gate, remove ours to avoid double gate */
-    var aiGate = document.getElementById('quiz-gate');
-    if (aiGate && aiGate !== gate) { gate.remove(); return; }
-    gateBtn.addEventListener('click', function() {
-      gate.style.opacity = '0';
-      gate.style.pointerEvents = 'none';
-      setTimeout(function() {
-        gate.style.display = 'none';
-        /* Try to show quiz-main or the card container */
-        var main = document.getElementById('quiz-main') || document.querySelector('.card');
-        if (main) { main.style.display = ''; main.style.opacity = '0';
-          main.style.transition = 'opacity 0.5s ease';
-          requestAnimationFrame(function() { main.style.opacity = '1'; }); }
-      }, 600);
-    });
-    /* Hide quiz content until gate is dismissed */
-    var quizMain = document.getElementById('quiz-main') || document.querySelector('.card');
-    if (quizMain) quizMain.style.display = 'none';
-    console.log('[QAnim QuizGate] Gate initialized');
-  });
-})();
-</script>
-"""
-
-
-def inject_quiz_gate(html: str) -> str:
-    """
-    Injects the Quiz Unlocked gate screen into quiz HTML.
-    Gate appears first; student clicks 'Start Quiz →' to reveal questions.
-    """
-    try:
-        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
-        if body_match:
-            ins = body_match.end()
-            html = html[:ins] + '\n' + _QUIZ_GATE_HTML + html[ins:]
-        else:
-            html = _QUIZ_GATE_HTML + '\n' + html
-    except Exception as e:
-        QAnimLogger.warn("QuizGate", f"DOM injection failed: {e}")
-    try:
-        if '</body>' in html:
-            html = html.replace('</body>', _QUIZ_GATE_JS + '\n</body>', 1)
-        else:
-            html += '\n' + _QUIZ_GATE_JS
-        QAnimLogger.ok("QuizGate", "Quiz gate injected")
-    except Exception as e:
-        QAnimLogger.warn("QuizGate", f"JS injection failed: {e}")
     return html
 
 
@@ -4040,13 +3210,12 @@ async def _generate_concept_animation(question: str, category: str) -> str:
 
 async def generate_question_animation(question: str) -> dict:
     """
-    FOUR-STAGE CONCURRENT PIPELINE (v7.0):
+    THREE-STAGE CONCURRENT PIPELINE (v10.0):
 
     Stage 0 — ToFind Extraction   (sync, no AI)
-    Stage 1 — Hook Animation      (AI: HookGenerator)      ┐
-    Stage 2 — Concept Animation   (AI: concept engine)     ├ concurrent
-    Stage 3 — Solution Animation  (AI: main engine)        │
-    Stage 4 — Quiz Generation     (AI: QuizGenerator)      ┘
+    Stage 1 — Concept Animation   (AI: concept engine)     ┐
+    Stage 2 — Solution Animation  (AI: main engine)        ├ concurrent
+    Stage 3 — Quiz Generation     (AI: QuizGenerator)      ┘
 
     Post-processing (solution HTML only):
       Validate → Sanitize → Inject infrastructure
@@ -4075,7 +3244,7 @@ async def generate_question_animation(question: str) -> dict:
     solution_prompt = _build_prompt(question, category)
 
     # ── Stage 1-4: Four concurrent AI calls ─────────────────────────
-    QAnimLogger.info("Pipeline", "Launching 4 concurrent AI stages…")
+    QAnimLogger.info("Pipeline", "Launching 3 concurrent AI stages…")
 
     async def _run_solution_ai() -> str:
         try:
@@ -4097,8 +3266,7 @@ async def generate_question_animation(question: str) -> dict:
             raise
 
     try:
-        hook_html, concept_html, sol_raw, quiz_html = await asyncio.gather(
-            HookGenerator.generate(question, category),
+        concept_html, sol_raw, quiz_html = await asyncio.gather(
             _generate_concept_animation(question, category),
             _run_solution_ai(),
             QuizGenerator.generate(question, category),
@@ -4110,8 +3278,7 @@ async def generate_question_animation(question: str) -> dict:
     # ── Parse solution ───────────────────────────────────────────────
     result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v9.0"
-    result["hook_animation_code"]    = hook_html      # NEW
+    result["engine_version"]         = "v10.0"
     result["concept_animation_code"] = concept_html
     result["quiz_html"]              = quiz_html      # NEW
     result["to_find"]                = to_find_targets
@@ -4156,8 +3323,6 @@ async def generate_question_animation(question: str) -> dict:
     html = inject_inline_quiz(html, question, category, quiz_html)  # ← NEW v8.1: quiz embedded inline
     html = inject_step_controller(html)          # ← NEW: manual step safety net (must be LAST)
 
-    # ── Quiz gate injection (standalone quiz_html) ───────────────────
-    quiz_html = inject_quiz_gate(quiz_html)      # ← NEW: quiz unlock gate
 
     # ── Final validation ─────────────────────────────────────────────
     try:
@@ -4168,11 +3333,10 @@ async def generate_question_animation(question: str) -> dict:
     result["animation_code"]         = html
     result["quiz_html"]              = quiz_html  # updated with gate injection
     result["render_status"]          = "ok"
-    result["render_order"]           = ["hook_animation_code", "concept_animation_code", "animation_code", "quiz_html"]
+    result["render_order"]           = ["concept_animation_code", "animation_code", "quiz_html"]
 
     QAnimLogger.ok("Pipeline", (
         f"DONE v9 — '{result['title']}' "
-        f"hook={len(hook_html):,} "
         f"concept={len(concept_html):,} "
         f"solution={len(html):,} "
         f"quiz={len(quiz_html):,} "
@@ -4190,7 +3354,6 @@ def _build_failure_result(question: str, reason: str) -> dict:
         "animation_type":         "error",
         "design_strategy":        "",
         "animation_code":         fallback,
-        "hook_animation_code":    fallback,
         "concept_animation_code": fallback,
         "quiz_html":              fallback,
         "solution_steps":         [],
@@ -4198,7 +3361,7 @@ def _build_failure_result(question: str, reason: str) -> dict:
         "key_insight":            "",
         "to_find":                [],
         "category":               "UNKNOWN",
-        "engine_version":         "v9.0",
+        "engine_version":         "v10.0",
         "render_status":          "error",
     }
 
@@ -4602,7 +3765,7 @@ if __name__ == "__main__":
 
     for cat, q in questions_to_test.items():
         print("=" * 72)
-        print(f"  QAnim v9.0 — Interactive Step-Based Engine — Category: {cat}")
+        print(f"  QAnim v10.0 — Interactive Step-Based Engine — Category: {cat}")
         print(f"  Q: {q[:65]}...")
         print("=" * 72)
 
@@ -4613,7 +3776,6 @@ if __name__ == "__main__":
 
         result = generate_question_animation_sync(q)
 
-        hook_html     = result.get("hook_animation_code", "")
         concept_html  = result.get("concept_animation_code", "")
         solution_html = result.get("animation_code", "")
         quiz_html     = result.get("quiz_html", "")
@@ -4623,10 +3785,9 @@ if __name__ == "__main__":
         print(f"Engine              : {result.get('engine_version','N/A')}")
         print(f"Render Status       : {result.get('render_status','N/A')}")
         print(f"[ToFind] Targets    : {result.get('to_find',[])}")
-        print(f"[Stage 1] Hook      : {len(hook_html):,} chars")
-        print(f"[Stage 2] Concept   : {len(concept_html):,} chars")
-        print(f"[Stage 3] Solution  : {len(solution_html):,} chars")
-        print(f"[Stage 4] Quiz      : {len(quiz_html):,} chars")
+        print(f"[Stage 1] Concept   : {len(concept_html):,} chars")
+        print(f"[Stage 2] Solution  : {len(solution_html):,} chars")
+        print(f"[Stage 3] Quiz      : {len(quiz_html):,} chars")
 
         steps = result.get('solution_steps', [])
         print(f"Solution Steps      : {len(steps)}")
@@ -4637,26 +3798,20 @@ if __name__ == "__main__":
 
         slug = cat.lower()
 
-        # Save Stage 1 — Hook Animation
-        hook_out = f"q_anim_v70_{slug}_hook.html"
-        with open(hook_out, "w", encoding="utf-8") as f:
-            f.write(hook_html)
-        print(f"\n[Stage 1] Hook saved    : {hook_out}")
-
-        # Save Stage 2 — Concept Animation (with Notes)
-        concept_out = f"q_anim_v70_{slug}_concept.html"
+        # Save Stage 1 — Concept Animation (with Notes)
+        concept_out = f"q_anim_v10_{slug}_concept.html"
         with open(concept_out, "w", encoding="utf-8") as f:
             f.write(concept_html)
-        print(f"[Stage 2] Concept saved : {concept_out}")
+        print(f"\n[Stage 1] Concept saved : {concept_out}")
 
-        # Save Stage 3 — Solution Animation (with Notes + ToFind + Solution)
-        solution_out = f"q_anim_v70_{slug}_solution.html"
+        # Save Stage 2 — Solution Animation
+        solution_out = f"q_anim_v10_{slug}_solution.html"
         with open(solution_out, "w", encoding="utf-8") as f:
             f.write(solution_html)
-        print(f"[Stage 3] Solution saved: {solution_out}")
+        print(f"[Stage 2] Solution saved: {solution_out}")
 
-        # Save Stage 4 — Quiz
-        quiz_out = f"q_anim_v70_{slug}_quiz.html"
+        # Save Stage 3 — Quiz
+        quiz_out = f"q_anim_v10_{slug}_quiz.html"
         with open(quiz_out, "w", encoding="utf-8") as f:
             f.write(quiz_html)
-        print(f"[Stage 4] Quiz saved    : {quiz_out}\n")
+        print(f"[Stage 3] Quiz saved    : {quiz_out}\n")
