@@ -307,7 +307,8 @@ class HtmlSanitizer:
             r'<script[^>]+src\s*=\s*["\'][^"\']*["\'][^>]*>\s*</script>',
             '', html, flags=re.IGNORECASE | re.DOTALL
         )
-        html = cls._fix_template_literals(html)      # ← ADD THIS LINE
+        html = cls._fix_template_literals(html)   # ← fixed version (double quotes)
+        html = cls._fix_const_let(html)           # ← new: var instead of const/let
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(
             r'<svg(?![^>]*xmlns)',
@@ -352,27 +353,58 @@ class HtmlSanitizer:
 
     @classmethod
     def _fix_template_literals(cls, html: str) -> str:
-        """Replace backtick template literals with string concatenation."""
+        """Replace backtick template literals with double-quoted string concatenation."""
         def process_script(script_match: re.Match) -> str:
             tag   = script_match.group(1)
             body  = script_match.group(2)
             close = script_match.group(3)
-            # Skip JSON data blocks
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
                 return script_match.group(0)
-            # Replace `...${expr}...` template literals
-            def replace_template(m: re.Match) -> str:
-                content = m.group(1)
-                # Replace ${expr} with ' + expr + '
-                content = re.sub(r'\$\{([^}]+)\}', r"' + \1 + '", content)
-                # Escape any unescaped single quotes inside
-                content = content.replace("\\'", "'")
-                return "'" + content + "'"
-            fixed = re.sub(r'`((?:[^`\\]|\\.)*)`', replace_template, body)
-            if fixed != body:
-                QAnimLogger.warn("Sanitizer", "Backtick template literals detected and replaced")
-            return f"{tag}{fixed}{close}"
 
+            def replace_template(m: re.Match) -> str:
+                raw = m.group(1)
+                # Split on ${...} — alternating literal / expression parts
+                parts = re.split(r'\$\{([^}]*)\}', raw)
+                out = []
+                for idx, part in enumerate(parts):
+                    if idx % 2 == 0:
+                        # String literal — use DOUBLE quotes to avoid apostrophe bug
+                        esc = (part
+                               .replace('\\', '\\\\')
+                               .replace('"',  '\\"')
+                               .replace('\n', '\\n')
+                               .replace('\r', '\\r')
+                               .replace('\t', '\\t'))
+                        out.append('"' + esc + '"')
+                    else:
+                        # Expression — parenthesise and keep verbatim
+                        out.append('(' + part.strip() + ')')
+                # Drop empty string tokens at edges
+                while out and out[0]  == '""': out.pop(0)
+                while out and out[-1] == '""': out.pop()
+                return (' + '.join(out)) if out else '""'
+
+            original = body
+            body = re.sub(r'`((?:[^`\\]|\\.)*)`', replace_template, body, flags=re.DOTALL)
+            if body != original:
+                QAnimLogger.warn("Sanitizer", "Backtick template literals detected and replaced")
+            return f"{tag}{body}{close}"
+
+        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
+        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def _fix_const_let(cls, html: str) -> str:
+        """Convert const/let → var for maximum JS compatibility in iframes."""
+        def process_script(script_match: re.Match) -> str:
+            tag   = script_match.group(1)
+            body  = script_match.group(2)
+            close = script_match.group(3)
+            if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
+                return script_match.group(0)
+            body = re.sub(r'\bconst\b', 'var', body)
+            body = re.sub(r'\blet\b',   'var', body)
+            return f"{tag}{body}{close}"
         pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
         return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
 
