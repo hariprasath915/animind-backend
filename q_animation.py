@@ -307,8 +307,10 @@ class HtmlSanitizer:
             r'<script[^>]+src\s*=\s*["\'][^"\']*["\'][^>]*>\s*</script>',
             '', html, flags=re.IGNORECASE | re.DOTALL
         )
-        html = cls._fix_template_literals(html)   # ← fixed version (double quotes)
-        html = cls._fix_const_let(html)           # ← new: var instead of const/let
+        html = cls._fix_template_literals(html)        # double-quote safe version
+        html = cls._fix_const_let(html)                 # const/let → var
+        html = cls._fix_arrow_functions(html)           # arrow fn → regular fn
+        html = cls._fix_single_quote_apostrophes(html)  # 'it\'s' → "it's"
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(
             r'<svg(?![^>]*xmlns)',
@@ -405,6 +407,79 @@ class HtmlSanitizer:
             body = re.sub(r'\bconst\b', 'var', body)
             body = re.sub(r'\blet\b',   'var', body)
             return f"{tag}{body}{close}"
+        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
+        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def _fix_arrow_functions(cls, html: str) -> str:
+        """
+        Convert simple ES6 arrow functions to ES5 regular functions.
+        Handles: (params) => { body }  and  (params) => expr
+        Skips application/json blocks.
+        """
+        def process_script(script_match: re.Match) -> str:
+            tag   = script_match.group(1)
+            body  = script_match.group(2)
+            close = script_match.group(3)
+            if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
+                return script_match.group(0)
+            # (params) => { block } → function(params) { block }
+            body = re.sub(
+                r'\(([^)]*)\)\s*=>\s*(\{)',
+                r'function(\1) \2',
+                body
+            )
+            # (params) => expr  (no braces) → function(params) { return expr; }
+            body = re.sub(
+                r'\(([^)]*)\)\s*=>\s*([^{;\n][^;\n]*)',
+                r'function(\1) { return \2; }',
+                body
+            )
+            # param => { block }  (single param, no parens)
+            body = re.sub(
+                r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*(\{)',
+                r'function(\1) \2',
+                body
+            )
+            # param => expr  (single param, no parens, no braces)
+            body = re.sub(
+                r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*([^{;\n][^;\n]*)',
+                r'function(\1) { return \2; }',
+                body
+            )
+            return f"{tag}{body}{close}"
+        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
+        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def _fix_single_quote_apostrophes(cls, html: str) -> str:
+        """
+        Find single-quoted JS strings that contain apostrophes and rewrap
+        them in double quotes.
+        e.g. 'Layer\'s resistance'  or  'it's broken'
+        Both become: "Layer's resistance"  / "it's broken"
+        Skips application/json blocks.
+        """
+        def process_script(script_match: re.Match) -> str:
+            tag   = script_match.group(1)
+            body  = script_match.group(2)
+            close = script_match.group(3)
+            if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
+                return script_match.group(0)
+
+            def fix_sq_string(m: re.Match) -> str:
+                inner = m.group(1)  # content between outer single quotes
+                # If there's a bare apostrophe (not preceded by backslash), rewrap
+                if re.search(r"(?<!\\)'", inner):
+                    # Unescape any \' in the original and escape " instead
+                    fixed = inner.replace("\\'" , "'" ).replace('"', '\\"')
+                    return '"' + fixed + '"'
+                return m.group(0)  # no apostrophe issue, leave alone
+
+            # Match single-quoted strings (not crossing newlines, handles \' escapes)
+            body = re.sub(r"'((?:[^'\\\n]|\\.)*)'", fix_sq_string, body)
+            return f"{tag}{body}{close}"
+
         pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
         return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
 
