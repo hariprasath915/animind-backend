@@ -423,28 +423,16 @@ class HtmlSanitizer:
             close = script_match.group(3)
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
                 return script_match.group(0)
-            # (params) => { block } → function(params) { block }
+            # (params) => { block } → function(params) { block }  [safe]
             body = re.sub(
                 r'\(([^)]*)\)\s*=>\s*(\{)',
                 r'function(\1) \2',
                 body
             )
-            # (params) => expr  (no braces) → function(params) { return expr; }
-            body = re.sub(
-                r'\(([^)]*)\)\s*=>\s*([^{;\n][^;\n]*)',
-                r'function(\1) { return \2; }',
-                body
-            )
-            # param => { block }  (single param, no parens)
+            # param => { block }  (single param, no parens) [safe]
             body = re.sub(
                 r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*(\{)',
                 r'function(\1) \2',
-                body
-            )
-            # param => expr  (single param, no parens, no braces)
-            body = re.sub(
-                r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*([^{;\n][^;\n]*)',
-                r'function(\1) { return \2; }',
                 body
             )
             return f"{tag}{body}{close}"
@@ -476,6 +464,9 @@ class HtmlSanitizer:
                     return '"' + fixed + '"'
                 return m.group(0)  # no apostrophe issue, leave alone
 
+            # Pre-escape inter-word apostrophes (e.g. 'it's' -> 'it\'s')
+            # so the closing regex can see the full string as one token.
+            body = re.sub(r"(?<=[a-zA-Z])'(?=[a-zA-Z])", "\\'", body)
             # Match single-quoted strings (not crossing newlines, handles \' escapes)
             body = re.sub(r"'((?:[^'\\\n]|\\.)*)'", fix_sq_string, body)
             return f"{tag}{body}{close}"
@@ -824,11 +815,12 @@ _TO_FIND_DOM = """
 _TO_FIND_CSS = """
 <style id="qanim-tofind-styles">
 #tofind-backdrop {
-  display:none; position:fixed; inset:0; z-index:8000;
+  display:block; position:fixed; inset:0; z-index:8000;
   background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; transition:opacity 0.22s ease;
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 0.22s ease, visibility 0.22s ease;
 }
-#tofind-backdrop.open { display:block; opacity:1; }
+#tofind-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
 #tofind-panel {
   display:flex; flex-direction:column; position:fixed;
   top:50%; left:50%; transform:translate(-50%,-48%) scale(0.96);
@@ -1016,9 +1008,9 @@ def _build_solution_data_tag(steps: list, answer: str, insight: str) -> str:
     )
 
 
-# Solution panel DOM (light theme)
+# Solution panel DOM (light theme) — panel is INSIDE backdrop for proper flex centering
 _SOLUTION_PANEL_DOM = """
-<div id="sol-backdrop" aria-hidden="true"></div>
+<div id="sol-backdrop" aria-hidden="true">
 <aside id="sol-panel" role="dialog" aria-labelledby="sol-heading" aria-hidden="true">
   <div class="sol-header">
     <div class="sol-header-left">
@@ -1027,41 +1019,56 @@ _SOLUTION_PANEL_DOM = """
     </div>
     <button id="sol-close" class="sol-close-btn" aria-label="Close">✕</button>
   </div>
-  <div id="sol-steps-container" class="sol-steps-container"></div>
-  <div id="sol-answer-card" class="sol-answer-card">
-    <div class="sol-answer-label">✅ Final Answer</div>
-    <div id="sol-answer-text" class="sol-answer-text"></div>
-  </div>
-  <div id="sol-insight-card" class="sol-insight-card">
-    <div class="sol-insight-label">💬 Key Insight</div>
-    <div id="sol-insight-text" class="sol-insight-text"></div>
+  <div class="sol-panel-body">
+    <div id="sol-steps-container" class="sol-steps-container"></div>
+    <div id="sol-answer-card" class="sol-answer-card">
+      <div class="sol-answer-label">✅ Final Answer</div>
+      <div id="sol-answer-text" class="sol-answer-text"></div>
+    </div>
+    <div id="sol-insight-card" class="sol-insight-card">
+      <div class="sol-insight-label">💬 Key Insight</div>
+      <div id="sol-insight-text" class="sol-insight-text"></div>
+    </div>
   </div>
 </aside>
+</div>
 """
 
 _SOLUTION_PANEL_CSS = """
 <style id="qanim-solution-styles">
 /* ── Solution Panel — Light Theme ── */
 #sol-backdrop {
-  display:none; position:fixed; inset:0; z-index:8500;
-  background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; transition:opacity 0.22s ease;
+  display:flex; position:fixed; inset:0; z-index:8500;
+  background:rgba(15,23,42,0.42); backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 0.26s ease, visibility 0.26s ease;
+  align-items:center; justify-content:center;
+  padding:16px; box-sizing:border-box;
 }
-#sol-backdrop.open { display:flex; align-items:center; justify-content:center; opacity:1; }
+#sol-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
 
 #sol-panel {
-  background:#ffffff; border-radius:16px; padding:24px;
-  max-width:560px; width:90vw; max-height:84vh; overflow-y:auto;
+  background:#ffffff; border-radius:18px;
+  width:min(620px,96vw); max-height:88vh;
   border:1px solid #e2e8f0;
-  box-shadow:0 8px 40px rgba(0,0,0,0.12);
-  opacity:0; transform:translateY(12px) scale(0.97);
-  transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
-  scrollbar-width:thin; scrollbar-color:#e2e8f0 transparent;
+  box-shadow:0 12px 48px rgba(0,0,0,0.14);
+  opacity:0; transform:translateY(14px) scale(0.97);
+  transition:opacity 0.26s ease,transform 0.26s cubic-bezier(0.34,1.56,0.64,1);
+  display:flex; flex-direction:column; overflow:hidden;
 }
 #sol-panel.open { opacity:1; transform:translateY(0) scale(1); }
 
+.sol-panel-body {
+  overflow-y:auto; flex:1; padding:20px 24px;
+  scrollbar-width:thin; scrollbar-color:#e2e8f0 transparent;
+  display:flex; flex-direction:column; gap:0;
+}
+
 .sol-header {
-  display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:18px 22px; border-bottom:1px solid #e2e8f0; flex-shrink:0;
+  background:#ffffff; border-radius:18px 18px 0 0;
 }
 .sol-header-left { display:flex; align-items:center; gap:10px; }
 .sol-icon { font-size:22px; }
@@ -1070,14 +1077,14 @@ _SOLUTION_PANEL_CSS = """
   font-size:17px; font-weight:800; color:#1e293b;
 }
 .sol-close-btn {
-  width:30px; height:30px; border-radius:8px; border:1px solid #e2e8f0;
-  background:#f8fafc; color:#64748b; font-size:12px; cursor:pointer;
+  width:32px; height:32px; border-radius:8px; border:1px solid #e2e8f0;
+  background:#f8fafc; color:#64748b; font-size:13px; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
-  transition:background 0.15s,color 0.15s;
+  transition:background 0.15s,color 0.15s; flex-shrink:0;
 }
 .sol-close-btn:hover { background:#fee2e2; color:#dc2626; }
 
-.sol-steps-container { display:flex; flex-direction:column; gap:0; margin-bottom:16px; }
+.sol-steps-container { display:flex; flex-direction:column; gap:0; margin-bottom:14px; }
 
 .sol-step {
   display:flex; align-items:flex-start; gap:12px; padding:12px 0;
@@ -1085,18 +1092,19 @@ _SOLUTION_PANEL_CSS = """
   opacity:0; transform:translateX(-12px);
   transition:opacity 0.30s ease,transform 0.30s ease;
 }
+.sol-step:last-child { border-bottom:none; }
 .sol-step.visible { opacity:1; transform:translateX(0); }
 .sol-step-num {
-  width:26px; height:26px; border-radius:50%; flex-shrink:0;
+  width:28px; height:28px; border-radius:50%; flex-shrink:0;
   background:#7c3aed; color:#fff; font-size:12px; font-weight:700;
-  display:flex; align-items:center; justify-content:center; margin-top:1px;
+  display:flex; align-items:center; justify-content:center; margin-top:2px;
 }
 .sol-step-text {
   font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13px; color:#334155; line-height:1.7;
+  font-size:13.5px; color:#334155; line-height:1.75;
 }
 .formula {
-  background:#ede9fe; color:#6d28d9; padding:1px 5px;
+  background:#ede9fe; color:#6d28d9; padding:2px 6px;
   border-radius:4px; font-family:monospace; font-size:12px;
 }
 
@@ -1116,7 +1124,7 @@ _SOLUTION_PANEL_CSS = """
 }
 .sol-answer-text {
   font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:14px; font-weight:600; color:#166534; line-height:1.6;
+  font-size:14px; font-weight:600; color:#166534; line-height:1.65;
 }
 
 .sol-insight-card { background:#fefce8; border:1px solid #fef08a; }
@@ -1127,7 +1135,7 @@ _SOLUTION_PANEL_CSS = """
 }
 .sol-insight-text {
   font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13px; color:#78350f; line-height:1.6;
+  font-size:13px; color:#78350f; line-height:1.65;
 }
 </style>
 """
@@ -1193,15 +1201,24 @@ SOLUTION_JS_MODULE = r"""
     if (!backdrop || !panel) return;
     _buildSteps(_loadData());
     backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden','false');
     panel.classList.add('open');
     panel.setAttribute('aria-hidden','false');
     solutionOpen = true;
-    _animateReveal();
+    /* Scroll panel body to top so content starts from beginning */
+    var body = panel.querySelector('.sol-panel-body');
+    if (body) body.scrollTop = 0;
+    setTimeout(_animateReveal, 80);
   }
   function closeSolution() {
     var backdrop = _el('sol-backdrop'), panel = _el('sol-panel');
-    if (backdrop) backdrop.classList.remove('open');
-    if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
+    if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
+    if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true'); }
+    /* Reset step visibility for next open */
+    document.querySelectorAll('.sol-step').forEach(function(el){ el.classList.remove('visible'); });
+    var ac = _el('sol-answer-card'), ic = _el('sol-insight-card');
+    if (ac) ac.classList.remove('visible');
+    if (ic) ic.classList.remove('visible');
     solutionOpen = false;
   }
   window.openSolution   = openSolution;
@@ -1209,9 +1226,9 @@ SOLUTION_JS_MODULE = r"""
   window.toggleSolution = function() { solutionOpen ? closeSolution() : openSolution(); };
   _onReady(function() {
     var closeBtn = _el('sol-close');
-    if (closeBtn) closeBtn.addEventListener('click', closeSolution);
+    if (closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeSolution(); });
     var backdrop = _el('sol-backdrop');
-    if (backdrop) backdrop.addEventListener('click', closeSolution);
+    if (backdrop) backdrop.addEventListener('click', function(e){ if (e.target === backdrop) closeSolution(); });
     document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && solutionOpen) closeSolution(); });
   });
 })();
@@ -1338,24 +1355,27 @@ _QUIZ_PANEL_CSS = """
 <style id="qanim-quiz-styles">
 /* ── Quiz Panel v10 — Light Theme, 3 Sets × 5 Questions ── */
 #quiz-backdrop {
-  display:none; position:fixed; inset:0; z-index:8700;
-  background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; transition:opacity 0.22s ease;
+  display:flex; position:fixed; inset:0; z-index:8700;
+  background:rgba(15,23,42,0.42); backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 0.25s ease, visibility 0.25s ease;
+  align-items:center; justify-content:center;
+  padding:16px; box-sizing:border-box;
 }
-#quiz-backdrop.open { display:block; opacity:1; }
+#quiz-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
 
 #quiz-panel {
-  position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-48%) scale(0.97);
-  z-index:8800; width:min(720px,95vw); max-height:88vh;
+  width:min(740px,96vw); max-height:90vh;
   border-radius:16px; background:#f8fafc;
   border:1px solid #e2e8f0;
-  box-shadow:0 8px 40px rgba(0,0,0,0.12);
+  box-shadow:0 12px 48px rgba(0,0,0,0.14);
   opacity:0; pointer-events:none;
-  transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+  transform:translateY(14px) scale(0.97);
+  transition:opacity 0.25s ease,transform 0.26s cubic-bezier(0.34,1.56,0.64,1);
   display:flex; flex-direction:column; overflow:hidden;
 }
-#quiz-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+#quiz-panel.open { opacity:1; pointer-events:auto; transform:translateY(0) scale(1); }
 
 .quiz-panel-header {
   display:flex; align-items:center; justify-content:space-between;
@@ -1457,7 +1477,7 @@ _QUIZ_PANEL_CSS = """
 """
 
 _QUIZ_PANEL_DOM = """
-<div id="quiz-backdrop" aria-hidden="true"></div>
+<div id="quiz-backdrop" aria-hidden="true">
 <div id="quiz-panel" role="dialog" aria-label="Quiz" aria-hidden="true">
   <div class="quiz-panel-header">
     <div class="quiz-panel-title">📝 Quiz — Test Your Understanding</div>
@@ -1469,6 +1489,7 @@ _QUIZ_PANEL_DOM = """
       Generating quiz questions…
     </div>
   </div>
+</div>
 </div>
 """
 
@@ -1616,15 +1637,19 @@ _QUIZ_PANEL_JS = r"""
       _buildQuiz(_quizData);
     }
     backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden','false');
     panel.classList.add('open');
     panel.setAttribute('aria-hidden','false');
     quizOpen = true;
+    /* Scroll quiz content to top */
+    var scroll = _el('quiz-sets-container');
+    if (scroll) scroll.scrollTop = 0;
   }
 
   function closeQuiz() {
     var backdrop = _el('quiz-backdrop'), panel = _el('quiz-panel');
-    if (backdrop) backdrop.classList.remove('open');
-    if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
+    if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
+    if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true'); }
     quizOpen = false;
   }
 
@@ -1635,9 +1660,9 @@ _QUIZ_PANEL_JS = r"""
     var quizBtn = _el('quiz-ctrl-btn');
     if (quizBtn) quizBtn.addEventListener('click', function(e) { e.stopPropagation(); quizOpen ? closeQuiz() : openQuiz(); });
     var closeBtn = _el('quiz-close-btn');
-    if (closeBtn) closeBtn.addEventListener('click', closeQuiz);
+    if (closeBtn) closeBtn.addEventListener('click', function(e) { e.stopPropagation(); closeQuiz(); });
     var backdrop = _el('quiz-backdrop');
-    if (backdrop) backdrop.addEventListener('click', closeQuiz);
+    if (backdrop) backdrop.addEventListener('click', function(e) { if (e.target === backdrop) closeQuiz(); });
     document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && quizOpen) closeQuiz(); });
   });
 })();
@@ -1973,24 +1998,25 @@ _ANSWER_BOX_CSS = """
 <style id="qanim-answerbox-styles">
 /* ── Answer Box Panel — Light Theme ── */
 #answerbox-backdrop {
-  display:none; position:fixed; inset:0; z-index:8600;
+  display:flex; position:fixed; inset:0; z-index:8600;
   background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; transition:opacity 0.22s ease;
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 0.25s ease, visibility 0.25s ease;
+  align-items:center; justify-content:center; padding:16px; box-sizing:border-box;
 }
-#answerbox-backdrop.open { display:block; opacity:1; }
+#answerbox-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
 
 #answerbox-panel {
-  position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-48%) scale(0.97);
-  z-index:8700; width:min(520px,92vw);
+  width:min(540px,94vw); max-height:90vh;
   border-radius:16px; background:#ffffff;
   border:1px solid #e2e8f0;
-  box-shadow:0 8px 40px rgba(0,0,0,0.12);
+  box-shadow:0 12px 48px rgba(0,0,0,0.14);
   opacity:0; pointer-events:none;
-  transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
-  overflow:hidden;
+  transform:translateY(16px) scale(0.97);
+  transition:opacity 0.25s ease,transform 0.26s cubic-bezier(0.34,1.56,0.64,1);
+  overflow:hidden; display:flex; flex-direction:column;
 }
-#answerbox-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+#answerbox-panel.open { opacity:1; pointer-events:auto; transform:translateY(0) scale(1); }
 
 .ab-header {
   display:flex; align-items:center; justify-content:space-between;
@@ -2063,13 +2089,13 @@ _ANSWER_BOX_CSS = """
 """
 
 _ANSWER_BOX_DOM = """
-<div id="answerbox-backdrop" aria-hidden="true"></div>
+<div id="answerbox-backdrop" aria-hidden="true">
 <div id="answerbox-panel" role="dialog" aria-label="Answer Box" aria-hidden="true">
   <div class="ab-header">
     <div class="ab-header-title">✏️ Answer Box</div>
     <button class="ab-close-btn" id="ab-close-btn">✕</button>
   </div>
-  <div class="ab-body">
+  <div class="ab-body" style="overflow-y:auto;flex:1;">
     <p class="ab-instruction">
       Type your answer below and click <strong>Submit</strong> to check it.
       You can enter a numerical value, formula, or a brief explanation.
@@ -2083,6 +2109,7 @@ _ANSWER_BOX_DOM = """
       <button id="ab-retry-btn">Try Again</button>
     </div>
   </div>
+</div>
 </div>
 """
 
@@ -2173,29 +2200,29 @@ _ANSWER_BOX_JS = r"""
   }
 
   var _RESULTS = {
-    'correct': {
-      icon:    '✅',
-      verdict: 'Correct Answer!',
-      msg:     'Excellent work! Your answer matches the solution. You have understood this concept well. Keep it up!',
-      cls:     'correct'
+    correct: {
+      icon:    "✅",
+      verdict: "Correct Answer!",
+      msg:     "Excellent work! Your answer matches the solution. You understood this concept well — keep it up!",
+      cls:     "correct"
     },
-    'almost': {
-      icon:    '🟡',
-      verdict: 'Almost Correct',
-      msg:     'Your answer is close! There may be a small numerical difference or a missing detail. Review the step-by-step solution to fine-tune your understanding.',
-      cls:     'almost'
+    almost: {
+      icon:    "🟡",
+      verdict: "Almost Correct",
+      msg:     "Your answer is close! There may be a small numerical difference or a missing detail. Review the step-by-step solution to fine-tune your understanding.",
+      cls:     "almost"
     },
-    'wrong': {
-      icon:    '❌',
-      verdict: 'Wrong Answer',
-      msg:     'That\'s not quite right — but that\'s okay! Every mistake is a learning opportunity. Click "View Solution" to see the step-by-step explanation and try again.',
-      cls:     'wrong'
+    wrong: {
+      icon:    "❌",
+      verdict: "Wrong Answer",
+      msg:     "Not quite right — but every mistake is a learning opportunity! Click View Solution to see the step-by-step explanation and try again.",
+      cls:     "wrong"
     },
-    'empty': {
-      icon:    '📝',
-      verdict: 'Empty Answer',
-      msg:     'Please type your answer before submitting.',
-      cls:     'wrong'
+    empty: {
+      icon:    "📝",
+      verdict: "Empty Answer",
+      msg:     "Please type your answer before submitting.",
+      cls:     "wrong"
     }
   };
 
@@ -2228,17 +2255,23 @@ _ANSWER_BOX_JS = r"""
   function openAnswerBox() {
     var backdrop = _el('answerbox-backdrop'), panel = _el('answerbox-panel');
     if (!backdrop || !panel) return;
+    /* Clear previous result state */
+    var prevResult = _el('ab-result');
+    if (prevResult) prevResult.className = '';
+    var prevInp = _el('ab-user-input');
+    if (prevInp) prevInp.value = '';
     backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden','false');
     panel.classList.add('open');
     panel.setAttribute('aria-hidden','false');
     abOpen = true;
-    setTimeout(function() { var inp = _el('ab-user-input'); if(inp) inp.focus(); }, 200);
+    setTimeout(function() { var inp = _el('ab-user-input'); if(inp) inp.focus(); }, 150);
   }
 
   function closeAnswerBox() {
     var backdrop = _el('answerbox-backdrop'), panel = _el('answerbox-panel');
-    if (backdrop) backdrop.classList.remove('open');
-    if (panel)   { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
+    if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
+    if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true'); }
     abOpen = false;
   }
 
@@ -2247,19 +2280,28 @@ _ANSWER_BOX_JS = r"""
 
   _onReady(function() {
     /* Open button (wired from controls bar) */
-    var abBtn = document.getElementById('answerbox-ctrl-btn');
-    if (abBtn) abBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      abOpen ? closeAnswerBox() : openAnswerBox();
-    });
+    function wireControlsBtn() {
+      var abBtn = document.getElementById('answerbox-ctrl-btn');
+      if (abBtn) {
+        abBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          abOpen ? closeAnswerBox() : openAnswerBox();
+        });
+      } else {
+        setTimeout(wireControlsBtn, 100);
+      }
+    }
+    wireControlsBtn();
 
     /* Close button */
     var closeBtn = _el('ab-close-btn');
-    if (closeBtn) closeBtn.addEventListener('click', closeAnswerBox);
+    if (closeBtn) closeBtn.addEventListener('click', function(e) { e.stopPropagation(); closeAnswerBox(); });
 
     /* Backdrop click */
     var backdrop = _el('answerbox-backdrop');
-    if (backdrop) backdrop.addEventListener('click', closeAnswerBox);
+    if (backdrop) backdrop.addEventListener('click', function(e) { if (e.target === backdrop) closeAnswerBox(); });
+
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && abOpen) closeAnswerBox(); });
 
     /* Submit */
     var submitBtn = _el('ab-submit-btn');
