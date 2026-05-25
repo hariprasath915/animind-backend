@@ -47,7 +47,8 @@ import html as html_module
 from typing import Optional
 
 # ── Client + model routing ──────────────────────────────────────────────
-client         = anthropic.Anthropic()
+client         = anthropic.Anthropic()        # sync client (for sync functions)
+async_client   = anthropic.AsyncAnthropic()   # async client (for async functions)
 
 QUIZ_MODEL     = "claude-haiku-4-5"       # Stage 3 — quiz generation (3×5 Qs)
 CONCEPT_MODEL  = "claude-sonnet-4-5"      # Stage 1 — concept SVG animation
@@ -1805,7 +1806,7 @@ class QuizGeneratorV2:
             category=category
         )
         try:
-            msg = client.messages.create(
+            msg = await async_client.messages.create(
                 model=QUIZ_MODEL,
                 max_tokens=MAX_TOK_QUIZ,
                 system=NEW_QUIZ_SYSTEM_PROMPT,
@@ -3396,7 +3397,7 @@ async def _generate_concept_animation(question: str, category: str) -> str:
     QAnimLogger.info("ConceptPipeline", f"START  category={category}")
     prompt = _build_concept_prompt(question, category)
     try:
-        msg = client.messages.create(
+        msg = await async_client.messages.create(
             model=CONCEPT_MODEL,
             max_tokens=MAX_TOK_CONCEPT,
             system=SYSTEM_CONCEPT,
@@ -3473,8 +3474,9 @@ async def generate_question_animation(question: str) -> dict:
     to_find_targets = ToFindExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
 
-    # ── Classify ────────────────────────────────────────────────────
-    category = _classify_topic(question)
+    # ── Classify (run sync function in thread pool to avoid blocking event loop) ────
+    loop = asyncio.get_event_loop()
+    category = await loop.run_in_executor(None, _classify_topic, question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
     # ── Build solution prompt ────────────────────────────────────────
@@ -3485,7 +3487,7 @@ async def generate_question_animation(question: str) -> dict:
 
     async def _run_solution_ai() -> str:
         try:
-            msg = client.messages.create(
+            msg = await async_client.messages.create(
                 model=SOLUTION_MODEL,
                 max_tokens=MAX_TOK,
                 system=SYSTEM,
