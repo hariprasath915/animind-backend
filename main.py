@@ -109,7 +109,7 @@ async def _keep_alive_pinger():
     # Render sets this automatically; fallback to known URL
     self_url = os.getenv(
         "RENDER_EXTERNAL_URL",
-        "https://animind-backend-1.onrender.com"
+        "https://animind-backend-y07f.onrender.com"
     )
     health_url = f"{self_url.rstrip('/')}/health"
     print(f"[KEEP-ALIVE] ✅ Pinger started → {health_url} every {KEEP_ALIVE_INTERVAL}s")

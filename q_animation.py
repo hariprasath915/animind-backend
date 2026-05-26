@@ -47,8 +47,7 @@ import html as html_module
 from typing import Optional
 
 # ── Client + model routing ──────────────────────────────────────────────
-client         = anthropic.Anthropic()        # sync client (for sync functions)
-async_client   = anthropic.AsyncAnthropic()   # async client (for async functions)
+client         = anthropic.Anthropic()
 
 QUIZ_MODEL     = "claude-haiku-4-5"       # Stage 3 — quiz generation (3×5 Qs)
 CONCEPT_MODEL  = "claude-sonnet-4-5"      # Stage 1 — concept SVG animation
@@ -69,20 +68,27 @@ class QAnimLogger:
     PREFIX = "[QAnim v10]"
 
     @classmethod
+    def _safe_print(cls, msg: str):
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            print(msg.encode("ascii", errors="replace").decode("ascii"))
+
+    @classmethod
     def info(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ℹ  [{stage}] {msg}")
+        cls._safe_print(f"{cls.PREFIX} [INFO]  [{stage}] {msg}")
 
     @classmethod
     def warn(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ⚠  [{stage}] {msg}")
+        cls._safe_print(f"{cls.PREFIX} [WARN]  [{stage}] {msg}")
 
     @classmethod
     def error(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ✖  [{stage}] {msg}")
+        cls._safe_print(f"{cls.PREFIX} [ERR]   [{stage}] {msg}")
 
     @classmethod
     def ok(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ✅ [{stage}] {msg}")
+        cls._safe_print(f"{cls.PREFIX} [OK]    [{stage}] {msg}")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -424,16 +430,28 @@ class HtmlSanitizer:
             close = script_match.group(3)
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
                 return script_match.group(0)
-            # (params) => { block } → function(params) { block }  [safe]
+            # (params) => { block } → function(params) { block }
             body = re.sub(
                 r'\(([^)]*)\)\s*=>\s*(\{)',
                 r'function(\1) \2',
                 body
             )
-            # param => { block }  (single param, no parens) [safe]
+            # (params) => expr  (no braces) → function(params) { return expr; }
+            body = re.sub(
+                r'\(([^)]*)\)\s*=>\s*([^{;\n][^;\n]*)',
+                r'function(\1) { return \2; }',
+                body
+            )
+            # param => { block }  (single param, no parens)
             body = re.sub(
                 r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*(\{)',
                 r'function(\1) \2',
+                body
+            )
+            # param => expr  (single param, no parens, no braces)
+            body = re.sub(
+                r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*([^{;\n][^;\n]*)',
+                r'function(\1) { return \2; }',
                 body
             )
             return f"{tag}{body}{close}"
@@ -465,9 +483,6 @@ class HtmlSanitizer:
                     return '"' + fixed + '"'
                 return m.group(0)  # no apostrophe issue, leave alone
 
-            # Pre-escape inter-word apostrophes (e.g. 'it's' -> 'it\'s')
-            # so the closing regex can see the full string as one token.
-            body = re.sub(r"(?<=[a-zA-Z])'(?=[a-zA-Z])", "\\'", body)
             # Match single-quoted strings (not crossing newlines, handles \' escapes)
             body = re.sub(r"'((?:[^'\\\n]|\\.)*)'", fix_sq_string, body)
             return f"{tag}{body}{close}"
@@ -816,12 +831,11 @@ _TO_FIND_DOM = """
 _TO_FIND_CSS = """
 <style id="qanim-tofind-styles">
 #tofind-backdrop {
-  display:block; position:fixed; inset:0; z-index:8000;
+  display:none; position:fixed; inset:0; z-index:8000;
   background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; visibility:hidden; pointer-events:none;
-  transition:opacity 0.22s ease, visibility 0.22s ease;
+  opacity:0; transition:opacity 0.22s ease;
 }
-#tofind-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
+#tofind-backdrop.open { display:block; opacity:1; }
 #tofind-panel {
   display:flex; flex-direction:column; position:fixed;
   top:50%; left:50%; transform:translate(-50%,-48%) scale(0.96);
@@ -1039,15 +1053,14 @@ _SOLUTION_PANEL_CSS = """
 <style id="qanim-solution-styles">
 /* ── Solution Panel — Light Theme ── */
 #sol-backdrop {
-  display:flex; position:fixed; inset:0; z-index:8500;
+  display:none; position:fixed; inset:0; z-index:8500;
   background:rgba(15,23,42,0.42); backdrop-filter:blur(6px);
   -webkit-backdrop-filter:blur(6px);
-  opacity:0; visibility:hidden; pointer-events:none;
-  transition:opacity 0.26s ease, visibility 0.26s ease;
+  opacity:0; transition:opacity 0.22s ease;
   align-items:center; justify-content:center;
   padding:16px; box-sizing:border-box;
 }
-#sol-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
+#sol-backdrop.open { display:flex; opacity:1; }
 
 #sol-panel {
   background:#ffffff; border-radius:18px;
@@ -1144,7 +1157,10 @@ _SOLUTION_PANEL_CSS = """
 SOLUTION_JS_MODULE = r"""
 (function initSolutionSystem() {
   'use strict';
-  var solutionOpen = false, _solBuilt = false;
+  var solutionOpen = false;
+  // BUG FIX: _solBuilt was never reset, preventing the panel from showing
+  // updated solution data. We now always rebuild on open so the content
+  // always matches the current __sol_data__ JSON tag.
   function _onReady(fn) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
     else setTimeout(fn, 0);
@@ -1165,9 +1181,9 @@ SOLUTION_JS_MODULE = r"""
     var safe = _escape(text);
     return safe.replace(/([A-Za-z_]\w*\s*=\s*[^<&,;.]+)/g,'<span class="formula">$1</span>');
   }
+  // BUG FIX: Removed _solBuilt guard — always rebuild steps so the panel
+  // always reflects the current question's solution data.
   function _buildSteps(data) {
-    if (_solBuilt) return;
-    _solBuilt = true;
     var container = _el('sol-steps-container');
     if (!container) return;
     var steps = Array.isArray(data.steps) ? data.steps : [];
@@ -1181,8 +1197,8 @@ SOLUTION_JS_MODULE = r"""
     }
     container.innerHTML = html;
     var ansEl = _el('sol-answer-text'), insEl = _el('sol-insight-text');
-    if (ansEl && data.answer)  ansEl.innerHTML = _highlight(data.answer);
-    if (insEl && data.insight) insEl.innerHTML = _highlight(data.insight);
+    if (ansEl) ansEl.innerHTML = data.answer  ? _highlight(data.answer)  : '';
+    if (insEl) insEl.innerHTML = data.insight ? _highlight(data.insight) : '';
   }
   function _animateReveal() {
     var stepEls = document.querySelectorAll('.sol-step');
@@ -1199,33 +1215,33 @@ SOLUTION_JS_MODULE = r"""
   }
   function openSolution() {
     var backdrop = _el('sol-backdrop'), panel = _el('sol-panel');
-    if (!backdrop || !panel) return;
+    if (!backdrop || !panel) { console.warn('[QAnim] sol-backdrop or sol-panel not found'); return; }
+    // Always rebuild so solution matches current question
     _buildSteps(_loadData());
     backdrop.classList.add('open');
     backdrop.setAttribute('aria-hidden','false');
     panel.classList.add('open');
     panel.setAttribute('aria-hidden','false');
     solutionOpen = true;
-    /* Scroll panel body to top so content starts from beginning */
-    var body = panel.querySelector('.sol-panel-body');
-    if (body) body.scrollTop = 0;
-    setTimeout(_animateReveal, 80);
+    setTimeout(_animateReveal, 60);
   }
   function closeSolution() {
     var backdrop = _el('sol-backdrop'), panel = _el('sol-panel');
     if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
     if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true'); }
-    /* Reset step visibility for next open */
-    document.querySelectorAll('.sol-step').forEach(function(el){ el.classList.remove('visible'); });
-    var ac = _el('sol-answer-card'), ic = _el('sol-insight-card');
-    if (ac) ac.classList.remove('visible');
-    if (ic) ic.classList.remove('visible');
     solutionOpen = false;
   }
   window.openSolution   = openSolution;
   window.closeSolution  = closeSolution;
   window.toggleSolution = function() { solutionOpen ? closeSolution() : openSolution(); };
   _onReady(function() {
+    // BUG FIX: Wire sol-ctrl-btn via addEventListener (was only wired via
+    // inline onclick which could fail if window.openSolution wasn't ready yet).
+    var solCtrlBtn = _el('sol-ctrl-btn');
+    if (solCtrlBtn) {
+      solCtrlBtn.removeAttribute('onclick'); // remove inline handler to avoid double-fire
+      solCtrlBtn.addEventListener('click', function(e) { e.stopPropagation(); solutionOpen ? closeSolution() : openSolution(); });
+    }
     var closeBtn = _el('sol-close');
     if (closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeSolution(); });
     var backdrop = _el('sol-backdrop');
@@ -1354,215 +1370,299 @@ Return ONLY the JSON object. No preamble, no markdown."""
 
 _QUIZ_PANEL_CSS = """
 <style id="qanim-quiz-styles">
-/* ── Quiz Panel v10.1 — One-at-a-time Design ── */
+/* ── Quiz Panel v11 — Modern Single-Question Interactive ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
 #quiz-backdrop {
-  display:flex; position:fixed; inset:0; z-index:8700;
-  background:rgba(15,23,42,0.48); backdrop-filter:blur(8px);
+  display:none; position:fixed; inset:0; z-index:8700;
+  background:rgba(15,23,42,0.55); backdrop-filter:blur(8px);
   -webkit-backdrop-filter:blur(8px);
-  opacity:0; visibility:hidden; pointer-events:none;
-  transition:opacity 0.25s ease, visibility 0.25s ease;
+  opacity:0; transition:opacity 0.25s ease;
   align-items:center; justify-content:center;
   padding:16px; box-sizing:border-box;
 }
-#quiz-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
+#quiz-backdrop.open { display:flex; opacity:1; }
 
 #quiz-panel {
-  width:min(680px,96vw); max-height:92vh;
-  border-radius:20px; background:#eceaf4;
-  box-shadow:0 16px 56px rgba(100,50,200,0.18);
-  opacity:0; transform:translateY(16px) scale(0.97); pointer-events:none;
-  transition:opacity 0.25s ease, transform 0.26s cubic-bezier(0.34,1.56,0.64,1);
+  width:min(860px,96vw); max-height:92vh;
+  border-radius:20px; background:#f5f4ff;
+  border:1px solid #e2e0ff;
+  box-shadow:0 24px 64px rgba(99,70,255,0.18), 0 4px 16px rgba(0,0,0,0.10);
+  opacity:0; pointer-events:none;
+  transform:translateY(20px) scale(0.96);
+  transition:opacity 0.28s ease,transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
   display:flex; flex-direction:column; overflow:hidden;
+  font-family:'Inter',-apple-system,'Segoe UI',Arial,sans-serif;
 }
-#quiz-panel.open { opacity:1; transform:none; pointer-events:auto; }
+#quiz-panel.open { opacity:1; pointer-events:auto; transform:translateY(0) scale(1); }
 
-/* ── Header ── */
-.qz-header {
-  background:#eceaf4; padding:18px 22px 10px;
-  display:flex; align-items:center; justify-content:space-between; flex-shrink:0;
+/* ── Panel Header ── */
+.qp-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 22px 14px; background:#ffffff;
+  border-bottom:1px solid #e9e7ff; flex-shrink:0;
 }
-.qz-header-left { display:flex; align-items:center; gap:10px; }
-.qz-title-text h2 {
-  font:800 20px/1.2 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#1e293b; margin:0;
+.qp-header-center { flex:1; text-align:center; }
+.qp-header-title {
+  font-size:18px; font-weight:800; color:#1e1b4b;
+  display:flex; align-items:center; justify-content:center; gap:8px;
 }
-.qz-title-text p {
-  font:500 12px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#64748b; margin:4px 0 0;
+.qp-header-sub { font-size:12px; color:#7c7aab; margin-top:2px; }
+.qp-close-btn {
+  width:32px; height:32px; border-radius:10px; border:1px solid #e2e8f0;
+  background:#f8fafc; color:#64748b; font-size:13px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 0.15s,color 0.15s; flex-shrink:0;
 }
-.qz-close-btn {
-  width:32px; height:32px; border-radius:50%;
-  border:1.5px solid #c4b5fd; background:#fff; color:#7c3aed;
-  font-size:14px; cursor:pointer; display:flex;
-  align-items:center; justify-content:center; transition:background 0.15s; flex-shrink:0;
-}
-.qz-close-btn:hover { background:#ede9fe; }
+.qp-close-btn:hover { background:#fee2e2; color:#dc2626; }
 
-/* ── Progress area ── */
-.qz-progress-area { padding:0 22px 14px; flex-shrink:0; }
-.qz-progress-meta {
-  display:flex; justify-content:space-between; align-items:center;
-  font:600 12px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#7c3aed; margin-bottom:7px;
+/* ── Progress Row ── */
+.qp-progress-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 22px 4px; background:#ffffff; flex-shrink:0;
 }
-.qz-score-badge { font:700 12px/1 -apple-system,'Segoe UI',Arial,sans-serif; color:#64748b; }
-.qz-progress-track { height:5px; background:#d8d4f0; border-radius:99px; overflow:hidden; }
-.qz-progress-fill {
-  height:100%; border-radius:99px;
-  background:linear-gradient(90deg,#7c3aed,#db2777);
-  transition:width 0.45s cubic-bezier(0.4,0,0.2,1);
+.qp-progress-label { font-size:12px; font-weight:700; color:#6d28d9; }
+.qp-score-label { font-size:12px; font-weight:700; color:#1e293b; }
+.qp-progress-bar-wrap {
+  height:5px; background:#e9e7ff; margin:0 22px 0; flex-shrink:0;
+  border-radius:3px;
+}
+.qp-progress-bar {
+  height:5px; background:linear-gradient(90deg,#6d28d9,#db2777);
+  border-radius:3px; transition:width 0.4s cubic-bezier(0.4,0,0.2,1);
+  min-width:6px;
 }
 
-/* ── Scrollable body ── */
-.qz-body { flex:1; overflow-y:auto; padding:0 16px 20px;
-  scrollbar-width:thin; scrollbar-color:#c4b5fd transparent; }
+/* ── Scroll Body ── */
+.qp-body {
+  overflow-y:auto; flex:1; padding:18px 22px 22px;
+  scrollbar-width:thin; scrollbar-color:#c4b5fd transparent;
+}
 
-/* ── Question card ── */
-.qz-card {
-  background:#fff; border-radius:16px; padding:22px 20px 18px;
-  box-shadow:0 2px 14px rgba(100,50,200,0.09);
+/* ── Question Card ── */
+.qp-card {
+  background:#ffffff; border-radius:16px;
+  border:1px solid #e9e7ff;
+  box-shadow:0 2px 12px rgba(99,70,255,0.08);
+  padding:22px 24px; margin-bottom:14px;
+  animation:qp-fadein 0.3s ease;
 }
-.qz-card-meta {
-  display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap;
+@keyframes qp-fadein {
+  from { opacity:0; transform:translateY(8px); }
+  to   { opacity:1; transform:translateY(0); }
 }
-.qz-card-counter {
-  font:700 11px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#7c3aed; text-transform:uppercase; letter-spacing:0.6px;
+.qp-card-meta {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:1.3px; color:#6d28d9; margin-bottom:8px;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
 }
-.qz-card-pts {
-  font:700 10px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#64748b;
+.qp-pts-badge {
+  background:#ede9fe; color:#6d28d9; padding:2px 8px;
+  border-radius:20px; font-size:10px; font-weight:700;
 }
-.qz-type-badge {
-  font:700 10px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#7c3aed; background:#ede9fe; border-radius:20px;
-  padding:3px 10px; text-transform:uppercase;
+.qp-type-badge {
+  background:#f0fdf4; border:1px solid #bbf7d0;
+  color:#15803d; padding:2px 8px; border-radius:20px;
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;
 }
-.qz-question-text {
-  font:700 15px/1.65 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#1e293b; margin:0 0 16px;
+.qp-question-text {
+  font-size:15.5px; font-weight:700; color:#1e1b4b;
+  line-height:1.65; margin-bottom:18px;
 }
 
 /* ── Hint ── */
-.qz-hint-toggle {
-  display:inline-flex; align-items:center; gap:6px;
-  padding:7px 14px; border-radius:10px;
-  border:1.5px dashed #e2e8f0; background:#fafafa;
-  color:#64748b; font:600 12px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  cursor:pointer; margin-bottom:12px;
-  transition:background 0.15s,border-color 0.15s,color 0.15s;
+.qp-hint-row { margin-bottom:14px; }
+.qp-hint-btn {
+  display:flex; align-items:center; gap:7px; padding:9px 16px;
+  border-radius:10px; border:1px solid #e9e7ff; background:#faf9ff;
+  color:#6d28d9; font-size:12px; font-weight:600;
+  font-family:inherit; cursor:pointer; width:100%;
+  transition:background 0.15s,border-color 0.15s;
 }
-.qz-hint-toggle:hover { background:#fef9c3; border-color:#fde047; color:#854d0e; }
-.qz-hint-box {
-  display:none; background:#fef9c3; border-radius:8px;
-  padding:10px 13px; margin-bottom:14px;
-  font:400 12.5px/1.65 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#713f12; border-left:3px solid #fbbf24;
+.qp-hint-btn:hover { background:#ede9fe; border-color:#a78bfa; }
+.qp-hint-content {
+  display:none; margin-top:8px; padding:11px 14px;
+  border-radius:10px; background:#fefce8; border:1px solid #fde68a;
+  font-size:12.5px; color:#78350f; line-height:1.65;
 }
-.qz-hint-box.show { display:block; }
+.qp-hint-content.show { display:block; animation:qp-fadein 0.2s ease; }
 
 /* ── Options ── */
-.qz-options { display:flex; flex-direction:column; gap:9px; margin-bottom:14px; }
-.qz-opt {
-  display:flex; align-items:center; gap:12px; padding:11px 14px;
-  border-radius:11px; border:1.5px solid #e2e8f0; background:#f8fafc;
-  cursor:pointer; transition:background 0.15s,border-color 0.15s,transform 0.12s;
-  font:500 13px/1.5 -apple-system,'Segoe UI',Arial,sans-serif; color:#334155;
-  text-align:left; width:100%;
+.qp-options { display:flex; flex-direction:column; gap:9px; }
+.qp-opt-btn {
+  display:flex; align-items:center; gap:12px; padding:13px 16px;
+  border-radius:12px; border:2px solid #e9e7ff; background:#faf9ff;
+  color:#334155; font-size:14px; font-family:inherit; text-align:left;
+  cursor:pointer; width:100%;
+  transition:background 0.18s,border-color 0.18s,transform 0.12s,box-shadow 0.18s;
+  position:relative; overflow:hidden;
 }
-.qz-opt:hover:not([disabled]) {
-  background:#ede9fe; border-color:#a78bfa; transform:translateX(3px);
+.qp-opt-btn::before {
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(135deg,rgba(109,40,217,0.06),rgba(219,39,119,0.04));
+  opacity:0; transition:opacity 0.18s;
 }
-.qz-opt-letter {
-  width:26px; height:26px; border-radius:50%; flex-shrink:0;
-  background:#e2e8f0; color:#64748b;
-  font:700 12px/26px -apple-system,sans-serif; text-align:center;
-  transition:background 0.15s,color 0.15s;
+.qp-opt-btn:hover:not([disabled]) {
+  border-color:#a78bfa; background:#f5f3ff;
+  transform:translateX(3px);
+  box-shadow:0 2px 12px rgba(109,40,217,0.12);
 }
-.qz-opt.correct { background:#f0fdf4; border-color:#4ade80; color:#166534; }
-.qz-opt.correct .qz-opt-letter { background:#22c55e; color:#fff; }
-.qz-opt.wrong { background:#fef2f2; border-color:#f87171; color:#991b1b; }
-.qz-opt.wrong .qz-opt-letter { background:#ef4444; color:#fff; }
+.qp-opt-btn:hover:not([disabled])::before { opacity:1; }
+.qp-opt-btn:active:not([disabled]) { transform:translateX(1px) scale(0.99); }
+.qp-opt-btn.selected {
+  border-color:#7c3aed; background:#f5f3ff;
+  transform:translateX(3px);
+}
+.qp-opt-btn.correct {
+  background:#f0fdf4; border-color:#22c55e; color:#14532d;
+  font-weight:600; transform:none;
+  box-shadow:0 2px 10px rgba(34,197,94,0.15);
+  animation:qp-correct-pulse 0.4s ease;
+}
+@keyframes qp-correct-pulse {
+  0%   { transform:scale(1); }
+  40%  { transform:scale(1.015); }
+  100% { transform:scale(1); }
+}
+.qp-opt-btn.wrong {
+  background:#fef2f2; border-color:#f87171; color:#7f1d1d;
+  transform:none;
+  animation:qp-wrong-shake 0.35s ease;
+}
+@keyframes qp-wrong-shake {
+  0%,100% { transform:translateX(0); }
+  25%     { transform:translateX(-4px); }
+  75%     { transform:translateX(4px); }
+}
+.qp-opt-letter {
+  width:30px; height:30px; border-radius:50%; flex-shrink:0;
+  background:#ede9fe; color:#6d28d9; font-size:12px; font-weight:800;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 0.18s,color 0.18s;
+}
+.qp-opt-btn.correct .qp-opt-letter { background:#22c55e; color:#fff; }
+.qp-opt-btn.wrong   .qp-opt-letter { background:#f87171; color:#fff; }
+.qp-opt-btn[disabled] { cursor:default; }
 
 /* ── Explanation ── */
-.qz-expl {
-  display:none; background:#f1f5f9; border-radius:9px;
-  padding:12px 14px; margin-bottom:6px;
-  font:400 12.5px/1.7 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#475569; border-left:3px solid #7c3aed;
+.qp-expl {
+  display:none; margin-top:14px; padding:14px 16px;
+  border-radius:12px; background:#f5f3ff;
+  border-left:4px solid #7c3aed;
+  font-size:13px; color:#4c1d95; line-height:1.75;
 }
-.qz-expl.show { display:block; }
+.qp-expl.show { display:block; animation:qp-fadein 0.25s ease; }
 
-/* ── Next button ── */
-.qz-next-btn {
-  display:none; width:100%; padding:14px; margin-top:14px;
-  border-radius:12px; border:none;
-  background:linear-gradient(135deg,#7c3aed,#db2777);
-  color:#fff; font:700 14px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  cursor:pointer; letter-spacing:0.3px;
-  transition:opacity 0.15s, transform 0.1s;
+/* ── Navigation ── */
+.qp-nav {
+  display:flex; gap:10px; margin-top:16px; align-items:center;
 }
-.qz-next-btn:hover { opacity:0.92; transform:translateY(-1px); }
-.qz-next-btn:active { transform:translateY(0); }
-.qz-next-btn.show { display:block; }
+.qp-prev-btn {
+  padding:12px 20px; border-radius:12px; border:2px solid #e9e7ff;
+  background:#ffffff; color:#6d28d9; font-size:13px; font-weight:700;
+  font-family:inherit; cursor:pointer; flex-shrink:0;
+  transition:background 0.15s,border-color 0.15s,transform 0.1s;
+}
+.qp-prev-btn:hover:not([disabled]) { background:#ede9fe; border-color:#a78bfa; transform:translateX(-2px); }
+.qp-prev-btn[disabled] { opacity:0.35; cursor:default; }
+.qp-next-btn {
+  flex:1; padding:14px; border-radius:12px; border:none;
+  background:linear-gradient(135deg,#6d28d9,#db2777);
+  color:#fff; font-size:15px; font-weight:800;
+  font-family:inherit; cursor:pointer; display:none;
+  transition:opacity 0.15s,transform 0.12s,box-shadow 0.15s;
+  box-shadow:0 4px 18px rgba(109,40,217,0.30);
+}
+.qp-next-btn:hover { opacity:0.92; transform:translateY(-1px); box-shadow:0 6px 24px rgba(109,40,217,0.38); }
+.qp-next-btn:active { transform:translateY(0); }
+.qp-next-btn.show { display:block; animation:qp-fadein 0.2s ease; }
 
-/* ── Finish screen ── */
-.qz-finish { text-align:center; padding:28px 16px; }
-.qz-finish-emoji { font-size:50px; display:block; margin-bottom:14px; }
-.qz-finish h3 {
-  font:800 20px/1.2 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#1e293b; margin:0 0 8px;
+/* ── Results Screen ── */
+.qp-results {
+  display:none; text-align:center;
+  background:#ffffff; border-radius:16px;
+  border:1px solid #e9e7ff; padding:44px 32px;
+  box-shadow:0 4px 20px rgba(99,70,255,0.10);
+  animation:qp-fadein 0.35s ease;
 }
-.qz-finish p {
-  font:500 13px/1.6 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#64748b; margin:0 0 18px;
+.qp-results.show { display:block; }
+.qp-results-emoji { font-size:52px; display:block; margin-bottom:14px; }
+.qp-results h2 { font-size:24px; font-weight:800; color:#1e1b4b; margin-bottom:8px; }
+.qp-results-score {
+  font-size:52px; font-weight:900;
+  background:linear-gradient(135deg,#6d28d9,#db2777);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  background-clip:text; margin:10px 0;
 }
-.qz-restart-btn {
-  padding:11px 28px; border-radius:10px; border:none;
-  background:linear-gradient(135deg,#7c3aed,#db2777);
-  color:#fff; font:700 13px/1 -apple-system,sans-serif; cursor:pointer;
-  transition:opacity 0.15s;
+.qp-results-sub { font-size:14px; color:#64748b; margin-bottom:28px; }
+.qp-restart-btn {
+  padding:13px 36px; border-radius:12px; border:none;
+  background:linear-gradient(135deg,#6d28d9,#db2777);
+  color:#fff; font-size:14px; font-weight:800;
+  font-family:inherit; cursor:pointer;
+  box-shadow:0 4px 18px rgba(109,40,217,0.30);
+  transition:opacity 0.15s,transform 0.1s;
 }
-.qz-restart-btn:hover { opacity:0.9; }
+.qp-restart-btn:hover { opacity:0.92; transform:translateY(-1px); }
 
 /* ── Loading ── */
-.qz-loading {
-  text-align:center; padding:40px 20px;
-  font:500 14px/1 -apple-system,'Segoe UI',Arial,sans-serif; color:#64748b;
+.qp-loading {
+  text-align:center; padding:48px 20px; color:#7c7aab;
+  font-size:14px;
 }
-.qz-spin { font-size:28px; display:block; margin-bottom:12px; animation:qz-spin 1s linear infinite; }
-@keyframes qz-spin { to { transform:rotate(360deg); } }
+.qp-loading-icon {
+  font-size:34px; margin-bottom:14px;
+  animation:qs-spin 1s linear infinite; display:block;
+}
+@keyframes qs-spin { to { transform:rotate(360deg); } }
+
+/* ── Responsive ── */
+@media (max-width:560px) {
+  .qp-card { padding:18px 16px; }
+  .qp-question-text { font-size:14px; }
+  .qp-opt-btn { font-size:13px; padding:11px 12px; }
+  .qp-header { padding:14px 16px; }
+  .qp-progress-row { padding:8px 16px 4px; }
+  .qp-body { padding:14px 16px 18px; }
+  .qp-progress-bar-wrap { margin:0 16px 0; }
+}
 </style>
 """
 
 _QUIZ_PANEL_DOM = """
 <div id="quiz-backdrop" aria-hidden="true">
 <div id="quiz-panel" role="dialog" aria-label="Quiz" aria-hidden="true">
-  <div class="qz-header">
-    <div class="qz-header-left">
-      <span style="font-size:28px;line-height:1">🔥</span>
-      <div class="qz-title-text">
-        <h2 id="qz-panel-title">Quiz</h2>
-        <p id="qz-panel-sub">Loading…</p>
-      </div>
+
+  <!-- Header -->
+  <div class="qp-header">
+    <div style="width:32px"></div>
+    <div class="qp-header-center">
+      <div class="qp-header-title">🔥 Quiz — Test Your Understanding</div>
+      <div class="qp-header-sub" id="qp-header-sub">Loading questions…</div>
     </div>
-    <button class="qz-close-btn" id="quiz-close-btn">✕</button>
+    <button class="qp-close-btn" id="quiz-close-btn" aria-label="Close Quiz">✕</button>
   </div>
-  <div class="qz-progress-area">
-    <div class="qz-progress-meta">
-      <span id="qz-q-counter">Question 1 of 15</span>
-      <span class="qz-score-badge" id="qz-score-display">Score: 0</span>
-    </div>
-    <div class="qz-progress-track">
-      <div class="qz-progress-fill" id="qz-progress-fill" style="width:0%"></div>
-    </div>
+
+  <!-- Progress Row -->
+  <div class="qp-progress-row">
+    <span class="qp-progress-label" id="qp-progress-label">Question 1 of 15</span>
+    <span class="qp-score-label" id="qp-score-label">Score: 0</span>
   </div>
-  <div class="qz-body" id="qz-body">
-    <div class="qz-loading">
-      <span class="qz-spin">⟳</span>
+  <div class="qp-progress-bar-wrap">
+    <div class="qp-progress-bar" id="qp-progress-bar" style="width:6.67%"></div>
+  </div>
+
+  <!-- Scrollable Body -->
+  <div class="qp-body" id="qp-body">
+    <!-- Question card injected here -->
+    <div class="qp-loading" id="qp-loading-state">
+      <span class="qp-loading-icon">⟳</span>
       Generating quiz questions…
     </div>
+    <div id="qp-card-area"></div>
+    <div id="qp-results-area"></div>
   </div>
+
 </div>
 </div>
 """
@@ -1570,14 +1670,15 @@ _QUIZ_PANEL_DOM = """
 _QUIZ_PANEL_JS = r"""
 (function initQuizSystem() {
   'use strict';
-  var quizOpen = false;
-  var _built   = false;
-  var _allQ    = [];
-  var _cur     = 0;
-  var _score   = 0;
-  var _answered = false;
+  var quizOpen      = false;
+  var _initialized  = false;
+  var _allQuestions = [];
+  var _currentIdx   = 0;
+  var _score        = 0;
+  var _answered     = false;
+  var LETTERS       = ['A','B','C','D'];
 
-  function _el(id) { return document.getElementById(id); }
+  function _el(id)  { return document.getElementById(id); }
   function _onReady(fn) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
     else setTimeout(fn, 0);
@@ -1585,192 +1686,227 @@ _QUIZ_PANEL_JS = r"""
   function _esc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
-  function _loadData() {
-    try { var t = document.getElementById('__quiz_data__'); return t ? JSON.parse(t.textContent) : null; }
-    catch(e) { return null; }
-  }
-  function _flatten(data) {
-    var all = [];
-    if (!data || !data.sets) return all;
-    for (var si = 0; si < data.sets.length; si++) {
-      var set = data.sets[si];
-      var qs = set.questions || [];
-      for (var qi = 0; qi < qs.length; qi++) {
-        all.push({
-          q:           qs[qi].q || qs[qi].question || '',
-          type:        qs[qi].type || 'mcq',
-          options:     qs[qi].options || [],
-          correct:     qs[qi].correct || 0,
-          explanation: qs[qi].explanation || '',
-          hint:        (qs[qi].explanation || '').split('.')[0] + '.'
+
+  /* Load + flatten all questions from embedded JSON */
+  function _loadQuestions() {
+    try {
+      var tag = _el('__quiz_data__');
+      if (!tag) return [];
+      var data = JSON.parse(tag.textContent);
+      var result = [];
+      if (data && data.sets) {
+        data.sets.forEach(function(set) {
+          (set.questions||[]).forEach(function(q) { result.push(q); });
         });
       }
-    }
-    return all;
+      return result;
+    } catch(e) { return []; }
   }
 
-  function _renderQ(idx) {
-    var body  = _el('qz-body');
-    var total = _allQ.length;
-    if (!body) return;
-    if (idx >= total) { _renderFinish(); return; }
-
-    var q = _allQ[idx];
-    var letters = ['A','B','C','D'];
-
-    /* Update header chrome */
-    var counter = _el('qz-q-counter');
-    if (counter) counter.textContent = 'Question ' + (idx+1) + ' of ' + total;
-    var fill = _el('qz-progress-fill');
-    if (fill) fill.style.width = Math.round(idx / total * 100) + '%';
-    var scoreEl = _el('qz-score-display');
-    if (scoreEl) scoreEl.textContent = 'Score: ' + _score;
-
-    var typeLabel = (q.type || 'mcq').toUpperCase();
-    var optHtml = '';
-    for (var oi = 0; oi < q.options.length; oi++) {
-      optHtml += '<button class="qz-opt" data-opt="' + oi + '" data-correct="' + q.correct + '">' +
-        '<span class="qz-opt-letter">' + (letters[oi] || oi) + '</span>' +
-        _esc(q.options[oi]) + '</button>';
-    }
-
-    body.innerHTML =
-      '<div class="qz-card">' +
-        '<div class="qz-card-meta">' +
-          '<span class="qz-card-counter">QUESTION ' + (idx+1) + ' OF ' + total + '</span>' +
-          '<span class="qz-card-pts">&nbsp;&middot;&nbsp;2 PTS</span>' +
-          '<span class="qz-type-badge">' + typeLabel + '</span>' +
-        '</div>' +
-        '<p class="qz-question-text">' + _esc(q.q) + '</p>' +
-        '<div class="qz-hint-toggle" id="qz-hint-btn">\uD83D\uDCA1 Show Hint</div>' +
-        '<div class="qz-hint-box" id="qz-hint-box">' + _esc(q.hint) + '</div>' +
-        '<div class="qz-options" id="qz-opts">' + optHtml + '</div>' +
-        '<div class="qz-expl" id="qz-expl">' + _esc(q.explanation) + '</div>' +
-        '<button class="qz-next-btn" id="qz-next-btn">' +
-          (idx < total - 1 ? 'Next Question \u2192' : 'See Results') +
-        '</button>' +
-      '</div>';
-
+  /* Render the question at index idx */
+  function _renderQuestion(idx) {
     _answered = false;
+    var q = _allQuestions[idx];
+    if (!q) return;
+    var total = _allQuestions.length;
 
-    /* Hint toggle */
-    var hintBtn = document.getElementById('qz-hint-btn');
-    var hintBox = document.getElementById('qz-hint-box');
-    if (hintBtn && hintBox) {
+    /* ── Progress ── */
+    var pLabel = _el('qp-progress-label');
+    var pBar   = _el('qp-progress-bar');
+    var sLabel = _el('qp-score-label');
+    if (pLabel) pLabel.textContent = 'Question ' + (idx+1) + ' of ' + total;
+    if (sLabel) sLabel.textContent = 'Score: ' + _score;
+    if (pBar)   pBar.style.width   = Math.max(6, ((idx+1)/total)*100) + '%';
+
+    var qtype = (q.type || 'mcq').toUpperCase();
+    var opts  = q.options || [];
+    var corr  = typeof q.correct === 'number' ? q.correct : 0;
+    var hint  = q.hint || '';
+    var expl  = q.explanation || '';
+    var isLast = (idx === total - 1);
+
+    /* ── Build card HTML ── */
+    var html = '<div class="qp-card" id="qp-active-card">';
+
+    /* Meta row */
+    html += '<div class="qp-card-meta">';
+    html += 'QUESTION ' + (idx+1) + ' OF ' + total + '&nbsp;&middot;&nbsp;';
+    html += '<span class="qp-pts-badge">2 PTS</span>';
+    html += '<span class="qp-type-badge">' + _esc(qtype) + '</span>';
+    html += '</div>';
+
+    /* Question text */
+    html += '<div class="qp-question-text">' + _esc(q.q || q.question || '') + '</div>';
+
+    /* Hint */
+    if (hint) {
+      html += '<div class="qp-hint-row">';
+      html += '<button class="qp-hint-btn" id="qp-hint-btn">⚡ Show Hint</button>';
+      html += '<div class="qp-hint-content" id="qp-hint-text">' + _esc(hint) + '</div>';
+      html += '</div>';
+    }
+
+    /* Options */
+    html += '<div class="qp-options">';
+    for (var oi = 0; oi < opts.length; oi++) {
+      var letter = LETTERS[oi] || String(oi+1);
+      html += '<button class="qp-opt-btn" id="qp-opt-' + oi + '" data-opt="' + oi + '" data-correct="' + corr + '">';
+      html += '<span class="qp-opt-letter">' + letter + '.</span>';
+      html += _esc(opts[oi]);
+      html += '</button>';
+    }
+    html += '</div>';
+
+    /* Explanation (hidden until answered) */
+    if (expl) {
+      html += '<div class="qp-expl" id="qp-expl">' + _esc(expl) + '</div>';
+    }
+
+    html += '</div>'; /* end qp-card */
+
+    /* Navigation buttons */
+    html += '<div class="qp-nav">';
+    html += '<button class="qp-prev-btn" id="qp-prev-btn"' + (idx === 0 ? ' disabled' : '') + '>← Prev</button>';
+    html += '<button class="qp-next-btn" id="qp-next-btn">' + (isLast ? 'See Results 🏆' : 'Next Question →') + '</button>';
+    html += '</div>';
+
+    var area = _el('qp-card-area');
+    if (area) area.innerHTML = html;
+
+    /* Wire hint */
+    var hintBtn  = _el('qp-hint-btn');
+    var hintText = _el('qp-hint-text');
+    if (hintBtn && hintText) {
       hintBtn.addEventListener('click', function() {
-        var open = hintBox.classList.toggle('show');
-        hintBtn.innerHTML = (open ? '\uD83D\uDCA1 Hide Hint' : '\uD83D\uDCA1 Show Hint');
+        hintText.classList.toggle('show');
+        hintBtn.textContent = hintText.classList.contains('show') ? '⚡ Hide Hint' : '⚡ Show Hint';
       });
     }
 
-    /* Option click */
-    var optsEl = document.getElementById('qz-opts');
-    if (optsEl) {
-      optsEl.addEventListener('click', function(e) {
-        if (_answered) return;
-        var btn = e.target.closest('.qz-opt');
+    /* Wire option buttons */
+    for (var oi2 = 0; oi2 < opts.length; oi2++) {
+      (function(optIdx) {
+        var btn = _el('qp-opt-' + optIdx);
         if (!btn) return;
-        _answered = true;
-
-        var chosen  = parseInt(btn.getAttribute('data-opt'), 10);
-        var correct = parseInt(btn.getAttribute('data-correct'), 10);
-
-        optsEl.querySelectorAll('.qz-opt').forEach(function(o) {
-          o.setAttribute('disabled', '1');
-          o.style.pointerEvents = 'none';
-          o.style.cursor = 'default';
-          var oi2 = parseInt(o.getAttribute('data-opt'), 10);
-          if (oi2 === correct) o.classList.add('correct');
-          else if (oi2 === chosen && chosen !== correct) o.classList.add('wrong');
+        btn.addEventListener('click', function() {
+          if (_answered) return;
+          _answered = true;
+          var correctIdx = parseInt(this.getAttribute('data-correct'), 10);
+          /* Mark all options */
+          for (var k = 0; k < opts.length; k++) {
+            var ob = _el('qp-opt-' + k);
+            if (!ob) continue;
+            ob.setAttribute('disabled','1');
+            ob.style.pointerEvents = 'none';
+            if (k === correctIdx) ob.classList.add('correct');
+            else if (k === optIdx && optIdx !== correctIdx) ob.classList.add('wrong');
+          }
+          /* Score */
+          if (optIdx === correctIdx) _score++;
+          var sLbl = _el('qp-score-label');
+          if (sLbl) sLbl.textContent = 'Score: ' + _score;
+          /* Show explanation */
+          var explEl = _el('qp-expl');
+          if (explEl) explEl.classList.add('show');
+          /* Show next button */
+          var nBtn = _el('qp-next-btn');
+          if (nBtn) nBtn.style.display = 'block';
         });
+      })(oi2);
+    }
 
-        if (chosen === correct) _score++;
-
-        var explEl = document.getElementById('qz-expl');
-        if (explEl) explEl.classList.add('show');
-
-        var nextBtn = document.getElementById('qz-next-btn');
-        if (nextBtn) nextBtn.classList.add('show');
-
-        var scoreEl2 = _el('qz-score-display');
-        if (scoreEl2) scoreEl2.textContent = 'Score: ' + _score;
+    /* Wire prev button */
+    var prevBtn = _el('qp-prev-btn');
+    if (prevBtn) {
+      prevBtn.addEventListener('click', function() {
+        if (_currentIdx > 0) { _currentIdx--; _renderQuestion(_currentIdx); }
       });
     }
 
-    /* Next button */
-    var nb = document.getElementById('qz-next-btn');
-    if (nb) {
-      nb.addEventListener('click', function() {
-        _cur++;
-        _renderQ(_cur);
-      });
-    }
-
-    body.scrollTop = 0;
-  }
-
-  function _renderFinish() {
-    var body  = _el('qz-body');
-    var total = _allQ.length;
-    var pct   = Math.round(_score / total * 100);
-    var emoji = pct >= 80 ? '\uD83C\uDF89' : pct >= 60 ? '\uD83D\uDC4D' : '\uD83D\uDCDA';
-    var msg   = pct >= 80 ? 'Excellent work!' : pct >= 60 ? 'Good effort!' : 'Keep practising!';
-
-    var fill = _el('qz-progress-fill');
-    if (fill) fill.style.width = '100%';
-    var counter = _el('qz-q-counter');
-    if (counter) counter.textContent = 'Completed!';
-
-    body.innerHTML =
-      '<div class="qz-card qz-finish">' +
-        '<span class="qz-finish-emoji">' + emoji + '</span>' +
-        '<h3>' + msg + '</h3>' +
-        '<p>You scored <strong>' + _score + ' / ' + total + '</strong> (' + pct + '%)</p>' +
-        '<button class="qz-restart-btn" id="qz-restart-btn">Try Again</button>' +
-      '</div>';
-
-    var rb = document.getElementById('qz-restart-btn');
-    if (rb) {
-      rb.addEventListener('click', function() {
-        _cur = 0; _score = 0; _answered = false;
-        var f = _el('qz-progress-fill'); if (f) f.style.width = '0%';
-        var s = _el('qz-score-display'); if (s) s.textContent = 'Score: 0';
-        _renderQ(0);
+    /* Wire next button */
+    var nextBtn = _el('qp-next-btn');
+    if (nextBtn) {
+      nextBtn.addEventListener('click', function() {
+        _currentIdx++;
+        if (_currentIdx < _allQuestions.length) {
+          _renderQuestion(_currentIdx);
+        } else {
+          _showResults();
+        }
       });
     }
   }
 
-  function _init() {
-    if (_built) return;
-    _built = true;
-    var data = _loadData();
-    _allQ = _flatten(data);
+  function _showResults() {
+    var area = _el('qp-card-area');
+    if (area) area.innerHTML = '';
+    var total = _allQuestions.length;
+    var pct   = total > 0 ? Math.round((_score / total) * 100) : 0;
+    var emoji = pct >= 80 ? '🏆' : pct >= 60 ? '🎉' : '📚';
+    var msg   = pct >= 80 ? 'Excellent work!' : pct >= 60 ? 'Good job!' : 'Keep practicing!';
 
-    /* Update subtitle */
-    var sub = _el('qz-panel-sub');
-    if (sub) sub.textContent = _allQ.length + ' Questions';
+    /* Update progress to 100% */
+    var pBar = _el('qp-progress-bar');
+    if (pBar) pBar.style.width = '100%';
+    var pLabel = _el('qp-progress-label');
+    if (pLabel) pLabel.textContent = 'Quiz Complete!';
+    var sLabel = _el('qp-score-label');
+    if (sLabel) sLabel.textContent = 'Final Score: ' + _score;
 
-    if (_allQ.length === 0) {
-      var body = _el('qz-body');
-      if (body) body.innerHTML = '<div class="qz-loading">No questions available.</div>';
-      return;
+    var html = '<div class="qp-results show">';
+    html += '<span class="qp-results-emoji">' + emoji + '</span>';
+    html += '<h2>Quiz Complete!</h2>';
+    html += '<div class="qp-results-score">' + _score + ' / ' + total + '</div>';
+    html += '<div class="qp-results-sub">You scored ' + pct + '% &mdash; ' + msg + '</div>';
+    html += '<button class="qp-restart-btn" id="qp-restart-btn">🔄 Restart Quiz</button>';
+    html += '</div>';
+
+    var rArea = _el('qp-results-area');
+    if (rArea) rArea.innerHTML = html;
+
+    var restartBtn = _el('qp-restart-btn');
+    if (restartBtn) {
+      restartBtn.addEventListener('click', function() {
+        _currentIdx = 0; _score = 0; _answered = false;
+        var rArea2 = _el('qp-results-area');
+        if (rArea2) rArea2.innerHTML = '';
+        _renderQuestion(0);
+      });
     }
-    _renderQ(0);
+  }
+
+  /* ── Initialize quiz on first open ── */
+  function _initIfNeeded() {
+    if (_initialized) return;
+    _initialized = true;
+    _allQuestions = _loadQuestions();
+    var loading = _el('qp-loading-state');
+    if (loading) loading.style.display = 'none';
+    var sub = _el('qp-header-sub');
+    if (sub) sub.textContent = _allQuestions.length + ' Questions';
+    if (_allQuestions.length > 0) {
+      _renderQuestion(0);
+    } else {
+      var area = _el('qp-card-area');
+      if (area) area.innerHTML = '<div style="text-align:center;padding:40px;color:#7c7aab">No quiz questions available.</div>';
+    }
   }
 
   function openQuiz() {
     var backdrop = _el('quiz-backdrop'), panel = _el('quiz-panel');
     if (!backdrop || !panel) return;
-    if (!_built) _init();
-    backdrop.classList.add('open'); backdrop.setAttribute('aria-hidden', 'false');
-    panel.classList.add('open');    panel.setAttribute('aria-hidden', 'false');
+    _initIfNeeded();
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden','false');
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden','false');
     quizOpen = true;
-    var body = _el('qz-body'); if (body) body.scrollTop = 0;
   }
+
   function closeQuiz() {
     var backdrop = _el('quiz-backdrop'), panel = _el('quiz-panel');
-    if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden', 'true'); }
-    if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden', 'true'); }
+    if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
+    if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true'); }
     quizOpen = false;
   }
 
@@ -1778,12 +1914,12 @@ _QUIZ_PANEL_JS = r"""
   window.closeQuiz = closeQuiz;
 
   _onReady(function() {
-    var qBtn = _el('quiz-ctrl-btn');
-    if (qBtn) qBtn.addEventListener('click', function(e) { e.stopPropagation(); quizOpen ? closeQuiz() : openQuiz(); });
-    var cBtn = _el('quiz-close-btn');
-    if (cBtn) cBtn.addEventListener('click', function(e) { e.stopPropagation(); closeQuiz(); });
-    var bd = _el('quiz-backdrop');
-    if (bd) bd.addEventListener('click', function(e) { if (e.target === bd) closeQuiz(); });
+    var quizBtn = _el('quiz-ctrl-btn');
+    if (quizBtn) quizBtn.addEventListener('click', function(e) { e.stopPropagation(); quizOpen ? closeQuiz() : openQuiz(); });
+    var closeBtn = _el('quiz-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', function(e) { e.stopPropagation(); closeQuiz(); });
+    var backdrop = _el('quiz-backdrop');
+    if (backdrop) backdrop.addEventListener('click', function(e) { if (e.target === backdrop) closeQuiz(); });
     document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && quizOpen) closeQuiz(); });
   });
 })();
@@ -1806,7 +1942,7 @@ class QuizGeneratorV2:
             category=category
         )
         try:
-            msg = await async_client.messages.create(
+            msg = client.messages.create(
                 model=QUIZ_MODEL,
                 max_tokens=MAX_TOK_QUIZ,
                 system=NEW_QUIZ_SYSTEM_PROMPT,
@@ -1870,12 +2006,12 @@ class QuizGeneratorV2:
                          "correct": 1, "explanation": "In a direct proportional relationship, doubling one variable doubles the result."},
                         {"q": "Which formula is most relevant to this category of problem?",
                          "type": "mcq",
-                         "options": ["The governing equation for this domain", "E = mc²", "F = ma", "V = IR"],
-                         "correct": 0, "explanation": "The correct formula depends on the specific topic — check the concept animation."},
+                         "options": ["The governing equation for this domain", "E = mc\u00b2", "F = ma", "V = IR"],
+                         "correct": 0, "explanation": "The correct formula depends on the specific topic."},
                         {"q": "True or False: Units must always be consistent when applying formulas.",
                          "type": "tf",
                          "options": ["True", "False"],
-                         "correct": 0, "explanation": "Unit consistency is critical; mixing units (e.g., kg and g) leads to incorrect answers."},
+                         "correct": 0, "explanation": "Unit consistency is critical; mixing units leads to incorrect answers."},
                         {"q": "In a multi-step problem, what is the safest approach?",
                          "type": "mcq",
                          "options": ["Solve all steps in one go", "Solve step by step, checking each result", "Skip intermediate steps", "Estimate only"],
@@ -1896,11 +2032,11 @@ class QuizGeneratorV2:
                          "correct": 0, "explanation": "Without enough independent equations or given values, the system is underdetermined."},
                         {"q": "True or False: Approximation methods always give less accurate results than exact methods.",
                          "type": "tf",
-                         "options": ["True", "False — approximations can be very accurate within stated tolerances"],
-                         "correct": 1, "explanation": "Approximations are designed to be accurate within defined error bounds and are widely used in practice."},
+                         "options": ["True", "False \u2014 approximations can be very accurate within stated tolerances"],
+                         "correct": 1, "explanation": "Approximations are designed to be accurate within defined error bounds."},
                         {"q": "A student gets a numerically correct answer but with wrong units. Is this considered correct?",
                          "type": "mcq",
-                         "options": ["Yes — numbers are what matter", "No — units are integral to the answer", "Sometimes, depending on context", "Only in pure mathematics"],
+                         "options": ["Yes \u2014 numbers are what matter", "No \u2014 units are integral to the answer", "Sometimes, depending on context", "Only in pure mathematics"],
                          "correct": 1, "explanation": "Units are fundamental to physical quantities; a wrong unit means a meaningfully different answer."},
                         {"q": "What is the primary source of significant error in manual calculations?",
                          "type": "mcq",
@@ -1917,283 +2053,469 @@ class QuizGeneratorV2:
 
     @classmethod
     def build_standalone_html(cls, data: dict, question: str, category: str) -> str:
-        """Builds a standalone one-at-a-time quiz HTML from quiz data."""
+        """Builds a standalone modern quiz HTML from quiz data.
+        Layout: centered card, single-question-at-a-time, progress bar, score,
+        hint toggle, animated option feedback, explanation reveal, Prev/Next nav.
+        """
         q_safe   = html_module.escape(question[:100])
         cat_safe = html_module.escape(category)
         data_json = json.dumps(data, ensure_ascii=False)
-        total_q = sum(len(s.get('questions', [])) for s in data.get('sets', []))
 
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QAnim Quiz — {cat_safe}</title>
+<meta name="description" content="Interactive quiz on {cat_safe} — test your understanding with MCQ questions, hints, and explanations.">
+<title>Quiz — {cat_safe}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script type="application/json" id="__quiz_data__">{data_json}</script>
 <style>
+/* ── RESET ── */
 *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
+html {{ scroll-behavior:smooth; }}
 html, body {{
-  min-height:100%; background:#eceaf4;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-}}
-.page-wrap {{ max-width:680px; margin:0 auto; padding:24px 16px 40px; }}
-
-/* Header card */
-.qz-header-card {{
-  background:#fff; border-radius:16px; padding:20px 22px;
-  box-shadow:0 2px 14px rgba(100,50,200,0.09);
-  margin-bottom:14px; display:flex; align-items:center; gap:14px;
-}}
-.qz-header-card h1 {{
-  font:800 20px/1.2 -apple-system,'Segoe UI',Arial,sans-serif; color:#1e293b; margin:0;
-}}
-.qz-header-card p {{
-  font:500 12px/1 -apple-system,'Segoe UI',Arial,sans-serif; color:#64748b; margin:4px 0 0;
+  min-height:100%;
+  background:#f0eeff;
+  font-family:'Inter',-apple-system,'Segoe UI',Arial,sans-serif;
+  color:#1e1b4b;
 }}
 
-/* Progress */
+/* ── PAGE WRAPPER ── */
+.qz-page {{
+  max-width:860px; margin:0 auto;
+  padding:32px 16px 100px;
+  min-height:100vh;
+}}
+
+/* ── HEADER ── */
+.qz-header {{ text-align:center; margin-bottom:24px; }}
+.qz-header-emoji {{
+  font-size:40px; display:block; margin-bottom:8px;
+  animation:qz-bounce 2.5s ease infinite;
+}}
+@keyframes qz-bounce {{
+  0%,100% {{ transform:translateY(0); }}
+  50%      {{ transform:translateY(-7px); }}
+}}
+.qz-header h1 {{
+  font-size:26px; font-weight:900; color:#1e1b4b; letter-spacing:-0.5px;
+}}
+.qz-header-sub {{ font-size:13px; color:#7c7aab; margin-top:5px; font-weight:500; }}
+
+/* ── PROGRESS ROW ── */
 .qz-progress-row {{
-  display:flex; justify-content:space-between; align-items:center;
-  font:600 12px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#7c3aed; margin-bottom:7px;
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:8px;
 }}
-.qz-score-lbl {{ font:700 12px/1 -apple-system,'Segoe UI',Arial,sans-serif; color:#64748b; }}
-.qz-track {{ height:5px; background:#d8d4f0; border-radius:99px; overflow:hidden; margin-bottom:16px; }}
-.qz-fill {{
-  height:100%; border-radius:99px;
-  background:linear-gradient(90deg,#7c3aed,#db2777);
-  transition:width 0.45s cubic-bezier(0.4,0,0.2,1);
+.qz-progress-label {{ font-size:13px; font-weight:700; color:#6d28d9; }}
+.qz-score-label {{
+  font-size:13px; font-weight:700; color:#1e1b4b;
+  background:#fff; border:1.5px solid #e2e0ff;
+  padding:3px 12px; border-radius:20px;
+}}
+.qz-progress-bar-wrap {{
+  width:100%; height:6px; background:#ddd9ff;
+  border-radius:3px; margin-bottom:22px; overflow:hidden;
+}}
+.qz-progress-bar {{
+  height:6px;
+  background:linear-gradient(90deg,#6d28d9,#db2777);
+  border-radius:3px;
+  transition:width 0.5s cubic-bezier(0.4,0,0.2,1);
+  min-width:6px;
+  box-shadow:0 0 8px rgba(109,40,217,0.4);
 }}
 
-/* Question card */
+/* ── QUESTION CARD ── */
 .qz-card {{
-  background:#fff; border-radius:16px; padding:22px 20px 18px;
-  box-shadow:0 2px 14px rgba(100,50,200,0.09);
+  background:#ffffff; border-radius:18px;
+  border:1.5px solid #e2e0ff;
+  box-shadow:0 4px 24px rgba(99,70,255,0.10), 0 1px 4px rgba(0,0,0,0.06);
+  padding:26px 28px; margin-bottom:16px;
+  animation:qz-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);
 }}
-.qz-meta {{ display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }}
-.qz-counter {{ font:700 11px/1 -apple-system,'Segoe UI',Arial,sans-serif; color:#7c3aed; text-transform:uppercase; letter-spacing:0.6px; }}
-.qz-pts {{ font:700 10px/1 -apple-system,'Segoe UI',Arial,sans-serif; color:#64748b; }}
-.qz-badge {{
-  font:700 10px/1 -apple-system,'Segoe UI',Arial,sans-serif; color:#7c3aed;
-  background:#ede9fe; border-radius:20px; padding:3px 10px; text-transform:uppercase;
+@keyframes qz-slidein {{
+  from {{ opacity:0; transform:translateY(12px) scale(0.99); }}
+  to   {{ opacity:1; transform:translateY(0)   scale(1);    }}
 }}
-.qz-qtext {{ font:700 15px/1.65 -apple-system,'Segoe UI',Arial,sans-serif; color:#1e293b; margin:0 0 16px; }}
+.qz-card-meta {{
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:1.4px; color:#6d28d9; margin-bottom:10px;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+}}
+.qz-pts-badge {{
+  background:#ede9fe; color:#6d28d9; padding:3px 10px;
+  border-radius:20px; font-size:10px; font-weight:800;
+}}
+.qz-type-badge {{
+  background:#f0fdf4; border:1px solid #bbf7d0;
+  color:#15803d; padding:3px 10px; border-radius:20px;
+  font-size:10px; font-weight:800; letter-spacing:0.5px;
+}}
+.qz-question-text {{
+  font-size:17px; font-weight:700; color:#1e1b4b;
+  line-height:1.7; margin-bottom:20px;
+}}
 
+/* ── HINT ── */
+.qz-hint-row {{ margin-bottom:16px; }}
 .qz-hint-btn {{
-  display:inline-flex; align-items:center; gap:6px; padding:7px 14px;
-  border-radius:10px; border:1.5px dashed #e2e8f0; background:#fafafa;
-  color:#64748b; font:600 12px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  cursor:pointer; margin-bottom:12px;
-  transition:background 0.15s,border-color 0.15s;
+  display:flex; align-items:center; gap:8px; padding:10px 18px;
+  border-radius:12px; border:1.5px solid #e2e0ff; background:#faf9ff;
+  color:#6d28d9; font-size:13px; font-weight:600;
+  font-family:inherit; cursor:pointer; width:100%;
+  transition:background 0.18s,border-color 0.18s,transform 0.1s;
 }}
-.qz-hint-btn:hover {{ background:#fef9c3; border-color:#fde047; color:#854d0e; }}
+.qz-hint-btn:hover {{ background:#ede9fe; border-color:#a78bfa; transform:translateY(-1px); }}
+.qz-hint-btn:active {{ transform:translateY(0); }}
 .qz-hint-content {{
-  display:none; background:#fef9c3; border-radius:8px; padding:10px 13px; margin-bottom:14px;
-  font:400 12.5px/1.65 -apple-system,'Segoe UI',Arial,sans-serif; color:#713f12;
-  border-left:3px solid #fbbf24;
+  display:none; margin-top:10px; padding:12px 16px;
+  border-radius:12px; background:#fefce8; border:1.5px solid #fde68a;
+  font-size:13px; color:#78350f; line-height:1.7;
 }}
-.qz-hint-content.show {{ display:block; }}
+.qz-hint-content.show {{ display:block; animation:qz-slidein 0.2s ease; }}
 
-.qz-opts {{ display:flex; flex-direction:column; gap:9px; margin-bottom:14px; }}
-.qz-opt {{
-  display:flex; align-items:center; gap:12px; padding:11px 14px;
-  border-radius:11px; border:1.5px solid #e2e8f0; background:#f8fafc;
-  cursor:pointer; font:500 13px/1.5 -apple-system,'Segoe UI',Arial,sans-serif;
-  color:#334155; text-align:left; width:100%;
-  transition:background 0.15s,border-color 0.15s,transform 0.12s;
+/* ── OPTIONS ── */
+.qz-options {{ display:flex; flex-direction:column; gap:10px; }}
+.qz-opt-btn {{
+  display:flex; align-items:center; gap:14px; padding:14px 18px;
+  border-radius:14px; border:2px solid #e2e0ff; background:#faf9ff;
+  color:#334155; font-size:14.5px; font-family:inherit; text-align:left;
+  cursor:pointer; width:100%;
+  transition:background 0.2s,border-color 0.2s,transform 0.14s,box-shadow 0.2s;
+  position:relative; overflow:hidden;
 }}
-.qz-opt:hover:not([disabled]) {{ background:#ede9fe; border-color:#a78bfa; transform:translateX(3px); }}
-.qz-ltr {{
-  width:26px; height:26px; border-radius:50%; flex-shrink:0; background:#e2e8f0;
-  color:#64748b; font:700 12px/26px -apple-system,sans-serif; text-align:center;
-  transition:background 0.15s,color 0.15s;
+.qz-opt-btn::after {{
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(135deg,rgba(109,40,217,0.06),rgba(219,39,119,0.04));
+  opacity:0; transition:opacity 0.2s; pointer-events:none;
 }}
-.qz-opt.correct {{ background:#f0fdf4; border-color:#4ade80; color:#166534; }}
-.qz-opt.correct .qz-ltr {{ background:#22c55e; color:#fff; }}
-.qz-opt.wrong {{ background:#fef2f2; border-color:#f87171; color:#991b1b; }}
-.qz-opt.wrong .qz-ltr {{ background:#ef4444; color:#fff; }}
+.qz-opt-btn:hover:not([disabled]) {{
+  border-color:#a78bfa; background:#f5f3ff;
+  transform:translateX(4px);
+  box-shadow:0 4px 16px rgba(109,40,217,0.14);
+}}
+.qz-opt-btn:hover:not([disabled])::after {{ opacity:1; }}
+.qz-opt-btn:active:not([disabled]) {{ transform:translateX(2px) scale(0.99); }}
+.qz-opt-btn[disabled] {{ cursor:default; }}
 
+.qz-opt-btn.correct {{
+  background:#f0fdf4; border-color:#22c55e; color:#14532d;
+  font-weight:700; transform:none;
+  box-shadow:0 3px 14px rgba(34,197,94,0.18);
+  animation:qz-correct-pop 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}}
+@keyframes qz-correct-pop {{
+  0%   {{ transform:scale(1); }}
+  50%  {{ transform:scale(1.02); }}
+  100% {{ transform:scale(1); }}
+}}
+.qz-opt-btn.wrong {{
+  background:#fef2f2; border-color:#f87171; color:#7f1d1d;
+  transform:none;
+  animation:qz-wrong-shake 0.38s ease;
+}}
+@keyframes qz-wrong-shake {{
+  0%,100% {{ transform:translateX(0); }}
+  20%     {{ transform:translateX(-5px); }}
+  60%     {{ transform:translateX(5px); }}
+}}
+.qz-opt-letter {{
+  width:32px; height:32px; border-radius:50%; flex-shrink:0;
+  background:#ede9fe; color:#6d28d9; font-size:13px; font-weight:800;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 0.2s,color 0.2s;
+}}
+.qz-opt-btn.correct .qz-opt-letter {{ background:#22c55e; color:#fff; }}
+.qz-opt-btn.wrong   .qz-opt-letter {{ background:#f87171; color:#fff; }}
+
+/* ── EXPLANATION ── */
 .qz-expl {{
-  display:none; background:#f1f5f9; border-radius:9px; padding:12px 14px;
-  font:400 12.5px/1.7 -apple-system,'Segoe UI',Arial,sans-serif; color:#475569;
-  border-left:3px solid #7c3aed; margin-bottom:6px;
+  display:none; margin-top:16px; padding:14px 18px;
+  border-radius:14px; background:#f5f3ff;
+  border-left:5px solid #7c3aed;
+  font-size:13.5px; color:#4c1d95; line-height:1.8;
 }}
-.qz-expl.show {{ display:block; }}
-
-.qz-next {{
-  display:none; width:100%; padding:14px; margin-top:14px;
-  border-radius:12px; border:none;
-  background:linear-gradient(135deg,#7c3aed,#db2777);
-  color:#fff; font:700 14px/1 -apple-system,'Segoe UI',Arial,sans-serif;
-  cursor:pointer; letter-spacing:0.3px;
-  transition:opacity 0.15s,transform 0.1s;
+.qz-expl.show {{ display:block; animation:qz-slidein 0.28s ease; }}
+.qz-expl-label {{
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:1px; color:#7c3aed; margin-bottom:5px;
 }}
-.qz-next:hover {{ opacity:0.92; transform:translateY(-1px); }}
-.qz-next.show {{ display:block; }}
 
-.qz-finish {{ text-align:center; padding:28px 16px; }}
-.qz-finish-emoji {{ font-size:50px; display:block; margin-bottom:14px; }}
-.qz-finish h3 {{ font:800 20px/1.2 -apple-system,'Segoe UI',Arial,sans-serif; color:#1e293b; margin:0 0 8px; }}
-.qz-finish p {{ font:500 13px/1.6 -apple-system,'Segoe UI',Arial,sans-serif; color:#64748b; margin:0 0 18px; }}
-.qz-restart {{
-  padding:11px 28px; border-radius:10px; border:none;
-  background:linear-gradient(135deg,#7c3aed,#db2777);
-  color:#fff; font:700 13px/1 -apple-system,sans-serif; cursor:pointer;
+/* ── NAVIGATION ── */
+.qz-nav {{ display:flex; gap:10px; align-items:stretch; }}
+.qz-prev-btn {{
+  padding:13px 22px; border-radius:14px; border:2px solid #e2e0ff;
+  background:#ffffff; color:#6d28d9; font-size:14px; font-weight:700;
+  font-family:inherit; cursor:pointer; flex-shrink:0;
+  transition:background 0.18s,border-color 0.18s,transform 0.12s;
+}}
+.qz-prev-btn:hover:not([disabled]) {{ background:#ede9fe; border-color:#a78bfa; transform:translateX(-2px); }}
+.qz-prev-btn[disabled] {{ opacity:0.3; cursor:default; }}
+.qz-next-btn {{
+  flex:1; padding:15px; border-radius:14px; border:none;
+  background:linear-gradient(135deg,#6d28d9 0%,#9333ea 50%,#db2777 100%);
+  background-size:200% auto;
+  color:#fff; font-size:16px; font-weight:800;
+  font-family:inherit; cursor:pointer; display:none;
+  transition:background-position 0.4s,opacity 0.15s,transform 0.12s,box-shadow 0.15s;
+  box-shadow:0 6px 24px rgba(109,40,217,0.32);
+}}
+.qz-next-btn:hover {{ background-position:right center; transform:translateY(-2px); box-shadow:0 8px 32px rgba(109,40,217,0.42); }}
+.qz-next-btn:active {{ transform:translateY(0); }}
+.qz-next-btn.show {{ display:block; animation:qz-slidein 0.22s ease; }}
+
+/* ── RESULTS ── */
+.qz-results {{
+  display:none; text-align:center;
+  background:#ffffff; border-radius:18px;
+  border:1.5px solid #e2e0ff; padding:52px 36px;
+  box-shadow:0 8px 32px rgba(99,70,255,0.12);
+  animation:qz-slidein 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}}
+.qz-results.show {{ display:block; }}
+.qz-results-emoji {{ font-size:60px; display:block; margin-bottom:16px; animation:qz-bounce 1.5s infinite; }}
+.qz-results h2 {{ font-size:26px; font-weight:900; color:#1e1b4b; margin-bottom:10px; }}
+.qz-results-score {{
+  font-size:56px; font-weight:900;
+  background:linear-gradient(135deg,#6d28d9,#db2777);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  background-clip:text; margin:12px 0; line-height:1;
+}}
+.qz-results-sub {{ font-size:15px; color:#64748b; margin-bottom:32px; font-weight:500; }}
+.qz-restart-btn {{
+  padding:15px 44px; border-radius:14px; border:none;
+  background:linear-gradient(135deg,#6d28d9,#db2777);
+  color:#fff; font-size:15px; font-weight:800;
+  font-family:inherit; cursor:pointer;
+  box-shadow:0 6px 24px rgba(109,40,217,0.32);
+  transition:opacity 0.15s,transform 0.12s;
+}}
+.qz-restart-btn:hover {{ opacity:0.92; transform:translateY(-2px); }}
+
+/* ── RESPONSIVE ── */
+@media (max-width:600px) {{
+  .qz-page {{ padding:20px 12px 80px; }}
+  .qz-header h1 {{ font-size:20px; }}
+  .qz-card {{ padding:20px 16px; }}
+  .qz-question-text {{ font-size:15px; }}
+  .qz-opt-btn {{ font-size:13px; padding:12px 14px; gap:10px; }}
+  .qz-opt-letter {{ width:28px; height:28px; font-size:11px; }}
+  .qz-next-btn {{ font-size:14px; padding:13px; }}
+  .qz-prev-btn {{ padding:11px 16px; font-size:13px; }}
 }}
 </style>
 </head>
 <body>
-<div class="page-wrap">
-  <div class="qz-header-card">
-    <span style="font-size:32px;line-height:1">🔥</span>
-    <div>
-      <h1>{cat_safe} Quiz</h1>
-      <p id="sa-sub">{q_safe[:60]}{'…' if len(q_safe)>60 else ''} &middot; {total_q} Questions</p>
-    </div>
-  </div>
+<div class="qz-page">
+
+  <header class="qz-header">
+    <span class="qz-header-emoji">🔥</span>
+    <h1>🎯 {cat_safe} Quiz</h1>
+    <div class="qz-header-sub" id="qz-header-sub">Loading questions…</div>
+  </header>
+
   <div class="qz-progress-row">
-    <span id="sa-counter">Question 1 of {total_q}</span>
-    <span class="qz-score-lbl" id="sa-score">Score: 0</span>
+    <span class="qz-progress-label" id="qz-progress-label">Question 1 of 15</span>
+    <span class="qz-score-label" id="qz-score-label">Score: 0</span>
   </div>
-  <div class="qz-track"><div class="qz-fill" id="sa-fill" style="width:0%"></div></div>
-  <div id="sa-body"></div>
+  <div class="qz-progress-bar-wrap">
+    <div class="qz-progress-bar" id="qz-progress-bar" style="width:6.67%"></div>
+  </div>
+
+  <main id="qz-card-area"></main>
+  <div id="qz-results-area"></div>
+
 </div>
+
 <script>
 (function() {{
   'use strict';
-  var _all = []; var _cur = 0; var _score = 0; var _answered = false;
+  var LETTERS      = ['A','B','C','D'];
+  var allQuestions = [];
+  var currentIdx   = 0;
+  var score        = 0;
+  var answered     = false;
 
+  function _el(id) {{ return document.getElementById(id); }}
   function _esc(s) {{
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }}
-  function _flatten(data) {{
-    var all = [];
-    if (!data || !data.sets) return all;
-    for (var si = 0; si < data.sets.length; si++) {{
-      var qs = data.sets[si].questions || [];
-      for (var qi = 0; qi < qs.length; qi++) {{
-        all.push({{
-          q: qs[qi].q||qs[qi].question||'',
-          type: qs[qi].type||'mcq',
-          options: qs[qi].options||[],
-          correct: qs[qi].correct||0,
-          explanation: qs[qi].explanation||'',
-          hint: (qs[qi].explanation||'').split('.')[0]+'.'
+
+  function _loadQuestions() {{
+    try {{
+      var tag = _el('__quiz_data__');
+      if (!tag) return [];
+      var data = JSON.parse(tag.textContent);
+      var result = [];
+      if (data && data.sets) {{
+        data.sets.forEach(function(set) {{
+          (set.questions || []).forEach(function(q) {{ result.push(q); }});
         }});
       }}
-    }}
-    return all;
+      return result;
+    }} catch(e) {{ return []; }}
   }}
 
-  function renderQ(idx) {{
-    var body = document.getElementById('sa-body');
-    var total = _all.length;
-    if (!body) return;
-    if (idx >= total) {{ renderFinish(); return; }}
+  function _renderQuestion(idx) {{
+    answered = false;
+    var q     = allQuestions[idx];
+    if (!q) return;
+    var total = allQuestions.length;
 
-    var q = _all[idx];
-    var letters = ['A','B','C','D'];
+    var pLabel = _el('qz-progress-label');
+    var pBar   = _el('qz-progress-bar');
+    var sLabel = _el('qz-score-label');
+    if (pLabel) pLabel.textContent = 'Question ' + (idx+1) + ' of ' + total;
+    if (sLabel) sLabel.textContent = 'Score: ' + score;
+    if (pBar)   pBar.style.width   = Math.max(6, ((idx+1)/total)*100) + '%';
 
-    document.getElementById('sa-counter').textContent = 'Question '+(idx+1)+' of '+total;
-    document.getElementById('sa-fill').style.width = Math.round(idx/total*100)+'%';
-    document.getElementById('sa-score').textContent = 'Score: '+_score;
+    var qtype  = (q.type || 'mcq').toUpperCase();
+    var opts   = q.options || [];
+    var corr   = typeof q.correct === 'number' ? q.correct : 0;
+    var hint   = q.hint || '';
+    var expl   = q.explanation || '';
+    var isLast = (idx === total - 1);
 
-    var opts = '';
-    for (var oi = 0; oi < q.options.length; oi++) {{
-      opts += '<button class="qz-opt" data-opt="'+oi+'" data-correct="'+q.correct+'">'+
-        '<span class="qz-ltr">'+(letters[oi]||oi)+'</span>'+_esc(q.options[oi])+'</button>';
+    var html = '<div class="qz-card">';
+    html += '<div class="qz-card-meta">';
+    html += 'QUESTION ' + (idx+1) + ' OF ' + total + '&nbsp;&middot;&nbsp;';
+    html += '<span class="qz-pts-badge">2 PTS</span>';
+    html += '<span class="qz-type-badge">' + _esc(qtype) + '</span>';
+    html += '</div>';
+    html += '<div class="qz-question-text">' + _esc(q.q || q.question || '') + '</div>';
+
+    if (hint) {{
+      html += '<div class="qz-hint-row">';
+      html += '<button class="qz-hint-btn" id="qz-hint-btn">\u26a1 Show Hint</button>';
+      html += '<div class="qz-hint-content" id="qz-hint-text">' + _esc(hint) + '</div>';
+      html += '</div>';
     }}
 
-    body.innerHTML =
-      '<div class="qz-card">'+
-        '<div class="qz-meta">'+
-          '<span class="qz-counter">QUESTION '+(idx+1)+' OF '+total+'</span>'+
-          '<span class="qz-pts">&nbsp;&middot;&nbsp;2 PTS</span>'+
-          '<span class="qz-badge">'+(q.type||'mcq').toUpperCase()+'</span>'+
-        '</div>'+
-        '<p class="qz-qtext">'+_esc(q.q)+'</p>'+
-        '<div class="qz-hint-btn" id="sa-hint-btn">\uD83D\uDCA1 Show Hint</div>'+
-        '<div class="qz-hint-content" id="sa-hint-box">'+_esc(q.hint)+'</div>'+
-        '<div class="qz-opts" id="sa-opts">'+opts+'</div>'+
-        '<div class="qz-expl" id="sa-expl">'+_esc(q.explanation)+'</div>'+
-        '<button class="qz-next show" id="sa-next" style="display:none">'+
-          (idx < total-1 ? 'Next Question \u2192' : 'See Results')+
-        '</button>'+
-      '</div>';
+    html += '<div class="qz-options">';
+    for (var oi = 0; oi < opts.length; oi++) {{
+      var letter = LETTERS[oi] || String(oi+1);
+      html += '<button class="qz-opt-btn" id="qz-opt-' + oi + '" data-opt="' + oi + '" data-correct="' + corr + '">';
+      html += '<span class="qz-opt-letter">' + letter + '.</span>';
+      html += _esc(opts[oi]);
+      html += '</button>';
+    }}
+    html += '</div>';
 
-    _answered = false;
+    if (expl) {{
+      html += '<div class="qz-expl" id="qz-expl"><div class="qz-expl-label">\ud83d\udca1 Explanation</div>' + _esc(expl) + '</div>';
+    }}
+    html += '</div>';
 
-    var hBtn = document.getElementById('sa-hint-btn');
-    var hBox = document.getElementById('sa-hint-box');
-    if (hBtn && hBox) {{
-      hBtn.addEventListener('click', function() {{
-        var o = hBox.classList.toggle('show');
-        hBtn.innerHTML = o ? '\uD83D\uDCA1 Hide Hint' : '\uD83D\uDCA1 Show Hint';
+    html += '<div class="qz-nav">';
+    html += '<button class="qz-prev-btn" id="qz-prev-btn"' + (idx === 0 ? ' disabled' : '') + '>\u2190 Prev</button>';
+    html += '<button class="qz-next-btn" id="qz-next-btn">' + (isLast ? 'See Results \ud83c\udfc6' : 'Next Question \u2192') + '</button>';
+    html += '</div>';
+
+    var area = _el('qz-card-area');
+    if (area) area.innerHTML = html;
+
+    var hintBtn  = _el('qz-hint-btn');
+    var hintText = _el('qz-hint-text');
+    if (hintBtn && hintText) {{
+      hintBtn.addEventListener('click', function() {{
+        hintText.classList.toggle('show');
+        hintBtn.textContent = hintText.classList.contains('show') ? '\u26a1 Hide Hint' : '\u26a1 Show Hint';
       }});
     }}
 
-    var optsEl = document.getElementById('sa-opts');
-    if (optsEl) {{
-      optsEl.addEventListener('click', function(e) {{
-        if (_answered) return;
-        var btn = e.target.closest('.qz-opt');
+    for (var oi2 = 0; oi2 < opts.length; oi2++) {{
+      (function(optIdx) {{
+        var btn = _el('qz-opt-' + optIdx);
         if (!btn) return;
-        _answered = true;
-        var chosen = parseInt(btn.getAttribute('data-opt'),10);
-        var correct = parseInt(btn.getAttribute('data-correct'),10);
-        optsEl.querySelectorAll('.qz-opt').forEach(function(o) {{
-          o.setAttribute('disabled','1'); o.style.pointerEvents='none'; o.style.cursor='default';
-          var oi2 = parseInt(o.getAttribute('data-opt'),10);
-          if (oi2===correct) o.classList.add('correct');
-          else if (oi2===chosen && chosen!==correct) o.classList.add('wrong');
+        btn.addEventListener('click', function() {{
+          if (answered) return;
+          answered = true;
+          var correctIdx = parseInt(this.getAttribute('data-correct'), 10);
+          for (var k = 0; k < opts.length; k++) {{
+            var ob = _el('qz-opt-' + k);
+            if (!ob) continue;
+            ob.setAttribute('disabled','1');
+            ob.style.pointerEvents = 'none';
+            if (k === correctIdx) ob.classList.add('correct');
+            else if (k === optIdx && optIdx !== correctIdx) ob.classList.add('wrong');
+          }}
+          if (optIdx === correctIdx) score++;
+          var sLbl = _el('qz-score-label');
+          if (sLbl) sLbl.textContent = 'Score: ' + score;
+          var explEl = _el('qz-expl');
+          if (explEl) explEl.classList.add('show');
+          var nBtn = _el('qz-next-btn');
+          if (nBtn) {{ nBtn.classList.add('show'); nBtn.style.display = 'block'; }}
         }});
-        if (chosen===correct) _score++;
-        var ex = document.getElementById('sa-expl'); if (ex) ex.classList.add('show');
-        var nb = document.getElementById('sa-next'); if (nb) nb.style.display='block';
-        document.getElementById('sa-score').textContent = 'Score: '+_score;
+      }})(oi2);
+    }}
+
+    var prevBtn = _el('qz-prev-btn');
+    if (prevBtn) {{
+      prevBtn.addEventListener('click', function() {{
+        if (currentIdx > 0) {{ currentIdx--; _renderQuestion(currentIdx); }}
       }});
     }}
 
-    var nb2 = document.getElementById('sa-next');
-    if (nb2) {{ nb2.addEventListener('click', function() {{ _cur++; renderQ(_cur); }}); }}
-
-    body.scrollTop = 0;
-    window.scrollTo(0,0);
+    var nextBtnEl = _el('qz-next-btn');
+    if (nextBtnEl) {{
+      nextBtnEl.addEventListener('click', function() {{
+        currentIdx++;
+        if (currentIdx < allQuestions.length) {{
+          _renderQuestion(currentIdx);
+        }} else {{
+          _showResults();
+        }}
+      }});
+    }}
   }}
 
-  function renderFinish() {{
-    var body = document.getElementById('sa-body');
-    var total = _all.length;
-    var pct = Math.round(_score/total*100);
-    var emoji = pct>=80?'\uD83C\uDF89':pct>=60?'\uD83D\uDC4D':'\uD83D\uDCDA';
-    var msg = pct>=80?'Excellent work!':pct>=60?'Good effort!':'Keep practising!';
-    document.getElementById('sa-fill').style.width='100%';
-    document.getElementById('sa-counter').textContent='Completed!';
-    body.innerHTML =
-      '<div class="qz-card qz-finish">'+
-        '<span class="qz-finish-emoji">'+emoji+'</span>'+
-        '<h3>'+msg+'</h3>'+
-        '<p>You scored <strong>'+_score+' / '+total+'</strong> ('+pct+'%)</p>'+
-        '<button class="qz-restart" id="sa-restart">Try Again</button>'+
-      '</div>';
-    var rb = document.getElementById('sa-restart');
-    if (rb) {{ rb.addEventListener('click', function() {{
-      _cur=0; _score=0; _answered=false;
-      document.getElementById('sa-fill').style.width='0%';
-      document.getElementById('sa-score').textContent='Score: 0';
-      renderQ(0);
-    }}); }}
+  function _showResults() {{
+    var area = _el('qz-card-area');
+    if (area) area.innerHTML = '';
+    var total = allQuestions.length;
+    var pct   = total > 0 ? Math.round((score / total) * 100) : 0;
+    var emoji = pct >= 80 ? '\ud83c\udfc6' : pct >= 60 ? '\ud83c\udf89' : '\ud83d\udcda';
+    var msg   = pct >= 80 ? 'Excellent work! \ud83c\udf1f' : pct >= 60 ? 'Good job! \ud83d\udc4d' : 'Keep practicing! \ud83d\udcaa';
+    var pBar  = _el('qz-progress-bar');
+    if (pBar) pBar.style.width = '100%';
+    var pLabel = _el('qz-progress-label');
+    if (pLabel) pLabel.textContent = 'Quiz Complete!';
+    var sLabel = _el('qz-score-label');
+    if (sLabel) sLabel.textContent = 'Final: ' + score + '/' + total;
+    var html = '<div class="qz-results show">';
+    html += '<span class="qz-results-emoji">' + emoji + '</span>';
+    html += '<h2>Quiz Complete!</h2>';
+    html += '<div class="qz-results-score">' + score + ' / ' + total + '</div>';
+    html += '<div class="qz-results-sub">You scored ' + pct + '% \u2014 ' + msg + '</div>';
+    html += '<button class="qz-restart-btn" id="qz-restart-btn">\ud83d\udd04 Restart Quiz</button>';
+    html += '</div>';
+    var rArea = _el('qz-results-area');
+    if (rArea) rArea.innerHTML = html;
+    var restartBtn = _el('qz-restart-btn');
+    if (restartBtn) {{
+      restartBtn.addEventListener('click', function() {{
+        currentIdx = 0; score = 0; answered = false;
+        var rArea2 = _el('qz-results-area');
+        if (rArea2) rArea2.innerHTML = '';
+        _renderQuestion(0);
+      }});
+    }}
   }}
 
   document.addEventListener('DOMContentLoaded', function() {{
-    try {{
-      var tag = document.getElementById('__quiz_data__');
-      if (tag) {{
-        _all = _flatten(JSON.parse(tag.textContent));
-        if (_all.length > 0) renderQ(0);
-        else document.getElementById('sa-body').innerHTML = '<div style="text-align:center;padding:40px;color:#64748b">No questions.</div>';
-      }}
-    }} catch(e) {{ console.error('Quiz init error:', e); }}
+    allQuestions = _loadQuestions();
+    var sub = _el('qz-header-sub');
+    if (sub) sub.textContent = '{cat_safe} \u00b7 ' + allQuestions.length + ' Questions';
+    if (allQuestions.length > 0) {{
+      _renderQuestion(0);
+    }} else {{
+      var area = _el('qz-card-area');
+      if (area) area.innerHTML = '<div style="text-align:center;padding:48px;color:#7c7aab;font-size:15px;">No quiz questions available.</div>';
+    }}
   }});
 }})();
 </script>
@@ -2265,13 +2587,11 @@ _ANSWER_BOX_CSS = """
 <style id="qanim-answerbox-styles">
 /* ── Answer Box Panel — Light Theme ── */
 #answerbox-backdrop {
-  display:flex; position:fixed; inset:0; z-index:8600;
+  display:none; position:fixed; inset:0; z-index:8600;
   background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; visibility:hidden; pointer-events:none;
-  transition:opacity 0.25s ease, visibility 0.25s ease;
-  align-items:center; justify-content:center; padding:16px; box-sizing:border-box;
+  opacity:0; transition:opacity 0.22s ease;
 }
-#answerbox-backdrop.open { visibility:visible; pointer-events:auto; opacity:1; }
+#answerbox-backdrop.open { display:flex; align-items:center; justify-content:center; padding:16px; opacity:1; }
 
 #answerbox-panel {
   width:min(540px,94vw); max-height:90vh;
@@ -2521,18 +2841,17 @@ _ANSWER_BOX_JS = r"""
 
   function openAnswerBox() {
     var backdrop = _el('answerbox-backdrop'), panel = _el('answerbox-panel');
-    if (!backdrop || !panel) return;
-    /* Clear previous result state */
-    var prevResult = _el('ab-result');
-    if (prevResult) prevResult.className = '';
-    var prevInp = _el('ab-user-input');
-    if (prevInp) prevInp.value = '';
+    // BUG FIX: Added diagnostic warning so missing DOM is easy to spot in DevTools
+    if (!backdrop || !panel) {
+      console.warn('[QAnim AnswerBox] Panel DOM not found — check inject_answer_box_panel() order');
+      return;
+    }
     backdrop.classList.add('open');
     backdrop.setAttribute('aria-hidden','false');
     panel.classList.add('open');
     panel.setAttribute('aria-hidden','false');
     abOpen = true;
-    setTimeout(function() { var inp = _el('ab-user-input'); if(inp) inp.focus(); }, 150);
+    setTimeout(function() { var inp = _el('ab-user-input'); if(inp) inp.focus(); }, 200);
   }
 
   function closeAnswerBox() {
@@ -2542,14 +2861,28 @@ _ANSWER_BOX_JS = r"""
     abOpen = false;
   }
 
+  /* BUG FIX: resetAnswerBox — called by the StepController whenever the user
+     moves to a new animation scene so stale input/feedback is cleared. */
+  function resetAnswerBox() {
+    var inp = _el('ab-user-input');
+    if (inp) inp.value = '';
+    var result = _el('ab-result');
+    if (result) result.className = '';
+  }
+
   window.openAnswerBox  = openAnswerBox;
   window.closeAnswerBox = closeAnswerBox;
+  window.resetAnswerBox = resetAnswerBox;
 
   _onReady(function() {
-    /* Open button (wired from controls bar) */
+    /* BUG FIX: Wire answerbox-ctrl-btn. The button is injected by
+       inject_controls_bar() before this script runs, so it should exist
+       at DOMContentLoaded. The retry handles rare timing edge-cases. */
     function wireControlsBtn() {
       var abBtn = document.getElementById('answerbox-ctrl-btn');
       if (abBtn) {
+        // Remove any stale onclick to prevent double-fire
+        abBtn.removeAttribute('onclick');
         abBtn.addEventListener('click', function(e) {
           e.stopPropagation();
           abOpen ? closeAnswerBox() : openAnswerBox();
@@ -2713,10 +3046,14 @@ _CONTROLS_BAR_DOM = """
     <span>📝</span><span class="ctrl-label">Quiz</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="sol-ctrl-btn" title="View step-by-step solution" onclick="if(window.openSolution)openSolution();">
+  <!-- BUG FIX: Removed inline onclick from sol-ctrl-btn; it is now wired via
+       addEventListener in SOLUTION_JS_MODULE to avoid double-fire and ensure
+       window.openSolution is guaranteed to exist before binding. -->
+  <button class="qanim-ctrl-btn" id="sol-ctrl-btn" title="View step-by-step solution">
     <span>💡</span><span class="ctrl-label">View Solution</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
+  <!-- BUG FIX: answerbox-ctrl-btn is wired in _ANSWER_BOX_JS via wireControlsBtn() -->
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>✏️</span><span class="ctrl-label">Answer Box</span>
   </button>
@@ -3064,21 +3401,57 @@ def inject_notes_system(html: str, question: str = "") -> str:
 
 _STEP_CONTROLLER_JS = r"""
 <script id="qanim-step-controller">
-/* QAnim Manual Step Controller v10 */
+/* QAnim Manual Step Controller v10.1
+   BUG FIX: If the AI omits #nextbtn/#prevbtn, we now create minimal fallback
+   nav buttons so the Next button always works.
+   BUG FIX: resetAnswerBox() is called on scene change so the answer input
+   clears when moving between animation steps.
+*/
 (function patchStepController() {
   'use strict';
   window.addEventListener('load', function() {
     try {
       var nextBtn = document.getElementById('nextbtn');
       var prevBtn = document.getElementById('prevbtn');
-      if (!nextBtn && !prevBtn) return;
+
+      /* BUG FIX: If AI omitted nav buttons, create minimal fallback buttons so
+         the Next/Prev functionality is always available. */
+      if (!nextBtn) {
+        nextBtn = document.createElement('button');
+        nextBtn.id = 'nextbtn';
+        nextBtn.textContent = 'Next ▶';
+        nextBtn.style.cssText = (
+          'position:fixed;bottom:70px;right:20px;z-index:6500;'
+          +'padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;'
+          +'background:#7c3aed;color:#fff;font-size:13px;font-weight:700;'
+          +'cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.12);'
+        );
+        document.body.appendChild(nextBtn);
+        console.log('[QAnim SC] Created fallback #nextbtn — AI omitted it');
+      }
+      if (!prevBtn) {
+        prevBtn = document.createElement('button');
+        prevBtn.id = 'prevbtn';
+        prevBtn.textContent = '◀ Prev';
+        prevBtn.style.cssText = (
+          'position:fixed;bottom:70px;left:20px;z-index:6500;'
+          +'padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;'
+          +'background:#ffffff;color:#334155;font-size:13px;font-weight:700;'
+          +'cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.12);'
+        );
+        document.body.appendChild(prevBtn);
+        console.log('[QAnim SC] Created fallback #prevbtn — AI omitted it');
+      }
 
       var scenes = [];
       for (var i = 0; i < 20; i++) {
         var s = document.getElementById('scene-' + i);
         if (s) { scenes.push(s); } else if (i > 0) { break; }
       }
-      if (scenes.length < 1) return;
+      if (scenes.length < 1) {
+        console.warn('[QAnim SC] No scene-N elements found — step controller inactive');
+        return;
+      }
 
       var _sceneSnapshots = [];
       for (var si = 0; si < scenes.length; si++) {
@@ -3137,35 +3510,23 @@ _STEP_CONTROLLER_JS = r"""
         for (var j = 0; j < scenes.length; j++) {
           if (j === idx) {
             if (_animFired[j]) { delete _animFired[j]; _resetScene(j); }
-            /* Force display:block FIRST so opacity transition has a visible target */
-            scenes[j].style.display    = 'block';
-            scenes[j].style.visibility = 'visible';
-            scenes[j].style.pointerEvents = 'auto';
-            /* Double rAF ensures display change is painted before opacity starts */
             (function(sceneEl) {
               requestAnimationFrame(function() {
-                requestAnimationFrame(function() {
-                  sceneEl.style.transition = 'opacity 0.35s ease';
-                  sceneEl.style.opacity    = '1';
-                });
+                sceneEl.style.transition = 'opacity 0.35s ease';
+                sceneEl.style.opacity = '1';
+                sceneEl.style.display = sceneEl.style.display === 'none' ? '' : sceneEl.style.display;
+                sceneEl.style.visibility = 'visible'; sceneEl.style.pointerEvents = 'auto';
               });
             })(scenes[j]);
           } else {
-            scenes[j].style.transition    = 'opacity 0.2s ease';
-            scenes[j].style.opacity       = '0';
-            scenes[j].style.pointerEvents = 'none';
-            /* Hide after fade completes so layout doesn't collapse mid-transition */
-            (function(el) {
-              setTimeout(function() {
-                if (el.style.opacity === '0') {
-                  el.style.display    = 'none';
-                  el.style.visibility = 'hidden';
-                }
-              }, 230);
-            })(scenes[j]);
+            scenes[j].style.transition = 'opacity 0.35s ease';
+            scenes[j].style.opacity = '0'; scenes[j].style.pointerEvents = 'none';
           }
         }
         _updateDots(); _updateNavBtns();
+        /* BUG FIX: Reset the answer box when switching scenes so stale
+           input/feedback from a previous step does not remain visible. */
+        if (typeof window.resetAnswerBox === 'function') window.resetAnswerBox();
         (function(capturedIdx) {
           requestAnimationFrame(function() { requestAnimationFrame(function() { _fireAnim(capturedIdx); }); });
         })(idx);
@@ -3194,6 +3555,8 @@ _STEP_CONTROLLER_JS = r"""
         }
       }
 
+      /* BUG FIX: Clone buttons to strip any existing onclick handlers the AI
+         may have attached, then bind our own clean listener. */
       var nb2 = nextBtn.cloneNode(true);
       nextBtn.parentNode.replaceChild(nb2, nextBtn);
       nextBtn = nb2;
@@ -3203,13 +3566,21 @@ _STEP_CONTROLLER_JS = r"""
         prevBtn = pb2;
       }
 
-      nextBtn.addEventListener('click', function(e) { e.stopPropagation(); if (currentStep < scenes.length - 1) showScene(currentStep + 1); });
-      if (prevBtn) prevBtn.addEventListener('click', function(e) { e.stopPropagation(); if (currentStep > 0) showScene(currentStep - 1); });
+      nextBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (currentStep < scenes.length - 1) showScene(currentStep + 1);
+      });
+      if (prevBtn) prevBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (currentStep > 0) showScene(currentStep - 1);
+      });
 
+      /* Block auto-advance intervals so the user controls pacing */
       var _ri = window.setInterval;
       window.setInterval = function(fn, ms) {
         var src = fn ? fn.toString() : '';
-        if (ms && ms < 8000 && (src.indexOf('showScene') !== -1 || src.indexOf('currentStep') !== -1 || src.indexOf('nextStep') !== -1)) {
+        if (ms && ms < 8000 && (src.indexOf('showScene') !== -1 ||
+            src.indexOf('currentStep') !== -1 || src.indexOf('nextStep') !== -1)) {
           console.log('[SC] Blocked auto-advance interval (' + ms + 'ms)');
           return -1;
         }
@@ -3217,7 +3588,7 @@ _STEP_CONTROLLER_JS = r"""
       };
 
       showScene(0);
-      console.log('[QAnim SC v10] ' + scenes.length + ' scenes ready');
+      console.log('[QAnim SC v10.1] ' + scenes.length + ' scenes ready');
     } catch(err) { console.error('[QAnim SC] Fatal:', err); }
   });
 })();
@@ -3397,7 +3768,7 @@ async def _generate_concept_animation(question: str, category: str) -> str:
     QAnimLogger.info("ConceptPipeline", f"START  category={category}")
     prompt = _build_concept_prompt(question, category)
     try:
-        msg = await async_client.messages.create(
+        msg = client.messages.create(
             model=CONCEPT_MODEL,
             max_tokens=MAX_TOK_CONCEPT,
             system=SYSTEM_CONCEPT,
@@ -3474,9 +3845,8 @@ async def generate_question_animation(question: str) -> dict:
     to_find_targets = ToFindExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
 
-    # ── Classify (run sync function in thread pool to avoid blocking event loop) ────
-    loop = asyncio.get_event_loop()
-    category = await loop.run_in_executor(None, _classify_topic, question)
+    # ── Classify ────────────────────────────────────────────────────
+    category = _classify_topic(question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
     # ── Build solution prompt ────────────────────────────────────────
@@ -3487,7 +3857,7 @@ async def generate_question_animation(question: str) -> dict:
 
     async def _run_solution_ai() -> str:
         try:
-            msg = await async_client.messages.create(
+            msg = client.messages.create(
                 model=SOLUTION_MODEL,
                 max_tokens=MAX_TOK,
                 system=SYSTEM,
