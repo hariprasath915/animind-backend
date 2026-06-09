@@ -1,42 +1,34 @@
 """
-main.py  —  SmartBoard AI Backend v4.2
-=======================================
-UPDATED: Keep-alive pinger + CORS + HEAD support + better error handling
+main.py  —  SmartBoard AI Backend v5.0 (Supabase)
+==================================================
+Migrated from SQLAlchemy + bcrypt/jose to Supabase Auth + supabase-py.
 
-New in v4.2:
-  - Background self-ping every 10 minutes (prevents Render free-tier spin-down)
+New in v5.0:
+  - Removed: database.py / models.py / init_db() — Supabase manages schema
+  - Removed: JWT_SECRET_KEY, DATABASE_URL env vars (no longer needed)
+  - Added:   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY
+  - auth_utils.py: calls supabase.auth.get_user(token) instead of jose decode
+  - auth_routes.py: delegates register/login to Supabase Auth
+  - sync_routes.py: queries `contents` table via supabase-py (always user-scoped)
 
-From v4.1:
-  - CORS now covers all Vercel preview URLs via regex
-  - Root route handles HEAD (fixes Render health-check 405)
-  - /health returns 200 on GET and HEAD
-  - Startup errors are caught and logged cleanly
-  - Optional DEBUG_CORS env var to allow all origins during dev
-
-Preserved from v4.0 (UNCHANGED):
-  POST /auth/register
-  POST /auth/login
-  GET  /auth/verify
-  GET  /auth/me
-  POST /sync/animations
-  POST /sync/animations/batch
-  GET  /sync/animations
-  DELETE /sync/animations/{id}
+Preserved (UNCHANGED):
+  POST /auth/register        POST /auth/login
+  GET  /auth/verify          GET  /auth/me
+  POST /sync/animations      POST /sync/animations/batch
+  GET  /sync/animations      DELETE /sync/animations/{id}
   GET  /health
-  POST /generate-animation
-  POST /generate-from-book
-  POST /generate-topic-content
-  POST /generate-question-animation
+  POST /generate-animation   POST /generate-question-animation
+  POST /generate-from-book   POST /generate-topic-content
 
 Run:
     uvicorn main:app --host 0.0.0.0 --port 8000
 
-Environment variables (in .env):
+Environment variables (in .env / Render):
     ANTHROPIC_API_KEY=sk-ant-...
-    JWT_SECRET_KEY=<long random string>
-    JWT_EXPIRE_DAYS=30
-    DATABASE_URL=sqlite:///./genzet.db   (optional — default is SQLite)
-    DEBUG_CORS=true                       (optional — allows ALL origins, dev only)
+    SUPABASE_URL=https://xxx.supabase.co
+    SUPABASE_SERVICE_ROLE_KEY=eyJ...
+    SUPABASE_ANON_KEY=eyJ...
+    DEBUG_CORS=true   (optional — allows ALL origins, dev only)
 """
 
 import sys, io, os, asyncio
@@ -65,8 +57,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
-# ── NEW: Auth + Sync ──────────────────────────────────────────────────
-from database import init_db
+# ── Auth + Sync (Supabase-backed) ────────────────────────────────────
+# database.py / init_db() removed — Supabase manages schema
 from auth_routes import router as auth_router
 from sync_routes import router as sync_router
 
@@ -127,16 +119,10 @@ async def _keep_alive_pinger():
 # ── Startup / Shutdown lifecycle ───────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Runs once at startup: creates DB tables + starts keep-alive pinger."""
-    print("[STARTUP]  Initializing database…")
-    try:
-        init_db()
-        print("[STARTUP]  ✅ GenZet v4.2 ready")
-    except Exception as e:
-        # Non-fatal: log the error but keep the server alive.
-        # Users can still reach the health endpoint; DB-backed routes
-        # will return 500 until the DB is fixed, but the server won't crash.
-        print(f"[STARTUP]  ⚠  DB init warning (server still running): {e}")
+    """Runs once at startup: starts keep-alive pinger.
+    DB init removed — Supabase manages schema, no local init needed.
+    """
+    print("[STARTUP] ✅ GenZet v5.0 ready (Supabase backend)")
 
     # Start the keep-alive background pinger
     pinger_task = asyncio.create_task(_keep_alive_pinger())
@@ -155,7 +141,7 @@ async def lifespan(app: FastAPI):
 # ── App ────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="SmartBoard AI API",
-    version="4.2.0",
+    version="5.0.0",
     lifespan=lifespan,
 )
 
@@ -217,7 +203,8 @@ async def health(request: Request):
         return JSONResponse(content=None, status_code=200)
     return {
         "status":  "ok",
-        "version": "4.2.0",
+        "version": "5.0.0",
+        "backend": "Supabase",
         "debug_cors": DEBUG_CORS,
         "keep_alive_interval": KEEP_ALIVE_INTERVAL,
         "sub_topics_module": SUB_TOPICS_AVAILABLE,
@@ -382,6 +369,6 @@ if __name__ == "__main__":
     import uvicorn
     _port = int(os.getenv("PORT", "8000"))
     print("=" * 65)
-    print(f"  SmartBoard AI API v4.2 — with Auth + Cloud Sync + Keep-Alive on port {_port}")
+    print(f"  SmartBoard AI API v5.0 (Supabase) — Auth + Cloud Sync + Keep-Alive on port {_port}")
     print("=" * 65)
     uvicorn.run("main:app", host="0.0.0.0", port=_port)
