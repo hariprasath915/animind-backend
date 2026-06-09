@@ -1,129 +1,115 @@
 """
-q_animation.py  —  QAnim Question Animation Generator  v10.0
+q_animation.py  --  QAnim Question Animation Generator  v11.6
 =============================================================
-╔══════════════════════════════════════════════════════════════╗
-║  v10.0 — LIGHT THEME + NEW QUIZ/SOLUTION/ANSWER SYSTEMS     ║
-╠══════════════════════════════════════════════════════════════╣
-║  CHANGES IN v10.0 vs v9.0:                                  ║
-║  ✅ LIGHT THEME: White/light-gray UI throughout             ║
-║  ✅ REMOVED: Hook section (HookGenerator, Stage 1)          ║
-║  ✅ NEW QUIZ: 3 sets × 5 questions, separate cards          ║
-║  ✅ NEW VIEW SOLUTION: Step-by-step numbered display        ║
-║  ✅ NEW ANSWER BOX: Input + validation (correct/wrong/close) ║
-║  ✅ Floating controls bar (Find / Quiz / View Solution /    ║
-║     Answer Box) — always visible                            ║
-║  ✅ Three-stage concurrent pipeline (no hook stage)         ║
-╚══════════════════════════════════════════════════════════════╝
-
-PIPELINE (v10.0):
-  Stage 0 — ToFind Extraction    (sync, no AI)
-  Stage 1 — Concept Animation    (claude-sonnet-4-5) + StepController
-  Stage 2 — Solution Animation   (claude-sonnet-4-5) + StepController
-  Stage 3 — Quiz Generation      (claude-haiku-4-5)  + 3 sets × 5 Qs
-
-CONTROLS BAR (injected into every animation HTML):
-  [🔍 Find]  [📝 Quiz]  [💡 View Solution]  [✏️ Answer Box]
-
-ANSWER VALIDATION LOGIC:
-  Numerical: ±1% → Correct, ±15% → Almost Correct, >15% → Wrong
-  Text:       ≥80% keyword overlap → Correct, ≥40% → Almost, <40% → Wrong
-
-RESULT DICT KEYS:
-  concept_animation_code  — concept teaching animation HTML
-  animation_code          — solution animation HTML (all panels embedded)
-  quiz_html               — standalone quiz HTML (3 sets × 5 Qs)
-  to_find                 — list of extracted target quantities
-  solution_steps          — list of step strings
-  final_answer            — complete answer string
-  key_insight             — one-line conceptual insight
-  title, category, engine_version, render_status
+v11.6 -- CHANGES FROM v11.5:
+  - TASK: Quiz system completely removed.
+    * QuizGeneratorV2 class deleted entirely.
+    * NEW_QUIZ_SYSTEM_PROMPT, NEW_QUIZ_PROMPT_TEMPLATE constants deleted.
+    * inject_quiz_v2_panel() function deleted (was already a no-op in v11.5,
+      now fully excised including its _QUIZ_PANEL_CSS/_DOM/_JS stubs).
+    * Stage 3 (Quiz Generation) removed from asyncio.gather() pipeline.
+    * quiz_data / quiz_html removed from result dict, _build_failure_result,
+      and the CLI output block.
+    * Pipeline docstring updated: now 3 concurrent AI stages (Concept,
+      Solution, Solution Steps).
+    * Version header updated to v11.6 throughout.
+ 
+v11.5 features fully preserved:
+  - FINAL ANSWER PANEL (numbered i, ii, iii results)
+  - ANSWER BOX unchanged (Find-condition chip, multi-target)
+  - EEE/ECE Circuit Visualization Pipeline (Module 15 & 16)
+  - Solution step generator: claude-sonnet-4-6
+  - Prev/Next navigation buttons inside controls bar
+  - Scene explanation box at y=420
+ 
+PIPELINE (v11.6):
+  Stage 0 -- ToFind Extraction    (sync, no AI)
+  Stage 1 -- Concept Animation    (claude-sonnet-4-6) + StepController
+             [EEE/ECE: CircuitVisualizationEngine concept prompt]
+  Stage 2 -- Solution Animation   (claude-sonnet-4-6) + StepController
+             [EEE/ECE: CircuitVisualizationEngine solution prompt]
+  Stage 3 -- Solution Steps       (claude-sonnet-4-6)
+             [all 3 run concurrently via asyncio.gather]
 """
-
+ 
 import anthropic
 import json
 import re
 import asyncio
 import html as html_module
 from typing import Optional
-
-# ── Client + model routing ──────────────────────────────────────────────
-client         = anthropic.Anthropic()
-
-QUIZ_MODEL     = "claude-haiku-4-5"       # Stage 3 — quiz generation (3×5 Qs)
-CONCEPT_MODEL  = "claude-sonnet-4-5"      # Stage 1 — concept SVG animation
-SOLUTION_MODEL = "claude-sonnet-4-5"      # Stage 2 — solution SVG animation
-Q_MODEL        = SOLUTION_MODEL           # used by _classify_topic
-
-MAX_TOK           = 16000
-MAX_TOK_CONCEPT   = 12000
-MAX_TOK_QUIZ      = 6000
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 1 — QAnimLogger
-# ══════════════════════════════════════════════════════════════════════
-
+ 
+# ---------------------------------------------------------------------------
+# Client + model routing
+# ---------------------------------------------------------------------------
+client = anthropic.Anthropic()
+ 
+CONCEPT_MODEL        = "claude-sonnet-4-6"
+SOLUTION_MODEL       = "claude-sonnet-4-6"
+Q_MODEL              = SOLUTION_MODEL
+HAIKU_SOLUTION_MODEL = "claude-sonnet-4-6"
+ 
+MAX_TOK                = 20000
+MAX_TOK_CONCEPT        = 12000
+MAX_TOK_HAIKU_SOLUTION = 12000
+ 
+ 
+# ===========================================================================
+#  MODULE 1 -- QAnimLogger
+# ===========================================================================
 class QAnimLogger:
-    """Centralized logger. All lifecycle events go through here."""
-    PREFIX = "[QAnim v10]"
-
+    PREFIX = "[QAnim v11.6]"
+ 
     @classmethod
-    def info(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ℹ  [{stage}] {msg}")
-
+    def info(cls, stage, msg):
+        print(f"{cls.PREFIX} i  [{stage}] {msg}")
+ 
     @classmethod
-    def warn(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ⚠  [{stage}] {msg}")
-
+    def warn(cls, stage, msg):
+        print(f"{cls.PREFIX} !  [{stage}] {msg}")
+ 
     @classmethod
-    def error(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ✖  [{stage}] {msg}")
-
+    def error(cls, stage, msg):
+        print(f"{cls.PREFIX} X  [{stage}] {msg}")
+ 
     @classmethod
-    def ok(cls, stage: str, msg: str):
-        print(f"{cls.PREFIX} ✅ [{stage}] {msg}")
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 2 — GenerationValidator
-# ══════════════════════════════════════════════════════════════════════
-
+    def ok(cls, stage, msg):
+        print(f"{cls.PREFIX} OK [{stage}] {msg}")
+ 
+ 
+# ===========================================================================
+#  MODULE 2 -- GenerationValidator
+# ===========================================================================
 class ValidationError(Exception):
     pass
-
-
+ 
+ 
 class GenerationValidator:
-    """Validates AI-generated HTML before iframe injection."""
-
     DANGEROUS_PATTERNS = [
-        (r'document\.write\s*\(', "document.write() is forbidden"),
-        (r'<script[^>]+src\s*=',  "External script src not allowed"),
-        (r'javascript:\s*void',   "javascript:void() link detected"),
+        (r'document\.write\s*\(',  "document.write() is forbidden"),
+        (r'<script[^>]+src\s*=',   "External script src not allowed"),
+        (r'javascript:\s*void',    "javascript:void() link detected"),
         (r'on\w+\s*=\s*["\']?\s*eval\s*\(', "eval() in event handler"),
     ]
-
     REQUIRED_ELEMENTS = [
         ("<!DOCTYPE", "Missing DOCTYPE declaration"),
         ("<html",     "Missing <html> tag"),
         ("</html>",   "Missing closing </html> tag"),
         ("<body",     "Missing <body> tag"),
         ("</body>",   "Missing closing </body> tag"),
-        ("<script",   "No script block — animation would be static"),
+        ("<script",   "No script block"),
     ]
-
     SVG_REQUIRED = [
         ("<svg",   "No SVG element found"),
         ("</svg>", "SVG element not closed"),
     ]
-
+ 
     @classmethod
-    def validate(cls, html: str, require_svg: bool = True) -> None:
+    def validate(cls, html, require_svg=True):
         if not html or not html.strip():
             raise ValidationError("animation_code is empty")
         if len(html) < 500:
-            raise ValidationError(
-                f"animation_code suspiciously short ({len(html)} chars) — likely truncated"
-            )
+            raise ValidationError(f"animation_code suspiciously short ({len(html)} chars)")
         for pattern, reason in cls.REQUIRED_ELEMENTS:
             if pattern not in html:
                 raise ValidationError(reason)
@@ -133,34 +119,23 @@ class GenerationValidator:
                     raise ValidationError(reason)
         for pattern, reason in cls.DANGEROUS_PATTERNS:
             if re.search(pattern, html, re.IGNORECASE):
-                QAnimLogger.warn("Validator", f"Dangerous pattern detected: {reason}")
+                QAnimLogger.warn("Validator", f"Dangerous pattern: {reason}")
         open_scripts  = len(re.findall(r'<script(?:\s[^>]*)?>',  html, re.IGNORECASE))
         close_scripts = len(re.findall(r'</script>',              html, re.IGNORECASE))
         if open_scripts != close_scripts:
-            raise ValidationError(
-                f"Unbalanced <script> tags: {open_scripts} open, {close_scripts} close"
-            )
+            raise ValidationError(f"Unbalanced <script> tags: {open_scripts} open, {close_scripts} close")
         open_svgs  = len(re.findall(r'<svg(?:\s[^>]*)?>',  html, re.IGNORECASE))
         close_svgs = len(re.findall(r'</svg>',              html, re.IGNORECASE))
         if open_svgs != close_svgs:
-            raise ValidationError(
-                f"Unbalanced <svg> tags: {open_svgs} open, {close_svgs} close"
-            )
+            raise ValidationError(f"Unbalanced <svg> tags: {open_svgs} open, {close_svgs} close")
         QAnimLogger.ok("Validator", f"HTML passed validation ({len(html):,} chars)")
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 2.5 — ToFindExtractor
-# ══════════════════════════════════════════════════════════════════════
-
+ 
+ 
+# ===========================================================================
+#  MODULE 2.5 -- ToFindExtractor
+# ===========================================================================
 class ToFindExtractor:
-    """
-    Parses an academic question and returns a deduplicated, student-friendly
-    list of the quantities the student must find.
-    Never raises — always returns a list.
-    """
-
-    _TRIGGER_PATTERNS: list = [
+    _TRIGGER_PATTERNS = [
         (r'\bsolve\s+for\s+(.+?)(?=\.|,|;|\band\b|$)',         1),
         (r'\bfind\s+(?:the\s+|an?\s+)?(.+?)(?=\.|;|$)',        1),
         (r'\bdetermine\s+(?:the\s+|an?\s+)?(.+?)(?=\.|,|;|$)', 1),
@@ -179,46 +154,28 @@ class ToFindExtractor:
         (r'\bshow\s+(?:that\s+)?(.+?)(?=\.|,|;|$)',              1),
         (r'\bexpress\s+(?:the\s+)?(.+?)\s+in\s+terms',          1),
     ]
-
-    _NOISE_PREFIXES: list = [
-        "the value of", "the values of", "value of",
-        "the magnitude of", "magnitude of",
-        "the amount of", "amount of",
-        "the total", "the net", "the resultant", "the effective",
-        "an expression for", "the expression for",
+    _NOISE_PREFIXES = [
+        "the value of","the values of","value of","the magnitude of","magnitude of",
+        "the amount of","amount of","the total","the net","the resultant","the effective",
+        "an expression for","the expression for",
     ]
-
-    _SPLIT_RE = re.compile(
-        r'\s*,\s*|\s+and\s+|\s+also\s+|\s+as\s+well\s+as\s+|\s+along\s+with\s+',
-        re.IGNORECASE
-    )
-    _TRAILING_RE = re.compile(
-        r'\s+(?:if|when|given|assuming|where|such\s+that|for|in|at|'
-        r'of\s+the\s+system|of\s+the\s+block|of\s+each)\s+.+$',
-        re.IGNORECASE
-    )
-    _ARTICLE_RE      = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
-    _TRIGGER_VERB_RE = re.compile(
-        r'^(?:find|determine|calculate|evaluate|compute|obtain|'
-        r'identify|estimate|derive|prove|show|express|solve\s+for)'
-        r'\s+(?:the\s+|an?\s+)?', re.IGNORECASE
-    )
-    _MATH_VAR_RE = re.compile(r'^[A-Za-zα-ωΑ-Ω][0-9₀-₉]?$')
+    _SPLIT_RE     = re.compile(r'\s*,\s*|\s+and\s+|\s+also\s+|\s+as\s+well\s+as\s+|\s+along\s+with\s+', re.IGNORECASE)
+    _TRAILING_RE  = re.compile(r'\s+(?:if|when|given|assuming|where|such\s+that|for|in|at|of\s+the\s+system|of\s+the\s+block|of\s+each)\s+.+$', re.IGNORECASE)
+    _ARTICLE_RE   = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
+    _TRIGGER_VERB_RE = re.compile(r'^(?:find|determine|calculate|evaluate|compute|obtain|identify|estimate|derive|prove|show|express|solve\s+for)\s+(?:the\s+|an?\s+)?', re.IGNORECASE)
+    _MATH_VAR_RE  = re.compile(r'^[A-Za-z\u03b1-\u03c9\u0391-\u03a9][0-9\u2080-\u2089]?$')
     MAX_LEN = 120
-
+ 
     @classmethod
-    def extract(cls, question: str) -> list:
+    def extract(cls, question):
         if not question or not question.strip():
             return []
         try:
             raw      = cls._run_patterns(question)
             expanded = cls._split_conjunctions(raw)
             cleaned  = [cls._clean(t) for t in expanded]
-            valid    = [t for t in cleaned
-                        if t and (
-                            (len(t) >= 3 and len(t) <= cls.MAX_LEN)
-                            or cls._MATH_VAR_RE.match(t)
-                        )]
+            valid    = [t for t in cleaned if t and (
+                            (3 <= len(t) <= cls.MAX_LEN) or cls._MATH_VAR_RE.match(t))]
             deduped  = cls._deduplicate(valid)
             result   = [cls._cap(t) for t in deduped]
             if not result:
@@ -228,9 +185,9 @@ class ToFindExtractor:
         except Exception as exc:
             QAnimLogger.error("ToFindExtractor", f"Unhandled error: {exc}")
             return []
-
+ 
     @classmethod
-    def _run_patterns(cls, question: str) -> list:
+    def _run_patterns(cls, question):
         found = []
         for pattern, grp in cls._TRIGGER_PATTERNS:
             for m in re.finditer(pattern, question, re.IGNORECASE | re.MULTILINE):
@@ -241,17 +198,17 @@ class ToFindExtractor:
                 except IndexError:
                     pass
         return found
-
+ 
     @classmethod
-    def _split_conjunctions(cls, targets: list) -> list:
+    def _split_conjunctions(cls, targets):
         result = []
         for t in targets:
             parts = cls._SPLIT_RE.split(t)
             result.extend(p.strip() for p in parts if p.strip())
         return result
-
+ 
     @classmethod
-    def _clean(cls, target: str) -> str:
+    def _clean(cls, target):
         t = target.strip().rstrip(".,;:?!")
         for noise in sorted(cls._NOISE_PREFIXES, key=len, reverse=True):
             if t.lower().startswith(noise):
@@ -261,9 +218,9 @@ class ToFindExtractor:
         t = cls._TRIGGER_VERB_RE.sub("", t).strip()
         t = cls._ARTICLE_RE.sub("", t).strip()
         return t.rstrip(".,;:?!")
-
+ 
     @classmethod
-    def _deduplicate(cls, targets: list) -> list:
+    def _deduplicate(cls, targets):
         seen, result = set(), []
         for t in targets:
             key = t.lower().strip()
@@ -271,13 +228,13 @@ class ToFindExtractor:
                 seen.add(key)
                 result.append(t)
         return result
-
+ 
     @classmethod
-    def _cap(cls, s: str) -> str:
+    def _cap(cls, s):
         return s[0].upper() + s[1:] if s else s
-
+ 
     @classmethod
-    def _fallback(cls, question: str) -> list:
+    def _fallback(cls, question):
         try:
             sentences = re.split(r'[.!?]', question.strip())
             for s in reversed(sentences):
@@ -287,17 +244,15 @@ class ToFindExtractor:
             return []
         except Exception:
             return []
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 3 — HtmlSanitizer
-# ══════════════════════════════════════════════════════════════════════
-
+ 
+ 
+# ===========================================================================
+#  MODULE 3 -- HtmlSanitizer
+# ===========================================================================
 class HtmlSanitizer:
-    """Cleans AI-generated HTML. Does NOT validate."""
-
+ 
     @classmethod
-    def sanitize(cls, html: str) -> str:
+    def sanitize(cls, html):
         html = html.replace('\ufeff', '')
         end = html.rfind('</html>')
         if end != -1:
@@ -305,28 +260,72 @@ class HtmlSanitizer:
         html = re.sub(r'document\.write\s*\([^)]*\)\s*;?', '', html, flags=re.IGNORECASE)
         html = re.sub(
             r'<script[^>]+src\s*=\s*["\'][^"\']*["\'][^>]*>\s*</script>',
-            '', html, flags=re.IGNORECASE | re.DOTALL
-        )
-        html = cls._fix_template_literals(html)        # double-quote safe version
-        html = cls._fix_const_let(html)                 # const/let → var
-        html = cls._fix_arrow_functions(html)           # arrow fn → regular fn
-        html = cls._fix_single_quote_apostrophes(html)  # 'it\'s' → "it's"
+            '', html, flags=re.IGNORECASE | re.DOTALL)
+        html = cls._fix_template_literals(html)
+        html = cls._fix_const_let(html)
+        html = cls._fix_arrow_functions(html)
+        html = cls._fix_single_quote_apostrophes(html)
         html = cls._wrap_scripts_in_error_boundary(html)
-        html = re.sub(
-            r'<svg(?![^>]*xmlns)',
-            '<svg xmlns="http://www.w3.org/2000/svg"',
-            html, flags=re.IGNORECASE
-        )
+        html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
+        html = cls._fix_svg_subscripts(html)
         html = html.replace('\x00', '')
         QAnimLogger.ok("Sanitizer", "HTML sanitized")
         return html
-
+ 
+    _SUB_PATTERN = re.compile(
+        r'(?<![A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'
+        r'([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'
+        r'_'
+        r'(?:'
+        r'\{([^}]{1,20})\}'
+        r'|([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d]+)'
+        r')'
+    )
+ 
     @classmethod
-    def _wrap_scripts_in_error_boundary(cls, html: str) -> str:
-        def wrap_script(match: re.Match) -> str:
-            tag   = match.group(1)
-            body  = match.group(2)
-            close = match.group(3)
+    def _replace_sub_in_text_content(cls, content):
+        def replacer(m):
+            base = m.group(1)
+            sub  = m.group(2) if m.group(2) else m.group(3)
+            return (base
+                    + '<tspan dy="5" font-size="0.72em">' + sub + '</tspan>'
+                    + '<tspan dy="-5" font-size="1em"></tspan>')
+        return cls._SUB_PATTERN.sub(replacer, content)
+ 
+    @classmethod
+    def _fix_svg_subscripts(cls, html):
+        def fix_svg_block(svg_match):
+            svg_content = svg_match.group(0)
+ 
+            def fix_text_tag(t_match):
+                full   = t_match.group(0)
+                open_t = t_match.group(1)
+                inner  = t_match.group(2)
+                close_t= t_match.group(3)
+                if 'dy=' in inner and 'font-size' in inner:
+                    return full
+                if '_' not in inner:
+                    return full
+                fixed = cls._replace_sub_in_text_content(inner)
+                if fixed != inner:
+                    QAnimLogger.info("Sanitizer", f"Subscript fixed in <text>: {inner[:60]!r}")
+                return open_t + fixed + close_t
+ 
+            svg_content = re.sub(
+                r'(<text\b[^>]*>)(.*?)(</text>)',
+                fix_text_tag,
+                svg_content,
+                flags=re.DOTALL | re.IGNORECASE
+            )
+            return svg_content
+ 
+        html = re.sub(r'<svg[\s\S]*?</svg>', fix_svg_block, html, flags=re.IGNORECASE)
+        return html
+ 
+    @classmethod
+    def _wrap_scripts_in_error_boundary(cls, html):
+        def wrap_script(match):
+            tag, body, close = match.group(1), match.group(2), match.group(3)
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
                 return match.group(0)
             stripped = body.strip()
@@ -334,9 +333,8 @@ class HtmlSanitizer:
                 return match.group(0)
             if len(stripped) < 20:
                 return match.group(0)
-            wrapped_body = (
-                "\n/* ── QAnim Error Boundary ── */\n"
-                "try {\n" + body +
+            wrapped = (
+                "\n/* -- QAnim Error Boundary -- */\ntry {\n" + body +
                 "\n} catch (_qanim_err) {\n"
                 "  console.error('[QAnim ErrorBoundary]', _qanim_err);\n"
                 "  (function() {\n"
@@ -345,462 +343,287 @@ class HtmlSanitizer:
                 "    fb.style.display = 'flex';\n"
                 "    var msg = fb.querySelector('.qanim-err-msg');\n"
                 "    if (msg) msg.textContent = String(_qanim_err);\n"
-                "  })();\n"
-                "}\n"
-            )
-            return f"{tag}{wrapped_body}{close}"
-
-        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
-        return re.sub(pattern, wrap_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+                "  })();\n}\n")
+            return f"{tag}{wrapped}{close}"
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', wrap_script, html, flags=re.DOTALL | re.IGNORECASE)
+ 
     @classmethod
-    def _fix_template_literals(cls, html: str) -> str:
-        """Replace backtick template literals with double-quoted string concatenation."""
-        def process_script(script_match: re.Match) -> str:
-            tag   = script_match.group(1)
-            body  = script_match.group(2)
-            close = script_match.group(3)
+    def _fix_template_literals(cls, html):
+        def process_script(script_match):
+            tag, body, close = script_match.group(1), script_match.group(2), script_match.group(3)
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
                 return script_match.group(0)
-
-            def replace_template(m: re.Match) -> str:
+            def replace_template(m):
                 raw = m.group(1)
-                # Split on ${...} — alternating literal / expression parts
                 parts = re.split(r'\$\{([^}]*)\}', raw)
                 out = []
                 for idx, part in enumerate(parts):
                     if idx % 2 == 0:
-                        # String literal — use DOUBLE quotes to avoid apostrophe bug
-                        esc = (part
-                               .replace('\\', '\\\\')
-                               .replace('"',  '\\"')
-                               .replace('\n', '\\n')
-                               .replace('\r', '\\r')
-                               .replace('\t', '\\t'))
+                        esc = part.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\r','\\r').replace('\t','\\t')
                         out.append('"' + esc + '"')
                     else:
-                        # Expression — parenthesise and keep verbatim
                         out.append('(' + part.strip() + ')')
-                # Drop empty string tokens at edges
                 while out and out[0]  == '""': out.pop(0)
                 while out and out[-1] == '""': out.pop()
                 return (' + '.join(out)) if out else '""'
-
             original = body
             body = re.sub(r'`((?:[^`\\]|\\.)*)`', replace_template, body, flags=re.DOTALL)
             if body != original:
-                QAnimLogger.warn("Sanitizer", "Backtick template literals detected and replaced")
+                QAnimLogger.warn("Sanitizer", "Backtick template literals replaced")
             return f"{tag}{body}{close}"
-
-        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
-        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
+ 
     @classmethod
-    def _fix_const_let(cls, html: str) -> str:
-        """Convert const/let → var for maximum JS compatibility in iframes."""
-        def process_script(script_match: re.Match) -> str:
-            tag   = script_match.group(1)
-            body  = script_match.group(2)
-            close = script_match.group(3)
+    def _fix_const_let(cls, html):
+        def process_script(m):
+            tag, body, close = m.group(1), m.group(2), m.group(3)
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
-                return script_match.group(0)
+                return m.group(0)
             body = re.sub(r'\bconst\b', 'var', body)
             body = re.sub(r'\blet\b',   'var', body)
             return f"{tag}{body}{close}"
-        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
-        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
+ 
     @classmethod
-    def _fix_arrow_functions(cls, html: str) -> str:
-        """
-        Convert simple ES6 arrow functions to ES5 regular functions.
-        Handles: (params) => { body }  and  (params) => expr
-        Skips application/json blocks.
-        """
-        def process_script(script_match: re.Match) -> str:
-            tag   = script_match.group(1)
-            body  = script_match.group(2)
-            close = script_match.group(3)
+    def _fix_arrow_functions(cls, html):
+        def process_script(m):
+            tag, body, close = m.group(1), m.group(2), m.group(3)
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
-                return script_match.group(0)
-            # (params) => { block } → function(params) { block }
-            body = re.sub(
-                r'\(([^)]*)\)\s*=>\s*(\{)',
-                r'function(\1) \2',
-                body
-            )
-            # (params) => expr  (no braces) → function(params) { return expr; }
-            body = re.sub(
-                r'\(([^)]*)\)\s*=>\s*([^{;\n][^;\n]*)',
-                r'function(\1) { return \2; }',
-                body
-            )
-            # param => { block }  (single param, no parens)
-            body = re.sub(
-                r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*(\{)',
-                r'function(\1) \2',
-                body
-            )
-            # param => expr  (single param, no parens, no braces)
-            body = re.sub(
-                r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*([^{;\n][^;\n]*)',
-                r'function(\1) { return \2; }',
-                body
-            )
+                return m.group(0)
+            body = re.sub(r'\(([^)]*)\)\s*=>\s*(\{)', r'function(\1) \2', body)
+            body = re.sub(r'\(([^)]*)\)\s*=>\s*([^{;\n][^;\n]*)', r'function(\1) { return \2; }', body)
+            body = re.sub(r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*(\{)', r'function(\1) \2', body)
+            body = re.sub(r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*([^{;\n][^;\n]*)', r'function(\1) { return \2; }', body)
             return f"{tag}{body}{close}"
-        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
-        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
+ 
     @classmethod
-    def _fix_single_quote_apostrophes(cls, html: str) -> str:
-        """
-        Find single-quoted JS strings that contain apostrophes and rewrap
-        them in double quotes.
-        e.g. 'Layer\'s resistance'  or  'it's broken'
-        Both become: "Layer's resistance"  / "it's broken"
-        Skips application/json blocks.
-        """
-        def process_script(script_match: re.Match) -> str:
-            tag   = script_match.group(1)
-            body  = script_match.group(2)
-            close = script_match.group(3)
+    def _fix_single_quote_apostrophes(cls, html):
+        def process_script(m):
+            tag, body, close = m.group(1), m.group(2), m.group(3)
             if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
-                return script_match.group(0)
-
-            def fix_sq_string(m: re.Match) -> str:
-                inner = m.group(1)  # content between outer single quotes
-                # If there's a bare apostrophe (not preceded by backslash), rewrap
+                return m.group(0)
+            def fix_sq_string(mm):
+                inner = mm.group(1)
                 if re.search(r"(?<!\\)'", inner):
-                    # Unescape any \' in the original and escape " instead
-                    fixed = inner.replace("\\'" , "'" ).replace('"', '\\"')
+                    fixed = inner.replace("\\'", "'").replace('"', '\\"')
                     return '"' + fixed + '"'
-                return m.group(0)  # no apostrophe issue, leave alone
-
-            # Match single-quoted strings (not crossing newlines, handles \' escapes)
+                return mm.group(0)
             body = re.sub(r"'((?:[^'\\\n]|\\.)*)'", fix_sq_string, body)
             return f"{tag}{body}{close}"
-
-        pattern = r'(<script(?:\s[^>]*)?>)(.*?)(</script>)'
-        return re.sub(pattern, process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 4 — RecoveryEngine  (Light Theme)
-# ══════════════════════════════════════════════════════════════════════
-
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
+ 
+ 
+# ===========================================================================
+#  MODULE 4 -- RecoveryEngine
+# ===========================================================================
 class RecoveryEngine:
-    """Graceful fallback HTML when generation or validation fails. LIGHT THEME."""
-
+ 
     @staticmethod
-    def fallback_html(question: str, reason: str) -> str:
+    def fallback_html(question, reason):
         q_safe      = html_module.escape(question[:120])
         reason_safe = html_module.escape(reason[:300])
         return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
+<html lang="en"><head><meta charset="UTF-8">
 <style>
-  *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
-  html, body {{
-    width:100%; height:100%; overflow:hidden;
-    background:#f1f5f9;
-    font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-    display:flex; align-items:center; justify-content:center;
-  }}
-  .card {{
-    background:#ffffff;
-    border:1px solid #e2e8f0;
-    border-radius:16px;
-    box-shadow:0 4px 24px rgba(0,0,0,0.10);
-    padding:36px 40px; max-width:520px; text-align:center;
-  }}
-  .icon {{ font-size:40px; margin-bottom:16px; }}
-  .title {{ font-size:17px; font-weight:800; color:#1e293b; margin-bottom:10px; }}
-  .reason {{
-    font-size:11px; color:#64748b; background:#f8fafc;
-    border-radius:10px; padding:10px 14px; margin:12px 0;
-    border:1px solid #e2e8f0; text-align:left;
-    line-height:1.6; font-family:monospace;
-  }}
-  .question {{ font-size:12px; color:#94a3b8; line-height:1.6; margin-top:10px; font-style:italic; }}
-  .retry-hint {{
-    margin-top:18px; font-size:11px; font-weight:700;
-    letter-spacing:1.5px; text-transform:uppercase; color:#7c3aed;
-  }}
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">⚠️</div>
-    <div class="title">Animation Could Not Render</div>
-    <div class="reason">{reason_safe}</div>
-    <div class="question">"{q_safe}"</div>
-    <div class="retry-hint">Please regenerate the animation</div>
-  </div>
-</body>
-</html>"""
-
+*{{margin:0;padding:0;box-sizing:border-box}}
+html,body{{width:100%;height:100%;overflow:hidden;background:#f1f5f9;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  display:flex;align-items:center;justify-content:center}}
+.card{{background:#fff;border:1px solid #e2e8f0;border-radius:16px;
+  box-shadow:0 4px 24px rgba(0,0,0,.10);padding:36px 40px;max-width:520px;text-align:center}}
+.icon{{font-size:40px;margin-bottom:16px}}
+.title{{font-size:17px;font-weight:800;color:#1e293b;margin-bottom:10px}}
+.reason{{font-size:11px;color:#64748b;background:#f8fafc;border-radius:10px;
+  padding:10px 14px;margin:12px 0;border:1px solid #e2e8f0;text-align:left;
+  line-height:1.6;font-family:monospace}}
+.question{{font-size:12px;color:#94a3b8;line-height:1.6;margin-top:10px;font-style:italic}}
+.retry-hint{{margin-top:18px;font-size:11px;font-weight:700;letter-spacing:1.5px;
+  text-transform:uppercase;color:#7c3aed}}
+</style></head><body>
+<div class="card">
+<div class="icon">&#x26A0;&#xFE0F;</div>
+<div class="title">Animation Could Not Render</div>
+<div class="reason">{reason_safe}</div>
+<div class="question">"{q_safe}"</div>
+<div class="retry-hint">Please regenerate the animation</div>
+</div></body></html>"""
+ 
     @staticmethod
-    def partial_html(question: str, animation_code: str) -> str:
-        has_doctype = '<!DOCTYPE' in animation_code or '<html' in animation_code
-        if has_doctype:
+    def partial_html(question, animation_code):
+        if '<!DOCTYPE' in animation_code or '<html' in animation_code:
             return animation_code
         q_safe = html_module.escape(question[:120])
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8">
-<style>
-  html,body{{margin:0;padding:0;width:100%;height:100%;
-    display:flex;align-items:center;justify-content:center;
-    background:#f1f5f9;font-family:-apple-system,sans-serif}}
-</style>
-</head>
-<body>
+        return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<style>html,body{{margin:0;padding:0;width:100%;height:100%;
+  display:flex;align-items:center;justify-content:center;background:#f1f5f9;
+  font-family:-apple-system,sans-serif}}</style></head><body>
 <div style="font-size:11px;color:#64748b;position:fixed;top:8px;left:0;right:0;text-align:center">
-  {q_safe}
-</div>
-{animation_code}
-</body></html>"""
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 5 — IframeLifecycleManager JS constant (no hook bridge)
-# ══════════════════════════════════════════════════════════════════════
-
+  {q_safe}</div>
+{animation_code}</body></html>"""
+ 
+ 
+# ===========================================================================
+#  MODULE 5 -- IframeLifecycleManager JS constant
+# ===========================================================================
 IFRAME_RUNTIME_JS = r"""
-/* ═══════════════════════════════════════════════════════════
-   QAnim IframeLifecycleManager v10 — srcdoc-based safe render
-   ═══════════════════════════════════════════════════════════ */
 (function() {
   'use strict';
-
-  var _iframe      = null;
-  var _renderQueue = [];
-  var _rendering   = false;
-  var _currentHtml = '';
-
-  var Log = {
-    info:  function(m) { console.log('[QAnim ILM] ℹ  ' + m); },
-    warn:  function(m) { console.warn('[QAnim ILM] ⚠  ' + m); },
-    error: function(m) { console.error('[QAnim ILM] ✖  ' + m); },
-    ok:    function(m) { console.log('[QAnim ILM] ✅ ' + m); }
+  var _iframe=null, _renderQueue=[], _rendering=false, _currentHtml='';
+  var Log={
+    info:function(m){console.log('[QAnim ILM] i  '+m);},
+    warn:function(m){console.warn('[QAnim ILM] !  '+m);},
+    error:function(m){console.error('[QAnim ILM] X  '+m);},
+    ok:function(m){console.log('[QAnim ILM] OK '+m);}
   };
-
-  function _getIframe() {
-    if (_iframe && document.body.contains(_iframe)) return _iframe;
-    var existing = document.getElementById('qanim-frame');
-    if (existing) { _iframe = existing; return _iframe; }
-    var f = document.createElement('iframe');
-    f.id = 'qanim-frame';
-    f.setAttribute('sandbox', 'allow-scripts');
-    f.style.cssText = 'width:100%;height:100%;border:none;display:block;background:transparent';
-    f.setAttribute('title', 'QAnim Animation');
-    document.body.appendChild(f);
-    _iframe = f;
-    Log.ok('Created fresh iframe #qanim-frame');
-    return _iframe;
+  function _getIframe(){
+    if(_iframe&&document.body.contains(_iframe))return _iframe;
+    var existing=document.getElementById('qanim-frame');
+    if(existing){_iframe=existing;return _iframe;}
+    var f=document.createElement('iframe');
+    f.id='qanim-frame';f.setAttribute('sandbox','allow-scripts');
+    f.style.cssText='width:100%;height:100%;border:none;display:block;background:transparent';
+    f.setAttribute('title','QAnim Animation');
+    document.body.appendChild(f);_iframe=f;
+    Log.ok('Created fresh iframe #qanim-frame');return _iframe;
   }
-
-  function _resetIframe() {
+  function _resetIframe(){
     Log.warn('Resetting iframe...');
-    if (_iframe && document.body.contains(_iframe)) {
-      _iframe.removeAttribute('srcdoc');
-      _iframe.src = 'about:blank';
-      document.body.removeChild(_iframe);
-    }
-    _iframe = null;
-    _currentHtml = '';
-    return _getIframe();
+    if(_iframe&&document.body.contains(_iframe)){
+      _iframe.removeAttribute('srcdoc');_iframe.src='about:blank';
+      document.body.removeChild(_iframe);}
+    _iframe=null;_currentHtml='';return _getIframe();
   }
-
-  function _injectSrcdoc(iframe, html) {
-    try {
-      iframe.removeAttribute('srcdoc');
-      iframe.src = 'about:blank';
-      requestAnimationFrame(function() {
-        try {
-          iframe.srcdoc = html;
-          Log.ok('srcdoc injected (' + html.length + ' chars)');
-        } catch(e) {
-          Log.error('srcdoc assignment failed: ' + e);
-        }
+  function _injectSrcdoc(iframe,html){
+    try{
+      iframe.removeAttribute('srcdoc');iframe.src='about:blank';
+      requestAnimationFrame(function(){
+        try{iframe.srcdoc=html;Log.ok('srcdoc injected ('+html.length+' chars)');}
+        catch(e){Log.error('srcdoc assignment failed: '+e);}
       });
-    } catch(e) {
-      Log.error('_injectSrcdoc outer: ' + e);
-    }
+    }catch(e){Log.error('_injectSrcdoc outer: '+e);}
   }
-
-  function _processQueue() {
-    if (_rendering || _renderQueue.length === 0) return;
-    _rendering = true;
-    var task = _renderQueue.shift();
-    var iframe = _getIframe();
-    var timeoutId, done = false;
-
-    function cleanup() {
-      if (done) return;
-      done = true;
-      clearTimeout(timeoutId);
-      iframe.onload = null;
-      iframe.onerror = null;
-    }
-
-    iframe.onload = function() {
-      cleanup();
-      _currentHtml = task.html;
-      _rendering = false;
-      if (task.onSuccess) task.onSuccess();
-      _processQueue();
-    };
-    iframe.onerror = function(e) {
-      cleanup();
-      _rendering = false;
-      if (task.onError) task.onError('iframe error');
-      _processQueue();
-    };
-    timeoutId = setTimeout(function() {
-      if (done) return;
-      cleanup();
-      _currentHtml = task.html;
-      _rendering = false;
-      if (task.onSuccess) task.onSuccess();
-      _processQueue();
-    }, 8000);
-
-    _injectSrcdoc(iframe, task.html);
+  function _processQueue(){
+    if(_rendering||_renderQueue.length===0)return;
+    _rendering=true;
+    var task=_renderQueue.shift();var iframe=_getIframe();
+    var timeoutId,done=false;
+    function cleanup(){if(done)return;done=true;clearTimeout(timeoutId);iframe.onload=null;iframe.onerror=null;}
+    iframe.onload=function(){cleanup();_currentHtml=task.html;_rendering=false;if(task.onSuccess)task.onSuccess();_processQueue();};
+    iframe.onerror=function(e){cleanup();_rendering=false;if(task.onError)task.onError('iframe error');_processQueue();};
+    timeoutId=setTimeout(function(){if(done)return;cleanup();_currentHtml=task.html;_rendering=false;if(task.onSuccess)task.onSuccess();_processQueue();},8000);
+    _injectSrcdoc(iframe,task.html);
   }
-
-  window.QAnimILM = {
-    render: function(html, onSuccess, onError) {
-      if (!html || html.length < 100) {
-        if (onError) onError('empty html');
-        return;
-      }
-      _renderQueue = [];
-      _renderQueue.push({ html: html, onSuccess: onSuccess, onError: onError });
-      _processQueue();
+  window.QAnimILM={
+    render:function(html,onSuccess,onError){
+      if(!html||html.length<100){if(onError)onError('empty html');return;}
+      _renderQueue=[];_renderQueue.push({html:html,onSuccess:onSuccess,onError:onError});_processQueue();
     },
-    reset: function() {
-      _renderQueue = [];
-      _rendering = false;
-      _resetIframe();
-    },
-    getCurrentHtml: function() { return _currentHtml; },
-    isRendering:    function() { return _rendering; }
+    reset:function(){_renderQueue=[];_rendering=false;_resetIframe();},
+    getCurrentHtml:function(){return _currentHtml;},
+    isRendering:function(){return _rendering;}
   };
-
-  Log.ok('IframeLifecycleManager v10 initialized');
+  Log.ok('IframeLifecycleManager v11 initialized');
 })();
 """
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 6 — Error Boundary & Infrastructure  (Light Theme)
-# ══════════════════════════════════════════════════════════════════════
-
+ 
+ 
+# ===========================================================================
+#  MODULE 6 -- Error Boundary & Infrastructure
+# ===========================================================================
 ERROR_BOUNDARY_HTML = """
-<!-- QAnim Error Fallback — hidden unless needed -->
 <div id="qanim-error-fallback" style="
-  display:none; position:fixed; inset:0; z-index:9999;
-  background:rgba(241,245,249,0.92); backdrop-filter:blur(12px);
-  align-items:center; justify-content:center;
-">
-  <div style="
-    background:#ffffff; border-radius:16px; padding:32px 36px;
-    max-width:440px; text-align:center;
-    border:1px solid #e2e8f0;
-    box-shadow:0 8px 40px rgba(0,0,0,0.12);
-  ">
-    <div style="font-size:36px;margin-bottom:14px">⚠️</div>
+  display:none;position:fixed;inset:0;z-index:9999;
+  background:rgba(241,245,249,0.92);backdrop-filter:blur(12px);
+  align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:16px;padding:32px 36px;max-width:440px;
+    text-align:center;border:1px solid #e2e8f0;box-shadow:0 8px 40px rgba(0,0,0,.12);">
+    <div style="font-size:36px;margin-bottom:14px">&#x26A0;&#xFE0F;</div>
     <div style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:8px">Animation Error</div>
-    <div class="qanim-err-msg" style="
-      font-size:11px;color:#64748b;background:#f8fafc;
-      border-radius:10px;padding:10px 14px;margin:12px 0;
-      border:1px solid #e2e8f0;font-family:monospace;
-      text-align:left;line-height:1.6;word-break:break-all;
-    ">Unknown error</div>
+    <div class="qanim-err-msg" style="font-size:11px;color:#64748b;background:#f8fafc;
+      border-radius:10px;padding:10px 14px;margin:12px 0;border:1px solid #e2e8f0;
+      font-family:monospace;text-align:left;line-height:1.6;word-break:break-all;">Unknown error</div>
     <button onclick="document.getElementById('qanim-error-fallback').style.display='none'"
       style="margin-top:14px;padding:8px 22px;border-radius:8px;border:none;
-        background:#7c3aed;color:#fff;
-        font-weight:700;font-size:12px;cursor:pointer;">Dismiss</button>
+      background:#7c3aed;color:#fff;font-weight:700;font-size:12px;cursor:pointer;">Dismiss</button>
   </div>
 </div>
 """
-
+ 
 QANIM_INNER_LOGGER_JS = """
 <script>
-window.QLog = {
-  info:  function(m) { console.log('[QAnim Inner] ℹ  ' + m); },
-  warn:  function(m) { console.warn('[QAnim Inner] ⚠  ' + m); },
-  error: function(m) { console.error('[QAnim Inner] ✖  ' + m); }
+window.QLog={
+  info:function(m){console.log('[QAnim Inner] i  '+m);},
+  warn:function(m){console.warn('[QAnim Inner] !  '+m);},
+  error:function(m){console.error('[QAnim Inner] X  '+m);}
 };
-window.addEventListener('error', function(e) {
-  console.error('[QAnim GlobalError]', e.message, 'at', e.filename + ':' + e.lineno);
-  var fb = document.getElementById('qanim-error-fallback');
-  if (fb) {
-    fb.style.display = 'flex';
-    var msg = fb.querySelector('.qanim-err-msg');
-    if (msg) msg.textContent = e.message + ' (line ' + e.lineno + ')';
-  }
+window.addEventListener('error',function(e){
+  console.error('[QAnim GlobalError]',e.message,'at',e.filename+':'+e.lineno);
+  var fb=document.getElementById('qanim-error-fallback');
+  if(fb){fb.style.display='flex';var msg=fb.querySelector('.qanim-err-msg');
+    if(msg)msg.textContent=e.message+' (line '+e.lineno+')';}
 });
-window.addEventListener('unhandledrejection', function(e) {
-  console.error('[QAnim UnhandledPromise]', e.reason);
+window.addEventListener('unhandledrejection',function(e){
+  console.error('[QAnim UnhandledPromise]',e.reason);
 });
 </script>
 """
-
-
-def inject_infrastructure(html: str) -> str:
-    """Injects QAnim error fallback UI + inner logger + scroll-enable override."""
-    html = re.sub(
-        r'(<body[^>]*>)',
-        r'\1\n' + ERROR_BOUNDARY_HTML,
-        html, count=1, flags=re.IGNORECASE
-    )
-    first_script = re.search(
-        r'<script(?:\s[^>]*)?>(?!.*type\s*=\s*["\']application/json)',
-        html, re.IGNORECASE
-    )
+ 
+ 
+def inject_infrastructure(html):
+    html = re.sub(r'(<body[^>]*>)', r'\1\n' + ERROR_BOUNDARY_HTML, html, count=1, flags=re.IGNORECASE)
+    first_script = re.search(r'<script(?:\s[^>]*)?>(?!.*type\s*=\s*["\']application/json)', html, re.IGNORECASE)
     if first_script:
         pos = first_script.start()
         html = html[:pos] + QANIM_INNER_LOGGER_JS + '\n' + html[pos:]
     else:
         html = html.replace('</body>', QANIM_INNER_LOGGER_JS + '\n</body>', 1)
-
-    # Scroll-enable override
+    # v11.5/v11.6: Nav buttons live inside controls bar
     _scroll_fix = (
         '\n<style id="qanim-scroll-fix">\n'
-        'html, body {\n'
-        '  overflow-x: hidden !important;\n'
-        '  overflow-y: auto !important;\n'
-        '  height: auto !important;\n'
-        '  min-height: 100vh;\n'
+        'html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}\n'
+        'svg{width:100%!important;height:100%!important;}\n'
+        '#container,[id="container"]{padding-bottom:80px;width:100%;}\n'
+        '/* ── Bold question text fix ── */\n'
+        '#qstrip .qtext{font-weight:700!important;}\n'
+        '#qstrip .qtext *{font-weight:700!important;}\n'
+        '/* ── Nav buttons now live inside #qanim-controls-bar (v11.5+) ── */\n'
+        '/* Legacy standalone #prevbtn/#nextbtn hidden when bar is present */\n'
+        'body:has(#qanim-controls-bar) #prevbtn,\n'
+        'body:has(#qanim-controls-bar) #nextbtn{\n'
+        '  display:none!important;\n'
         '}\n'
-        '#container, [id="container"] { padding-bottom: 80px; }\n'
-        '</style>\n'
-    )
+        '/* ── Scene Explanation Box position fix (y=420) ── */\n'
+        '#anim-container{padding-bottom:16px!important;}\n'
+        '#anim-container svg{min-height:380px!important;}\n'
+        '/* qstrip (question strip above animation) */\n'
+        '#qstrip{\n'
+        '  padding:14px 22px!important;\n'
+        '  font-size:14.5px!important;\n'
+        '  line-height:1.65!important;\n'
+        '  border-radius:12px!important;\n'
+        '  margin-bottom:10px!important;\n'
+        '}\n'
+        '/* controls row spacing */\n'
+        '#controls{margin-top:12px!important;gap:18px!important;}\n'
+        '</style>\n')
     if '</head>' in html:
         html = html.replace('</head>', _scroll_fix + '</head>', 1)
     else:
         html = _scroll_fix + html
-
     QAnimLogger.ok("Infrastructure", "Error fallback + inner logger + scroll-fix injected")
     return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 6.5 — ToFind Injection System  (Light Theme)
-# ══════════════════════════════════════════════════════════════════════
-
-def _build_to_find_data_tag(targets: list) -> str:
+ 
+ 
+# ===========================================================================
+#  MODULE 6.5 -- ToFind Injection System
+# ===========================================================================
+def _build_to_find_data_tag(targets):
     payload = {"targets": [str(t) for t in (targets or [])]}
-    return (
-        '<script type="application/json" id="__tofind_data__">\n'
-        + json.dumps(payload, ensure_ascii=False, indent=2)
-        + '\n</script>'
-    )
-
-
+    return ('<script type="application/json" id="__tofind_data__">\n'
+            + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
+ 
+ 
 _TO_FIND_DOM = """
 <div id="tofind-backdrop" aria-hidden="true"></div>
 <aside id="tofind-panel" role="dialog" aria-labelledby="tofind-heading" aria-hidden="true">
@@ -814,155 +637,166 @@ _TO_FIND_DOM = """
       </div>
       <span id="tofind-heading" class="tf-title">To Find</span>
     </div>
-    <button id="tofind-close" class="tf-close-btn" aria-label="Close">✕</button>
+    <button id="tofind-close" class="tf-close-btn" aria-label="Close">&#x2715;</button>
   </div>
   <p class="tf-subtitle">What this question is asking you to determine:</p>
   <div id="tofind-items-container" class="tf-items-container"></div>
 </aside>
 """
-
+ 
 _TO_FIND_CSS = """
 <style id="qanim-tofind-styles">
 #tofind-backdrop {
-  display:none; position:fixed; inset:0; z-index:8000;
-  background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; transition:opacity 0.22s ease;
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+  background: rgba(15, 23, 42, 0.40);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity 0.22s ease;
 }
-#tofind-backdrop.open { display:block; opacity:1; }
+#tofind-backdrop.open { display: block; opacity: 1; }
+ 
 #tofind-panel {
-  display:flex; flex-direction:column; position:fixed;
-  top:50%; left:50%; transform:translate(-50%,-48%) scale(0.96);
-  z-index:8100; width:min(460px,92vw); max-height:80vh;
-  border-radius:16px; padding:24px; box-sizing:border-box;
-  background:#ffffff;
-  border:1px solid #e2e8f0;
-  box-shadow:0 8px 40px rgba(0,0,0,0.12);
-  opacity:0; pointer-events:none;
-  transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -48%) scale(0.96);
+  z-index: 8100;
+  width: min(460px, 92vw);
+  max-height: 80vh;
+  border-radius: 16px;
+  padding: 24px;
+  box-sizing: border-box;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease,
+              transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-#tofind-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
-.tf-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-.tf-header-left { display:flex; align-items:center; gap:10px; }
+#tofind-panel.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
+}
+.tf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.tf-header-left { display: flex; align-items: center; gap: 10px; }
 .tf-icon-wrap {
-  width:32px; height:32px; border-radius:8px;
-  background:#7c3aed; display:flex; align-items:center;
-  justify-content:center; color:#fff; flex-shrink:0;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: #7c3aed;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; flex-shrink: 0;
 }
-.tf-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:16px; font-weight:700; color:#1e293b; }
+.tf-title {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 16px; font-weight: 700; color: #1e293b;
+}
 .tf-close-btn {
-  width:30px; height:30px; border-radius:8px; border:1px solid #e2e8f0;
-  background:#f8fafc; color:#64748b; font-size:12px;
-  display:flex; align-items:center; justify-content:center; cursor:pointer;
-  transition:background 0.15s,color 0.15s;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b; font-size: 12px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
-.tf-close-btn:hover { background:#fee2e2; color:#dc2626; }
-.tf-subtitle { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; color:#64748b; margin:0 0 14px; }
+.tf-close-btn:hover { background: #fee2e2; color: #dc2626; }
+.tf-subtitle {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px; color: #64748b; margin: 0 0 14px;
+}
 .tf-items-container {
-  display:flex; flex-direction:column; gap:8px; overflow-y:auto;
-  scrollbar-width:thin; scrollbar-color:#e2e8f0 transparent;
+  display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 transparent;
 }
 .tofind-item {
-  display:flex; align-items:flex-start; gap:12px; padding:12px 14px; border-radius:10px;
-  background:#f8fafc; border:1px solid #e2e8f0;
-  opacity:0; transform:translateX(-12px); transition:background 0.15s;
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition: background 0.15s;
 }
-.tofind-item:hover { background:#ede9fe; border-color:#7c3aed; }
+.tofind-item:hover { background: #ede9fe; border-color: #7c3aed; }
 .tofind-check {
-  width:20px; height:20px; border-radius:50%;
-  background:#7c3aed; color:#fff; font-size:11px;
-  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #7c3aed; color: #fff;
+  font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
 }
-.tofind-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; font-weight:600; color:#1e293b; line-height:1.5; }
-.tofind-empty { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#94a3b8; text-align:center; padding:20px 0; font-style:italic; }
+.tofind-text {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px; font-weight: 600; color: #1e293b; line-height: 1.5;
+}
+.tofind-empty {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px; color: #94a3b8;
+  text-align: center; padding: 20px 0; font-style: italic;
+}
 </style>
 """
-
+ 
 TO_FIND_JS_MODULE = r"""
-(function initToFindSystem() {
+(function initToFindSystem(){
   'use strict';
-  var toFindOpen = false, _panelBuilt = false;
-  function _onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else setTimeout(fn, 0);
+  var toFindOpen=false,_panelBuilt=false;
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _el(id){return document.getElementById(id);}
+  function _loadTargets(){
+    try{var tag=_el('__tofind_data__');if(!tag)return[];var data=JSON.parse(tag.textContent)||{};return Array.isArray(data.targets)?data.targets:[];}catch(e){return[];}
   }
-  function _el(id) { return document.getElementById(id); }
-  function _loadTargets() {
-    try {
-      var tag = _el('__tofind_data__');
-      if (!tag) return [];
-      var data = JSON.parse(tag.textContent) || {};
-      return Array.isArray(data.targets) ? data.targets : [];
-    } catch(e) { return []; }
+  function _escape(text){if(!text)return'';return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function _buildPanel(targets){
+    if(_panelBuilt)return;_panelBuilt=true;
+    var container=_el('tofind-items-container');if(!container)return;
+    if(!targets||targets.length===0){container.innerHTML='<div class="tofind-empty">No specific targets detected.</div>';return;}
+    var html='';
+    for(var i=0;i<targets.length;i++){html+='<div class="tofind-item" id="tofind-item-'+i+'"><div class="tofind-check">&#10003;</div><div class="tofind-text">'+_escape(targets[i])+'</div></div>';}
+    container.innerHTML=html;
   }
-  function _escape(text) {
-    if (!text) return '';
-    return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  function _animateReveal(){
+    var items=document.querySelectorAll('.tofind-item');
+    for(var i=0;i<items.length;i++){(function(el,idx){el.style.opacity='0';el.style.transform='translateX(-12px)';el.style.transition='none';setTimeout(function(){el.style.transition='opacity .28s ease,transform .28s ease';el.style.opacity='1';el.style.transform='translateX(0)';},60+idx*80);})(items[i],i);}
   }
-  function _buildPanel(targets) {
-    if (_panelBuilt) return;
-    _panelBuilt = true;
-    var container = _el('tofind-items-container');
-    if (!container) return;
-    if (!targets || targets.length === 0) {
-      container.innerHTML = '<div class="tofind-empty">No specific targets detected.</div>';
-      return;
-    }
-    var html = '';
-    for (var i = 0; i < targets.length; i++) {
-      html += '<div class="tofind-item" id="tofind-item-'+i+'"><div class="tofind-check">&#10003;</div><div class="tofind-text">'+_escape(targets[i])+'</div></div>';
-    }
-    container.innerHTML = html;
+  function openToFind(){
+    var backdrop=_el('tofind-backdrop'),panel=_el('tofind-panel');if(!backdrop||!panel)return;
+    _buildPanel(_loadTargets());backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');toFindOpen=true;setTimeout(_animateReveal,100);
   }
-  function _animateReveal() {
-    var items = document.querySelectorAll('.tofind-item');
-    for (var i = 0; i < items.length; i++) {
-      (function(el, idx) {
-        el.style.opacity = '0'; el.style.transform = 'translateX(-12px)'; el.style.transition = 'none';
-        setTimeout(function() {
-          el.style.transition = 'opacity 0.28s ease,transform 0.28s ease';
-          el.style.opacity = '1'; el.style.transform = 'translateX(0)';
-        }, 60 + idx * 80);
-      })(items[i], i);
-    }
+  function closeToFind(){
+    var backdrop=_el('tofind-backdrop'),panel=_el('tofind-panel');
+    if(backdrop)backdrop.classList.remove('open');if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}toFindOpen=false;
   }
-  function openToFind() {
-    var backdrop = _el('tofind-backdrop'), panel = _el('tofind-panel');
-    if (!backdrop || !panel) return;
-    _buildPanel(_loadTargets());
-    backdrop.classList.add('open');
-    panel.classList.add('open');
-    panel.setAttribute('aria-hidden','false');
-    toFindOpen = true;
-    setTimeout(_animateReveal, 100);
-  }
-  function closeToFind() {
-    var backdrop = _el('tofind-backdrop'), panel = _el('tofind-panel');
-    if (backdrop) backdrop.classList.remove('open');
-    if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
-    toFindOpen = false;
-  }
-  window.openToFind   = openToFind;
-  window.closeToFind  = closeToFind;
-  window.toggleToFind = function() { toFindOpen ? closeToFind() : openToFind(); };
-  _onReady(function() {
-    var tfBtn = _el('tofind-btn') || document.querySelector('[data-tofind-btn]');
-    if (tfBtn) { tfBtn.removeAttribute('onclick'); tfBtn.addEventListener('click', function(e) { e.stopPropagation(); openToFind(); }); }
-    var closeBtn = _el('tofind-close');
-    if (closeBtn) { closeBtn.addEventListener('click', closeToFind); }
-    var backdrop = _el('tofind-backdrop');
-    if (backdrop) { backdrop.addEventListener('click', closeToFind); }
-    document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && toFindOpen) closeToFind(); });
+  window.openToFind=openToFind;window.closeToFind=closeToFind;window.toggleToFind=function(){toFindOpen?closeToFind():openToFind();};
+  _onReady(function(){
+    var tfBtn=_el('tofind-btn')||document.querySelector('[data-tofind-btn]');
+    if(tfBtn){tfBtn.removeAttribute('onclick');tfBtn.addEventListener('click',function(e){e.stopPropagation();openToFind();});}
+    var closeBtn=_el('tofind-close');if(closeBtn)closeBtn.addEventListener('click',closeToFind);
+    var backdrop=_el('tofind-backdrop');if(backdrop)backdrop.addEventListener('click',closeToFind);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&toFindOpen)closeToFind();});
   });
 })();
 """
-
-
-def inject_to_find_system(html: str, targets: list) -> str:
-    """Injects the complete 'To Find' feature into animation HTML."""
-    html = re.sub(
-        r'<script[^>]+id=["\']__tofind_data__["\'][^>]*>.*?</script>',
-        '', html, flags=re.DOTALL
-    )
+ 
+ 
+def inject_to_find_system(html, targets):
+    html = re.sub(r'<script[^>]+id=["\']__tofind_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     try:
         data_tag = _build_to_find_data_tag(targets)
         if '</head>' in html:
@@ -971,13 +805,11 @@ def inject_to_find_system(html: str, targets: list) -> str:
             html = data_tag + '\n' + html
     except Exception as e:
         QAnimLogger.warn("ToFindInjector", f"Data tag insertion failed: {e}")
-
     try:
         if '</head>' in html:
             html = html.replace('</head>', _TO_FIND_CSS + '\n</head>', 1)
     except Exception as e:
         QAnimLogger.warn("ToFindInjector", f"CSS insertion failed: {e}")
-
     try:
         body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
         if body_match:
@@ -985,7 +817,6 @@ def inject_to_find_system(html: str, targets: list) -> str:
             html = html[:ins] + '\n' + _TO_FIND_DOM + html[ins:]
     except Exception as e:
         QAnimLogger.warn("ToFindInjector", f"DOM insertion failed: {e}")
-
     try:
         tofind_script = '<script>\n' + TO_FIND_JS_MODULE + '\n</script>'
         if '</body>' in html:
@@ -994,1814 +825,1016 @@ def inject_to_find_system(html: str, targets: list) -> str:
             html += '\n' + tofind_script
     except Exception as e:
         QAnimLogger.warn("ToFindInjector", f"JS module insertion failed: {e}")
-
     QAnimLogger.ok("ToFindInjector", f"Injected {len(targets)} target(s)")
     return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 7 — Solution System  (Light Theme + "View Solution" button)
-# ══════════════════════════════════════════════════════════════════════
-
-def _build_solution_data_tag(steps: list, answer: str, insight: str) -> str:
+ 
+ 
+# ===========================================================================
+#  MODULE 7 -- Final Answer Panel System  (v11.2)
+# ===========================================================================
+ 
+def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
+    ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
+    items = []
+    for idx, t in enumerate(answer_targets or []):
+        label   = str(t.get("label", "")).strip()
+        value   = str(t.get("value", "")).strip()
+        unit    = str(t.get("unit",  "")).strip()
+        roman   = ROMAN[idx] if idx < len(ROMAN) else str(idx + 1)
+        items.append({"roman": roman, "label": label, "value": value, "unit": unit})
+ 
+    if not items and final_answer:
+        import re as _re
+        _num_re = _re.compile(
+            r'([A-Za-z_][A-Za-z_0-9]*)\s*[=:]\s*([-+]?\d[\d.,]*(?:\s*[×x*]\s*10\^?[-+]?\d+)?)\s*([A-Za-z°%/²³·]+(?:\s*[A-Za-z°%/²³·]+)*)?',
+            _re.IGNORECASE)
+        for i, m in enumerate(_num_re.finditer(final_answer)):
+            roman = ROMAN[i] if i < len(ROMAN) else str(i + 1)
+            items.append({
+                "roman": roman,
+                "label": m.group(1).strip(),
+                "value": m.group(2).strip(),
+                "unit":  (m.group(3) or "").strip(),
+            })
+ 
     payload = {
-        "steps":   [str(s) for s in (steps or [])],
-        "answer":  str(answer  or ""),
-        "insight": str(insight or ""),
+        "items":       items,
+        "raw_answer":  str(final_answer  or ""),
+        "key_insight": str(key_insight   or ""),
     }
-    return (
-        '<script type="application/json" id="__sol_data__">\n'
-        + json.dumps(payload, ensure_ascii=False, indent=2)
-        + '\n</script>'
-    )
-
-
-# Solution panel DOM (light theme) — panel is INSIDE backdrop for proper flex centering
-_SOLUTION_PANEL_DOM = """
-<div id="sol-backdrop" aria-hidden="true">
-<aside id="sol-panel" role="dialog" aria-labelledby="sol-heading" aria-hidden="true">
-  <div class="sol-header">
-    <div class="sol-header-left">
-      <div class="sol-icon">💡</div>
-      <span id="sol-heading" class="sol-title">Step-by-Step Solution</span>
+    return ('<script type="application/json" id="__final_answer_data__">\n'
+            + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
+ 
+ 
+_FINAL_ANSWER_PANEL_DOM = """
+<div id="fa-backdrop" aria-hidden="true"></div>
+<aside id="fa-panel" role="dialog" aria-labelledby="fa-heading" aria-hidden="true">
+ 
+  <div class="fa-header">
+    <div class="fa-header-left">
+      <div class="fa-icon-wrap">&#x2705;</div>
+      <div>
+        <div id="fa-heading" class="fa-title">Final Answer</div>
+        <div class="fa-subtitle">Computed results for this question</div>
+      </div>
     </div>
-    <button id="sol-close" class="sol-close-btn" aria-label="Close">✕</button>
+    <button id="fa-close" class="fa-close-btn" aria-label="Close">&#x2715;</button>
   </div>
-  <div class="sol-panel-body">
-    <div id="sol-steps-container" class="sol-steps-container"></div>
-    <div id="sol-answer-card" class="sol-answer-card">
-      <div class="sol-answer-label">✅ Final Answer</div>
-      <div id="sol-answer-text" class="sol-answer-text"></div>
-    </div>
-    <div id="sol-insight-card" class="sol-insight-card">
-      <div class="sol-insight-label">💬 Key Insight</div>
-      <div id="sol-insight-text" class="sol-insight-text"></div>
+ 
+  <div class="fa-body">
+    <div id="fa-items-container" class="fa-items-container"></div>
+    <div id="fa-insight-card" class="fa-insight-card">
+      <div class="fa-insight-label">&#x1F4A1; Key Insight</div>
+      <div id="fa-insight-text" class="fa-insight-text"></div>
     </div>
   </div>
+ 
 </aside>
-</div>
 """
-
-_SOLUTION_PANEL_CSS = """
-<style id="qanim-solution-styles">
-/* ── Solution Panel — Light Theme ── */
-#sol-backdrop {
-  display:none; position:fixed; inset:0; z-index:8500;
-  background:rgba(15,23,42,0.42); backdrop-filter:blur(6px);
-  -webkit-backdrop-filter:blur(6px);
-  opacity:0; transition:opacity 0.22s ease;
-  align-items:center; justify-content:center;
-  padding:16px; box-sizing:border-box;
+ 
+_FINAL_ANSWER_PANEL_CSS = """
+<style id="qanim-fa-styles">
+#fa-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 8500;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.24s ease;
 }
-#sol-backdrop.open { display:flex; opacity:1; }
-
-#sol-panel {
-  background:#ffffff; border-radius:18px;
-  width:min(620px,96vw); max-height:88vh;
-  border:1px solid #e2e8f0;
-  box-shadow:0 12px 48px rgba(0,0,0,0.14);
-  opacity:0; transform:translateY(14px) scale(0.97);
-  transition:opacity 0.26s ease,transform 0.26s cubic-bezier(0.34,1.56,0.64,1);
-  display:flex; flex-direction:column; overflow:hidden;
+#fa-backdrop.open { display: block; opacity: 1; }
+ 
+#fa-panel {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -48%) scale(0.96);
+  z-index: 8600;
+  width: min(520px, 94vw);
+  max-height: 86vh;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 20px 60px rgba(80,60,140,.18), 0 2px 8px rgba(0,0,0,.06);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease,
+              transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: hidden;
 }
-#sol-panel.open { opacity:1; transform:translateY(0) scale(1); }
-
-.sol-panel-body {
-  overflow-y:auto; flex:1; padding:20px 24px;
-  scrollbar-width:thin; scrollbar-color:#e2e8f0 transparent;
-  display:flex; flex-direction:column; gap:0;
+#fa-panel.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
 }
-
-.sol-header {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:18px 22px; border-bottom:1px solid #e2e8f0; flex-shrink:0;
-  background:#ffffff; border-radius:18px 18px 0 0;
+.fa-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid #f0f0f8;
+  flex-shrink: 0;
+  background: #ffffff;
 }
-.sol-header-left { display:flex; align-items:center; gap:10px; }
-.sol-icon { font-size:22px; }
-.sol-title {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:17px; font-weight:800; color:#1e293b;
+.fa-header-left { display: flex; align-items: center; gap: 13px; }
+.fa-icon-wrap {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  background: #f0fdf4;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; flex-shrink: 0;
 }
-.sol-close-btn {
-  width:32px; height:32px; border-radius:8px; border:1px solid #e2e8f0;
-  background:#f8fafc; color:#64748b; font-size:13px; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  transition:background 0.15s,color 0.15s; flex-shrink:0;
+.fa-title {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 17px; font-weight: 800; color: #1a1a2e; line-height: 1.2;
 }
-.sol-close-btn:hover { background:#fee2e2; color:#dc2626; }
-
-.sol-steps-container { display:flex; flex-direction:column; gap:0; margin-bottom:14px; }
-
-.sol-step {
-  display:flex; align-items:flex-start; gap:12px; padding:12px 0;
-  border-bottom:1px solid #f1f5f9;
-  opacity:0; transform:translateX(-12px);
-  transition:opacity 0.30s ease,transform 0.30s ease;
+.fa-subtitle {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11px; color: #64748b; margin-top: 2px;
 }
-.sol-step:last-child { border-bottom:none; }
-.sol-step.visible { opacity:1; transform:translateX(0); }
-.sol-step-num {
-  width:28px; height:28px; border-radius:50%; flex-shrink:0;
-  background:#7c3aed; color:#fff; font-size:12px; font-weight:700;
-  display:flex; align-items:center; justify-content:center; margin-top:2px;
+.fa-close-btn {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid #e8e8f0;
+  background: #fafafa;
+  color: #888; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  flex-shrink: 0;
 }
-.sol-step-text {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13.5px; color:#334155; line-height:1.75;
+.fa-close-btn:hover { background: #fee2e2; color: #dc2626; border-color: #fca5a5; }
+.fa-body {
+  overflow-y: auto;
+  flex: 1;
+  padding: 18px 22px 24px;
+  scrollbar-width: thin;
+  scrollbar-color: #e0d8ff transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.formula {
-  background:#ede9fe; color:#6d28d9; padding:2px 6px;
-  border-radius:4px; font-family:monospace; font-size:12px;
+.fa-body::-webkit-scrollbar { width: 5px; }
+.fa-body::-webkit-scrollbar-thumb { background: #d0c8f0; border-radius: 3px; }
+.fa-items-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-
-.sol-answer-card, .sol-insight-card {
-  border-radius:10px; padding:14px 16px; margin-bottom:10px;
-  opacity:0; transition:opacity 0.35s ease;
+.fa-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #16a34a;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.30s ease, transform 0.30s ease;
 }
-.sol-answer-card.visible, .sol-insight-card.visible { opacity:1; }
-
-.sol-answer-card {
-  background:#f0fdf4; border:1px solid #bbf7d0;
+.fa-item.visible { opacity: 1; transform: translateY(0); }
+.fa-item-roman {
+  min-width: 32px; height: 32px;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #ffffff;
+  font-size: 12px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-style: italic;
+  box-shadow: 0 2px 8px rgba(22,163,74,.30);
 }
-.sol-answer-label {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:11px; font-weight:700; text-transform:uppercase;
-  letter-spacing:1px; color:#16a34a; margin-bottom:6px;
+.fa-item-body { flex: 1; }
+.fa-item-label {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px; font-weight: 700;
+  color: #166534;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 5px;
 }
-.sol-answer-text {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:14px; font-weight:600; color:#166534; line-height:1.65;
+.fa-item-value {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 15px; font-weight: 800;
+  color: #1e293b;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  display: inline-block;
+  word-break: break-word;
 }
-
-.sol-insight-card { background:#fefce8; border:1px solid #fef08a; }
-.sol-insight-label {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:11px; font-weight:700; text-transform:uppercase;
-  letter-spacing:1px; color:#ca8a04; margin-bottom:6px;
+.fa-insight-card {
+  border-radius: 13px;
+  padding: 14px 18px;
+  background: #fffbf0;
+  border: 1.5px solid #fde8a0;
+  opacity: 0;
+  transition: opacity 0.35s ease;
 }
-.sol-insight-text {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13px; color:#78350f; line-height:1.65;
+.fa-insight-card.visible { opacity: 1; }
+.fa-insight-label {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 10px; font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #b45309;
+  margin-bottom: 7px;
+}
+.fa-insight-text {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px; color: #78350f; line-height: 1.72;
 }
 </style>
 """
-
-SOLUTION_JS_MODULE = r"""
-(function initSolutionSystem() {
+ 
+_FINAL_ANSWER_JS = r"""
+(function initFinalAnswerSystem(){
   'use strict';
-  var solutionOpen = false;
-  // BUG FIX: _solBuilt was never reset, preventing the panel from showing
-  // updated solution data. We now always rebuild on open so the content
-  // always matches the current __sol_data__ JSON tag.
-  function _onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else setTimeout(fn, 0);
-  }
-  function _el(id) { return document.getElementById(id); }
-  function _loadData() {
-    try {
-      var tag = _el('__sol_data__');
-      if (!tag) return {};
+  var faOpen = false;
+  var _built = false;
+  function _el(id){ return document.getElementById(id); }
+  function _onReady(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else setTimeout(fn,0); }
+  function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+ 
+  function _loadData(){
+    try{
+      var tag = _el('__final_answer_data__');
+      if(!tag) return {};
       return JSON.parse(tag.textContent) || {};
-    } catch(e) { return {}; }
+    } catch(e){ return {}; }
   }
-  function _escape(text) {
-    if (!text) return '';
-    return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-  function _highlight(text) {
-    var safe = _escape(text);
-    return safe.replace(/([A-Za-z_]\w*\s*=\s*[^<&,;.]+)/g,'<span class="formula">$1</span>');
-  }
-  // BUG FIX: Removed _solBuilt guard — always rebuild steps so the panel
-  // always reflects the current question's solution data.
-  function _buildSteps(data) {
-    var container = _el('sol-steps-container');
-    if (!container) return;
-    var steps = Array.isArray(data.steps) ? data.steps : [];
-    var html = '';
-    if (steps.length === 0) {
-      html = '<div class="sol-step visible"><div class="sol-step-num">!</div><div class="sol-step-text">Solution steps unavailable.</div></div>';
+ 
+  function _buildPanel(){
+    if(_built) return;
+    _built = true;
+    var data = _loadData();
+    var items = Array.isArray(data.items) ? data.items : [];
+    var container = _el('fa-items-container');
+    if(!container) return;
+ 
+    if(items.length === 0 && data.raw_answer){
+      container.innerHTML = '<div class="fa-item visible">'
+        + '<div class="fa-item-roman">i</div>'
+        + '<div class="fa-item-body">'
+        + '<div class="fa-item-label">Answer</div>'
+        + '<div class="fa-item-value">' + _esc(data.raw_answer) + '</div>'
+        + '</div></div>';
     } else {
-      for (var i = 0; i < steps.length; i++) {
-        html += '<div class="sol-step" id="sol-step-'+i+'"><div class="sol-step-num">'+(i+1)+'</div><div class="sol-step-text">'+_highlight(steps[i])+'</div></div>';
+      var html = '';
+      for(var i = 0; i < items.length; i++){
+        var it = items[i];
+        var valueStr = _esc(it.value || '');
+        if(it.unit && it.value && it.value.indexOf(it.unit) === -1){
+          valueStr += ' ' + _esc(it.unit);
+        }
+        html += '<div class="fa-item" id="fa-item-' + i + '">'
+              + '<div class="fa-item-roman">' + _esc(it.roman) + '</div>'
+              + '<div class="fa-item-body">'
+              + '<div class="fa-item-label">' + _esc(it.label) + '</div>'
+              + '<div class="fa-item-value">' + valueStr + '</div>'
+              + '</div></div>';
       }
+      container.innerHTML = html;
     }
-    container.innerHTML = html;
-    var ansEl = _el('sol-answer-text'), insEl = _el('sol-insight-text');
-    if (ansEl) ansEl.innerHTML = data.answer  ? _highlight(data.answer)  : '';
-    if (insEl) insEl.innerHTML = data.insight ? _highlight(data.insight) : '';
+ 
+    var insEl = _el('fa-insight-text');
+    if(insEl) insEl.textContent = data.key_insight || '';
   }
-  function _animateReveal() {
-    var stepEls = document.querySelectorAll('.sol-step');
-    for (var i = 0; i < stepEls.length; i++) {
-      (function(el, idx) {
+ 
+  function _animateReveal(){
+    var items = document.querySelectorAll('.fa-item');
+    for(var i = 0; i < items.length; i++){
+      (function(el, idx){
         el.classList.remove('visible');
-        setTimeout(function() { el.classList.add('visible'); }, 50 + idx * 80);
-      })(stepEls[i], i);
+        el.style.transition = 'none';
+        setTimeout(function(){
+          el.style.transition = 'opacity .30s ease, transform .30s ease';
+          el.classList.add('visible');
+        }, 80 + idx * 110);
+      })(items[i], i);
     }
-    var base = 50 + stepEls.length * 80;
-    var ac = _el('sol-answer-card'), ic = _el('sol-insight-card');
-    if (ac) { ac.classList.remove('visible'); setTimeout(function(){ ac.classList.add('visible'); }, base); }
-    if (ic) { ic.classList.remove('visible'); setTimeout(function(){ ic.classList.add('visible'); }, base+100); }
+    var insCard = _el('fa-insight-card');
+    if(insCard){
+      insCard.classList.remove('visible');
+      setTimeout(function(){
+        insCard.classList.add('visible');
+      }, 80 + items.length * 110 + 120);
+    }
   }
-  function openSolution() {
-    var backdrop = _el('sol-backdrop'), panel = _el('sol-panel');
-    if (!backdrop || !panel) { console.warn('[QAnim] sol-backdrop or sol-panel not found'); return; }
-    // Always rebuild so solution matches current question
-    _buildSteps(_loadData());
+ 
+  function openFinalAnswer(){
+    _buildPanel();
+    var backdrop = _el('fa-backdrop');
+    var panel    = _el('fa-panel');
+    if(!backdrop || !panel) return;
     backdrop.classList.add('open');
-    backdrop.setAttribute('aria-hidden','false');
     panel.classList.add('open');
-    panel.setAttribute('aria-hidden','false');
-    solutionOpen = true;
-    setTimeout(_animateReveal, 60);
+    panel.setAttribute('aria-hidden', 'false');
+    faOpen = true;
+    setTimeout(_animateReveal, 80);
   }
-  function closeSolution() {
-    var backdrop = _el('sol-backdrop'), panel = _el('sol-panel');
-    if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
-    if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true'); }
-    solutionOpen = false;
+ 
+  function closeFinalAnswer(){
+    var backdrop = _el('fa-backdrop');
+    var panel    = _el('fa-panel');
+    if(backdrop) backdrop.classList.remove('open');
+    if(panel){ panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
+    faOpen = false;
+    _built = false;
   }
-  window.openSolution   = openSolution;
-  window.closeSolution  = closeSolution;
-  window.toggleSolution = function() { solutionOpen ? closeSolution() : openSolution(); };
-  _onReady(function() {
-    // BUG FIX: Wire sol-ctrl-btn via addEventListener (was only wired via
-    // inline onclick which could fail if window.openSolution wasn't ready yet).
-    var solCtrlBtn = _el('sol-ctrl-btn');
-    if (solCtrlBtn) {
-      solCtrlBtn.removeAttribute('onclick'); // remove inline handler to avoid double-fire
-      solCtrlBtn.addEventListener('click', function(e) { e.stopPropagation(); solutionOpen ? closeSolution() : openSolution(); });
+ 
+  window.openFinalAnswer  = openFinalAnswer;
+  window.closeFinalAnswer = closeFinalAnswer;
+  window.toggleFinalAnswer = function(){ faOpen ? closeFinalAnswer() : openFinalAnswer(); };
+ 
+  _onReady(function(){
+    function wireBtn(){
+      var btn = document.getElementById('fa-ctrl-btn');
+      if(btn){
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', function(e){ e.stopPropagation(); faOpen ? closeFinalAnswer() : openFinalAnswer(); });
+      } else { setTimeout(wireBtn, 80); }
     }
-    var closeBtn = _el('sol-close');
-    if (closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeSolution(); });
-    var backdrop = _el('sol-backdrop');
-    if (backdrop) backdrop.addEventListener('click', function(e){ if (e.target === backdrop) closeSolution(); });
-    document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && solutionOpen) closeSolution(); });
+    wireBtn();
+ 
+    var closeBtn = _el('fa-close');
+    if(closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeFinalAnswer(); });
+ 
+    var backdrop = _el('fa-backdrop');
+    if(backdrop) backdrop.addEventListener('click', function(e){ if(e.target === backdrop) closeFinalAnswer(); });
+ 
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && faOpen) closeFinalAnswer(); });
   });
 })();
 """
-
-
-def inject_solution_system(html: str, steps: list, answer: str, insight: str) -> str:
-    """Injects solution data, panel DOM, CSS, and JS module."""
-    # Remove any existing sol_data tag
-    html = re.sub(
-        r'<script[^>]+id=["\']__sol_data__["\'][^>]*>.*?</script>',
-        '', html, flags=re.DOTALL
-    )
-    # Inject data tag
-    data_tag = _build_solution_data_tag(steps, answer, insight)
+ 
+ 
+def inject_final_answer_panel(html, answer_targets, final_answer, key_insight):
+    html = re.sub(r'<script[^>]+id=["\']__sol_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
+    html = re.sub(r'<(?:div|aside)[^>]+id=["\']sol-backdrop["\'][^>]*>.*?</(?:div|aside)>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'<(?:div|aside)[^>]+id=["\']sol-panel["\'][^>]*>.*?</(?:div|aside)>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'<style[^>]+id=["\']qanim-solution-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'<script[^>]+id=["\']__final_answer_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
+    html = re.sub(r'<style[^>]+id=["\']qanim-fa-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+ 
+    data_tag = _build_final_answer_data_tag(answer_targets, final_answer, key_insight)
     if '</head>' in html:
         html = html.replace('</head>', data_tag + '\n</head>', 1)
     else:
         html = data_tag + '\n' + html
-
-    # Inject CSS
+ 
     if '</head>' in html:
-        html = html.replace('</head>', _SOLUTION_PANEL_CSS + '\n</head>', 1)
-
-    # Remove any AI-generated #solbtn (we'll add our own in controls bar)
-    html = re.sub(
-        r'<button[^>]+id=["\']solbtn["\'][^>]*>.*?</button>',
-        '', html, flags=re.DOTALL | re.IGNORECASE
-    )
-
-    # Inject panel DOM after <body>
+        html = html.replace('</head>', _FINAL_ANSWER_PANEL_CSS + '\n</head>', 1)
+ 
     body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
     if body_match:
         ins = body_match.end()
-        html = html[:ins] + '\n' + _SOLUTION_PANEL_DOM + html[ins:]
-
-    # Remove old inline solution data patterns
-    for pat in [
-        r'var SOL_STEPS\s*=\s*\(function\(\).*?\}\)\(\);',
-        r"var SOL_ANSWER\s*=\s*'[^']*';",
-        r"var SOL_INSIGHT\s*=\s*'[^']*';",
-    ]:
-        html = re.sub(pat, '', html, flags=re.DOTALL)
-
-    # Inject JS
-    sol_script = '<script>\n' + SOLUTION_JS_MODULE + '\n</script>'
+        html = html[:ins] + '\n' + _FINAL_ANSWER_PANEL_DOM + html[ins:]
+ 
+    fa_script = '<script>\n' + _FINAL_ANSWER_JS + '\n</script>'
     if '</body>' in html:
-        html = html.replace('</body>', sol_script + '\n</body>', 1)
+        html = html.replace('</body>', fa_script + '\n</body>', 1)
     else:
-        html += '\n' + sol_script
-
-    QAnimLogger.ok("Solution", f"Injected {len(steps)} steps — light theme panel added")
+        html += '\n' + fa_script
+ 
+    QAnimLogger.ok("FinalAnswer", f"Injected v11.2 Final Answer panel ({len(answer_targets or [])} item(s))")
     return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 8 — NEW Quiz System  (3 Sets × 5 Questions)
-# ══════════════════════════════════════════════════════════════════════
-
-NEW_QUIZ_SYSTEM_PROMPT = """You are an expert educational quiz designer.
-Generate 3 quiz sets with 5 questions each about the given topic.
-
-CRITICAL: Return ONLY valid JSON. No markdown, no explanation, no code fences.
-Exact format:
-{
-  "sets": [
-    {
-      "title": "Set 1: Core Concepts",
-      "focus": "Fundamental principles and definitions",
-      "questions": [
-        {
-          "q": "Question text here?",
-          "type": "mcq",
-          "options": ["Option A", "Option B", "Option C", "Option D"],
-          "correct": 0,
-          "explanation": "Brief explanation of why this is correct."
-        }
-      ]
-    },
-    {
-      "title": "Set 2: Application",
-      "focus": "Problem-solving and practical scenarios",
-      "questions": [ ...5 questions... ]
-    },
-    {
-      "title": "Set 3: Advanced",
-      "focus": "Challenging and nuanced questions",
-      "questions": [ ...5 questions... ]
-    }
-  ]
-}
-
-Question types allowed:
-- "mcq": 4 options (correct index 0-3)
-- "tf": 2 options ["True", "False"] (correct index 0 or 1)
-- "numerical": 4 options with numerical answers
-
-Set difficulty:
-- Set 1: Beginner — fundamental concepts, definitions, basic principles
-- Set 2: Intermediate — application, calculations, real-world scenarios
-- Set 3: Advanced — tricky edge cases, deeper analysis, common mistakes
-
-Rules:
-- Questions must be CONCEPTUALLY RELATED to the topic, NOT copies of the original question
-- Each question must have exactly the options listed (2 for tf, 4 for mcq/numerical)
-- correct field is the 0-based index of the correct option
-- Keep explanations under 100 words
-- Make questions genuinely educational and progressively harder"""
-
-
-NEW_QUIZ_PROMPT_TEMPLATE = """Generate 3 quiz sets × 5 questions each for this topic.
-
-ORIGINAL QUESTION (for context only — do NOT copy it directly into quiz questions):
-{question}
-
-TOPIC CATEGORY: {category}
-
-Return ONLY the JSON object. No preamble, no markdown."""
-
-
-# ── Quiz panel HTML (light theme, 3 cards) ──────────────────────────
-
-_QUIZ_PANEL_CSS = """
-<style id="qanim-quiz-styles">
-/* ── Quiz Panel v11 — Single Question, Modern Educational UX ── */
-#quiz-backdrop {
-  display:none; position:fixed; inset:0; z-index:8700;
-  background:rgba(15,23,42,0.52); backdrop-filter:blur(8px);
-  -webkit-backdrop-filter:blur(8px);
-  opacity:0; transition:opacity 0.25s ease;
-  align-items:center; justify-content:center;
-  padding:16px; box-sizing:border-box;
-}
-#quiz-backdrop.open { display:flex; opacity:1; }
-
-#quiz-panel {
-  width:min(780px,96vw); max-height:92vh;
-  border-radius:20px; background:#ffffff;
-  border:1px solid #e2e8f0;
-  box-shadow:0 20px 60px rgba(0,0,0,0.18);
-  opacity:0; pointer-events:none;
-  transform:translateY(20px) scale(0.96);
-  transition:opacity 0.28s ease,transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
-  display:flex; flex-direction:column; overflow:hidden;
-}
-#quiz-panel.open { opacity:1; pointer-events:auto; transform:translateY(0) scale(1); }
-
-/* Header */
-.qp-header {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:14px 20px; background:#fff;
-  border-bottom:1px solid #e2e8f0; flex-shrink:0;
-}
-.qp-title { font-family:'Inter',sans-serif; font-size:15px; font-weight:800; color:#1e293b; display:flex; align-items:center; gap:8px; }
-.qp-meta  { font-size:11px; color:#64748b; font-weight:500; margin-top:2px; }
-.qp-close {
-  width:32px; height:32px; border-radius:8px;
-  border:1px solid #e2e8f0; background:#f8fafc;
-  color:#64748b; font-size:14px; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  transition:background 0.15s,color 0.15s;
-}
-.qp-close:hover { background:#fee2e2; color:#dc2626; border-color:#fca5a5; }
-
-/* Progress bar */
-.qp-progress-wrap {
-  height:4px; background:#e2e8f0; flex-shrink:0;
-}
-.qp-progress-fill {
-  height:100%; background:linear-gradient(90deg,#7c3aed,#a78bfa);
-  transition:width 0.4s ease; border-radius:0 2px 2px 0;
-}
-
-/* Score badge */
-.qp-score-badge {
-  display:flex; align-items:center; gap:6px;
-  font-family:'Inter',sans-serif; font-size:12px;
-  color:#64748b; padding:4px 10px;
-  background:#f1f5f9; border-radius:20px;
-  font-weight:600;
-}
-.qp-score-num { color:#7c3aed; font-size:14px; font-weight:800; }
-
-/* Body / scrollable area */
-.qp-body {
-  flex:1; overflow-y:auto; padding:20px;
-  scrollbar-width:thin; scrollbar-color:#e2e8f0 transparent;
-}
-
-/* Question counter */
-.qp-q-counter {
-  font-family:'Inter',sans-serif; font-size:11px; font-weight:700;
-  letter-spacing:1px; text-transform:uppercase; color:#7c3aed;
-  margin-bottom:8px;
-}
-
-/* Question text */
-.qp-q-text {
-  font-family:'Inter',sans-serif; font-size:16px; font-weight:700;
-  color:#0f172a; line-height:1.55; margin-bottom:16px;
-}
-
-/* Hint section */
-.qp-hint-toggle {
-  display:inline-flex; align-items:center; gap:6px;
-  font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
-  color:#7c3aed; cursor:pointer; margin-bottom:8px;
-  background:#ede9fe; border:none; border-radius:6px;
-  padding:4px 10px; transition:background 0.15s;
-}
-.qp-hint-toggle:hover { background:#ddd6fe; }
-.qp-hint-box {
-  display:none; margin-bottom:12px;
-  padding:10px 12px; border-radius:8px;
-  background:#faf5ff; border-left:3px solid #7c3aed;
-  font-family:'Inter',sans-serif; font-size:12px; color:#6d28d9; line-height:1.6;
-}
-.qp-hint-box.show { display:block; }
-
-/* Options */
-.qp-options { display:flex; flex-direction:column; gap:10px; margin-bottom:16px; }
-.qp-opt-btn {
-  display:flex; align-items:center; gap:12px;
-  padding:12px 16px; border-radius:12px;
-  border:2px solid #e2e8f0; background:#f8fafc;
-  color:#334155; font-size:13px; font-family:'Inter',sans-serif;
-  font-weight:500; text-align:left; cursor:pointer;
-  transition:all 0.18s ease; position:relative; overflow:hidden;
-}
-.qp-opt-btn:hover:not([disabled]) {
-  background:#ede9fe; border-color:#7c3aed; color:#7c3aed;
-  transform:translateY(-1px); box-shadow:0 4px 12px rgba(124,58,237,0.15);
-}
-.qp-opt-btn:active:not([disabled]) { transform:scale(0.98); }
-.qp-opt-btn[disabled] { cursor:default; }
-.qp-opt-btn.selected   { border-color:#7c3aed; background:#ede9fe; color:#6d28d9; }
-.qp-opt-btn.correct    { background:#f0fdf4; border-color:#16a34a; color:#166534; font-weight:700; }
-.qp-opt-btn.wrong      { background:#fef2f2; border-color:#dc2626; color:#991b1b; }
-.qp-opt-letter {
-  width:28px; height:28px; border-radius:50%; flex-shrink:0;
-  background:#e2e8f0; color:#64748b; font-size:11px; font-weight:800;
-  display:flex; align-items:center; justify-content:center;
-  transition:background 0.18s, color 0.18s;
-}
-.qp-opt-btn.correct .qp-opt-letter { background:#16a34a; color:#fff; }
-.qp-opt-btn.wrong   .qp-opt-letter { background:#dc2626; color:#fff; }
-.qp-opt-btn.selected .qp-opt-letter { background:#7c3aed; color:#fff; }
-
-/* Explanation */
-.qp-expl {
-  display:none; margin-top:4px; padding:12px 14px;
-  border-radius:10px; background:#f8fafc;
-  border-left:4px solid #7c3aed;
-  font-family:'Inter',sans-serif; font-size:12px;
-  color:#475569; line-height:1.7;
-}
-.qp-expl.show { display:block; animation:qp-fadein 0.3s ease; }
-@keyframes qp-fadein { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
-
-/* Nav buttons */
-.qp-nav {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:12px 20px; border-top:1px solid #e2e8f0;
-  background:#fafafa; flex-shrink:0;
-}
-.qp-btn {
-  display:inline-flex; align-items:center; gap:6px;
-  padding:9px 20px; border-radius:10px; border:none;
-  font-family:'Inter',sans-serif; font-size:13px; font-weight:700;
-  cursor:pointer; transition:all 0.18s ease;
-}
-.qp-btn-prev {
-  background:#f1f5f9; color:#475569;
-}
-.qp-btn-prev:hover:not([disabled]) { background:#e2e8f0; color:#1e293b; }
-.qp-btn-prev[disabled] { opacity:0.4; cursor:default; }
-.qp-btn-next {
-  background:linear-gradient(135deg,#7c3aed,#6d28d9);
-  color:#fff; box-shadow:0 4px 14px rgba(124,58,237,0.35);
-}
-.qp-btn-next:hover:not([disabled]) {
-  transform:translateY(-1px); box-shadow:0 6px 20px rgba(124,58,237,0.45);
-}
-.qp-btn-next[disabled] { opacity:0.5; cursor:default; }
-
-/* Results screen */
-.qp-results {
-  text-align:center; padding:32px 20px;
-  font-family:'Inter',sans-serif;
-}
-.qp-results-emoji { font-size:52px; margin-bottom:12px; display:block; }
-.qp-results-title { font-size:22px; font-weight:800; color:#1e293b; margin-bottom:6px; }
-.qp-results-score { font-size:15px; color:#64748b; }
-.qp-results-score strong { color:#7c3aed; font-size:20px; }
-.qp-restart-btn {
-  margin-top:20px; padding:11px 28px;
-  background:linear-gradient(135deg,#7c3aed,#6d28d9);
-  color:#fff; border:none; border-radius:12px;
-  font-family:'Inter',sans-serif; font-size:14px; font-weight:700;
-  cursor:pointer; box-shadow:0 4px 14px rgba(124,58,237,0.35);
-  transition:transform 0.18s,box-shadow 0.18s;
-}
-.qp-restart-btn:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(124,58,237,0.45); }
-
-/* Loading */
-.qp-loading {
-  text-align:center; padding:48px 20px; color:#64748b;
-  font-family:'Inter',sans-serif; font-size:14px;
-}
-.qp-loading-icon { font-size:36px; margin-bottom:12px; display:block; animation:qp-spin 1s linear infinite; }
-@keyframes qp-spin { to { transform:rotate(360deg); } }
-
-/* Responsive */
-@media (max-width:480px) {
-  .qp-q-text { font-size:14px; }
-  .qp-opt-btn { font-size:12px; padding:10px 12px; }
-  .qp-body { padding:14px; }
-}
-</style>
-"""
-
-_QUIZ_PANEL_DOM = """
-<div id="quiz-backdrop" aria-hidden="true">
-<div id="quiz-panel" role="dialog" aria-label="Quiz" aria-hidden="true">
-  <!-- Header -->
-  <div class="qp-header">
-    <div>
-      <div class="qp-title">&#x1F4DD; Quiz</div>
-      <div class="qp-meta" id="qp-meta">Loading…</div>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;">
-      <div class="qp-score-badge">&#x2B50; Score: <span class="qp-score-num" id="qp-score">0</span></div>
-      <button class="qp-close" id="quiz-close-btn">&#x2715;</button>
-    </div>
-  </div>
-  <!-- Progress bar -->
-  <div class="qp-progress-wrap">
-    <div class="qp-progress-fill" id="qp-progress-fill" style="width:0%"></div>
-  </div>
-  <!-- Body: single question view -->
-  <div class="qp-body" id="qp-body">
-    <div class="qp-loading">
-      <span class="qp-loading-icon">&#x27F3;</span>
-      Generating quiz questions&#x2026;
-    </div>
-  </div>
-  <!-- Navigation -->
-  <div class="qp-nav" id="qp-nav" style="display:none;">
-    <button class="qp-btn qp-btn-prev" id="qp-btn-prev" disabled>&#x2190; Prev</button>
-    <button class="qp-btn qp-btn-next" id="qp-btn-next">Next &#x2192;</button>
-  </div>
-</div>
-</div>
-"""
-
-_QUIZ_PANEL_JS = r"""
-(function initQuizSystem() {
-  'use strict';
-  var _quizOpen  = false;
-  var _quizData  = null;
-  var _questions = [];
-  var _currentQ  = 0;
-  var _score     = 0;
-  var _answered  = [];
-
-  function _el(id) { return document.getElementById(id); }
-  function _esc(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-  function _onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else setTimeout(fn, 0);
-  }
-
-  /* ── Load quiz data from embedded JSON tag ── */
-  function _loadData() {
-    try {
-      var tag = document.getElementById('__quiz_data__');
-      if (!tag) return null;
-      return JSON.parse(tag.textContent);
-    } catch(e) { return null; }
-  }
-
-  /* ── Flatten sets → flat question array ── */
-  function _flattenQuestions(data) {
-    var qs = [];
-    if (data.sets && Array.isArray(data.sets)) {
-      data.sets.forEach(function(set) {
-        (set.questions || []).forEach(function(q) { qs.push(q); });
-      });
-    } else if (data.questions && Array.isArray(data.questions)) {
-      qs = data.questions;
-    }
-    return qs;
-  }
-
-  /* ── Render a single question ── */
-  function _renderQ(idx) {
-    var body = _el('qp-body');
-    var nav  = _el('qp-nav');
-    var meta = _el('qp-meta');
-    var fill = _el('qp-progress-fill');
-    var scoreEl = _el('qp-score');
-    var prevBtn = _el('qp-btn-prev');
-    var nextBtn = _el('qp-btn-next');
-
-    if (!body || idx >= _questions.length) return;
-
-    var total = _questions.length;
-    var q     = _questions[idx];
-    var ans   = _answered[idx];
-    var letters = ['A','B','C','D','E'];
-
-    // Update header meta + progress
-    if (meta)    meta.textContent = 'Question ' + (idx+1) + ' of ' + total;
-    if (fill)    fill.style.width = Math.round(((idx + (ans !== undefined ? 1 : 0)) / total) * 100) + '%';
-    if (scoreEl) scoreEl.textContent = _score;
-    if (nav)     nav.style.display = 'flex';
-
-    // Prev / Next labels
-    if (prevBtn) prevBtn.disabled = (idx === 0);
-    if (nextBtn) {
-      if (ans !== undefined) {
-        nextBtn.textContent = (idx === total - 1) ? 'See Results \u2713' : 'Next \u2192';
-      } else {
-        nextBtn.textContent = 'Skip \u2192';
-      }
-    }
-
-    // Build question HTML
-    var hint = q.hint || q.clue || '';
-    var expl = q.explanation || q.explain || '';
-    var opts = q.options || [];
-    var correct = q.correct || 0;
-
-    var html = '';
-    html += '<div class="qp-q-counter">Question ' + (idx+1) + ' / ' + total + '</div>';
-    html += '<div class="qp-q-text">' + _esc(q.q || q.question || '') + '</div>';
-
-    if (hint) {
-      html += '<button class="qp-hint-toggle" id="qp-hint-btn-' + idx + '" onclick="this.nextElementSibling.classList.toggle(\'show\')">&#x1F4A1; Show Hint</button>';
-      html += '<div class="qp-hint-box" id="qp-hint-' + idx + '">' + _esc(hint) + '</div>';
-    }
-
-    html += '<div class="qp-options" id="qp-opts-' + idx + '">';
-    opts.forEach(function(opt, oi) {
-      var letter = letters[oi] || String(oi+1);
-      var cls = 'qp-opt-btn';
-      var dis = '';
-      if (ans !== undefined) {
-        dis = ' disabled';
-        if (oi === correct)       cls += ' correct';
-        else if (oi === ans && ans !== correct) cls += ' wrong';
-      }
-      html += '<button class="' + cls + '"' + dis + ' data-qi="' + idx + '" data-opt="' + oi + '" data-correct="' + correct + '">';
-      html += '<span class="qp-opt-letter">' + letter + '</span>';
-      html += _esc(opt);
-      html += '</button>';
-    });
-    html += '</div>';
-
-    if (ans !== undefined && expl) {
-      html += '<div class="qp-expl show">' + _esc(expl) + '</div>';
-    } else if (expl) {
-      html += '<div class="qp-expl" id="qp-expl-' + idx + '">' + _esc(expl) + '</div>';
-    }
-
-    body.innerHTML = html;
-
-    // Bind option click
-    var optBtns = body.querySelectorAll('.qp-opt-btn:not([disabled])');
-    optBtns.forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var qi      = parseInt(btn.getAttribute('data-qi'));
-        var chosen  = parseInt(btn.getAttribute('data-opt'));
-        var correct = parseInt(btn.getAttribute('data-correct'));
-        if (_answered[qi] !== undefined) return;
-        _answered[qi] = chosen;
-        if (chosen === correct) _score++;
-        _renderQ(qi);
-      });
-    });
-  }
-
-  /* ── Show results screen ── */
-  function _showResults() {
-    var body = _el('qp-body');
-    var nav  = _el('qp-nav');
-    var total = _questions.length;
-    if (nav) nav.style.display = 'none';
-    var pct = total > 0 ? Math.round((_score / total) * 100) : 0;
-    var emoji = pct >= 80 ? '\uD83C\uDFC6' : pct >= 50 ? '\uD83D\uDE4C' : '\uD83D\uDCAA';
-    body.innerHTML =
-      '<div class="qp-results">' +
-      '<span class="qp-results-emoji">' + emoji + '</span>' +
-      '<div class="qp-results-title">Quiz Complete!</div>' +
-      '<div class="qp-results-score">You scored <strong>' + _score + ' / ' + total + '</strong> (' + pct + '%)</div>' +
-      '<button class="qp-restart-btn" id="qp-restart">&#x21BA; Restart Quiz</button>' +
-      '</div>';
-    var rb = _el('qp-restart');
-    if (rb) rb.addEventListener('click', _restartQuiz);
-  }
-
-  /* ── Restart ── */
-  function _restartQuiz() {
-    _score    = 0;
-    _currentQ = 0;
-    _answered = [];
-    var nav = _el('qp-nav');
-    if (nav) nav.style.display = 'flex';
-    _renderQ(0);
-  }
-
-  /* ── Build the quiz (called after data loads) ── */
-  function _buildQuiz(data) {
-    _questions = _flattenQuestions(data);
-    _answered  = new Array(_questions.length);
-    _score     = 0;
-    _currentQ  = 0;
-    if (_questions.length === 0) {
-      var body = _el('qp-body');
-      if (body) body.innerHTML = '<div class="qp-loading">No questions available.</div>';
-      return;
-    }
-    _renderQ(0);
-  }
-
-  /* ── Open / Close panel ── */
-  function _openPanel() {
-    var bd = _el('quiz-backdrop');
-    var pn = _el('quiz-panel');
-    if (!bd || !pn) return;
-    bd.style.display = 'flex';
-    requestAnimationFrame(function() {
-      bd.classList.add('open');
-      pn.classList.add('open');
-      pn.setAttribute('aria-hidden','false');
-    });
-    _quizOpen = true;
-    if (!_quizData) {
-      _quizData = _loadData();
-      if (_quizData) _buildQuiz(_quizData);
-    }
-  }
-
-  function _closePanel() {
-    var bd = _el('quiz-backdrop');
-    var pn = _el('quiz-panel');
-    if (!bd || !pn) return;
-    bd.classList.remove('open');
-    pn.classList.remove('open');
-    pn.setAttribute('aria-hidden','true');
-    setTimeout(function() { bd.style.display = 'none'; }, 300);
-    _quizOpen = false;
-  }
-
-  /* ── Wire up navigation ── */
-  function _wireNav() {
-    var prev = _el('qp-btn-prev');
-    var next = _el('qp-btn-next');
-    if (prev) prev.addEventListener('click', function() {
-      if (_currentQ > 0) { _currentQ--; _renderQ(_currentQ); }
-    });
-    if (next) next.addEventListener('click', function() {
-      if (_currentQ < _questions.length - 1) {
-        _currentQ++;
-        _renderQ(_currentQ);
-      } else {
-        _showResults();
-      }
-    });
-  }
-
-  /* ── Init ── */
-  function _init() {
-    var closeBtn = _el('quiz-close-btn');
-    if (closeBtn) closeBtn.addEventListener('click', _closePanel);
-    var backdrop = _el('quiz-backdrop');
-    if (backdrop) backdrop.addEventListener('click', function(e) {
-      if (e.target === backdrop) _closePanel();
-    });
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && _quizOpen) _closePanel();
-    });
-    _wireNav();
-
-    // Expose open function for quiz button
-    window._quizPanelOpen  = _openPanel;
-    window._quizPanelClose = _closePanel;
-  }
-
-  _onReady(_init);
-})();
-"""
-
-
-class QuizGeneratorV2:
-    """
-    Generates 3 quiz sets × 5 questions each as JSON.
-    Returns quiz JSON data and builds the embeddable HTML panel.
-    Never raises — returns fallback on any failure.
-    """
-
+ 
+ 
+# ===========================================================================
+#  MODULE 7.5 -- Solution Step Generator
+# ===========================================================================
+ 
+_HAIKU_SOLUTION_SYSTEM = """You are a patient, expert tutor generating a detailed step-by-step solution for a student.
+You are powered by claude-sonnet-4-6, which means you must use your full reasoning capability for
+accurate calculations, clear explanations, and structured mathematical working.
+ 
+RULES (follow every one):
+1. Number every step: "Step 1:", "Step 2:", etc. -- never skip numbering.
+2. At the START of each step, name the concept or formula being used in BOLD using **formula/concept name**.
+3. Show ALL working -- do not skip arithmetic or algebra.
+4. Use simple, plain English a high-school student can understand.
+5. After the last numbered step, add a "Final Answer:" section.
+   IMPORTANT: Format each computed value on its own line as:  Symbol = value unit
+   Example (for multiple answers):
+     Final Answer:
+     X_L = 31.42 Ohm
+     X_C = 31.83 Ohm
+     Z = 20.01 Ohm
+     I = 11.49 A
+     Power factor = 0.9995
+6. Keep each step focused on ONE action only.
+7. Do NOT use LaTeX notation -- write math in plain text (e.g. "F = m x a" not "F=ma^{}").
+8. End with a one-sentence "Key Insight:" that captures the most important concept.
+9. For multi-part questions, address EVERY asked quantity. Never skip any asked value.
+ 
+FORMAT EXAMPLE:
+Step 1: **Identify the given information**
+We know the mass m = 5 kg and acceleration a = 3 m/s^2. Write these down first.
+ 
+Step 2: **Apply Newton's Second Law**
+The formula is F = m x a. Substitute the values: F = 5 x 3 = 15 N.
+ 
+Final Answer:
+F = 15 N
+ 
+Key Insight: Newton's Second Law links force, mass, and acceleration -- if mass doubles, force doubles for the same acceleration."""
+ 
+_HAIKU_SOLUTION_USER_TEMPLATE = """Generate a detailed, numbered step-by-step solution for this question.
+Follow the system instructions exactly.
+ 
+QUESTION: {question}"""
+ 
+ 
+class HaikuSolutionGenerator:
+ 
     @classmethod
-    async def generate(cls, question: str, category: str) -> dict:
-        """Generate 3×5 quiz questions as structured JSON."""
-        QAnimLogger.info("QuizGenV2", f"Generating 3×5 quiz for category={category}")
-        prompt = NEW_QUIZ_PROMPT_TEMPLATE.format(
-            question=question[:400],
-            category=category
-        )
+    def generate(cls, question):
+        QAnimLogger.info("HaikuSolution", f"Generating via {HAIKU_SOLUTION_MODEL}")
+        prompt = _HAIKU_SOLUTION_USER_TEMPLATE.format(question=question[:600])
         try:
             msg = client.messages.create(
-                model=QUIZ_MODEL,
-                max_tokens=MAX_TOK_QUIZ,
-                system=NEW_QUIZ_SYSTEM_PROMPT,
+                model=HAIKU_SOLUTION_MODEL,
+                max_tokens=MAX_TOK_HAIKU_SOLUTION,
+                system=_HAIKU_SOLUTION_SYSTEM,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = msg.content[0].text.strip()
-            QAnimLogger.info("QuizGenV2", f"model={QUIZ_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
-
-            # Strip code fences if present
-            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()
-
-            data = json.loads(raw)
-            if not isinstance(data, dict) or 'sets' not in data:
-                raise ValueError("Missing 'sets' key in response")
-
-            QAnimLogger.ok("QuizGenV2", f"Generated {len(data['sets'])} sets")
-            return data
-
+            QAnimLogger.info("HaikuSolution", f"stop_reason={msg.stop_reason}  len={len(raw)}")
+            return cls._parse(raw)
         except Exception as e:
-            QAnimLogger.error("QuizGenV2", f"Generation failed: {e} — using fallback")
-            return cls._fallback_data(question, category)
-
+            QAnimLogger.error("HaikuSolution", f"Generation failed: {e}")
+            return cls._fallback(question)
+ 
     @classmethod
-    def _fallback_data(cls, question: str, category: str) -> dict:
-        """Returns a minimal 3×5 fallback quiz dataset."""
+    async def generate_async(cls, question):
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, cls.generate, question)
+ 
+    @classmethod
+    def _parse(cls, raw):
+        steps = []
+        final_answer = ""
+        key_insight  = ""
+        step_pattern = re.compile(
+            r'Step\s+(\d+)\s*:\s*(.*?)(?=Step\s+\d+\s*:|\*{0,2}Final Answer\s*:|\*{0,2}Key Insight\s*:|$)',
+            re.DOTALL | re.IGNORECASE)
+        for m in step_pattern.finditer(raw):
+            step_text = m.group(2).strip()
+            if step_text:
+                steps.append(f"Step {m.group(1)}: {step_text}")
+        fa_match = re.search(r'\*{0,2}Final Answer\*{0,2}\s*:\s*(.*?)(?=\*{0,2}Key Insight\*{0,2}\s*:|$)', raw, re.DOTALL | re.IGNORECASE)
+        if fa_match:
+            final_answer = fa_match.group(1).strip().lstrip('*').rstrip('*').strip()
+        ki_match = re.search(r'\*{0,2}Key Insight\*{0,2}\s*:\s*(.*?)$', raw, re.DOTALL | re.IGNORECASE)
+        if ki_match:
+            key_insight = ki_match.group(1).strip().lstrip('*').rstrip('*').strip()
+        if not steps and raw:
+            paragraphs = [p.strip() for p in re.split(r'\n\n+', raw) if p.strip()]
+            steps = paragraphs[:10]
+        QAnimLogger.ok("HaikuSolution", f"Parsed {len(steps)} steps, answer={len(final_answer)} chars")
+        return {"steps": steps, "final_answer": final_answer, "key_insight": key_insight, "raw": raw}
+ 
+    @classmethod
+    def _fallback(cls, question):
         return {
-            "sets": [
-                {
-                    "title": "Set 1: Core Concepts",
-                    "focus": "Fundamental principles",
-                    "questions": [
-                        {"q": "What is the primary principle governing this type of problem?",
-                         "type": "mcq",
-                         "options": ["Conservation of energy", "Newton's third law", "Fundamental governing law", "Superposition principle"],
-                         "correct": 2, "explanation": "The core principle depends on the topic — review the animation to identify it."},
-                        {"q": "True or False: All variables in this problem are independent of each other.",
-                         "type": "tf",
-                         "options": ["True", "False — they are related by the governing equation"],
-                         "correct": 1, "explanation": "Variables are linked through the governing equation; changing one affects others."},
-                        {"q": "Why is it important to identify all given quantities before solving?",
-                         "type": "mcq",
-                         "options": ["To choose the correct formula", "It isn't necessary", "Only for physics problems", "To add length"],
-                         "correct": 0, "explanation": "Identifying givens ensures formula selection is correct and no constraints are missed."},
-                        {"q": "Which step should come FIRST when solving this type of problem?",
-                         "type": "mcq",
-                         "options": ["Calculate the answer immediately", "Identify knowns and unknowns", "Write any formula", "Check units last"],
-                         "correct": 1, "explanation": "Identifying knowns and unknowns first is essential to structured problem-solving."},
-                        {"q": "What does a correct solution always include?",
-                         "type": "mcq",
-                         "options": ["Correct formula, substitution, and answer with units", "Just the numerical answer", "Formulas only", "Units are optional"],
-                         "correct": 0, "explanation": "A complete solution needs the formula, substituted values, calculated result, and proper units."},
-                    ]
-                },
-                {
-                    "title": "Set 2: Application",
-                    "focus": "Problem-solving scenarios",
-                    "questions": [
-                        {"q": "If all other variables are held constant, what happens when the main variable doubles?",
-                         "type": "mcq",
-                         "options": ["The result stays the same", "The result doubles", "The result halves", "The result squares"],
-                         "correct": 1, "explanation": "In a direct proportional relationship, doubling one variable doubles the result."},
-                        {"q": "Which formula is most relevant to this category of problem?",
-                         "type": "mcq",
-                         "options": ["The governing equation for this domain", "E = mc²", "F = ma", "V = IR"],
-                         "correct": 0, "explanation": "The correct formula depends on the specific topic — check the concept animation."},
-                        {"q": "True or False: Units must always be consistent when applying formulas.",
-                         "type": "tf",
-                         "options": ["True", "False"],
-                         "correct": 0, "explanation": "Unit consistency is critical; mixing units (e.g., kg and g) leads to incorrect answers."},
-                        {"q": "In a multi-step problem, what is the safest approach?",
-                         "type": "mcq",
-                         "options": ["Solve all steps in one go", "Solve step by step, checking each result", "Skip intermediate steps", "Estimate only"],
-                         "correct": 1, "explanation": "Step-by-step solving reduces errors and makes it easier to check work."},
-                        {"q": "What does a negative result typically indicate in physics problems?",
-                         "type": "mcq",
-                         "options": ["An error was made", "Direction opposite to chosen positive direction", "The answer is zero", "Units are wrong"],
-                         "correct": 1, "explanation": "A negative sign indicates direction (or sign convention), not necessarily an error."},
-                    ]
-                },
-                {
-                    "title": "Set 3: Advanced",
-                    "focus": "Nuanced and challenging questions",
-                    "questions": [
-                        {"q": "Which condition would make this problem unsolvable with the standard approach?",
-                         "type": "mcq",
-                         "options": ["Insufficient given data", "Too many given values", "Large numbers", "Metric units"],
-                         "correct": 0, "explanation": "Without enough independent equations or given values, the system is underdetermined."},
-                        {"q": "True or False: Approximation methods always give less accurate results than exact methods.",
-                         "type": "tf",
-                         "options": ["True", "False — approximations can be very accurate within stated tolerances"],
-                         "correct": 1, "explanation": "Approximations are designed to be accurate within defined error bounds and are widely used in practice."},
-                        {"q": "A student gets a numerically correct answer but with wrong units. Is this considered correct?",
-                         "type": "mcq",
-                         "options": ["Yes — numbers are what matter", "No — units are integral to the answer", "Sometimes, depending on context", "Only in pure mathematics"],
-                         "correct": 1, "explanation": "Units are fundamental to physical quantities; a wrong unit means a meaningfully different answer."},
-                        {"q": "What is the primary source of significant error in manual calculations?",
-                         "type": "mcq",
-                         "options": ["Rounding intermediate results too aggressively", "Using exact values", "Following the formula", "Writing all steps"],
-                         "correct": 0, "explanation": "Premature rounding of intermediate results accumulates errors that affect the final answer."},
-                        {"q": "If two different methods give slightly different numerical answers, what should you do?",
-                         "type": "mcq",
-                         "options": ["Choose the larger value", "Choose the smaller value", "Check both methods for errors and identify which is exact", "Average the two values"],
-                         "correct": 2, "explanation": "Different methods may use different approximations. Identify which is more exact or where rounding occurred."},
-                    ]
-                }
-            ]
+            "steps": [
+                "Step 1: **Identify the given information** -- Read the question carefully and list all known values with their units.",
+                "Step 2: **Choose the right formula** -- Select the equation that connects the known and unknown quantities.",
+                "Step 3: **Substitute values** -- Plug the given numbers into the formula, keeping track of units.",
+                "Step 4: **Solve and check** -- Calculate the result and verify the units match what was asked.",
+            ],
+            "final_answer": "Please re-generate the solution for a detailed answer.",
+            "key_insight":  "Always identify knowns and unknowns before applying any formula.",
+            "raw": "",
         }
-
-    @classmethod
-    def build_standalone_html(cls, data: dict, question: str, category: str) -> str:
-        """Builds a standalone light-themed quiz HTML from quiz data.
-        Layout matches the reference image: header with title/score, progress
-        bar, one-question-at-a-time card with MCQ options, explanation reveal,
-        and a 'Next Question →' button at the bottom.
-        """
-        q_safe   = html_module.escape(question[:100])
-        cat_safe = html_module.escape(category)
-        data_json = json.dumps(data, ensure_ascii=False)
-
-        # Flatten all questions across all sets for a linear quiz flow
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Quiz — {cat_safe}</title>
-<script type="application/json" id="__quiz_data__">{data_json}</script>
-<style>
-/* ── RESET ── */
-*, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
-html, body {{
-  min-height:100%; background:#eef0fb;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-}}
-
-/* ── QUIZ WRAPPER ── */
-.quiz-page {{
-  max-width:940px; margin:0 auto; padding:24px 16px 80px;
-}}
-
-/* ── HEADER ── */
-.quiz-header {{
-  text-align:center; margin-bottom:20px;
-}}
-.quiz-header-emoji {{ font-size:32px; display:block; margin-bottom:6px; }}
-.quiz-header h1 {{
-  font-size:22px; font-weight:800; color:#1e293b;
-  display:flex; align-items:center; justify-content:center; gap:8px;
-}}
-.quiz-header-sub {{ font-size:13px; color:#64748b; margin-top:4px; }}
-
-/* ── PROGRESS ROW ── */
-.quiz-progress-row {{
-  display:flex; align-items:center; justify-content:space-between;
-  margin-bottom:14px;
-}}
-.quiz-progress-label {{ font-size:13px; font-weight:700; color:#7c3aed; }}
-.quiz-score-label {{ font-size:13px; font-weight:700; color:#1e293b; }}
-.quiz-progress-bar-wrap {{
-  width:100%; height:4px; background:#e2e8f0;
-  border-radius:2px; margin:6px 0 16px;
-}}
-.quiz-progress-bar {{
-  height:4px; background:linear-gradient(90deg,#7c3aed,#db2777);
-  border-radius:2px; transition:width 0.3s ease;
-}}
-
-/* ── QUESTION CARD ── */
-.quiz-card {{
-  background:#ffffff; border-radius:14px;
-  border:1px solid #e2e8f0;
-  box-shadow:0 2px 16px rgba(0,0,0,0.07);
-  padding:24px 28px; margin-bottom:16px;
-}}
-.quiz-card-meta {{
-  font-size:11px; font-weight:700; text-transform:uppercase;
-  letter-spacing:1.2px; color:#7c3aed; margin-bottom:10px;
-  display:flex; align-items:center; gap:8px;
-}}
-.quiz-card-pts {{
-  background:#ede9fe; color:#7c3aed;
-  padding:2px 8px; border-radius:20px; font-size:10px; font-weight:700;
-}}
-.quiz-type-badge {{
-  background:#f1f5f9; border:1px solid #e2e8f0;
-  color:#64748b; padding:2px 8px; border-radius:20px; font-size:10px;
-  font-weight:700; text-transform:uppercase; letter-spacing:0.5px;
-}}
-.quiz-q-text {{
-  font-size:16px; font-weight:700; color:#1e293b;
-  line-height:1.6; margin-bottom:18px;
-}}
-
-/* ── HINT ROW ── */
-.quiz-hint-row {{
-  margin-bottom:14px;
-}}
-.quiz-hint-btn {{
-  display:flex; align-items:center; gap:6px; padding:8px 16px;
-  border-radius:8px; border:1px solid #e2e8f0; background:#ffffff;
-  color:#64748b; font-size:12px; font-weight:600; cursor:pointer;
-  transition:background 0.15s;
-  width:100%;
-}}
-.quiz-hint-btn:hover {{ background:#fefce8; border-color:#f59e0b; color:#92400e; }}
-.quiz-hint-text {{
-  display:none; margin-top:8px; padding:10px 14px;
-  border-radius:8px; background:#fefce8; border:1px solid #fde68a;
-  font-size:12px; color:#78350f; line-height:1.6;
-}}
-.quiz-hint-text.show {{ display:block; }}
-
-/* ── OPTIONS ── */
-.quiz-options-list {{ display:flex; flex-direction:column; gap:8px; }}
-.quiz-opt-btn {{
-  display:flex; align-items:center; gap:10px; padding:11px 16px;
-  border-radius:10px; border:1px solid #e2e8f0; background:#ffffff;
-  color:#334155; font-size:14px; font-family:inherit; text-align:left;
-  cursor:pointer; transition:background 0.15s,border-color 0.15s,transform 0.1s;
-  width:100%;
-}}
-.quiz-opt-btn:hover:not([disabled]) {{
-  background:#f5f3ff; border-color:#7c3aed; color:#6d28d9;
-  transform:translateX(2px);
-}}
-.quiz-opt-btn.correct {{
-  background:#f0fdf4; border-color:#16a34a; color:#166534;
-  font-weight:600;
-}}
-.quiz-opt-btn.wrong {{
-  background:#fef2f2; border-color:#dc2626; color:#991b1b;
-}}
-.quiz-opt-letter {{
-  width:28px; height:28px; border-radius:50%; flex-shrink:0;
-  background:#e2e8f0; color:#64748b; font-size:11px; font-weight:700;
-  display:flex; align-items:center; justify-content:center;
-  transition:background 0.15s,color 0.15s;
-}}
-.quiz-opt-btn.correct .quiz-opt-letter {{ background:#16a34a; color:#fff; }}
-.quiz-opt-btn.wrong   .quiz-opt-letter {{ background:#dc2626; color:#fff; }}
-
-/* ── EXPLANATION ── */
-.quiz-expl {{
-  display:none; margin-top:14px; padding:12px 16px;
-  border-radius:10px; background:#f5f3ff;
-  border-left:4px solid #7c3aed;
-  font-size:13px; color:#4c1d95; line-height:1.7;
-}}
-.quiz-expl.show {{ display:block; }}
-
-/* ── NEXT BUTTON ── */
-.quiz-next-btn {{
-  display:none; width:100%; padding:15px;
-  margin-top:20px; border-radius:12px; border:none;
-  background:linear-gradient(135deg,#7c3aed,#db2777);
-  color:#fff; font-size:16px; font-weight:800;
-  font-family:inherit; cursor:pointer;
-  transition:opacity 0.15s,transform 0.1s;
-  box-shadow:0 4px 18px rgba(124,58,237,0.35);
-}}
-.quiz-next-btn:hover {{ opacity:0.92; transform:translateY(-1px); }}
-.quiz-next-btn.show {{ display:block; }}
-
-/* ── RESULTS SCREEN ── */
-.quiz-results {{
-  display:none; text-align:center;
-  background:#ffffff; border-radius:14px;
-  border:1px solid #e2e8f0; padding:40px 32px;
-  box-shadow:0 2px 16px rgba(0,0,0,0.07);
-}}
-.quiz-results.show {{ display:block; }}
-.quiz-results-emoji {{ font-size:48px; display:block; margin-bottom:12px; }}
-.quiz-results h2 {{ font-size:22px; font-weight:800; color:#1e293b; margin-bottom:8px; }}
-.quiz-results-score {{
-  font-size:48px; font-weight:900;
-  background:linear-gradient(135deg,#7c3aed,#db2777);
-  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
-  margin:10px 0;
-}}
-.quiz-results-sub {{ font-size:14px; color:#64748b; margin-bottom:24px; }}
-.quiz-restart-btn {{
-  padding:12px 32px; border-radius:10px; border:none;
-  background:#7c3aed; color:#fff; font-size:14px; font-weight:700;
-  font-family:inherit; cursor:pointer;
-}}
-.quiz-restart-btn:hover {{ background:#6d28d9; }}
-</style>
-</head>
-<body>
-<div class="quiz-page">
-  <!-- Header -->
-  <div class="quiz-header">
-    <span class="quiz-header-emoji">🔥</span>
-    <h1>🎯 {cat_safe} Quiz</h1>
-    <div class="quiz-header-sub">Extended Surfaces · 15 Questions</div>
-  </div>
-
-  <!-- Progress row -->
-  <div class="quiz-progress-row">
-    <span class="quiz-progress-label" id="q-progress-label">Question 1 of 15</span>
-    <span class="quiz-score-label" id="q-score-label">Score: 0</span>
-  </div>
-  <div class="quiz-progress-bar-wrap">
-    <div class="quiz-progress-bar" id="q-progress-bar" style="width:6.67%"></div>
-  </div>
-
-  <!-- Question card (dynamically replaced) -->
-  <div id="quiz-card-area"></div>
-
-  <!-- Results screen (hidden until quiz ends) -->
-  <div class="quiz-results" id="quiz-results-screen">
-    <span class="quiz-results-emoji">🎉</span>
-    <h2>Quiz Complete!</h2>
-    <div class="quiz-results-score" id="quiz-final-score">0 / 15</div>
-    <div class="quiz-results-sub" id="quiz-final-pct">You scored 0%</div>
-    <button class="quiz-restart-btn" id="quiz-restart-btn">Restart Quiz</button>
-  </div>
-</div>
-
-<script>
-(function() {{
-  'use strict';
-  var LETTERS = ['A','B','C','D'];
-  var allQuestions = [];
-  var currentIdx = 0;
-  var score = 0;
-  var answered = false;
-
-  function _esc(s) {{
-    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }}
-
-  /* Flatten all questions from all sets */
-  function _loadQuestions() {{
-    try {{
-      var tag = document.getElementById('__quiz_data__');
-      if (!tag) return [];
-      var data = JSON.parse(tag.textContent);
-      var result = [];
-      if (data && data.sets) {{
-        data.sets.forEach(function(set) {{
-          (set.questions || []).forEach(function(q) {{
-            result.push(q);
-          }});
-        }});
-      }}
-      return result;
-    }} catch(e) {{ return []; }}
-  }}
-
-  function _renderQuestion(idx) {{
-    answered = false;
-    var q = allQuestions[idx];
-    if (!q) return;
-    var total = allQuestions.length;
-    var pct   = Math.round((idx / total) * 100);
-
-    /* Update progress */
-    var progLabel = document.getElementById('q-progress-label');
-    var progBar   = document.getElementById('q-progress-bar');
-    if (progLabel) progLabel.textContent = 'Question ' + (idx+1) + ' of ' + total;
-    if (progBar)   progBar.style.width   = Math.max(6.67, ((idx+1)/total)*100) + '%';
-
-    var qtype = (q.type || 'mcq').toUpperCase();
-    var opts  = q.options || [];
-    var corr  = typeof q.correct === 'number' ? q.correct : 0;
-    var hint  = q.hint || q.explanation || '';
-
-    /* Build card HTML */
-    var html = '<div class="quiz-card" id="active-quiz-card">';
-    html += '<div class="quiz-card-meta">';
-    html += 'QUESTION ' + (idx+1) + ' OF ' + total + '&nbsp;&middot;&nbsp;';
-    html += '<span class="quiz-card-pts">2 PTS</span>';
-    html += '</div>';
-    html += '<span class="quiz-type-badge">' + _esc(qtype) + '</span>';
-    html += '<div class="quiz-q-text" style="margin-top:10px">' + _esc(q.q || q.question || '') + '</div>';
-
-    /* Hint row */
-    if (hint) {{
-      html += '<div class="quiz-hint-row">';
-      html += '<button class="quiz-hint-btn" id="hint-btn">⚡ Show Hint</button>';
-      html += '<div class="quiz-hint-text" id="hint-text">' + _esc(hint) + '</div>';
-      html += '</div>';
-    }}
-
-    /* Options */
-    html += '<div class="quiz-options-list">';
-    for (var oi = 0; oi < opts.length; oi++) {{
-      var letter = LETTERS[oi] || String(oi+1);
-      html += '<button class="quiz-opt-btn" id="opt-' + oi + '" data-opt="' + oi + '" data-correct="' + corr + '">';
-      html += '<span class="quiz-opt-letter">' + letter + '.</span>';
-      html += _esc(opts[oi]);
-      html += '</button>';
-    }}
-    html += '</div>';
-
-    /* Explanation (hidden until answered) */
-    html += '<div class="quiz-expl" id="quiz-expl">' + _esc(q.explanation || '') + '</div>';
-    html += '</div>';
-
-    /* Next button */
-    var isLast = (idx === allQuestions.length - 1);
-    html += '<button class="quiz-next-btn" id="quiz-next-btn">';
-    html += isLast ? 'See Results 🏆' : 'Next Question &rarr;';
-    html += '</button>';
-
-    var area = document.getElementById('quiz-card-area');
-    if (area) area.innerHTML = html;
-
-    /* Wire hint */
-    var hintBtn = document.getElementById('hint-btn');
-    var hintText = document.getElementById('hint-text');
-    if (hintBtn && hintText) {{
-      hintBtn.addEventListener('click', function() {{
-        hintText.classList.toggle('show');
-        hintBtn.textContent = hintText.classList.contains('show') ? '⚡ Hide Hint' : '⚡ Show Hint';
-      }});
-    }}
-
-    /* Wire option buttons */
-    for (var oi2 = 0; oi2 < opts.length; oi2++) {{
-      (function(optIdx) {{
-        var btn = document.getElementById('opt-' + optIdx);
-        if (btn) btn.addEventListener('click', function() {{
-          if (answered) return;
-          answered = true;
-          var chosenCorr = parseInt(this.getAttribute('data-correct'), 10);
-          /* Mark all options */
-          for (var k = 0; k < opts.length; k++) {{
-            var ob = document.getElementById('opt-' + k);
-            if (!ob) continue;
-            ob.setAttribute('disabled','1');
-            ob.style.pointerEvents = 'none';
-            if (k === chosenCorr) ob.classList.add('correct');
-            else if (k === optIdx && optIdx !== chosenCorr) ob.classList.add('wrong');
-          }}
-          /* Score */
-          if (optIdx === chosenCorr) score++;
-          var scoreLabel = document.getElementById('q-score-label');
-          if (scoreLabel) scoreLabel.textContent = 'Score: ' + score;
-          /* Show explanation */
-          var expl = document.getElementById('quiz-expl');
-          if (expl) expl.classList.add('show');
-          /* Show next button */
-          var nextBtn = document.getElementById('quiz-next-btn');
-          if (nextBtn) nextBtn.classList.add('show');
-        }});
-      }})(oi2);
-    }}
-
-    /* Wire next button */
-    var nextBtnEl = document.getElementById('quiz-next-btn');
-    if (nextBtnEl) {{
-      nextBtnEl.addEventListener('click', function() {{
-        currentIdx++;
-        if (currentIdx < allQuestions.length) {{
-          _renderQuestion(currentIdx);
-        }} else {{
-          _showResults();
-        }}
-      }});
-    }}
-  }}
-
-  function _showResults() {{
-    var area = document.getElementById('quiz-card-area');
-    if (area) area.innerHTML = '';
-    var progLabel = document.getElementById('q-progress-label');
-    if (progLabel) progLabel.textContent = 'Quiz Complete!';
-    var progBar = document.getElementById('q-progress-bar');
-    if (progBar) progBar.style.width = '100%';
-    var scoreLabel = document.getElementById('q-score-label');
-    if (scoreLabel) scoreLabel.textContent = 'Final Score: ' + score;
-    var results = document.getElementById('quiz-results-screen');
-    if (results) results.classList.add('show');
-    var total = allQuestions.length;
-    var pct = Math.round((score / total) * 100);
-    var finalScore = document.getElementById('quiz-final-score');
-    if (finalScore) finalScore.textContent = score + ' / ' + total;
-    var finalPct = document.getElementById('quiz-final-pct');
-    if (finalPct) finalPct.textContent = 'You scored ' + pct + '%' + (pct >= 80 ? ' 🌟 Excellent!' : pct >= 60 ? ' 👍 Good job!' : ' 📚 Keep practicing!');
-  }}
-
-  document.addEventListener('DOMContentLoaded', function() {{
-    allQuestions = _loadQuestions();
-    if (allQuestions.length > 0) {{
-      /* Update subtitle with actual question count */
-      var sub = document.querySelector('.quiz-header-sub');
-      if (sub) sub.textContent = '{cat_safe} · ' + allQuestions.length + ' Questions';
-      _renderQuestion(0);
-    }} else {{
-      var area = document.getElementById('quiz-card-area');
-      if (area) area.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b">No quiz questions available.</div>';
-    }}
-    var restartBtn = document.getElementById('quiz-restart-btn');
-    if (restartBtn) {{
-      restartBtn.addEventListener('click', function() {{
-        currentIdx = 0; score = 0; answered = false;
-        var results = document.getElementById('quiz-results-screen');
-        if (results) results.classList.remove('show');
-        var progLabel = document.getElementById('q-progress-label');
-        if (progLabel) progLabel.textContent = 'Question 1 of ' + allQuestions.length;
-        var scoreLabel = document.getElementById('q-score-label');
-        if (scoreLabel) scoreLabel.textContent = 'Score: 0';
-        var progBar = document.getElementById('q-progress-bar');
-        if (progBar) progBar.style.width = '6.67%';
-        _renderQuestion(0);
-      }});
-    }}
-  }});
-}})();
-</script>
-</body>
-</html>"""
-
-
-def inject_quiz_v2_panel(html: str, quiz_data: dict) -> str:
-    """Injects the 3×5 quiz panel + data + CSS + JS into animation HTML."""
-    # 1. Embed quiz data as JSON tag
-    try:
-        data_json = json.dumps(quiz_data, ensure_ascii=False)
-        data_tag = '<script type="application/json" id="__quiz_data__">\n' + data_json + '\n</script>'
-        if '</head>' in html:
-            html = html.replace('</head>', data_tag + '\n</head>', 1)
+ 
+ 
+# ===========================================================================
+#  MODULE 9 -- Answer Box System  (v11.1)
+# ===========================================================================
+ 
+def _build_answer_targets_tag(answer_targets):
+    payload = {"answer_targets": answer_targets or []}
+    return ('<script type="application/json" id="__answer_targets__">\n'
+            + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
+ 
+ 
+def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight):
+    targets = []
+    _num_re = re.compile(
+        r'([A-Za-z_][A-Za-z_0-9]*)\s*[=:]\s*([-+]?\d[\d.,]*(?:\s*[×x*]\s*10\^?[-+]?\d+)?)\s*([A-Za-z°%/²³·]+(?:\s*[A-Za-z°%/²³·]+)*)?',
+        re.IGNORECASE)
+    found_pairs = {}
+    if final_answer:
+        for m in _num_re.finditer(final_answer):
+            sym   = m.group(1).strip()
+            val   = m.group(2).strip()
+            unit  = (m.group(3) or "").strip()
+            found_pairs[sym.lower()] = {"sym": sym, "val": val, "unit": unit}
+ 
+    used_syms = set()
+    for tf in (to_find_targets or []):
+        tf_lower = tf.lower()
+        matched  = None
+        for sym_key, info in found_pairs.items():
+            if sym_key in tf_lower or tf_lower.startswith(sym_key):
+                if sym_key not in used_syms:
+                    matched = info
+                    used_syms.add(sym_key)
+                    break
+        if matched:
+            targets.append({
+                "label":   tf,
+                "value":   f"{matched['val']} {matched['unit']}".strip(),
+                "unit":    matched["unit"],
+                "insight": key_insight or "Apply the relevant formula step by step.",
+            })
         else:
-            html = data_tag + '\n' + html
-    except Exception as e:
-        QAnimLogger.warn("QuizV2Injector", f"Data tag failed: {e}")
-
-    # 2. CSS
-    try:
-        if '</head>' in html:
-            html = html.replace('</head>', _QUIZ_PANEL_CSS + '\n</head>', 1)
-    except Exception as e:
-        QAnimLogger.warn("QuizV2Injector", f"CSS failed: {e}")
-
-    # 3. Panel DOM after <body>
-    try:
-        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
-        if body_match:
-            ins = body_match.end()
-            html = html[:ins] + '\n' + _QUIZ_PANEL_DOM + html[ins:]
-    except Exception as e:
-        QAnimLogger.warn("QuizV2Injector", f"DOM failed: {e}")
-
-    # 4. JS
-    try:
-        quiz_script = '<script>\n' + _QUIZ_PANEL_JS + '\n</script>'
-        if '</body>' in html:
-            html = html.replace('</body>', quiz_script + '\n</body>', 1)
-        else:
-            html += '\n' + quiz_script
-    except Exception as e:
-        QAnimLogger.warn("QuizV2Injector", f"JS failed: {e}")
-
-    QAnimLogger.ok("QuizV2Injector", "3×5 quiz panel injected")
-    return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 9 — Answer Box System  (with validation logic)
-# ══════════════════════════════════════════════════════════════════════
-#
-#  VALIDATION LOGIC:
-#  1. Try numerical extraction from both user and correct answers.
-#     - If numbers found: |user - correct| / |correct| < 0.01 → CORRECT
-#                                                             < 0.15 → ALMOST CORRECT
-#                                                             ≥ 0.15 → WRONG
-#  2. Fall back to text comparison:
-#     - Exact match (case-insensitive) → CORRECT
-#     - Keyword overlap ≥ 80% → CORRECT
-#     - Keyword overlap ≥ 40% → ALMOST CORRECT
-#     - Keyword overlap  < 40% → WRONG
-#
-# ══════════════════════════════════════════════════════════════════════
-
+            targets.append({
+                "label":   tf,
+                "value":   final_answer,
+                "unit":    "",
+                "insight": key_insight or "Apply the relevant formula step by step.",
+            })
+ 
+    if not targets:
+        targets.append({
+            "label":   "Final Answer",
+            "value":   final_answer or "",
+            "unit":    "",
+            "insight": key_insight or "Follow the step-by-step solution to reach the answer.",
+        })
+ 
+    return targets
+ 
+ 
 _ANSWER_BOX_CSS = """
 <style id="qanim-answerbox-styles">
-/* ── Answer Box Panel — Light Theme ── */
 #answerbox-backdrop {
-  display:none; position:fixed; inset:0; z-index:8600;
-  background:rgba(15,23,42,0.40); backdrop-filter:blur(4px);
-  opacity:0; transition:opacity 0.22s ease;
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 8600;
+  background: rgba(15, 23, 42, 0.40);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity 0.22s ease;
 }
-#answerbox-backdrop.open { display:flex; align-items:center; justify-content:center; padding:16px; opacity:1; }
-
+#answerbox-backdrop.open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  opacity: 1;
+}
 #answerbox-panel {
-  width:min(540px,94vw); max-height:90vh;
-  border-radius:16px; background:#ffffff;
-  border:1px solid #e2e8f0;
-  box-shadow:0 12px 48px rgba(0,0,0,0.14);
-  opacity:0; pointer-events:none;
-  transform:translateY(16px) scale(0.97);
-  transition:opacity 0.25s ease,transform 0.26s cubic-bezier(0.34,1.56,0.64,1);
-  overflow:hidden; display:flex; flex-direction:column;
+  width: min(540px, 94vw);
+  max-height: 90vh;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(16px) scale(0.97);
+  transition: opacity 0.25s ease, transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-#answerbox-panel.open { opacity:1; pointer-events:auto; transform:translateY(0) scale(1); }
-
+#answerbox-panel.open { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
 .ab-header {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:16px 20px; background:#ffffff; border-bottom:1px solid #e2e8f0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; background: #ffffff; border-bottom: 1px solid #e2e8f0; flex-shrink: 0;
 }
 .ab-header-title {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:16px; font-weight:800; color:#1e293b;
-  display:flex; align-items:center; gap:8px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 16px; font-weight: 800; color: #1e293b;
+  display: flex; align-items: center; gap: 8px;
 }
 .ab-close-btn {
-  width:30px; height:30px; border-radius:8px; border:1px solid #e2e8f0;
-  background:#f8fafc; color:#64748b; font-size:12px; cursor:pointer;
-  display:flex; align-items:center; justify-content:center; transition:background 0.15s;
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid #e2e8f0;
+  background: #f8fafc; color: #64748b; font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background 0.15s;
 }
-.ab-close-btn:hover { background:#fee2e2; color:#dc2626; }
-
-.ab-body { padding:20px; }
+.ab-close-btn:hover { background: #fee2e2; color: #dc2626; }
+.ab-progress-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px 0; flex-shrink: 0;
+}
+.ab-progress-label {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11px; font-weight: 700; color: #7c3aed;
+  text-transform: uppercase; letter-spacing: 0.8px;
+}
+.ab-progress-dots { display: flex; gap: 5px; }
+.ab-dot { width: 7px; height: 7px; border-radius: 50%; background: #e2e8f0; transition: background 0.2s; }
+.ab-dot.done    { background: #16a34a; }
+.ab-dot.current { background: #7c3aed; }
+.ab-body { padding: 14px 20px 20px; overflow-y: auto; flex: 1; }
+.ab-find-chip {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 14px; border-radius: 10px; background: #f5f3ff;
+  border: 1px solid #ddd6fe; margin-bottom: 14px;
+}
+.ab-find-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.ab-find-text {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12.5px; font-weight: 600; color: #5b21b6; line-height: 1.5;
+}
+.ab-find-label {
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 1px; color: #7c3aed; display: block; margin-bottom: 2px;
+}
 .ab-instruction {
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13px; color:#64748b; margin-bottom:14px; line-height:1.6;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px; color: #64748b; margin-bottom: 10px; line-height: 1.6;
 }
 #ab-user-input {
-  width:100%; min-height:90px; padding:12px 14px; border-radius:10px;
-  border:1.5px solid #e2e8f0; background:#f8fafc;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13px; color:#1e293b; line-height:1.6; resize:vertical;
-  transition:border-color 0.15s; outline:none;
+  width: 100%; min-height: 80px; padding: 12px 14px; border-radius: 10px;
+  border: 1.5px solid #e2e8f0; background: #f8fafc;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px; color: #1e293b; line-height: 1.6; resize: vertical;
+  transition: border-color 0.15s; outline: none; box-sizing: border-box;
 }
-#ab-user-input:focus { border-color:#7c3aed; background:#ffffff; }
-#ab-user-input::placeholder { color:#94a3b8; }
-
+#ab-user-input:focus { border-color: #7c3aed; background: #ffffff; }
 #ab-submit-btn {
-  width:100%; padding:12px; margin-top:12px; border-radius:10px; border:none;
-  background:#7c3aed; color:#ffffff; font-size:14px; font-weight:700;
-  font-family:inherit; cursor:pointer;
-  transition:background 0.15s,transform 0.1s;
+  width: 100%; padding: 12px; margin-top: 10px; border-radius: 10px; border: none;
+  background: #7c3aed; color: #ffffff; font-size: 14px; font-weight: 700;
+  font-family: inherit; cursor: pointer; transition: background 0.15s, transform 0.1s;
 }
-#ab-submit-btn:hover { background:#6d28d9; transform:translateY(-1px); }
-#ab-submit-btn:active { transform:translateY(0); }
-
-#ab-result {
-  display:none; margin-top:14px; border-radius:10px; padding:14px 16px;
-  border:1px solid transparent; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+#ab-submit-btn:hover { background: #6d28d9; transform: translateY(-1px); }
+#ab-feedback {
+  display: none; margin-top: 14px; border-radius: 12px; overflow: hidden;
+  border: 1px solid transparent; animation: ab-feedback-in 0.28s cubic-bezier(0.34,1.56,0.64,1);
 }
-#ab-result.show { display:block; }
-#ab-result.correct  { background:#f0fdf4; border-color:#bbf7d0; }
-#ab-result.wrong    { background:#fef2f2; border-color:#fecaca; }
-#ab-result.almost   { background:#fff7ed; border-color:#fed7aa; }
-
-.ab-result-icon { font-size:24px; margin-bottom:6px; display:block; }
-.ab-result-verdict {
-  font-size:16px; font-weight:800; margin-bottom:4px;
+@keyframes ab-feedback-in {
+  from { opacity:0; transform:translateY(8px) scale(0.97); }
+  to   { opacity:1; transform:translateY(0)   scale(1);    }
 }
-.ab-result-verdict.correct { color:#15803d; }
-.ab-result-verdict.wrong   { color:#b91c1c; }
-.ab-result-verdict.almost  { color:#c2410c; }
-.ab-result-msg { font-size:13px; line-height:1.6; }
-.ab-result-msg.correct { color:#166534; }
-.ab-result-msg.wrong   { color:#991b1b; }
-.ab-result-msg.almost  { color:#9a3412; }
-
+#ab-feedback.show    { display: block; }
+#ab-feedback.correct { border-color: #bbf7d0; }
+#ab-feedback.almost  { border-color: #fed7aa; }
+#ab-feedback.wrong   { border-color: #fecaca; }
+.ab-feedback-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
+#ab-feedback.correct .ab-feedback-top { background: #f0fdf4; }
+#ab-feedback.almost  .ab-feedback-top { background: #fff7ed; }
+#ab-feedback.wrong   .ab-feedback-top { background: #fef2f2; }
+.ab-feedback-icon { font-size: 22px; flex-shrink: 0; }
+.ab-feedback-verdict { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 15px; font-weight: 800; }
+#ab-feedback.correct .ab-feedback-verdict { color: #15803d; }
+#ab-feedback.almost  .ab-feedback-verdict { color: #c2410c; }
+#ab-feedback.wrong   .ab-feedback-verdict { color: #b91c1c; }
+.ab-feedback-insight { padding: 10px 16px 13px; border-top: 1px solid; }
+#ab-feedback.correct .ab-feedback-insight { background:#fafffe; border-color:#bbf7d0; }
+#ab-feedback.almost  .ab-feedback-insight { background:#fffbf5; border-color:#fed7aa; }
+#ab-feedback.wrong   .ab-feedback-insight { background:#fff8f8; border-color:#fecaca; }
+.ab-insight-label {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 1.2px; color: #64748b; margin-bottom: 4px;
+}
+.ab-insight-text { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 12.5px; color: #1e293b; line-height: 1.68; }
+.ab-action-row { display: none; gap: 8px; margin-top: 12px; }
+.ab-action-row.show { display: flex; }
 #ab-retry-btn {
-  margin-top:10px; padding:7px 18px; border-radius:8px; border:1px solid #e2e8f0;
-  background:#f8fafc; color:#64748b; font-size:12px; font-weight:600;
-  font-family:inherit; cursor:pointer; transition:background 0.15s;
+  flex: 1; padding: 9px 14px; border-radius: 9px; border: 1px solid #e2e8f0;
+  background: #f8fafc; color: #64748b; font-size: 12px; font-weight: 600;
+  font-family: inherit; cursor: pointer; transition: background 0.15s;
 }
-#ab-retry-btn:hover { background:#ede9fe; border-color:#7c3aed; color:#7c3aed; }
+#ab-retry-btn:hover { background: #ede9fe; border-color: #7c3aed; color: #7c3aed; }
+#ab-next-target-btn {
+  flex: 2; padding: 9px 14px; border-radius: 9px; border: none;
+  background: #7c3aed; color: #fff; font-size: 12px; font-weight: 700;
+  font-family: inherit; cursor: pointer; display: none; transition: background 0.15s;
+}
+#ab-next-target-btn:hover { background: #6d28d9; }
+#ab-next-target-btn.show  { display: block; }
+#ab-alldone-card {
+  display: none; text-align: center; padding: 28px 20px; border-radius: 14px;
+  background: linear-gradient(135deg, #f0fdf4, #fefce8); border: 1.5px solid #bbf7d0; margin-top: 10px;
+}
+#ab-alldone-card.show { display: block; }
+.ab-alldone-emoji { font-size: 40px; display: block; margin-bottom: 10px; }
+.ab-alldone-title { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 18px; font-weight: 800; color: #15803d; margin-bottom: 6px; }
+.ab-alldone-sub { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #166534; line-height: 1.6; }
 </style>
 """
-
+ 
 _ANSWER_BOX_DOM = """
 <div id="answerbox-backdrop" aria-hidden="true">
 <div id="answerbox-panel" role="dialog" aria-label="Answer Box" aria-hidden="true">
   <div class="ab-header">
-    <div class="ab-header-title">✏️ Answer Box</div>
-    <button class="ab-close-btn" id="ab-close-btn">✕</button>
+    <div class="ab-header-title">&#x270F;&#xFE0F; Answer Box</div>
+    <button class="ab-close-btn" id="ab-close-btn">&#x2715;</button>
   </div>
-  <div class="ab-body" style="overflow-y:auto;flex:1;">
-    <p class="ab-instruction">
-      Type your answer below and click <strong>Submit</strong> to check it.
-      You can enter a numerical value, formula, or a brief explanation.
-    </p>
-    <textarea id="ab-user-input" placeholder="Type your answer here…" spellcheck="false"></textarea>
+  <div class="ab-progress-row">
+    <span class="ab-progress-label" id="ab-progress-label">Question 1 of 1</span>
+    <div class="ab-progress-dots" id="ab-progress-dots"></div>
+  </div>
+  <div class="ab-body">
+    <div class="ab-find-chip" id="ab-find-chip">
+      <span class="ab-find-icon">&#x1F50D;</span>
+      <div>
+        <span class="ab-find-label">Find</span>
+        <div class="ab-find-text" id="ab-find-text">Loading...</div>
+      </div>
+    </div>
+    <p class="ab-instruction">Type your answer below (include units if applicable) and click <strong>Submit</strong>.</p>
+    <textarea id="ab-user-input" placeholder="e.g. 350 W/m or 88 %" spellcheck="false"></textarea>
     <button id="ab-submit-btn">Submit Answer</button>
-    <div id="ab-result" role="alert">
-      <span class="ab-result-icon" id="ab-result-icon"></span>
-      <div class="ab-result-verdict" id="ab-result-verdict"></div>
-      <div class="ab-result-msg"    id="ab-result-msg"></div>
+    <div id="ab-feedback" role="alert">
+      <div class="ab-feedback-top">
+        <span class="ab-feedback-icon" id="ab-feedback-icon"></span>
+        <span class="ab-feedback-verdict" id="ab-feedback-verdict"></span>
+      </div>
+      <div class="ab-feedback-insight">
+        <div class="ab-insight-label">&#x1F4A1; Key Insight</div>
+        <div class="ab-insight-text" id="ab-insight-text"></div>
+      </div>
+    </div>
+    <div class="ab-action-row" id="ab-action-row">
       <button id="ab-retry-btn">Try Again</button>
+      <button id="ab-next-target-btn">Next &rarr;</button>
+    </div>
+    <div id="ab-alldone-card">
+      <span class="ab-alldone-emoji">&#x1F389;</span>
+      <div class="ab-alldone-title">All answers submitted!</div>
+      <div class="ab-alldone-sub">Great work. Open <strong>Final Answer</strong> to review the full solution.</div>
     </div>
   </div>
 </div>
 </div>
 """
-
+ 
 _ANSWER_BOX_JS = r"""
-(function initAnswerBox() {
+(function initAnswerBox(){
   'use strict';
   var abOpen = false;
-
-  function _el(id) { return document.getElementById(id); }
-  function _onReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else setTimeout(fn, 0);
+  var _targets = [];
+  var _currentIdx = 0;
+  var _loaded = false;
+ 
+  function _el(id){ return document.getElementById(id); }
+  function _onReady(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else setTimeout(fn,0); }
+ 
+  function _loadTargets(){
+    if(_loaded) return;
+    _loaded = true;
+    try{
+      var tag = _el('__answer_targets__');
+      if(!tag){ _useFallback(); return; }
+      var data = JSON.parse(tag.textContent) || {};
+      _targets = Array.isArray(data.answer_targets) ? data.answer_targets : [];
+    }catch(e){ _targets = []; }
+    if(_targets.length === 0) _useFallback();
   }
-
-  /* ── Load correct answer from embedded solution data ── */
-  function _loadCorrectAnswer() {
-    try {
-      var tag = document.getElementById('__sol_data__');
-      if (!tag) return '';
-      var data = JSON.parse(tag.textContent);
-      return (data && data.answer) ? String(data.answer) : '';
-    } catch(e) { return ''; }
+ 
+  function _useFallback(){
+    try{
+      var tag = _el('__sol_data__');
+      if(!tag) return;
+      var data = JSON.parse(tag.textContent) || {};
+      _targets = [{
+        label:   'Final Answer',
+        value:   String(data.answer || ''),
+        unit:    '',
+        insight: String(data.insight || 'Apply the relevant formula step by step.')
+      }];
+    }catch(e){ _targets = []; }
   }
-
-  /* ── Extract first number from a string ── */
-  function _extractNumbers(str) {
-    var matches = str.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g);
-    return matches ? matches.map(parseFloat).filter(function(n){ return isFinite(n); }) : [];
+ 
+  function _renderTarget(idx){
+    var t = _targets[idx];
+    if(!t) return;
+    var findEl = _el('ab-find-text');
+    if(findEl) findEl.textContent = t.label || 'Answer';
+    var total = _targets.length;
+    var progLabel = _el('ab-progress-label');
+    if(progLabel) progLabel.textContent = 'Question ' + (idx+1) + ' of ' + total;
+    var dotsEl = _el('ab-progress-dots');
+    if(dotsEl){
+      var html = '';
+      for(var i=0;i<total;i++){
+        var cls = i < idx ? 'ab-dot done' : i === idx ? 'ab-dot current' : 'ab-dot';
+        html += '<div class="' + cls + '"></div>';
+      }
+      dotsEl.innerHTML = html;
+    }
+    var inp = _el('ab-user-input');
+    if(inp){ inp.value = ''; inp.removeAttribute('disabled'); }
+    var fb = _el('ab-feedback');
+    if(fb) fb.className = '';
+    var ar = _el('ab-action-row');
+    if(ar) ar.className = 'ab-action-row';
+    var ntb = _el('ab-next-target-btn');
+    if(ntb) ntb.style.display = 'none';
+    var sb = _el('ab-submit-btn');
+    if(sb){ sb.style.display = ''; sb.disabled = false; }
+    var adc = _el('ab-alldone-card');
+    if(adc) adc.className = '';
+    var unit = t.unit ? ' (' + t.unit + ')' : '';
+    if(inp) inp.placeholder = 'Type your answer' + unit + '...';
   }
-
-  /* ── Core validation function ──
-     Returns: 'correct' | 'almost' | 'wrong'
-
-     NUMERICAL PATH:
-       tolerance < 1%  → correct
-       tolerance < 15% → almost
-       else            → wrong
-
-     TEXT PATH:
-       exact match (lower, trimmed)  → correct
-       keyword overlap ≥ 80%         → correct
-       keyword overlap ≥ 40%         → almost
-       else                          → wrong
-  */
-  function _validate(userAns, correctAns) {
-    if (!userAns || !userAns.trim()) return 'empty';
-
-    var userNums    = _extractNumbers(userAns);
-    var correctNums = _extractNumbers(correctAns);
-
-    /* Numerical comparison */
-    if (userNums.length > 0 && correctNums.length > 0) {
-      var uVal = userNums[0];
-      var cVal = correctNums[0];
+ 
+  function _extractNums(s){
+    var m = s.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g);
+    return m ? m.map(parseFloat).filter(function(n){ return isFinite(n); }) : [];
+  }
+ 
+  function _validate(userAns, correctAns){
+    if(!userAns || !userAns.trim()) return 'empty';
+    var userNums    = _extractNums(userAns);
+    var correctNums = _extractNums(correctAns);
+    if(userNums.length > 0 && correctNums.length > 0){
+      var uVal  = userNums[0];
+      var cVal  = correctNums[0];
       var denom = Math.abs(cVal) + 1e-12;
       var relErr = Math.abs(uVal - cVal) / denom;
-
-      if (relErr < 0.01)  return 'correct';
-      if (relErr < 0.15)  return 'almost';
+      if(relErr < 0.01)  return 'correct';
+      if(relErr < 0.15)  return 'almost';
       return 'wrong';
     }
-
-    /* Text comparison */
-    var uClean = userAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
-    var cClean = correctAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
-
-    if (uClean === cClean) return 'correct';
-
-    /* Keyword overlap */
-    var STOP = {a:1,an:1,the:1,is:1,are:1,of:1,to:1,in:1,and:1,or:1,it:1,
-                be:1,at:1,as:1,by:1,'for':1,on:1,with:1,that:1,this:1};
-    function keywords(s) {
-      var words = s.split(/\s+/);
-      var kw = {};
-      words.forEach(function(w){ if(w.length > 1 && !STOP[w]) kw[w] = true; });
-      return kw;
-    }
-    var uKW = keywords(uClean);
-    var cKW = keywords(cClean);
-    var cKeys = Object.keys(cKW);
-    if (cKeys.length === 0) return 'wrong';
-    var matchCount = cKeys.filter(function(k){ return uKW[k]; }).length;
-    var overlap = matchCount / cKeys.length;
-
-    if (overlap >= 0.80) return 'correct';
-    if (overlap >= 0.40) return 'almost';
+    var uC = userAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
+    var cC = correctAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
+    if(uC === cC) return 'correct';
+    var STOP={a:1,an:1,the:1,is:1,are:1,of:1,to:1,in:1,and:1,or:1,it:1,be:1,at:1,as:1,by:1,'for':1,on:1,with:1,that:1,this:1};
+    function kw(s){ var w=s.split(/\s+/),r={};w.forEach(function(x){if(x.length>1&&!STOP[x])r[x]=true;});return r; }
+    var uKW = kw(uC); var cKW = kw(cC); var cKeys = Object.keys(cKW);
+    if(cKeys.length === 0) return 'wrong';
+    var match = cKeys.filter(function(k){ return uKW[k]; }).length;
+    var overlap = match / cKeys.length;
+    if(overlap >= 0.80) return 'correct';
+    if(overlap >= 0.40) return 'almost';
     return 'wrong';
   }
-
-  var _RESULTS = {
-    correct: {
-      icon:    "✅",
-      verdict: "Correct Answer!",
-      msg:     "Excellent work! Your answer matches the solution. You understood this concept well — keep it up!",
-      cls:     "correct"
-    },
-    almost: {
-      icon:    "🟡",
-      verdict: "Almost Correct",
-      msg:     "Your answer is close! There may be a small numerical difference or a missing detail. Review the step-by-step solution to fine-tune your understanding.",
-      cls:     "almost"
-    },
-    wrong: {
-      icon:    "❌",
-      verdict: "Wrong Answer",
-      msg:     "Not quite right — but every mistake is a learning opportunity! Click View Solution to see the step-by-step explanation and try again.",
-      cls:     "wrong"
-    },
-    empty: {
-      icon:    "📝",
-      verdict: "Empty Answer",
-      msg:     "Please type your answer before submitting.",
-      cls:     "wrong"
-    }
+ 
+  var _FB = {
+    correct: { icon:'✅', verdict:'Correct!',       cls:'correct' },
+    almost:  { icon:'〰️', verdict:'Almost Correct', cls:'almost'  },
+    wrong:   { icon:'❌', verdict:'Wrong Answer',   cls:'wrong'   },
+    empty:   { icon:'❓', verdict:'No Answer',      cls:'wrong'   }
   };
-
-  function _showResult(verdict) {
-    var info    = _RESULTS[verdict] || _RESULTS['wrong'];
-    var result  = _el('ab-result');
-    var icon    = _el('ab-result-icon');
-    var verdEl  = _el('ab-result-verdict');
-    var msgEl   = _el('ab-result-msg');
-
-    if (!result || !icon || !verdEl || !msgEl) return;
-
-    /* Reset classes */
-    result.className  = '';
-    verdEl.className  = 'ab-result-verdict';
-    msgEl.className   = 'ab-result-msg';
-
-    icon.textContent    = info.icon;
-    verdEl.textContent  = info.verdict;
-    msgEl.textContent   = info.msg;
-
-    result.classList.add('show', info.cls);
-    verdEl.classList.add(info.cls);
-    msgEl.classList.add(info.cls);
-
-    /* Scroll result into view */
-    setTimeout(function() { result.scrollIntoView({ behavior:'smooth', block:'nearest' }); }, 50);
-  }
-
-  function openAnswerBox() {
-    var backdrop = _el('answerbox-backdrop'), panel = _el('answerbox-panel');
-    // BUG FIX: Added diagnostic warning so missing DOM is easy to spot in DevTools
-    if (!backdrop || !panel) {
-      console.warn('[QAnim AnswerBox] Panel DOM not found — check inject_answer_box_panel() order');
-      return;
+ 
+  function _showFeedback(verdict, insight){
+    var info = _FB[verdict] || _FB['wrong'];
+    var fb   = _el('ab-feedback');
+    var icon = _el('ab-feedback-icon');
+    var verd = _el('ab-feedback-verdict');
+    var ins  = _el('ab-insight-text');
+    if(!fb) return;
+    fb.className = 'show ' + info.cls;
+    if(icon) icon.textContent = info.icon;
+    if(verd) verd.textContent = info.verdict;
+    if(ins)  ins.textContent  = insight || 'Review the step-by-step solution for more detail.';
+    var ar = _el('ab-action-row');
+    if(ar) ar.className = 'ab-action-row show';
+    var ntb = _el('ab-next-target-btn');
+    var isLast = (_currentIdx >= _targets.length - 1);
+    if(ntb){
+      if((verdict === 'correct' || verdict === 'almost') && !isLast){
+        ntb.style.display = '';
+        ntb.textContent   = 'Next \u2192';
+      } else {
+        ntb.style.display = 'none';
+      }
     }
-    backdrop.classList.add('open');
-    backdrop.setAttribute('aria-hidden','false');
-    panel.classList.add('open');
-    panel.setAttribute('aria-hidden','false');
-    abOpen = true;
-    setTimeout(function() { var inp = _el('ab-user-input'); if(inp) inp.focus(); }, 200);
+    if(verdict === 'correct' && !isLast){
+      setTimeout(function(){ _advanceTarget(); }, 1400);
+    }
+    if(verdict === 'correct' && isLast){
+      setTimeout(function(){
+        var adc = _el('ab-alldone-card');
+        if(adc) adc.className = 'show';
+        var sb = _el('ab-submit-btn');
+        if(sb) sb.style.display = 'none';
+        var ntb2 = _el('ab-next-target-btn');
+        if(ntb2) ntb2.style.display = 'none';
+      }, 900);
+    }
   }
-
-  function closeAnswerBox() {
-    var backdrop = _el('answerbox-backdrop'), panel = _el('answerbox-panel');
-    if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
-    if (panel)    { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true'); }
+ 
+  function _advanceTarget(){
+    if(_currentIdx < _targets.length - 1){
+      _currentIdx++;
+      _renderTarget(_currentIdx);
+      var inp = _el('ab-user-input');
+      if(inp) inp.focus();
+    }
+  }
+ 
+  function openAnswerBox(){
+    _loadTargets();
+    _currentIdx = 0;
+    var backdrop = _el('answerbox-backdrop');
+    var panel    = _el('answerbox-panel');
+    if(!backdrop || !panel) return;
+    backdrop.classList.add('open'); backdrop.setAttribute('aria-hidden','false');
+    panel.classList.add('open');    panel.setAttribute('aria-hidden','false');
+    abOpen = true;
+    _renderTarget(_currentIdx);
+    setTimeout(function(){
+      var inp = _el('ab-user-input');
+      if(inp) inp.focus();
+    }, 220);
+  }
+ 
+  function closeAnswerBox(){
+    var backdrop = _el('answerbox-backdrop');
+    var panel    = _el('answerbox-panel');
+    if(backdrop){ backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
+    if(panel){    panel.classList.remove('open');    panel.setAttribute('aria-hidden','true');    }
     abOpen = false;
   }
-
-  /* BUG FIX: resetAnswerBox — called by the StepController whenever the user
-     moves to a new animation scene so stale input/feedback is cleared. */
-  function resetAnswerBox() {
-    var inp = _el('ab-user-input');
-    if (inp) inp.value = '';
-    var result = _el('ab-result');
-    if (result) result.className = '';
+ 
+  function resetAnswerBox(){
+    _loaded = false;
+    _targets = [];
+    _currentIdx = 0;
   }
-
+ 
   window.openAnswerBox  = openAnswerBox;
   window.closeAnswerBox = closeAnswerBox;
   window.resetAnswerBox = resetAnswerBox;
-
-  _onReady(function() {
-    /* BUG FIX: Wire answerbox-ctrl-btn. The button is injected by
-       inject_controls_bar() before this script runs, so it should exist
-       at DOMContentLoaded. The retry handles rare timing edge-cases. */
-    function wireControlsBtn() {
-      var abBtn = document.getElementById('answerbox-ctrl-btn');
-      if (abBtn) {
-        // Remove any stale onclick to prevent double-fire
-        abBtn.removeAttribute('onclick');
-        abBtn.addEventListener('click', function(e) {
+ 
+  _onReady(function(){
+    function wireCtrlBtn(){
+      var btn = document.getElementById('answerbox-ctrl-btn');
+      if(btn){
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click', function(e){
           e.stopPropagation();
           abOpen ? closeAnswerBox() : openAnswerBox();
         });
-      } else {
-        setTimeout(wireControlsBtn, 100);
-      }
+      } else { setTimeout(wireCtrlBtn, 100); }
     }
-    wireControlsBtn();
-
-    /* Close button */
+    wireCtrlBtn();
     var closeBtn = _el('ab-close-btn');
-    if (closeBtn) closeBtn.addEventListener('click', function(e) { e.stopPropagation(); closeAnswerBox(); });
-
-    /* Backdrop click */
+    if(closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeAnswerBox(); });
     var backdrop = _el('answerbox-backdrop');
-    if (backdrop) backdrop.addEventListener('click', function(e) { if (e.target === backdrop) closeAnswerBox(); });
-
-    document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && abOpen) closeAnswerBox(); });
-
-    /* Submit */
+    if(backdrop) backdrop.addEventListener('click', function(e){ if(e.target===backdrop) closeAnswerBox(); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && abOpen) closeAnswerBox(); });
     var submitBtn = _el('ab-submit-btn');
-    if (submitBtn) {
-      submitBtn.addEventListener('click', function() {
-        var inputEl   = _el('ab-user-input');
-        var userAns   = inputEl ? inputEl.value.trim() : '';
-        var correctAns = _loadCorrectAnswer();
-        var verdict   = _validate(userAns, correctAns);
-        _showResult(verdict);
-      });
-    }
-
-    /* Retry */
-    var retryBtn = _el('ab-retry-btn');
-    if (retryBtn) {
-      retryBtn.addEventListener('click', function() {
-        var inp = _el('ab-user-input');
-        if (inp) inp.value = '';
-        var result = _el('ab-result');
-        if (result) result.className = '';
-        if (inp) inp.focus();
-      });
-    }
-
-    /* Enter key in textarea does NOT submit (to allow multi-line input) */
-    /* Ctrl+Enter submits */
-    var inp2 = _el('ab-user-input');
-    if (inp2) {
-      inp2.addEventListener('keydown', function(e) {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-          e.preventDefault();
-          var sb = _el('ab-submit-btn');
-          if (sb) sb.click();
-        }
-      });
-    }
-
-    /* Escape closes */
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && abOpen) closeAnswerBox();
+    if(submitBtn) submitBtn.addEventListener('click', function(){
+      var inp     = _el('ab-user-input');
+      var userAns = inp ? inp.value.trim() : '';
+      var target  = _targets[_currentIdx] || {};
+      var verdict = _validate(userAns, target.value || '');
+      _showFeedback(verdict, target.insight || '');
+      if(inp) inp.disabled = true;
     });
+    var inp2 = _el('ab-user-input');
+    if(inp2) inp2.addEventListener('keydown', function(e){
+      if((e.ctrlKey || e.metaKey) && e.key==='Enter'){
+        e.preventDefault();
+        var sb = _el('ab-submit-btn');
+        if(sb) sb.click();
+      }
+    });
+    var retryBtn = _el('ab-retry-btn');
+    if(retryBtn) retryBtn.addEventListener('click', function(){
+      var inp = _el('ab-user-input');
+      if(inp){ inp.value=''; inp.disabled=false; inp.focus(); }
+      var fb = _el('ab-feedback');
+      if(fb) fb.className = '';
+      var ar = _el('ab-action-row');
+      if(ar) ar.className = 'ab-action-row';
+      var sb = _el('ab-submit-btn');
+      if(sb) sb.style.display = '';
+      var ntb = _el('ab-next-target-btn');
+      if(ntb) ntb.style.display = 'none';
+    });
+    var nextTargetBtn = _el('ab-next-target-btn');
+    if(nextTargetBtn) nextTargetBtn.addEventListener('click', function(){ _advanceTarget(); });
   });
 })();
 """
-
-
-def inject_answer_box_panel(html: str) -> str:
-    """Injects the Answer Box panel (DOM, CSS, JS) into animation HTML."""
+ 
+ 
+def inject_answer_box_panel(html, answer_targets=None):
+    html = re.sub(r'<style[^>]+id=["\']qanim-answerbox-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    if answer_targets:
+        try:
+            targets_tag = _build_answer_targets_tag(answer_targets)
+            if '</head>' in html:
+                html = html.replace('</head>', targets_tag + '\n</head>', 1)
+            else:
+                html = targets_tag + '\n' + html
+        except Exception as e:
+            QAnimLogger.warn("AnswerBoxInjector", f"Targets tag failed: {e}")
     try:
         if '</head>' in html:
             html = html.replace('</head>', _ANSWER_BOX_CSS + '\n</head>', 1)
     except Exception as e:
         QAnimLogger.warn("AnswerBoxInjector", f"CSS failed: {e}")
-
     try:
         body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
         if body_match:
@@ -2809,7 +1842,6 @@ def inject_answer_box_panel(html: str) -> str:
             html = html[:ins] + '\n' + _ANSWER_BOX_DOM + html[ins:]
     except Exception as e:
         QAnimLogger.warn("AnswerBoxInjector", f"DOM failed: {e}")
-
     try:
         ab_script = '<script>\n' + _ANSWER_BOX_JS + '\n</script>'
         if '</body>' in html:
@@ -2818,15 +1850,14 @@ def inject_answer_box_panel(html: str) -> str:
             html += '\n' + ab_script
     except Exception as e:
         QAnimLogger.warn("AnswerBoxInjector", f"JS failed: {e}")
-
-    QAnimLogger.ok("AnswerBoxInjector", "Answer box panel injected")
+    QAnimLogger.ok("AnswerBoxInjector", f"Answer box panel v11.1 injected ({len(answer_targets or [])} target(s))")
     return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 10 — Floating Controls Bar  (light theme, all 4 buttons)
-# ══════════════════════════════════════════════════════════════════════
-
+ 
+ 
+# ===========================================================================
+#  MODULE 10 -- Floating Controls Bar  (v11.5 -- Prev/Next in bar)
+# ===========================================================================
+ 
 _CONTROLS_BAR_CSS = """
 <style id="qanim-controls-bar-styles">
 #qanim-controls-bar {
@@ -2838,207 +1869,269 @@ _CONTROLS_BAR_CSS = """
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.97);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  padding: 8px 12px;
-  box-shadow: 0 4px 28px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid transparent;
+  border-radius: 16px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 36px rgba(124, 58, 237, 0.18),
+              0 2px 8px rgba(0, 0, 0, 0.08);
   white-space: nowrap;
+  background-clip: padding-box;
+  outline: 2.5px solid transparent;
+  outline-offset: -1px;
+}
+#qanim-controls-bar::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 18px;
+  background: linear-gradient(90deg, #7c3aed, #db2777, #f59e0b, #7c3aed);
+  background-size: 200% 100%;
+  animation: qanim-bar-glow 4s linear infinite;
+  z-index: -1;
+}
+@keyframes qanim-bar-glow {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
 }
 .qanim-ctrl-btn {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 7px 14px;
-  border-radius: 9px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
+  padding: 8px 15px;
+  border-radius: 10px;
+  border: 1.5px solid #e2e8f0;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   color: #334155;
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s, box-shadow 0.15s;
   user-select: none;
+  letter-spacing: 0.2px;
 }
 .qanim-ctrl-btn:hover {
-  background: #ede9fe;
+  background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%);
   border-color: #7c3aed;
   color: #6d28d9;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.22);
 }
-.qanim-ctrl-btn:active { transform: translateY(0); }
+.qanim-ctrl-btn:active { transform: translateY(0); box-shadow: none; }
+/* ── Prev/Next nav buttons inside bar ── */
+#ctrl-prevbtn,
+#ctrl-nextbtn {
+  background: linear-gradient(135deg, #ede9fe 0%, #e0d9fb 100%);
+  border-color: #7c3aed;
+  color: #6d28d9;
+  font-size: 13px;
+  padding: 8px 18px;
+}
+#ctrl-prevbtn:hover,
+#ctrl-nextbtn:hover {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+  color: #ffffff;
+  border-color: #5b21b6;
+}
+#ctrl-prevbtn:disabled,
+#ctrl-nextbtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
 .qanim-ctrl-sep {
-  width: 1px; height: 22px; background: #e2e8f0; flex-shrink: 0;
+  width: 1px;
+  height: 22px;
+  background: linear-gradient(to bottom, transparent, #c4b5fd, transparent);
+  flex-shrink: 0;
 }
-@media (max-width: 520px) {
-  #qanim-controls-bar { bottom: 10px; padding: 6px 8px; gap: 4px; }
-  .qanim-ctrl-btn { padding: 6px 10px; font-size: 11px; }
+@media (max-width: 600px) {
+  #qanim-controls-bar { bottom: 10px; padding: 7px 8px; gap: 3px; }
+  .qanim-ctrl-btn { padding: 7px 10px; font-size: 11px; }
   .qanim-ctrl-btn .ctrl-label { display: none; }
+  #ctrl-prevbtn,#ctrl-nextbtn { padding: 7px 12px; font-size: 13px; }
+  #qanim-notes-btn { padding: 8px 12px; font-size: 12px; }
+  #qanim-notes-btn .notes-btn-emoji { font-size: 15px; }
 }
 </style>
 """
-
+ 
+# v11.5/v11.6: [◀ Prev] [Find] [Final Answer] [Answer Box] [Notes] [Voice*] [Next ▶]
+# * Voice is appended dynamically by inject_voice_assistant
 _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
+  <button class="qanim-ctrl-btn" id="ctrl-prevbtn" title="Previous scene" disabled>
+    <span>&#x25C4;</span><span class="ctrl-label">Prev</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="tofind-btn" data-tofind-btn title="What to find">
-    <span>🔍</span><span class="ctrl-label">Find</span>
+    <span>&#x1F50D;</span><span class="ctrl-label">Find</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="quiz-ctrl-btn" title="Take the quiz">
-    <span>📝</span><span class="ctrl-label">Quiz</span>
+  <button class="qanim-ctrl-btn" id="fa-ctrl-btn" title="View final answer">
+    <span>&#x2705;</span><span class="ctrl-label">Final Answer</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <!-- BUG FIX: Removed inline onclick from sol-ctrl-btn; it is now wired via
-       addEventListener in SOLUTION_JS_MODULE to avoid double-fire and ensure
-       window.openSolution is guaranteed to exist before binding. -->
-  <button class="qanim-ctrl-btn" id="sol-ctrl-btn" title="View step-by-step solution">
-    <span>💡</span><span class="ctrl-label">View Solution</span>
-  </button>
-  <div class="qanim-ctrl-sep"></div>
-  <!-- BUG FIX: answerbox-ctrl-btn is wired in _ANSWER_BOX_JS via wireControlsBtn() -->
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
-    <span>✏️</span><span class="ctrl-label">Answer Box</span>
+    <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
+  <button id="qanim-notes-btn" aria-label="Open notes" title="My Notes">
+    <span class="notes-btn-emoji">&#x1F4D3;</span><span>Notes</span>
+  </button>
+  <div class="qanim-ctrl-sep" id="ctrl-next-sep"></div>
+  <button class="qanim-ctrl-btn" id="ctrl-nextbtn" title="Next scene">
+    <span>&#x25BA;</span><span class="ctrl-label">Next</span>
   </button>
 </div>
 """
-
-
-def inject_controls_bar(html: str) -> str:
-    """Injects the unified floating controls bar into animation HTML."""
+ 
+ 
+def inject_controls_bar(html):
     try:
         if '</head>' in html:
             html = html.replace('</head>', _CONTROLS_BAR_CSS + '\n</head>', 1)
     except Exception as e:
         QAnimLogger.warn("ControlsBar", f"CSS failed: {e}")
-
     try:
         if '</body>' in html:
             html = html.replace('</body>', _CONTROLS_BAR_DOM + '\n</body>', 1)
         else:
             html += '\n' + _CONTROLS_BAR_DOM
-        QAnimLogger.ok("ControlsBar", "Controls bar injected (Find / Quiz / View Solution / Answer Box)")
+        QAnimLogger.ok("ControlsBar", "Controls bar injected (v11.5/v11.6 -- Prev/Next in bar)")
     except Exception as e:
         QAnimLogger.warn("ControlsBar", f"DOM failed: {e}")
-
     return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 11 — Notes System  (Light Theme)
-# ══════════════════════════════════════════════════════════════════════
-
+ 
+ 
+# ===========================================================================
+#  MODULE 11 -- Notes System
+# ===========================================================================
+ 
 _NOTES_CSS = """
 <style id="qanim-notes-styles">
 #qanim-notes-btn {
-  position: fixed; top: 14px; right: 16px; z-index: 6900;
-  display: flex; align-items: center; gap: 6px; padding: 7px 13px 7px 9px;
-  border-radius: 9px; border: 1px solid #e2e8f0; background: #ffffff;
-  color: #64748b; font-family: -apple-system,'Segoe UI',Arial,sans-serif;
-  font-size: 12px; font-weight: 600; cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 20px;
+  border-radius: 12px;
+  border: 2px solid #f59e0b;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  color: #92400e;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 14px; font-weight: 800;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5);
+  animation: qanim-notes-pulse 2.8s ease-in-out infinite;
+  transition: background 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.14s;
 }
-#qanim-notes-btn:hover { background:#fefce8; border-color:#ca8a04; color:#92400e; }
-
+#qanim-notes-btn .notes-btn-emoji { font-size: 18px; line-height: 1; }
+@keyframes qanim-notes-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.45); }
+  50%      { box-shadow: 0 0 0 7px rgba(245,158,11,0); }
+}
+#qanim-notes-btn:hover {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border-color: #d97706; color: #78350f;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(245, 158, 11, 0.40);
+  animation: none;
+}
+#qanim-notes-btn:active { transform: translateY(0); box-shadow: none; animation: none; }
+#qanim-notes-btn.notes-open {
+  background: linear-gradient(135deg, #fde68a 0%, #fbbf24 100%);
+  border-color: #b45309; color: #78350f; animation: none;
+}
 #qanim-notes-panel {
-  position: fixed; top: 50px; right: 16px; z-index: 7200;
+  position: fixed; bottom: 80px; right: 16px; z-index: 7200;
   width: 340px; max-height: 80vh; border-radius: 14px;
   background: #ffffff; border: 1px solid #e2e8f0;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.10);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10);
   display: flex; flex-direction: column; overflow: hidden;
-  opacity: 0; transform: translateY(-8px) scale(0.97); pointer-events: none;
+  opacity: 0; transform: translateY(8px) scale(0.97); pointer-events: none;
   transition: opacity 0.22s ease, transform 0.22s ease;
 }
 #qanim-notes-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
-
 #qanim-notes-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px; background: #fffbeb; border-bottom: 1px solid #fef3c7;
-  cursor: grab; flex-shrink: 0;
+  padding: 10px 14px; background: #fffbeb; border-bottom: 1px solid #fef3c7; cursor: grab; flex-shrink: 0;
 }
-#qanim-notes-header:active { cursor: grabbing; }
-.notes-header-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; font-weight:700; color:#92400e; }
+.notes-header-title { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: 700; color: #92400e; }
 .notes-hdr-btn {
-  width:24px; height:24px; border-radius:6px; border:1px solid #fde68a;
-  background:rgba(255,255,255,0.6); color:#92400e; font-size:12px;
-  display:flex; align-items:center; justify-content:center; cursor:pointer;
+  width: 24px; height: 24px; border-radius: 6px; border: 1px solid #fde68a;
+  background: rgba(255,255,255,0.6); color: #92400e; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.notes-hdr-btn:hover { background:#fef3c7; }
-
-#qanim-notes-tabs { display:flex; border-bottom:1px solid #f1f5f9; flex-shrink:0; }
+.notes-hdr-btn:hover { background: #fef3c7; }
+#qanim-notes-tabs { display: flex; border-bottom: 1px solid #f1f5f9; flex-shrink: 0; }
 .notes-tab {
-  flex:1; padding:7px 0; text-align:center;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:11px; font-weight:600; color:#94a3b8; cursor:pointer;
-  border-bottom:2px solid transparent; transition:color 0.15s,border-color 0.15s;
-  text-transform:uppercase; letter-spacing:0.5px;
+  flex: 1; padding: 7px 0; text-align: center;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11px; font-weight: 600; color: #94a3b8; cursor: pointer;
+  border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s;
+  text-transform: uppercase; letter-spacing: 0.5px;
 }
-.notes-tab.active { color:#f59e0b; border-bottom-color:#f59e0b; }
-
+.notes-tab.active { color: #f59e0b; border-bottom-color: #f59e0b; }
 #qanim-canvas-toolbar {
-  display:flex; align-items:center; gap:5px; padding:6px 10px;
-  background:#f8fafc; border-bottom:1px solid #f1f5f9; flex-shrink:0; flex-wrap:wrap;
+  display: flex; align-items: center; gap: 5px; padding: 6px 10px;
+  background: #f8fafc; border-bottom: 1px solid #f1f5f9; flex-shrink: 0; flex-wrap: wrap;
 }
 .canvas-tool-btn {
-  padding:3px 9px; border-radius:5px; border:1px solid #e2e8f0;
-  background:#ffffff; color:#64748b; font-size:11px; font-weight:600; cursor:pointer;
+  padding: 3px 9px; border-radius: 5px; border: 1px solid #e2e8f0;
+  background: #ffffff; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer;
 }
-.canvas-tool-btn.active { background:#fef3c7; border-color:#f59e0b; color:#92400e; }
+.canvas-tool-btn.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
 .color-dot {
-  width:16px; height:16px; border-radius:50%; cursor:pointer;
-  border:2px solid transparent; transition:transform 0.12s;
+  width: 16px; height: 16px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; transition: transform 0.12s;
 }
-.color-dot:hover { transform:scale(1.2); }
-.color-dot.selected { border-color:#1e293b; transform:scale(1.1); }
+.color-dot:hover   { transform: scale(1.2); }
+.color-dot.selected { border-color: #1e293b; transform: scale(1.1); }
 .size-btn {
-  width:20px; height:20px; border-radius:50%; border:1px solid #e2e8f0;
-  background:#ffffff; color:#64748b; font-size:10px; font-weight:700;
-  display:flex; align-items:center; justify-content:center; cursor:pointer;
+  width: 20px; height: 20px; border-radius: 50%; border: 1px solid #e2e8f0;
+  background: #ffffff; color: #64748b; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.size-btn.active { background:#fef3c7; border-color:#f59e0b; color:#92400e; }
-.tool-sep { width:1px; height:18px; background:#e2e8f0; flex-shrink:0; }
-
-#qanim-canvas-wrap { flex:1 1 auto; position:relative; overflow:hidden; min-height:180px; }
-#qanim-draw-canvas { display:block; width:100%; height:100%; cursor:crosshair; background:#fefce8; touch-action:none; }
-
-#qanim-text-pane { display:none; flex-direction:column; flex:1 1 auto; overflow:hidden; }
+.size-btn.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+.tool-sep { width: 1px; height: 18px; background: #e2e8f0; flex-shrink: 0; }
+#qanim-canvas-wrap { flex: 1 1 auto; position: relative; overflow: hidden; min-height: 180px; }
+#qanim-draw-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; background: #fefce8; touch-action: none; }
+#qanim-text-pane { display: none; flex-direction: column; flex: 1 1 auto; overflow: hidden; }
 #qanim-notes-textarea {
-  flex:1 1 auto; width:100%; min-height:180px; resize:none; box-sizing:border-box;
-  background:#f8fafc; border:none; outline:none;
-  color:#1e293b; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13px; line-height:1.7; padding:12px 14px;
+  flex: 1 1 auto; width: 100%; min-height: 180px; resize: none; box-sizing: border-box;
+  background: #f8fafc; border: none; outline: none; color: #1e293b;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 13px; line-height: 1.7; padding: 12px 14px;
 }
-#qanim-notes-textarea::placeholder { color:#cbd5e1; }
-
+#qanim-notes-textarea::placeholder { color: #cbd5e1; }
 #qanim-notes-footer {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:6px 12px; border-top:1px solid #f1f5f9; flex-shrink:0; background:#f8fafc;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; border-top: 1px solid #f1f5f9; flex-shrink: 0; background: #f8fafc;
 }
-.notes-status { font-size:10px; color:#94a3b8; font-family:-apple-system,'Segoe UI',Arial,sans-serif; }
+.notes-status { font-size: 10px; color: #94a3b8; font-family: -apple-system, 'Segoe UI', Arial, sans-serif; }
 .notes-action-btn {
-  padding:3px 10px; border-radius:5px; border:1px solid #e2e8f0;
-  background:#ffffff; color:#64748b; font-size:10px; font-weight:600; cursor:pointer;
+  padding: 3px 10px; border-radius: 5px; border: 1px solid #e2e8f0;
+  background: #ffffff; color: #64748b; font-size: 10px; font-weight: 600; cursor: pointer;
 }
-.notes-action-btn:hover { background:#ede9fe; border-color:#7c3aed; color:#7c3aed; }
+.notes-action-btn:hover { background: #ede9fe; border-color: #7c3aed; color: #7c3aed; }
 </style>
 """
-
+ 
 _NOTES_DOM = """
-<button id="qanim-notes-btn" aria-label="Open notes">📝 Notes</button>
 <div id="qanim-notes-panel" role="dialog" aria-label="Notes" aria-hidden="true">
   <div id="qanim-notes-header">
-    <div class="notes-header-title">✏️ My Notes</div>
+    <div class="notes-header-title">&#x270F;&#xFE0F; My Notes</div>
     <div style="display:flex;gap:4px">
-      <button class="notes-hdr-btn" id="notes-minimize-btn" title="Minimize">—</button>
-      <button class="notes-hdr-btn" id="notes-close-btn" title="Close">✕</button>
+      <button class="notes-hdr-btn" id="notes-minimize-btn" title="Minimize">&mdash;</button>
+      <button class="notes-hdr-btn" id="notes-close-btn" title="Close">&#x2715;</button>
     </div>
   </div>
   <div id="qanim-notes-tabs">
-    <div class="notes-tab active" data-tab="canvas">🖊 Draw</div>
-    <div class="notes-tab" data-tab="text">📄 Text</div>
+    <div class="notes-tab active" data-tab="canvas">Draw</div>
+    <div class="notes-tab" data-tab="text">Text</div>
   </div>
   <div id="qanim-canvas-toolbar">
     <button class="canvas-tool-btn active" data-tool="pen">Pen</button>
@@ -3054,14 +2147,12 @@ _NOTES_DOM = """
     <button class="size-btn active" data-size="4">M</button>
     <button class="size-btn" data-size="7">L</button>
     <div class="tool-sep"></div>
-    <button class="canvas-tool-btn" id="notes-undo-btn">↩</button>
-    <button class="canvas-tool-btn" id="notes-clear-btn">🗑</button>
+    <button class="canvas-tool-btn" id="notes-undo-btn">&#x21A9;</button>
+    <button class="canvas-tool-btn" id="notes-clear-btn">&#x1F5D1;</button>
   </div>
-  <div id="qanim-canvas-wrap">
-    <canvas id="qanim-draw-canvas"></canvas>
-  </div>
+  <div id="qanim-canvas-wrap"><canvas id="qanim-draw-canvas"></canvas></div>
   <div id="qanim-text-pane">
-    <textarea id="qanim-notes-textarea" placeholder="Type your notes here…" spellcheck="false"></textarea>
+    <textarea id="qanim-notes-textarea" placeholder="Type your notes here..." spellcheck="false"></textarea>
   </div>
   <div id="qanim-notes-footer">
     <span class="notes-status" id="notes-char-count">0 chars</span>
@@ -3069,164 +2160,66 @@ _NOTES_DOM = """
   </div>
 </div>
 """
-
+ 
 _NOTES_JS = r"""
-(function initNotesSystem() {
+(function initNotesSystem(){
   'use strict';
-  var isOpen=false, isMin=false, isDrag=false, isDrawing=false;
-  var currentTool='pen', currentColor='#1e293b', currentSize=4, currentTab='canvas';
-  var undoStack=[], redoStack=[], MAX_UNDO=30;
-  var dragOffX=0, dragOffY=0, autoSaveTimer=null;
-  var ctx=null, canvas=null;
-
-  function _el(id){ return document.getElementById(id); }
-  function _onReady(fn){
-    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn);
-    else setTimeout(fn,0);
-  }
-  function _storage(){
-    try{ return window.localStorage; }
-    catch(e){ if(!window._qnotes) window._qnotes={}; return {getItem:function(k){return window._qnotes[k]||null;},setItem:function(k,v){window._qnotes[k]=v;}}; }
-  }
-
-  function _saveNotes(){
-    try{
-      var canvasData=canvas?canvas.toDataURL():'';
-      var textData=_el('qanim-notes-textarea')?_el('qanim-notes-textarea').value:'';
-      _storage().setItem('qanim_notes_v10',JSON.stringify({canvas:canvasData,text:textData}));
-      var stat=_el('notes-char-count');
-      if(stat) stat.textContent='Saved';
-    }catch(e){}
-  }
-  function _loadNotes(){
-    try{
-      var raw=_storage().getItem('qanim_notes_v10');
-      if(!raw) return;
-      var p=JSON.parse(raw);
-      var ta=_el('qanim-notes-textarea');
-      if(ta&&p.text) ta.value=p.text;
-      if(canvas&&p.canvas&&p.canvas.startsWith('data:')){
-        var img=new Image();
-        img.onload=function(){ ctx.drawImage(img,0,0); };
-        img.src=p.canvas;
-      }
-    }catch(e){}
-  }
-  function _scheduleAutoSave(){
-    if(autoSaveTimer) clearTimeout(autoSaveTimer);
-    autoSaveTimer=setTimeout(_saveNotes,1500);
-  }
-  function _initCanvas(){
-    canvas=_el('qanim-draw-canvas');
-    if(!canvas) return;
-    ctx=canvas.getContext('2d');
-    _resizeCanvas();
-    ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.strokeStyle=currentColor; ctx.lineWidth=currentSize;
-    _loadNotes();
-  }
-  function _resizeCanvas(){
-    if(!canvas) return;
-    var wrap=_el('qanim-canvas-wrap');
-    var w=wrap?wrap.clientWidth:320, h=wrap?wrap.clientHeight:200;
-    var imgData=null;
-    if(ctx&&canvas.width>0&&canvas.height>0){ try{imgData=ctx.getImageData(0,0,canvas.width,canvas.height);}catch(e){} }
-    canvas.width=w; canvas.height=h;
-    ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.strokeStyle=currentColor; ctx.lineWidth=currentSize;
-    if(imgData){ try{ctx.putImageData(imgData,0,0);}catch(e){} }
-  }
-  function _saveUndo(){ if(!canvas) return; if(undoStack.length>=MAX_UNDO) undoStack.shift(); undoStack.push(canvas.toDataURL()); redoStack=[]; }
-  function _undo(){
-    if(!canvas||undoStack.length===0) return;
-    redoStack.push(canvas.toDataURL());
-    var prev=undoStack.pop();
-    if(prev){ var img=new Image(); img.onload=function(){ ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0); }; img.src=prev; }
-    else ctx.clearRect(0,0,canvas.width,canvas.height);
-  }
-  function _getPos(e,cvs){
-    var rect=cvs.getBoundingClientRect();
-    var sx=cvs.width/rect.width, sy=cvs.height/rect.height;
-    var cx=e.touches?e.touches[0].clientX:e.clientX;
-    var cy=e.touches?e.touches[0].clientY:e.clientY;
-    return{x:(cx-rect.left)*sx,y:(cy-rect.top)*sy};
-  }
-  function _startDraw(e){
-    if(!canvas||currentTab!=='canvas') return;
-    e.preventDefault(); _saveUndo(); isDrawing=true;
-    var pos=_getPos(e,canvas); ctx.beginPath(); ctx.moveTo(pos.x,pos.y);
-    if(currentTool==='eraser'){ ctx.globalCompositeOperation='destination-out'; ctx.lineWidth=currentSize*4; }
-    else{ ctx.globalCompositeOperation='source-over'; ctx.strokeStyle=currentColor; ctx.lineWidth=currentSize; }
-  }
-  function _draw(e){
-    if(!isDrawing||!canvas) return; e.preventDefault();
-    var pos=_getPos(e,canvas); ctx.lineTo(pos.x,pos.y); ctx.stroke();
-  }
-  function _endDraw(){ if(!isDrawing) return; isDrawing=false; if(ctx) ctx.globalCompositeOperation='source-over'; _scheduleAutoSave(); }
-  function openNotes(){
-    var panel=_el('qanim-notes-panel');
-    if(!panel) return;
-    panel.classList.add('open'); panel.setAttribute('aria-hidden','false'); isOpen=true;
-    setTimeout(function(){ _resizeCanvas(); },50);
-  }
-  function closeNotes(){
-    var panel=_el('qanim-notes-panel');
-    if(panel){ panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
-    isOpen=false; _saveNotes();
-  }
-  function _switchTab(t){
-    currentTab=t;
-    document.querySelectorAll('.notes-tab').forEach(function(tb){ tb.classList.toggle('active',tb.dataset.tab===t); });
-    var ct=_el('qanim-canvas-toolbar'), cw=_el('qanim-canvas-wrap'), tp=_el('qanim-text-pane');
-    if(ct) ct.style.display=t==='canvas'?'flex':'none';
-    if(cw) cw.style.display=t==='canvas'?'block':'none';
-    if(tp) tp.style.display=t==='text'?'flex':'none';
-    if(t==='canvas') setTimeout(_resizeCanvas,30);
-  }
-
+  var isOpen=false,isMin=false,isDrag=false,isDrawing=false;
+  var currentTool='pen',currentColor='#1e293b',currentSize=4,currentTab='canvas';
+  var undoStack=[],MAX_UNDO=30;
+  var autoSaveTimer=null;
+  var ctx=null,canvas=null;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _storage(){try{return window.localStorage;}catch(e){if(!window._qnotes)window._qnotes={};return{getItem:function(k){return window._qnotes[k]||null;},setItem:function(k,v){window._qnotes[k]=v;}};}}
+  function _saveNotes(){try{var canvasData=canvas?canvas.toDataURL():'';var textData=_el('qanim-notes-textarea')?_el('qanim-notes-textarea').value:'';_storage().setItem('qanim_notes_v11',JSON.stringify({canvas:canvasData,text:textData}));var stat=_el('notes-char-count');if(stat)stat.textContent='Saved';}catch(e){}}
+  function _loadNotes(){try{var raw=_storage().getItem('qanim_notes_v11');if(!raw)return;var p=JSON.parse(raw);var ta=_el('qanim-notes-textarea');if(ta&&p.text)ta.value=p.text;if(canvas&&p.canvas&&p.canvas.startsWith('data:')){var img=new Image();img.onload=function(){ctx.drawImage(img,0,0);};img.src=p.canvas;}}catch(e){}}
+  function _scheduleAutoSave(){if(autoSaveTimer)clearTimeout(autoSaveTimer);autoSaveTimer=setTimeout(_saveNotes,1500);}
+  function _initCanvas(){canvas=_el('qanim-draw-canvas');if(!canvas)return;ctx=canvas.getContext('2d');_resizeCanvas();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=currentColor;ctx.lineWidth=currentSize;_loadNotes();}
+  function _resizeCanvas(){if(!canvas)return;var wrap=_el('qanim-canvas-wrap');var w=wrap?wrap.clientWidth:320,h=wrap?wrap.clientHeight:200;var imgData=null;if(ctx&&canvas.width>0&&canvas.height>0){try{imgData=ctx.getImageData(0,0,canvas.width,canvas.height);}catch(e){}}canvas.width=w;canvas.height=h;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=currentColor;ctx.lineWidth=currentSize;if(imgData){try{ctx.putImageData(imgData,0,0);}catch(e){}}}
+  function _saveUndo(){if(!canvas)return;if(undoStack.length>=MAX_UNDO)undoStack.shift();undoStack.push(canvas.toDataURL());}
+  function _undo(){if(!canvas||undoStack.length===0)return;var prev=undoStack.pop();if(prev){var img=new Image();img.onload=function(){ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);};img.src=prev;}else ctx.clearRect(0,0,canvas.width,canvas.height);}
+  function _getPos(e,cvs){var rect=cvs.getBoundingClientRect();var sx=cvs.width/rect.width,sy=cvs.height/rect.height;var cx=e.touches?e.touches[0].clientX:e.clientX;var cy=e.touches?e.touches[0].clientY:e.clientY;return{x:(cx-rect.left)*sx,y:(cy-rect.top)*sy};}
+  function _startDraw(e){if(!canvas||currentTab!=='canvas')return;e.preventDefault();_saveUndo();isDrawing=true;var pos=_getPos(e,canvas);ctx.beginPath();ctx.moveTo(pos.x,pos.y);if(currentTool==='eraser'){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=currentSize*4;}else{ctx.globalCompositeOperation='source-over';ctx.strokeStyle=currentColor;ctx.lineWidth=currentSize;}}
+  function _draw(e){if(!isDrawing||!canvas)return;e.preventDefault();var pos=_getPos(e,canvas);ctx.lineTo(pos.x,pos.y);ctx.stroke();}
+  function _endDraw(){if(!isDrawing)return;isDrawing=false;if(ctx)ctx.globalCompositeOperation='source-over';_scheduleAutoSave();}
+  function openNotes(){var panel=_el('qanim-notes-panel');if(!panel)return;panel.classList.add('open');panel.setAttribute('aria-hidden','false');isOpen=true;var btn=_el('qanim-notes-btn');if(btn)btn.classList.add('notes-open');setTimeout(function(){_resizeCanvas();},50);}
+  function closeNotes(){var panel=_el('qanim-notes-panel');if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}isOpen=false;var btn=_el('qanim-notes-btn');if(btn)btn.classList.remove('notes-open');_saveNotes();}
+  function _switchTab(t){currentTab=t;document.querySelectorAll('.notes-tab').forEach(function(tb){tb.classList.toggle('active',tb.dataset.tab===t);});var ct=_el('qanim-canvas-toolbar'),cw=_el('qanim-canvas-wrap'),tp=_el('qanim-text-pane');if(ct)ct.style.display=t==='canvas'?'flex':'none';if(cw)cw.style.display=t==='canvas'?'block':'none';if(tp)tp.style.display=t==='text'?'flex':'none';if(t==='canvas')setTimeout(_resizeCanvas,30);}
   _onReady(function(){
-    var nb=_el('qanim-notes-btn');
-    if(nb) nb.addEventListener('click',function(){ isOpen?closeNotes():openNotes(); });
-    var cb=_el('notes-close-btn'); if(cb) cb.addEventListener('click',closeNotes);
-    var mb=_el('notes-minimize-btn');
-    if(mb) mb.addEventListener('click',function(e){ e.stopPropagation(); isMin=!isMin; var p=_el('qanim-notes-panel'); if(p) p.style.maxHeight=isMin?'44px':'80vh'; mb.textContent=isMin?'□':'—'; });
-    document.querySelectorAll('.notes-tab').forEach(function(t){ t.addEventListener('click',function(){ _switchTab(this.dataset.tab); }); });
-    document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(b){ b.addEventListener('click',function(){ currentTool=this.dataset.tool; document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(x){ x.classList.remove('active'); }); this.classList.add('active'); }); });
-    document.querySelectorAll('.color-dot').forEach(function(d){ d.addEventListener('click',function(){ currentColor=this.dataset.color; document.querySelectorAll('.color-dot').forEach(function(x){ x.classList.remove('selected'); }); this.classList.add('selected'); if(ctx) ctx.strokeStyle=currentColor; currentTool='pen'; document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(b){ b.classList.toggle('active',b.dataset.tool==='pen'); }); }); });
-    document.querySelectorAll('.size-btn').forEach(function(b){ b.addEventListener('click',function(){ currentSize=parseInt(this.dataset.size,10); document.querySelectorAll('.size-btn').forEach(function(x){ x.classList.remove('active'); }); this.classList.add('active'); if(ctx) ctx.lineWidth=currentSize; }); });
-    var ub=_el('notes-undo-btn'); if(ub) ub.addEventListener('click',_undo);
-    var clrb=_el('notes-clear-btn'); if(clrb) clrb.addEventListener('click',function(){ if(!canvas) return; _saveUndo(); ctx.clearRect(0,0,canvas.width,canvas.height); _scheduleAutoSave(); });
-    var etb=_el('notes-export-text-btn'); if(etb) etb.addEventListener('click',function(){ var ta=_el('qanim-notes-textarea'); if(!ta||!ta.value) return; var blob=new Blob([ta.value],{type:'text/plain'}); var a=document.createElement('a'); a.download='qanim_notes.txt'; a.href=URL.createObjectURL(blob); a.click(); });
-    var ta=_el('qanim-notes-textarea'); if(ta) ta.addEventListener('input',function(){ var c=_el('notes-char-count'); if(c) c.textContent=ta.value.length+' chars'; _scheduleAutoSave(); });
+    var nb=_el('qanim-notes-btn');if(nb)nb.addEventListener('click',function(){isOpen?closeNotes():openNotes();});
+    var cb=_el('notes-close-btn');if(cb)cb.addEventListener('click',closeNotes);
+    var mb=_el('notes-minimize-btn');if(mb)mb.addEventListener('click',function(e){e.stopPropagation();isMin=!isMin;var p=_el('qanim-notes-panel');if(p)p.style.maxHeight=isMin?'44px':'80vh';mb.textContent=isMin?'[]':'--';});
+    document.querySelectorAll('.notes-tab').forEach(function(t){t.addEventListener('click',function(){_switchTab(this.dataset.tab);});});
+    document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(b){b.addEventListener('click',function(){currentTool=this.dataset.tool;document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(x){x.classList.remove('active');});this.classList.add('active');});});
+    document.querySelectorAll('.color-dot').forEach(function(d){d.addEventListener('click',function(){currentColor=this.dataset.color;document.querySelectorAll('.color-dot').forEach(function(x){x.classList.remove('selected');});this.classList.add('selected');if(ctx)ctx.strokeStyle=currentColor;currentTool='pen';document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(b){b.classList.toggle('active',b.dataset.tool==='pen');});});});
+    document.querySelectorAll('.size-btn').forEach(function(b){b.addEventListener('click',function(){currentSize=parseInt(this.dataset.size,10);document.querySelectorAll('.size-btn').forEach(function(x){x.classList.remove('active');});this.classList.add('active');if(ctx)ctx.lineWidth=currentSize;});});
+    var ub=_el('notes-undo-btn');if(ub)ub.addEventListener('click',_undo);
+    var clrb=_el('notes-clear-btn');if(clrb)clrb.addEventListener('click',function(){if(!canvas)return;_saveUndo();ctx.clearRect(0,0,canvas.width,canvas.height);_scheduleAutoSave();});
+    var etb=_el('notes-export-text-btn');if(etb)etb.addEventListener('click',function(){var ta=_el('qanim-notes-textarea');if(!ta||!ta.value)return;var blob=new Blob([ta.value],{type:'text/plain'});var a=document.createElement('a');a.download='qanim_notes.txt';a.href=URL.createObjectURL(blob);a.click();});
+    var ta=_el('qanim-notes-textarea');if(ta)ta.addEventListener('input',function(){var c=_el('notes-char-count');if(c)c.textContent=ta.value.length+' chars';_scheduleAutoSave();});
     var cvs=_el('qanim-draw-canvas');
-    if(cvs){
-      cvs.addEventListener('mousedown',_startDraw); cvs.addEventListener('mousemove',_draw);
-      cvs.addEventListener('mouseup',_endDraw); cvs.addEventListener('mouseleave',_endDraw);
-      cvs.addEventListener('touchstart',_startDraw,{passive:false}); cvs.addEventListener('touchmove',_draw,{passive:false}); cvs.addEventListener('touchend',_endDraw);
-    }
-    if(window.ResizeObserver){ var obs=new ResizeObserver(function(){ if(isOpen&&currentTab==='canvas') _resizeCanvas(); }); var wr=_el('qanim-canvas-wrap'); if(wr) obs.observe(wr); }
+    if(cvs){cvs.addEventListener('mousedown',_startDraw);cvs.addEventListener('mousemove',_draw);cvs.addEventListener('mouseup',_endDraw);cvs.addEventListener('mouseleave',_endDraw);cvs.addEventListener('touchstart',_startDraw,{passive:false});cvs.addEventListener('touchmove',_draw,{passive:false});cvs.addEventListener('touchend',_endDraw);}
+    if(window.ResizeObserver){var obs=new ResizeObserver(function(){if(isOpen&&currentTab==='canvas')_resizeCanvas();});var wr=_el('qanim-canvas-wrap');if(wr)obs.observe(wr);}
     _initCanvas();
   });
 })();
 """
-
-
-def inject_notes_system(html: str, question: str = "") -> str:
-    """Injects the floating Notes whiteboard into animation HTML. Light theme."""
+ 
+ 
+def inject_notes_system(html, question=""):
     try:
         if '</head>' in html:
             html = html.replace('</head>', _NOTES_CSS + '\n</head>', 1)
     except Exception as e:
         QAnimLogger.warn("NotesInjector", f"CSS failed: {e}")
-
     try:
         body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
         if body_match:
             ins = body_match.end()
             html = html[:ins] + '\n' + _NOTES_DOM + html[ins:]
     except Exception as e:
-        QAnimLogger.warn("NotesInjector", f"DOM failed: {e}")
-
+        QAnimLogger.warn("NotesInjector", f"DOM insertion failed: {e}")
     try:
         notes_script = '<script>\n' + _NOTES_JS + '\n</script>'
         if '</body>' in html:
@@ -3234,231 +2227,240 @@ def inject_notes_system(html: str, question: str = "") -> str:
         else:
             html += '\n' + notes_script
     except Exception as e:
-        QAnimLogger.warn("NotesInjector", f"JS failed: {e}")
-
-    QAnimLogger.ok("NotesInjector", "Notes whiteboard injected (light theme)")
+        QAnimLogger.warn("NotesInjector", f"JS module insertion failed: {e}")
+    QAnimLogger.ok("NotesInjector", "Notes whiteboard injected")
     return html
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 12 — StepController Patcher  (preserved from v9)
-# ══════════════════════════════════════════════════════════════════════
-
-_STEP_CONTROLLER_JS = r"""
-<script id="qanim-step-controller">
-/* QAnim Manual Step Controller v10.1
-   BUG FIX: If the AI omits #nextbtn/#prevbtn, we now create minimal fallback
-   nav buttons so the Next button always works.
-   BUG FIX: resetAnswerBox() is called on scene change so the answer input
-   clears when moving between animation steps.
-*/
-(function patchStepController() {
+ 
+ 
+# ===========================================================================
+#  MODULE 14 -- Voice Assistant System
+# ===========================================================================
+ 
+_VOICE_ASSISTANT_CSS = """
+<style id="qanim-voice-styles">
+#qanim-voice-btn {
+  display: flex; align-items: center; gap: 5px; padding: 8px 15px;
+  border-radius: 10px; border: 1.5px solid #e2e8f0;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  color: #334155; font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s, box-shadow 0.15s;
+  user-select: none; letter-spacing: 0.2px;
+}
+#qanim-voice-btn:hover {
+  background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%);
+  border-color: #7c3aed; color: #6d28d9;
+  transform: translateY(-2px); box-shadow: 0 4px 14px rgba(124, 58, 237, 0.22);
+}
+#qanim-voice-btn:active { transform: translateY(0); box-shadow: none; }
+#qanim-voice-btn.speaking { background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%); border-color: #7c3aed; color: #6d28d9; }
+#qanim-voice-btn.muted { color: #94a3b8; border-color: #e2e8f0; }
+@media (max-width: 600px) {
+  #qanim-voice-btn { padding: 7px 11px; font-size: 11px; }
+  #qanim-voice-btn .ctrl-label { display: none; }
+}
+</style>
+"""
+ 
+_VOICE_ASSISTANT_JS = r"""
+<script id="qanim-voice-assistant">
+(function initVoiceAssistant(){
   'use strict';
-  window.addEventListener('load', function() {
-    try {
-      var nextBtn = document.getElementById('nextbtn');
-      var prevBtn = document.getElementById('prevbtn');
-
-      /* BUG FIX: If AI omitted nav buttons, create minimal fallback buttons so
-         the Next/Prev functionality is always available. */
-      if (!nextBtn) {
-        nextBtn = document.createElement('button');
-        nextBtn.id = 'nextbtn';
-        nextBtn.textContent = 'Next ▶';
-        nextBtn.style.cssText = (
-          'position:fixed;bottom:70px;right:20px;z-index:6500;'
-          +'padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;'
-          +'background:#7c3aed;color:#fff;font-size:13px;font-weight:700;'
-          +'cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.12);'
-        );
-        document.body.appendChild(nextBtn);
-        console.log('[QAnim SC] Created fallback #nextbtn — AI omitted it');
-      }
-      if (!prevBtn) {
-        prevBtn = document.createElement('button');
-        prevBtn.id = 'prevbtn';
-        prevBtn.textContent = '◀ Prev';
-        prevBtn.style.cssText = (
-          'position:fixed;bottom:70px;left:20px;z-index:6500;'
-          +'padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;'
-          +'background:#ffffff;color:#334155;font-size:13px;font-weight:700;'
-          +'cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.12);'
-        );
-        document.body.appendChild(prevBtn);
-        console.log('[QAnim SC] Created fallback #prevbtn — AI omitted it');
-      }
-
-      var scenes = [];
-      for (var i = 0; i < 20; i++) {
-        var s = document.getElementById('scene-' + i);
-        if (s) { scenes.push(s); } else if (i > 0) { break; }
-      }
-      if (scenes.length < 1) {
-        console.warn('[QAnim SC] No scene-N elements found — step controller inactive');
-        return;
-      }
-
-      var _sceneSnapshots = [];
-      for (var si = 0; si < scenes.length; si++) {
-        var scEl = scenes[si];
-        _sceneSnapshots.push({
-          display: scEl.style.display, opacity: scEl.style.opacity,
-          visibility: scEl.style.visibility, transform: scEl.style.transform,
-          transition: scEl.style.transition,
-          children: (function(root) {
-            var result = [], all = root.querySelectorAll('*');
-            for (var ci = 0; ci < all.length; ci++) {
-              result.push({ el: all[ci], opacity: all[ci].style.opacity,
-                transform: all[ci].style.transform, display: all[ci].style.display,
-                visibility: all[ci].style.visibility, transition: all[ci].style.transition });
-            }
-            return result;
-          })(scEl)
-        });
-      }
-
-      var _animFired = {};
-      var _aiShowScene = (typeof window.showScene === 'function') ? window.showScene : null;
-      var currentStep = 0;
-
-      function _resetScene(idx) {
-        var snap = _sceneSnapshots[idx];
-        if (!snap) return;
-        var scEl = scenes[idx];
-        scEl.style.transition = 'none'; scEl.style.opacity = snap.opacity;
-        scEl.style.display = snap.display !== '' ? snap.display : '';
-        scEl.style.visibility = snap.visibility !== '' ? snap.visibility : '';
-        scEl.style.transform = snap.transform !== '' ? snap.transform : '';
-        for (var ci = 0; ci < snap.children.length; ci++) {
-          var c = snap.children[ci];
-          c.el.style.transition = 'none'; c.el.style.opacity = c.opacity;
-          c.el.style.transform = c.transform; c.el.style.display = c.display;
-          c.el.style.visibility = c.visibility;
-        }
-        requestAnimationFrame(function() {
-          scEl.style.transition = '';
-          for (var ci2 = 0; ci2 < snap.children.length; ci2++) snap.children[ci2].el.style.transition = '';
-        });
-      }
-
-      function _fireAnim(idx) {
-        if (_animFired[idx]) return;
-        _animFired[idx] = true;
-        var fn = window['animateScene' + idx];
-        if (typeof fn === 'function') { try { fn(); } catch(e) {} return; }
-        if (_aiShowScene) { try { _aiShowScene(idx); } catch(e) {} }
-      }
-
-      function showScene(idx) {
-        if (idx < 0 || idx >= scenes.length) return;
-        currentStep = idx;
-        for (var j = 0; j < scenes.length; j++) {
-          if (j === idx) {
-            if (_animFired[j]) { delete _animFired[j]; _resetScene(j); }
-            (function(sceneEl) {
-              requestAnimationFrame(function() {
-                sceneEl.style.transition = 'opacity 0.35s ease';
-                sceneEl.style.opacity = '1';
-                sceneEl.style.display = sceneEl.style.display === 'none' ? '' : sceneEl.style.display;
-                sceneEl.style.visibility = 'visible'; sceneEl.style.pointerEvents = 'auto';
-              });
-            })(scenes[j]);
-          } else {
-            scenes[j].style.transition = 'opacity 0.35s ease';
-            scenes[j].style.opacity = '0'; scenes[j].style.pointerEvents = 'none';
-          }
-        }
-        _updateDots(); _updateNavBtns();
-        /* BUG FIX: Reset the answer box when switching scenes so stale
-           input/feedback from a previous step does not remain visible. */
-        if (typeof window.resetAnswerBox === 'function') window.resetAnswerBox();
-        (function(capturedIdx) {
-          requestAnimationFrame(function() { requestAnimationFrame(function() { _fireAnim(capturedIdx); }); });
-        })(idx);
-      }
-
-      function _updateDots() {
-        var dc = document.getElementById('dots');
-        if (!dc) return;
-        var ds = dc.querySelectorAll('.dot, circle');
-        if (!ds.length) ds = dc.children;
-        for (var k = 0; k < ds.length; k++) {
-          var active = (k === currentStep);
-          ds[k].style.opacity = active ? '1' : '0.35';
-          if (ds[k].classList) ds[k].classList.toggle('active', active);
-        }
-      }
-
-      function _updateNavBtns() {
-        if (prevBtn) {
-          if (currentStep === 0) { prevBtn.setAttribute('disabled','true'); prevBtn.style.opacity='0.3'; }
-          else { prevBtn.removeAttribute('disabled'); prevBtn.style.opacity='1'; }
-        }
-        if (nextBtn) {
-          if (currentStep === scenes.length - 1) { nextBtn.setAttribute('disabled','true'); nextBtn.style.opacity='0.3'; }
-          else { nextBtn.removeAttribute('disabled'); nextBtn.style.opacity='1'; }
-        }
-      }
-
-      /* BUG FIX: Clone buttons to strip any existing onclick handlers the AI
-         may have attached, then bind our own clean listener. */
-      var nb2 = nextBtn.cloneNode(true);
-      nextBtn.parentNode.replaceChild(nb2, nextBtn);
-      nextBtn = nb2;
-      if (prevBtn) {
-        var pb2 = prevBtn.cloneNode(true);
-        prevBtn.parentNode.replaceChild(pb2, prevBtn);
-        prevBtn = pb2;
-      }
-
-      nextBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        if (currentStep < scenes.length - 1) showScene(currentStep + 1);
-      });
-      if (prevBtn) prevBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        if (currentStep > 0) showScene(currentStep - 1);
-      });
-
-      /* Block auto-advance intervals so the user controls pacing */
-      var _ri = window.setInterval;
-      window.setInterval = function(fn, ms) {
-        var src = fn ? fn.toString() : '';
-        if (ms && ms < 8000 && (src.indexOf('showScene') !== -1 ||
-            src.indexOf('currentStep') !== -1 || src.indexOf('nextStep') !== -1)) {
-          console.log('[SC] Blocked auto-advance interval (' + ms + 'ms)');
-          return -1;
-        }
-        return _ri.apply(window, arguments);
-      };
-
-      showScene(0);
-      console.log('[QAnim SC v10.1] ' + scenes.length + ' scenes ready');
-    } catch(err) { console.error('[QAnim SC] Fatal:', err); }
-  });
+  var _muted=false,_synth=window.speechSynthesis||null,_supported=!!_synth,_btn=null;
+  var _lastSpokenIdx=-1,_speakTimer=null;
+  function _setText(icon,label){if(!_btn)return;_btn.innerHTML='<span>'+icon+'</span><span class="ctrl-label">'+label+'</span>';}
+  function _getSceneText(sceneEl){
+    if(!sceneEl)return'';
+    var dv=sceneEl.getAttribute('data-voice');if(dv&&dv.trim())return dv.trim();
+    var nodes=sceneEl.querySelectorAll('text, foreignObject, p, h1, h2, h3, h4, li');
+    var seen=Object.create(null),parts=[],total=0;
+    for(var i=0;i<nodes.length;i++){
+      var raw=(nodes[i].textContent||'').replace(/\s+/g,' ').trim();
+      if(raw.length<5)continue;if(/^[\d\s\+\-\=\.\,\(\)\[\]\{\}\/\*\^\%]+$/.test(raw))continue;
+      var key=raw.toLowerCase();if(seen[key])continue;seen[key]=true;
+      parts.push(raw);total+=raw.length;if(total>600)break;
+    }
+    return parts.join('. ').trim();
+  }
+  function _speak(text){
+    if(!_supported||_muted||!text)return;
+    try{
+      _synth.cancel();var u=new SpeechSynthesisUtterance(text);u.rate=0.90;u.pitch=1.0;u.volume=1.0;
+      var voices=_synth.getVoices();
+      for(var i=0;i<voices.length;i++){var v=voices[i];if(/en[-_]/i.test(v.lang)&&!/novelty|zira|hazel|espeak/i.test(v.name)){u.voice=v;break;}}
+      u.onstart=function(){if(_btn){_btn.classList.add('speaking');_setText('&#x1F50A;','Speaking');}};
+      u.onend=function(){if(_btn){_btn.classList.remove('speaking');_setText('&#x1F50A;','Voice');}};
+      u.onerror=function(){if(_btn){_btn.classList.remove('speaking');_setText('&#x1F50A;','Voice');}};
+      _synth.speak(u);
+    }catch(e){console.warn('[QAnim VA] speak error:',e);}
+  }
+  function _onSceneChange(idx){
+    if(!_supported||_muted)return;if(idx===_lastSpokenIdx)return;_lastSpokenIdx=idx;
+    clearTimeout(_speakTimer);_synth.cancel();
+    _speakTimer=setTimeout(function(){
+      var sceneEl=document.getElementById('scene-'+idx);
+      var text=_getSceneText(sceneEl);if(!text)text='Scene '+(idx+1)+'.';
+      _speak(text);
+    },450);
+  }
+  function _findVisibleSceneIdx(){
+    for(var i=0;i<20;i++){var s=document.getElementById('scene-'+i);if(!s)break;var op=parseFloat(s.style.opacity);if(op>0.5)return i;}return 0;
+  }
+  function _toggleMute(){
+    _muted=!_muted;
+    if(_muted){clearTimeout(_speakTimer);if(_synth)_synth.cancel();_btn.classList.add('muted');_btn.classList.remove('speaking');_setText('&#x1F507;','Muted');}
+    else{_btn.classList.remove('muted');_setText('&#x1F50A;','Voice');_lastSpokenIdx=-1;_onSceneChange(_findVisibleSceneIdx());}
+  }
+  function _attachListeners(){
+    document.addEventListener('qanim:sceneChange',function(e){if(e&&e.detail&&typeof e.detail.idx==='number')_onSceneChange(e.detail.idx);});
+    var _obDebounce=null,_obLastIdx=-1;
+    function _obCheck(){for(var i=0;i<20;i++){var s=document.getElementById('scene-'+i);if(!s)break;var op=parseFloat(s.style.opacity);if(op>0.7&&i!==_obLastIdx){_obLastIdx=i;if(i!==_lastSpokenIdx)_onSceneChange(i);return;}}}
+    var root=document.querySelector('svg')||document.body;
+    var obs=new MutationObserver(function(){clearTimeout(_obDebounce);_obDebounce=setTimeout(_obCheck,60);});
+    obs.observe(root,{attributes:true,subtree:true,attributeFilter:['style','opacity']});
+    setTimeout(function(){if(_lastSpokenIdx===-1){_lastSpokenIdx=-1;_onSceneChange(0);}},950);
+  }
+  function _init(){
+    if(!_supported){console.warn('[QAnim VA] Web Speech API not supported.');return;}
+    var bar=document.getElementById('qanim-controls-bar');
+    var nextSep=document.getElementById('ctrl-next-sep');
+    if(bar && nextSep){
+      /* Insert Voice button + separator BEFORE the Next separator/button */
+      var voiceSep=document.createElement('div');voiceSep.className='qanim-ctrl-sep';
+      _btn=document.createElement('button');_btn.id='qanim-voice-btn';_btn.title='Toggle voice narration';
+      _btn.innerHTML='<span>&#x1F50A;</span><span class="ctrl-label">Voice</span>';
+      _btn.addEventListener('click',_toggleMute);
+      bar.insertBefore(voiceSep, nextSep);
+      bar.insertBefore(_btn, nextSep);
+    } else if(bar){
+      var sep=document.createElement('div');sep.className='qanim-ctrl-sep';bar.appendChild(sep);
+      _btn=document.createElement('button');_btn.id='qanim-voice-btn';_btn.title='Toggle voice narration';
+      _btn.innerHTML='<span>&#x1F50A;</span><span class="ctrl-label">Voice</span>';
+      _btn.addEventListener('click',_toggleMute);bar.appendChild(_btn);
+    } else {
+      _btn=document.createElement('button');_btn.id='qanim-voice-btn';
+      _btn.style.cssText='position:fixed;bottom:70px;right:70px;z-index:6800;';
+      _btn.innerHTML='<span>&#x1F50A;</span><span class="ctrl-label">Voice</span>';
+      _btn.addEventListener('click',_toggleMute);document.body.appendChild(_btn);
+    }
+    if(_synth.getVoices().length===0)_synth.addEventListener('voiceschanged',function(){},{once:true});
+    _attachListeners();
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_init);else setTimeout(_init,0);
 })();
 </script>
 """
-
-
-def inject_step_controller(html: str) -> str:
-    """Injects the manual step controller. Must be called LAST."""
+ 
+ 
+def inject_voice_assistant(html):
+    try:
+        if '</head>' in html:
+            html = html.replace('</head>', _VOICE_ASSISTANT_CSS + '\n</head>', 1)
+    except Exception as e:
+        QAnimLogger.warn("VoiceAssistant", f"CSS injection failed: {e}")
+    try:
+        if '</body>' in html:
+            html = html.replace('</body>', _VOICE_ASSISTANT_JS + '\n</body>', 1)
+        else:
+            html += '\n' + _VOICE_ASSISTANT_JS
+        QAnimLogger.ok("VoiceAssistant", "Voice assistant injected (inserts before Next btn)")
+    except Exception as e:
+        QAnimLogger.warn("VoiceAssistant", f"JS injection failed: {e}")
+    return html
+ 
+ 
+# ===========================================================================
+#  MODULE 12 -- StepController Patcher  (v11.5 -- prefers bar buttons)
+# ===========================================================================
+ 
+_STEP_CONTROLLER_JS = r"""
+<script id="qanim-step-controller">
+(function patchStepController(){
+  'use strict';
+  function initSC(){
+    try{
+      /* v11.5/v11.6: prefer #ctrl-nextbtn / #ctrl-prevbtn (inside controls bar).
+         Fall back to legacy #nextbtn / #prevbtn for animations without the bar,
+         and create standalone fixed-position buttons as last resort. */
+      var nextBtn=document.getElementById('ctrl-nextbtn')||document.getElementById('nextbtn');
+      var prevBtn=document.getElementById('ctrl-prevbtn')||document.getElementById('prevbtn');
+      if(!nextBtn){
+        nextBtn=document.createElement('button');nextBtn.id='nextbtn';nextBtn.textContent='Next \u25B6';
+        nextBtn.style.cssText='position:fixed;bottom:120px;right:20px;z-index:6500;padding:10px 22px;min-width:80px;border-radius:10px;border:1px solid #e2e8f0;background:#7c3aed;color:#fff;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.12);';
+        document.body.appendChild(nextBtn);}
+      if(!prevBtn){
+        prevBtn=document.createElement('button');prevBtn.id='prevbtn';prevBtn.textContent='\u25C4 Prev';
+        prevBtn.style.cssText='position:fixed;bottom:120px;left:20px;z-index:6500;padding:10px 22px;min-width:80px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;color:#334155;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.12);';
+        document.body.appendChild(prevBtn);}
+      var scenes=[];
+      for(var i=0;i<20;i++){var s=document.getElementById('scene-'+i);if(s){scenes.push(s);}else if(i>0){break;}}
+      if(scenes.length<1){console.warn('[QAnim SC] No scene-N elements found');return;}
+      var _sceneSnapshots=[];
+      for(var si=0;si<scenes.length;si++){
+        var scEl=scenes[si];
+        _sceneSnapshots.push({display:scEl.style.display,opacity:scEl.style.opacity,visibility:scEl.style.visibility,transform:scEl.style.transform,transition:scEl.style.transition,
+          children:(function(root){var result=[],all=root.querySelectorAll('*');for(var ci=0;ci<all.length;ci++)result.push({el:all[ci],opacity:all[ci].style.opacity,transform:all[ci].style.transform,display:all[ci].style.display,visibility:all[ci].style.visibility,transition:all[ci].style.transition});return result;})(scEl)});}
+      var _animFired={};
+      var _aiShowScene=(typeof window.showScene==='function')?window.showScene:null;
+      var currentStep=0;
+      function _resetScene(idx){
+        var snap=_sceneSnapshots[idx];if(!snap)return;var scEl=scenes[idx];
+        scEl.style.transition='none';scEl.style.opacity=snap.opacity;scEl.style.display=snap.display!==''?snap.display:'';scEl.style.visibility=snap.visibility!==''?snap.visibility:'';scEl.style.transform=snap.transform!==''?snap.transform:'';
+        for(var ci=0;ci<snap.children.length;ci++){var c=snap.children[ci];c.el.style.transition='none';c.el.style.opacity=c.opacity;c.el.style.transform=c.transform;c.el.style.display=c.display;c.el.style.visibility=c.visibility;}
+        requestAnimationFrame(function(){scEl.style.transition='';for(var ci2=0;ci2<snap.children.length;ci2++)snap.children[ci2].el.style.transition='';});}
+      function _fireAnim(idx){
+        if(_animFired[idx])return;_animFired[idx]=true;
+        var fn=window['animateScene'+idx];if(typeof fn==='function'){try{fn();}catch(e){}return;}
+        if(_aiShowScene){try{_aiShowScene(idx);}catch(e){}}}
+      function showScene(idx){
+        if(idx<0||idx>=scenes.length)return;currentStep=idx;
+        for(var j=0;j<scenes.length;j++){
+          if(j===idx){if(_animFired[j]){delete _animFired[j];_resetScene(j);}(function(sceneEl){requestAnimationFrame(function(){sceneEl.style.transition='opacity .35s ease';sceneEl.style.opacity='1';sceneEl.style.display=sceneEl.style.display==='none'?'':sceneEl.style.display;sceneEl.style.visibility='visible';sceneEl.style.pointerEvents='auto';});})(scenes[j]);}
+          else{scenes[j].style.transition='opacity .35s ease';scenes[j].style.opacity='0';scenes[j].style.pointerEvents='none';}}
+        _updateDots();_updateNavBtns();if(typeof window.resetAnswerBox==='function')window.resetAnswerBox();
+        try{document.dispatchEvent(new CustomEvent('qanim:sceneChange',{detail:{idx:idx}}));}catch(e){}
+        (function(capturedIdx){requestAnimationFrame(function(){requestAnimationFrame(function(){_fireAnim(capturedIdx);});});})(idx);}
+      function _updateDots(){
+        var dc=document.getElementById('dots');if(!dc)return;
+        var ds=dc.querySelectorAll('.dot,circle');if(!ds.length)ds=dc.children;
+        for(var k=0;k<ds.length;k++){var active=(k===currentStep);ds[k].style.opacity=active?'1':'0.35';if(ds[k].classList)ds[k].classList.toggle('active',active);}}
+      function _updateNavBtns(){
+        if(prevBtn){if(currentStep===0){prevBtn.setAttribute('disabled','true');prevBtn.style.opacity='0.35';}else{prevBtn.removeAttribute('disabled');prevBtn.style.opacity='1';}}
+        if(nextBtn){if(currentStep===scenes.length-1){nextBtn.setAttribute('disabled','true');nextBtn.style.opacity='0.35';}else{nextBtn.removeAttribute('disabled');nextBtn.style.opacity='1';}}}
+      var nb2=nextBtn.cloneNode(true);nextBtn.parentNode.replaceChild(nb2,nextBtn);nextBtn=nb2;
+      if(prevBtn){var pb2=prevBtn.cloneNode(true);prevBtn.parentNode.replaceChild(pb2,prevBtn);prevBtn=pb2;}
+      nextBtn.addEventListener('click',function(e){e.stopPropagation();if(currentStep<scenes.length-1)showScene(currentStep+1);});
+      if(prevBtn)prevBtn.addEventListener('click',function(e){e.stopPropagation();if(currentStep>0)showScene(currentStep-1);});
+      var _ri=window.setInterval;window.setInterval=function(fn,ms){
+        var src=fn?fn.toString():'';
+        if(ms&&ms<8000&&(src.indexOf('showScene')!==-1||src.indexOf('currentStep')!==-1||src.indexOf('nextStep')!==-1)){console.log('[SC] Blocked auto-advance interval ('+ms+'ms)');return -1;}
+        return _ri.apply(window,arguments);};
+      showScene(0);console.log('[QAnim SC v11.6] '+scenes.length+' scenes ready -- bar buttons wired');
+    }catch(err){console.error('[QAnim SC] Fatal:',err);}
+  }
+  if(document.readyState==='complete')initSC();else window.addEventListener('load',initSC);
+})();
+</script>
+"""
+ 
+ 
+def inject_step_controller(html):
     try:
         if '</body>' in html:
             html = html.replace('</body>', _STEP_CONTROLLER_JS + '\n</body>', 1)
         else:
             html += '\n' + _STEP_CONTROLLER_JS
-        QAnimLogger.ok("StepController", "Manual step controller injected")
+        QAnimLogger.ok("StepController", "Manual step controller injected (v11.6)")
     except Exception as e:
         QAnimLogger.warn("StepController", f"Injection failed: {e}")
     return html
-
-
-# ══════════════════════════════════════════════════════════════════════
+ 
+ 
+# ===========================================================================
 #  RESPONSE PARSING UTILITIES
-# ══════════════════════════════════════════════════════════════════════
-
-def _parse_response(raw: str, question: str) -> dict:
+# ===========================================================================
+ 
+def _parse_response(raw, question):
     strategies = [
         _parse_direct_json,
         _parse_stripped_json,
@@ -3474,84 +2476,66 @@ def _parse_response(raw: str, question: str) -> dict:
                 return result
         except Exception as e:
             QAnimLogger.warn("Parser", f"Strategy {i+1} failed: {e}")
-
-    QAnimLogger.error("Parser", "All strategies failed — returning empty result")
-    return {
-        "title":          f"Animation: {question[:50]}",
-        "explanation":    "Parse failed",
-        "animation_code": "",
-        "solution_steps": [],
-        "final_answer":   "",
-        "key_insight":    "",
-    }
-
-
+    QAnimLogger.error("Parser", "All strategies failed")
+    return {"title": f"Animation: {question[:50]}", "explanation": "Parse failed",
+            "animation_code": "", "solution_steps": [], "final_answer": "", "key_insight": ""}
+ 
+ 
 def _parse_direct_json(raw, question):
     data = json.loads(raw)
     return _normalize_parsed(data, question)
-
-
+ 
+ 
 def _parse_stripped_json(raw, question):
     stripped = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
     data = json.loads(stripped)
     return _normalize_parsed(data, question)
-
-
+ 
+ 
 def _parse_brace_extracted(raw, question):
     m = re.search(r'\{.*\}', raw, re.DOTALL)
     if not m:
         return None
     data = json.loads(m.group(0))
     return _normalize_parsed(data, question)
-
-
+ 
+ 
 def _parse_field_by_field(raw, question):
     def extract_string(field):
         pat = r'"' + re.escape(field) + r'"\s*:\s*"((?:[^"\\]|\\.)*)"'
         m = re.search(pat, raw)
         return _unescape_json_string(m.group(1)) if m else ""
-
     def extract_array(field):
         pat = r'"' + re.escape(field) + r'"\s*:\s*\[(.*?)\]'
         m = re.search(pat, raw, re.DOTALL)
-        if not m:
-            return []
+        if not m: return []
         items = re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1))
         return [_unescape_json_string(s) for s in items]
-
     code = _extract_animation_code_field(raw)
-    if not code:
-        return None
-
-    return {
-        "title":           extract_string("title") or f"Animation: {question[:50]}",
-        "explanation":     extract_string("explanation") or "Interactive animation",
-        "animation_type":  extract_string("animation_type"),
-        "design_strategy": extract_string("design_strategy"),
-        "solution_steps":  extract_array("solution_steps"),
-        "final_answer":    extract_string("final_answer"),
-        "key_insight":     extract_string("key_insight"),
-        "animation_code":  code,
-    }
-
-
-def _extract_animation_code_field(raw: str) -> str:
+    if not code: return None
+    return {"title": extract_string("title") or f"Animation: {question[:50]}",
+            "explanation": extract_string("explanation") or "Interactive animation",
+            "animation_type": extract_string("animation_type"),
+            "design_strategy": extract_string("design_strategy"),
+            "solution_steps": extract_array("solution_steps"),
+            "final_answer": extract_string("final_answer"),
+            "key_insight": extract_string("key_insight"),
+            "animation_code": code}
+ 
+ 
+def _extract_animation_code_field(raw):
     key_pos = raw.find('"animation_code"')
-    if key_pos == -1:
-        return ""
+    if key_pos == -1: return ""
     colon_pos = raw.find(':', key_pos)
-    if colon_pos == -1:
-        return ""
+    if colon_pos == -1: return ""
     after_colon = raw[colon_pos + 1:].lstrip()
-    if not after_colon.startswith('"'):
-        return ""
+    if not after_colon.startswith('"'): return ""
     content = after_colon[1:]
     end = _find_json_string_end(content)
-    if end == -1:
-        return ""
+    if end == -1: return ""
     return _unescape_json_string(content[:end])
-
-
+ 
+ 
 def _parse_bare_html(raw, question):
     for marker in ['<!DOCTYPE html>', '<html', '<svg']:
         idx = raw.find(marker)
@@ -3559,20 +2543,14 @@ def _parse_bare_html(raw, question):
             end = raw.rfind('</html>')
             code = raw[idx:end + 7] if end != -1 else raw[idx:]
             if len(code) > 200:
-                return {
-                    "title":          f"Animation: {question[:50]}",
-                    "explanation":    "Interactive animation",
-                    "animation_code": code.strip(),
-                    "solution_steps": [],
-                    "final_answer":   "",
-                    "key_insight":    "",
-                }
+                return {"title": f"Animation: {question[:50]}", "explanation": "Interactive animation",
+                        "animation_code": code.strip(), "solution_steps": [],
+                        "final_answer": "", "key_insight": ""}
     return None
-
-
-def _normalize_parsed(data: dict, question: str) -> dict:
-    if not isinstance(data, dict):
-        raise ValueError("Not a dict")
+ 
+ 
+def _normalize_parsed(data, question):
+    if not isinstance(data, dict): raise ValueError("Not a dict")
     result = {
         "title":           str(data.get("title") or "").strip() or f"Animation: {question[:50]}",
         "explanation":     str(data.get("explanation") or "").strip() or "Interactive animation",
@@ -3585,52 +2563,566 @@ def _normalize_parsed(data: dict, question: str) -> dict:
     sol = data.get("solution_steps")
     result["solution_steps"] = sol if isinstance(sol, list) else []
     return result
-
-
-def _find_json_string_end(s: str) -> int:
+ 
+ 
+def _find_json_string_end(s):
     i = 0
     while i < len(s):
-        if s[i] == '\\':
-            i += 2
-        elif s[i] == '"':
-            return i
-        else:
-            i += 1
+        if s[i] == '\\': i += 2
+        elif s[i] == '"': return i
+        else: i += 1
     return -1
-
-
-def _unescape_json_string(s: str) -> str:
+ 
+ 
+def _unescape_json_string(s):
     return (s.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
              .replace('\\r', '\r').replace("\\'", "'").replace('\\\\', '\\'))
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE 13 — Full Generation Pipeline  (v10.0 — Three-Stage Concurrent)
-# ══════════════════════════════════════════════════════════════════════
-
-async def _generate_concept_animation(question: str, category: str) -> str:
-    """STAGE 1 — Pure concept animation (no solution, no answer). Light theme."""
-    QAnimLogger.info("ConceptPipeline", f"START  category={category}")
-    prompt = _build_concept_prompt(question, category)
+ 
+ 
+# ===========================================================================
+#  SYSTEM PROMPTS  (v11.6)
+# ===========================================================================
+ 
+SYSTEM = """You are QAnim v11.6 -- a cinematic SVG motion designer and educational animation engineer.
+ 
+YOUR MISSION: Turn any student question into a PREMIUM 5-scene SVG animation
+that teaches the concept progressively. The animation SCENES must NOT show
+the computed numerical answer -- but you MUST fully solve the question and
+provide the complete final answer in the "final_answer" JSON field so it
+appears in the dedicated "Final Answer" panel when the student clicks the button.
+ 
+SCENE STRUCTURE (exactly 5 scenes, Feynman-style):
+ 
+Scene 0 "What Are We Looking At?":
+  - Draw the physical setup as a simple, friendly picture
+  - Use big clear shapes, short fun labels (avoid jargon)
+  - Bottom info card: one plain-English sentence saying what the picture shows
+  - Animate parts appearing one by one
+ 
+Scene 1 "The Big Idea":
+  - Show the ONE main idea or rule that solves this problem
+  - Show the formula name and structure in friendly words, NOT solved numbers
+  - Bottom info card: "The key idea is..." in plain, friendly language
+ 
+Scene 2 "Another Thing That Matters":
+  - Show the second effect or mechanism with a simple animation
+  - Bottom info card: one short plain-English sentence explaining it
+ 
+Scene 3 "Putting It Together":
+  - Show a simple diagram connecting the two ideas
+  - Bottom info card: "Together, these two things give us..." short explanation
+ 
+Scene 4 "How We Solve It -- Step by Step":
+  - Show a friendly numbered checklist of the 3-4 solving steps
+  - DO NOT show computed numerical results -- only the method steps
+ 
+IMPORTANT -- FINAL ANSWER FIELD:
+  Solve the question completely. Put the FULL computed answer (with all values
+  and units) into the "final_answer" JSON field.
+  Do NOT leave "final_answer" empty or as a placeholder string.
+ 
+VISUAL STANDARDS -- v11.6 LIGHT THEME (REQUIRED):
+- SVG viewBox="0 0 1000 600"
+- Background: #f8fafc or white gradient
+- NEVER use dark backgrounds
+- Text color: #1e293b (dark on light)
+- Cards: white fill, 1px #e2e8f0 border, border-radius 8-14px
+- Bottom info card: white bg, 1px border, positioned at y=420-540
+  * Card rect y=420, height MINIMUM 120px
+  * Card rect width: x=30 to x=970 (width=940)
+  * Title text: font-size 15px, font-weight 700, y offset 28px from card top (y=448)
+  * Body text lines: font-size 13.5px, line-height 22px, first line y=470
+  * Internal padding: 20px left (x=55), 24px top
+  * Allow 3 body text lines maximum
+  * Use colored left border-rect (8px wide, full card height) for visual hierarchy
+- Gradient fills, arrow markers, glow filter
+- Navigation: #prevbtn / #nextbtn (or #ctrl-prevbtn / #ctrl-nextbtn in bar)
+- Dots: .dot class
+- FORMULA SUBSCRIPTS: ALWAYS use <tspan dy="5" font-size="0.72em">subscript</tspan>
+  NEVER use underscore notation like f_s, T_s, Q_1
+ 
+ANIMATION TECHNIQUE:
+- Circles/shapes: opacity 0->1 with setTimeout + CSS transition
+- Arrows/lines: stroke-dasharray + stroke-dashoffset animation
+- Text labels: opacity 0->1
+- Spring scale-in: cubic-bezier(0.34,1.56,0.64,1)
+- Sequential setTimeout (100-400ms apart)
+ 
+JS ARCHITECTURE:
+- window.currentStep = 0; window.totalSteps = 5;
+- function showScene(n), animateScene0/1/2/3/4(), nextStep(), prevStep()
+- DOMContentLoaded: showScene(0)
+ 
+DEFS REQUIRED: linearGradients, arrowhead marker, glow filter
+ 
+SAFETY RULES:
+- Complete <!DOCTYPE html>...</html>
+- NO external CDN/fonts/scripts, NO backtick template literals, NO document.write()
+- Balanced SVG/script tags
+- Include: #prevbtn, #nextbtn, #dots, #qstrip .qtext (bold question)
+- DO NOT include Find/Solution/Answer Box buttons
+- DO NOT generate #sol-backdrop or #sol-panel
+ 
+OUTPUT FORMAT (strict JSON, no markdown fences):
+{
+  "animation_type": "concise label",
+  "design_strategy": "2-4 sentence description",
+  "solution_steps": ["Concept: ...", "Formula: ...", "Given: ...", "Find: ...", "Approach: ..."],
+  "final_answer": "<your fully computed answer with all numerical values and units here>",
+  "key_insight": "one memorable insight sentence",
+  "animation_code": "COMPLETE SELF-CONTAINED HTML AS A SINGLE PROPERLY-ESCAPED JSON STRING"
+}"""
+ 
+ 
+SYSTEM_CONCEPT = """You are QAnim Concept Engine v11.6 -- cinematic SVG concept animator.
+ 
+YOUR MISSION: 5-scene concept animation. LIGHT THEME. No dark backgrounds.
+No final answer shown. Each scene reveals ONE concept progressively.
+ 
+Scenes:
+  0: Physical setup / visual system overview
+  1: Core formula structure (named, not solved)
+  2: Secondary mechanism
+  3: Key relationships / abstract model
+  4: Summary of what to calculate + approach
+ 
+OUTPUT FORMAT (strict JSON):
+{
+  "animation_type": "label",
+  "design_strategy": "2-4 sentences",
+  "concept_code": "COMPLETE <!DOCTYPE html>...</html> AS ESCAPED JSON STRING"
+}
+ 
+SAFETY: No dark bg, no backticks, no external scripts, balanced tags,
+5 scenes, include #prevbtn/#nextbtn/#dots, manual step control.
+SUBSCRIPTS: NEVER use underscores. ALWAYS use <tspan dy="5" font-size="0.72em">sub</tspan>.
+BOTTOM INFO CARDS: Each scene MUST have a bottom info card.
+rect: x=30, y=420, width=940, height=120, rx=12. Colored left accent bar width=8.
+Title: font-size=15 bold. Body: font-size=13.5 with dy=22 line spacing. Max 3 lines."""
+ 
+ 
+DESIGN_SYSTEM = """
+LIGHT THEME: background #f8fafc or white gradient
+CARD STYLE: white bg, 1px #e2e8f0 border, border-radius 10-14px
+COLORS: PHYSICS=#3b5bdb/#e64980 | MATH=#7c3aed/#db2777 | BIO=#16a34a/#ca8a04
+TEXT: #1e293b on light bg
+SVG viewBox: "0 0 1000 600"
+BOTTOM INFO CARD:
+  - rect: x=30, y=420, width=940, height=120-140, rx=12
+  - Colored accent bar: x=30, y=420, width=8, height=120-140, rx=4 (no right radius)
+  - Title: font-size=15, font-weight=700, x=55, y=card_y+28
+  - Body lines: font-size=13.5, x=55, first line y=card_y+52, dy=22 between lines
+  - Max 3 body lines. Use tspan x=55 dy=22 for wrapping
+  - Total card must be readable and spacious -- never cramped
+"""
+ 
+SVG_TECHNIQUES = """
+TECHNIQUES:
+- stroke-dashoffset arrows/curves
+- opacity fade + translateY rise for labels
+- spring scale: cubic-bezier(0.34,1.56,0.64,1)
+- feGaussianBlur glow filter
+- Sequential setTimeout (NOT CSS animation-delay)
+- linearGradient fills
+ 
+FORMULA SUBSCRIPTS (CRITICAL):
+- NEVER write subscripts with underscores like f_s, T_s, Q_out, v_1
+- ALWAYS use SVG <tspan> subscripts:
+    <text>f<tspan dy="5" font-size="0.72em">s</tspan></text>
+- After subscript: reset with <tspan dy="-5" font-size="1em">
+"""
+ 
+STRATEGY_TEMPLATES = {
+    "VISUAL_PHYSICS": "Dynamic force/motion/field diagram on light background. 5 scenes: geometry, force vectors, secondary effect, circuit model, full summary.",
+    "PROCESS_BASED":  "Sequential process nodes on white. 5 scenes: input, first step, second step, combined model, complete flow summary.",
+    "MATHEMATICAL":   "Coordinate geometry on white. 5 scenes: axes/setup, primary formula, secondary relationship, graphical model, full equation summary.",
+    "BIOLOGICAL":     "Organic shapes on light bg. 5 scenes: cell/molecule setup, first mechanism, second mechanism, pathway model, complete system summary.",
+    "ABSTRACT":       "Clean metaphor on white. 5 scenes: analogy setup, first principle, second principle, combined model, complete concept summary.",
+    "MIXED":          "Split canvas light bg. 5 scenes: physical setup, primary formula, secondary formula, combined model, full parameter summary.",
+}
+ 
+CONCEPT_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES
+ 
+FALLBACK_RULES = """
+IF STUCK: Use one of these premium fallback layouts (light theme):
+1. CARD-REVEAL: 4 white cards with accent border-left, staggered fade
+2. TIMELINE: horizontal line draws, events spring-scale at nodes
+3. CONCEPT-MAP: central node, branch lines, satellite nodes appear
+4. DATA-BARS: animated bar chart on white with gradient fills
+NEVER flat dark backgrounds or neon-on-black.
+"""
+ 
+# ===========================================================================
+#  MODULE 15 -- EEE/ECE Domain Classifier
+# ===========================================================================
+ 
+class EEEClassifier:
+    _COMPONENT_KEYWORDS = {
+        "resistor", "capacitor", "inductor", "impedance", "reactance",
+        "ohm", "farad", "henry", "resistance", "inductance", "capacitance",
+        "transistor", "bjt", "mosfet", "diode", "zener", "thyristor",
+        "scr", "triac", "diac", "igbt", "fet", "jfet",
+        "op-amp", "opamp", "operational amplifier",
+        "ac supply", "dc supply", "ac source", "dc source", "voltage source",
+        "current source", "emf", "electromotive force",
+        "transformer", "motor", "generator", "alternator", "synchronous",
+        "induction motor", "dc motor", "servo motor", "stepper motor",
+        "rectifier", "inverter", "converter", "chopper",
+        "rlc", "rc circuit", "rl circuit", "lc circuit",
+        "series circuit", "parallel circuit", "mesh", "nodal",
+        "thevenin", "norton", "superposition", "kirchhoff",
+        "kvl", "kcl", "voltage divider", "current divider",
+        "wheatstone", "bridge circuit", "resonance",
+        "half wave", "full wave", "bridge rectifier",
+        "logic gate", "and gate", "or gate", "not gate", "nand", "nor",
+        "xor", "xnor", "flip flop", "latch", "counter", "register",
+        "mux", "demux", "multiplexer", "demultiplexer", "encoder", "decoder",
+        "adder", "subtractor", "alu", "boolean",
+        "modulation", "demodulation", "am modulation", "fm modulation",
+        "pcm", "pam", "ppm", "ask", "fsk", "psk", "qam",
+        "bandwidth", "antenna", "transmission line", "waveguide",
+        "filter", "amplifier", "oscillator",
+        "voltmeter", "ammeter", "ohmmeter", "multimeter",
+        "oscilloscope", "wattmeter", "power meter",
+        "power factor", "real power", "reactive power", "apparent power",
+        "load flow", "fault analysis", "short circuit", "open circuit",
+        "per unit", "bus bar", "feeder", "transmission",
+    }
+ 
+    _TOPIC_KEYWORDS = {
+        "electrical", "electronics", "circuit", "voltage", "current",
+        "watt", "ampere", "volt", "frequency", "hertz", "hz",
+        "signal", "waveform", "phasor", "sinusoidal", "alternating",
+        "direct current", "alternating current", "phase angle",
+        "gain", "attenuation", "decibel", "db",
+        "microcontroller", "arduino", "embedded", "fpga", "plc",
+        "power supply", "battery", "charge", "discharge",
+        "magnetic field", "electromagnetic", "flux", "faraday",
+        "maxwell", "coulomb", "lenz",
+    }
+ 
+    _NON_EEE_EXCLUSIONS = {
+        "photosynthesis", "mitosis", "dna", "rna", "protein", "cell membrane",
+        "animal", "plant", "ecosystem", "evolution", "bacteria", "virus",
+        "democracy", "capitalism", "philosophy", "literature", "history",
+        "thermodynamics", "heat engine", "turbine", "internal combustion",
+        "beam", "truss", "moment of inertia", "shear force", "bending moment",
+        "concrete", "civil", "soil", "foundation", "surveying",
+        "sorting algorithm", "data structure", "linked list", "binary tree",
+        "machine learning", "neural network", "deep learning", "gradient descent",
+        "regression", "clustering", "reinforcement learning",
+        "chemistry", "reaction", "mole", "atom", "molecule", "bond",
+    }
+ 
+    @classmethod
+    def is_eee_ece(cls, question: str) -> bool:
+        if not question or not question.strip():
+            return False
+        q_lower = question.lower()
+        exclusion_hits = sum(1 for term in cls._NON_EEE_EXCLUSIONS if term in q_lower)
+        if exclusion_hits >= 2:
+            QAnimLogger.info("EEEClassifier", f"Excluded by {exclusion_hits} non-EEE terms")
+            return False
+        for kw in cls._COMPONENT_KEYWORDS:
+            if kw in q_lower:
+                QAnimLogger.ok("EEEClassifier", f"Tier-1 match: '{kw}' -> EEE/ECE pipeline")
+                return True
+        topic_hits = [kw for kw in cls._TOPIC_KEYWORDS if kw in q_lower]
+        if len(topic_hits) >= 2:
+            QAnimLogger.ok("EEEClassifier", f"Tier-2 match: {topic_hits[:3]} -> EEE/ECE pipeline")
+            return True
+        if len(topic_hits) == 1:
+            try:
+                resp = client.messages.create(
+                    model=Q_MODEL, max_tokens=10,
+                    system="Reply with ONLY 'YES' if this is an Electrical/Electronics Engineering question, or 'NO' otherwise.",
+                    messages=[{"role": "user", "content": f"Is this EEE/ECE: {question[:200]}"}])
+                answer = resp.content[0].text.strip().upper()
+                result = answer.startswith("YES")
+                QAnimLogger.ok("EEEClassifier", f"Tier-3 API: '{answer}' -> {'EEE/ECE' if result else 'non-EEE'}")
+                return result
+            except Exception as e:
+                QAnimLogger.warn("EEEClassifier", f"Tier-3 API failed: {e} -- defaulting to non-EEE")
+                return False
+        QAnimLogger.info("EEEClassifier", "No EEE/ECE signals detected")
+        return False
+ 
+ 
+# ===========================================================================
+#  MODULE 16 -- Circuit Visualization Engine
+# ===========================================================================
+ 
+_CIRCUIT_TOPOLOGIES = {
+    "series_rlc":        ["series rlc", "rlc series", "series r l c"],
+    "parallel_rlc":      ["parallel rlc", "rlc parallel", "parallel r l c"],
+    "series_rc":         ["series rc", "rc circuit", "rc series"],
+    "series_rl":         ["series rl", "rl circuit", "rl series"],
+    "half_wave_rect":    ["half wave rectifier", "half-wave rectifier"],
+    "full_wave_rect":    ["full wave rectifier", "full-wave rectifier", "bridge rectifier"],
+    "ce_amplifier":      ["common emitter", "ce amplifier", "common-emitter"],
+    "cb_amplifier":      ["common base", "cb amplifier"],
+    "cc_amplifier":      ["common collector", "cc amplifier", "emitter follower"],
+    "cs_amplifier":      ["common source", "cs amplifier"],
+    "inverting_opamp":   ["inverting amplifier", "inverting op-amp", "inverting opamp"],
+    "non_inv_opamp":     ["non-inverting", "non inverting amplifier"],
+    "series_resonance":  ["series resonance", "resonant frequency", "resonance circuit"],
+    "thevenin":          ["thevenin", "thévenin"],
+    "norton":            ["norton"],
+    "wheatstone":        ["wheatstone", "bridge circuit"],
+    "voltage_divider":   ["voltage divider", "potential divider"],
+    "transformer_basic": ["transformer", "turns ratio", "step up", "step down"],
+    "logic_circuit":     ["logic gate", "boolean", "truth table", "combinational"],
+    "dc_motor":          ["dc motor", "armature", "back emf"],
+    "induction_motor":   ["induction motor", "slip", "synchronous speed"],
+}
+ 
+ 
+def _detect_circuit_topology(question: str) -> str:
+    q_lower = question.lower()
+    for topology, patterns in _CIRCUIT_TOPOLOGIES.items():
+        for pattern in patterns:
+            if pattern in q_lower:
+                QAnimLogger.info("CircuitEngine", f"Topology detected: {topology}")
+                return topology
+    return "generic_circuit"
+ 
+ 
+CIRCUIT_SYSTEM_PROMPT = """You are QAnim CircuitEngine v11.6 -- a premium electrical engineering circuit animator.
+ 
+YOUR MISSION: Generate a PROFESSIONAL, TEXTBOOK-QUALITY 5-scene circuit animation for EEE/ECE students.
+Every component must use PROPER ENGINEERING SYMBOLS.
+ 
+CIRCUIT SYMBOL GUIDE:
+RESISTOR: zigzag path with 6 peaks between endpoints (±14px from center)
+CAPACITOR: two parallel vertical lines (plates) separated 8px
+INDUCTOR: series of 4 semicircular bumps above wire baseline
+AC SOURCE: circle with sine wave inside, labeled V/Hz
+DC SOURCE: circle with + and - symbols
+DIODE: triangle pointing right with vertical bar at tip
+WIRE: straight lines stroke="#475569" stroke-width="2"
+GROUND: three decreasing horizontal lines below connection point
+NODE: small filled circle + letter label
+ 
+BOTTOM INFO CARDS:
+  - rect: x=30, y=420, width=940, height=120, rx=12
+  - Colored left accent bar: x=30, y=420, width=8, height=120
+  - Title: font-size=15 bold, x=55, y=448
+  - Body: font-size=13.5, x=55, first line y=470, dy=22
+ 
+SCENE STRUCTURE:
+Scene 0: Complete circuit schematic + animated current flow (stroke-dashoffset loop)
+Scene 1: Core formula / principle with phasor or symbolic diagram
+Scene 2: Component-by-component analysis
+Scene 3: Impedance/phasor/power triangle or equivalent circuit
+Scene 4: Step-by-step solving approach (no numerical answers)
+ 
+CURRENT FLOW ANIMATION (required Scene 0):
+  Dashed overlay path around full circuit loop.
+  CSS: @keyframes flow { to { stroke-dashoffset: -200; } }
+  style="stroke-dasharray:12 8;animation:flow 1.5s linear infinite"
+ 
+SAFETY: Complete HTML, no external scripts, no backticks, balanced tags.
+Include #prevbtn, #nextbtn, #dots, #qstrip .qtext. NO Find/Answer buttons.
+ 
+OUTPUT FORMAT (strict JSON):
+{
+  "animation_type": "circuit_diagram",
+  "design_strategy": "2-4 sentence description",
+  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ...", "Step 4: ..."],
+  "final_answer": "<fully computed numerical answer with all values and units>",
+  "key_insight": "one memorable sentence about the core circuit behaviour",
+  "animation_code": "COMPLETE SELF-CONTAINED HTML AS ESCAPED JSON STRING"
+}"""
+ 
+ 
+CIRCUIT_CONCEPT_SYSTEM_PROMPT = """You are QAnim CircuitEngine v11.6 -- premium circuit concept animator for EEE/ECE.
+ 
+Same as main circuit engine but CONCEPT only (no computed answers in scenes).
+Show circuit, formulas, and principles only.
+ 
+BOTTOM INFO CARDS: rect y=420, height=120.
+ 
+OUTPUT FORMAT (strict JSON):
+{
+  "animation_type": "circuit_concept",
+  "design_strategy": "2-4 sentences",
+  "concept_code": "COMPLETE <!DOCTYPE html>...</html> AS ESCAPED JSON STRING"
+}"""
+ 
+ 
+class CircuitVisualizationEngine:
+ 
+    @classmethod
+    def build_circuit_prompt(cls, question: str, topology: str) -> str:
+        topology_hint = cls._get_topology_hint(topology)
+        return f"""Generate a PREMIUM ENGINEERING-QUALITY 5-scene circuit animation.
+ 
+QUESTION: {question}
+DETECTED TOPOLOGY: {topology}
+TOPOLOGY-SPECIFIC GUIDANCE: {topology_hint}
+ 
+{DESIGN_SYSTEM}
+{SVG_TECHNIQUES}
+{FALLBACK_RULES}
+ 
+CIRCUIT ENGINE RULES (v11.6):
+- All components as proper engineering symbols
+- Scene 0: complete schematic + animated wire drawing + current flow loop
+- Scenes use info cards at y=420
+- All component values labeled; voltage polarities marked
+- final_answer MUST contain the complete computed numerical answer
+ 
+Return ONLY raw JSON. animation_code must be complete HTML as escaped JSON string."""
+ 
+    @classmethod
+    def build_concept_prompt(cls, question: str, topology: str) -> str:
+        topology_hint = cls._get_topology_hint(topology)
+        return f"""Generate a PREMIUM 5-scene CONCEPT circuit animation (no final answer in scenes).
+ 
+QUESTION: {question}
+DETECTED TOPOLOGY: {topology}
+TOPOLOGY-SPECIFIC GUIDANCE: {topology_hint}
+ 
+{DESIGN_SYSTEM}
+{SVG_TECHNIQUES}
+{FALLBACK_RULES}
+ 
+Info cards at y=420.
+Return ONLY raw JSON. concept_code must be complete <!DOCTYPE html>...</html>."""
+ 
+    @classmethod
+    def _get_topology_hint(cls, topology: str) -> str:
+        hints = {
+            "series_rlc": "Draw: AC source -> R (zigzag) -> L (bumps) -> C (plates) -> back. Label V_R, V_L, V_C. Scene 3: impedance triangle Z=sqrt(R²+(X_L-X_C)²).",
+            "parallel_rlc": "Vertical bus bars. Three horizontal branches: R, L, C. Current I_R, I_L, I_C labeled. Scene 3: phasor diagram.",
+            "half_wave_rect": "AC source -> diode -> R_L. Scene 2: waveform showing half-cycles passing/blocked.",
+            "full_wave_rect": "4 diodes in diamond bridge. AC at left/right corners, DC at top/bottom. Current path arrows for both half-cycles.",
+            "ce_amplifier": "NPN BJT center. R_B1/R_B2 divider on base. R_C to Vcc top. R_E to ground. C_E bypass. C_in/C_out coupling.",
+            "transformer_basic": "Two coil symbols with core between. Primary N1/V1 left, secondary N2/V2 right. Turns ratio label. Flux arrow through core.",
+            "series_resonance": "Series RLC. Scene 1: f_0=1/(2π√LC). Scene 2: frequency response curve with minimum at f_0. Scene 3: Q factor.",
+            "generic_circuit": "Identify components from question and draw in clear loop. Use proper engineering symbols. Animated current flow.",
+        }
+        return hints.get(topology, hints["generic_circuit"])
+ 
+ 
+HTML_SHELL_NOTE = """
+REQUIRED:
+- DO NOT generate #sol-backdrop, #sol-panel, or their CSS/JS
+- Include: <div id="sol-steps-container"></div> <div id="sol-answer-text"></div> <div id="sol-insight-text"></div>
+- All scenes in <g id="scene-N"> groups
+- #prevbtn, #nextbtn, #dots for navigation
+- #qstrip .qtext for question display (bold)
+- DO NOT include Find/Solution/Answer Box buttons
+"""
+ 
+ 
+def _classify_topic(question):
+    q = question.lower()
+    scores = {
+        "BIOLOGICAL":     sum(1 for k in ["cell","dna","rna","protein","photosynthesis","mitosis","enzyme","hormone","gene","organism","bacteria","virus","chromosome","metabolism"] if k in q),
+        "MATHEMATICAL":   sum(1 for k in ["integral","derivative","matrix","vector","theorem","equation","polynomial","logarithm","trigonometry","calculus","function","graph","proof"] if k in q),
+        "ABSTRACT":       sum(1 for k in ["philosophy","ethics","democracy","capitalism","justice","freedom","psychology","consciousness","society","ideology","culture","politics"] if k in q),
+        "PROCESS_BASED":  sum(1 for k in ["how does","how do","step by step","process","algorithm","mechanism","workflow","procedure","stages","works","function","operation"] if k in q),
+        "VISUAL_PHYSICS": sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit","newton","friction","torque","field","charge","resistance","heat","thermal","temperature","pipe","cylinder","conduction","convection"] if k in q),
+    }
+    max_score = max(scores.values())
+    if max_score >= 2:
+        top = [c for c, s in scores.items() if s == max_score]
+        return top[0] if len(top) == 1 else "MIXED"
+    if sum(1 for s in scores.values() if s > 0) >= 3:
+        return "MIXED"
+    try:
+        resp = client.messages.create(
+            model=Q_MODEL, max_tokens=30,
+            system="Reply with ONLY one of: VISUAL_PHYSICS, PROCESS_BASED, MATHEMATICAL, BIOLOGICAL, ABSTRACT, MIXED",
+            messages=[{"role": "user", "content": f"Classify: {question[:200]}"}])
+        cat = resp.content[0].text.strip().upper()
+        if cat in STRATEGY_TEMPLATES:
+            return cat
+    except Exception:
+        pass
+    return "PROCESS_BASED"
+ 
+ 
+def _build_concept_prompt(question, category):
+    strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
+    return f"""Build a CINEMATIC 5-SCENE CONCEPT ANIMATION for QAnim v11.6.
+ 
+QUESTION: {question}
+CATEGORY: {category}
+VISUAL STRATEGY: {strategy}
+ 
+{DESIGN_SYSTEM}
+{SVG_TECHNIQUES}
+{FALLBACK_RULES}
+ 
+CONCEPT ANIMATION v11.6 REQUIREMENTS:
+- LIGHT THEME: white/light-gray background
+- Exactly 5 scenes (scene-0 to scene-4)
+- Progressive concept revelation -- no final answer
+- Bottom info card per scene: rect y=420 height=120
+- Manual navigation: showScene(), animateScene0-4(), nextStep(), prevStep()
+- DO NOT include Find/Solution/Answer Box buttons
+ 
+Return ONLY raw JSON. concept_code must be complete <!DOCTYPE html>...</html> as escaped JSON string."""
+ 
+ 
+def _build_prompt(question, category):
+    strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
+    return f"""Build a PREMIUM CINEMATIC 5-SCENE SVG ANIMATION for QAnim v11.6.
+ 
+QUESTION: {question}
+CATEGORY: {category}
+STRATEGY: {strategy}
+ 
+{DESIGN_SYSTEM}
+{SVG_TECHNIQUES}
+{FALLBACK_RULES}
+{HTML_SHELL_NOTE}
+ 
+KEY REMINDERS v11.6:
+- LIGHT THEME: white/light-gray backgrounds, dark text, vivid accents
+- Exactly 5 scenes
+- Bottom info card y=420 height=120
+- final_answer: REQUIRED -- fully solved answer with all computed values and units
+- key_insight: one memorable sentence
+- DO NOT include Find/Solution/Answer Box buttons
+ 
+Return ONLY raw JSON. animation_code must be complete <!DOCTYPE html>...</html> as escaped JSON string."""
+ 
+ 
+# ===========================================================================
+#  MODULE 13 -- Full Generation Pipeline  (v11.6)
+# ===========================================================================
+ 
+async def _generate_concept_animation(question, category, is_eee=False, topology=None):
+    QAnimLogger.info("ConceptPipeline", f"START  category={category}  is_eee={is_eee}")
+ 
+    if is_eee:
+        prompt = CircuitVisualizationEngine.build_concept_prompt(question, topology or "generic_circuit")
+        system = CIRCUIT_CONCEPT_SYSTEM_PROMPT
+        QAnimLogger.info("ConceptPipeline", "Using CircuitVisualizationEngine for EEE/ECE concept")
+    else:
+        prompt = _build_concept_prompt(question, category)
+        system = SYSTEM_CONCEPT
+ 
     try:
         msg = client.messages.create(
-            model=CONCEPT_MODEL,
-            max_tokens=MAX_TOK_CONCEPT,
-            system=SYSTEM_CONCEPT,
-            messages=[{"role": "user", "content": prompt}]
-        )
+            model=CONCEPT_MODEL, max_tokens=MAX_TOK_CONCEPT,
+            system=system,
+            messages=[{"role": "user", "content": prompt}])
         raw = msg.content[0].text.strip()
         QAnimLogger.info("ConceptAI", f"model={CONCEPT_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
         if msg.stop_reason == "max_tokens":
-            QAnimLogger.warn("ConceptAI", "Hit max_tokens — may be truncated!")
+            QAnimLogger.warn("ConceptAI", "Hit max_tokens -- may be truncated!")
     except Exception as e:
         QAnimLogger.error("ConceptAI", f"API call failed: {e}")
         return RecoveryEngine.fallback_html(question, f"Concept AI error: {e}")
-
+ 
     raw_for_concept = raw.replace('"concept_code"', '"animation_code"')
     parsed_c = _parse_response(raw_for_concept, question)
     concept_html = parsed_c.get("animation_code", "").strip()
-
+ 
     if not concept_html:
         for marker in ['<!DOCTYPE html>', '<html', '<svg']:
             idx = raw.find(marker)
@@ -3638,10 +3130,10 @@ async def _generate_concept_animation(question: str, category: str) -> str:
                 end = raw.rfind('</html>')
                 concept_html = raw[idx:end + 7] if end != -1 else raw[idx:]
                 break
-
+ 
     if not concept_html:
         return RecoveryEngine.fallback_html(question, "Concept parse failed")
-
+ 
     try:
         GenerationValidator.validate(concept_html, require_svg=True)
     except ValidationError as e:
@@ -3650,97 +3142,129 @@ async def _generate_concept_animation(question: str, category: str) -> str:
             concept_html = RecoveryEngine.partial_html(question, concept_html)
         else:
             return RecoveryEngine.fallback_html(question, str(e))
-
+ 
     concept_html = HtmlSanitizer.sanitize(concept_html)
     concept_html = inject_infrastructure(concept_html)
     concept_html = inject_notes_system(concept_html, question)
+    concept_html = inject_voice_assistant(concept_html)
     concept_html = inject_step_controller(concept_html)
-
-    QAnimLogger.ok("ConceptPipeline", f"DONE — len={len(concept_html):,}")
+ 
+    QAnimLogger.ok("ConceptPipeline", f"DONE -- len={len(concept_html):,}")
     return concept_html
-
-
-async def generate_question_animation(question: str) -> dict:
+ 
+ 
+async def generate_question_animation(question):
     """
-    THREE-STAGE CONCURRENT PIPELINE (v10.0):
-
-    Stage 0 — ToFind Extraction   (sync, no AI)
-    Stage 1 — Concept Animation   (claude-sonnet-4-5) + StepController
-    Stage 2 — Solution Animation  (claude-sonnet-4-5) + all panels injected
-    Stage 3 — Quiz Generation     (claude-haiku-4-5)  + 3 sets × 5 Qs
-
-    Solution HTML receives full post-processing:
-      Validate → Sanitize → inject_infrastructure
-      → inject_solution_system → inject_to_find_system
-      → inject_notes_system → inject_quiz_v2_panel
-      → inject_answer_box_panel → inject_controls_bar
-      → inject_step_controller (LAST)
-
-    Returns result dict with three HTML outputs.
+    THREE-STAGE CONCURRENT PIPELINE (v11.6):
+ 
+    Stage 0 -- ToFind Extraction   (sync, no AI)
+    Stage 1 -- Concept Animation   (claude-sonnet-4-6)
+    Stage 2 -- Solution Animation  (claude-sonnet-4-6)
+    Stage 3 -- Solution Steps      (claude-sonnet-4-6)
+               [Stages 1-3 run concurrently via asyncio.gather]
+ 
+    v11.6 changes vs v11.5:
+      - Quiz system (Stage 3 in v11.5) completely removed.
+        No QuizGeneratorV2, no quiz_data, no quiz_html in result dict.
+      - Solution Steps is now Stage 3 (was Stage 4).
+      - asyncio.gather now runs 3 coroutines instead of 4.
     """
     question = (question or "").strip()
     if not question:
         raise ValueError("Question cannot be empty")
-
+ 
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v10 — '{short_q}'")
-    QAnimLogger.info("Pipeline", f"Concept/Solution: {SOLUTION_MODEL}  Quiz: {QUIZ_MODEL}")
-
-    # ── Stage 0: ToFind (sync) ──────────────────────────────────────
+    QAnimLogger.info("Pipeline", f"START v11.6 -- '{short_q}'")
+ 
     to_find_targets = ToFindExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
-
-    # ── Classify ────────────────────────────────────────────────────
+ 
+    is_eee = EEEClassifier.is_eee_ece(question)
+    if is_eee:
+        topology = _detect_circuit_topology(question)
+        QAnimLogger.ok("Pipeline", f"EEE/ECE detected -> CircuitVisualizationEngine (topology={topology})")
+    else:
+        topology = None
+        QAnimLogger.info("Pipeline", "Non-EEE/ECE question -> standard animation pipeline")
+ 
     category = _classify_topic(question)
     QAnimLogger.info("Classifier", f"Category: {category}")
-
-    # ── Build solution prompt ────────────────────────────────────────
-    solution_prompt = _build_prompt(question, category)
-
-    # ── Stage 1-3: Three concurrent AI calls ─────────────────────────
-    QAnimLogger.info("Pipeline", "Launching 3 concurrent AI stages…")
-
-    async def _run_solution_ai() -> str:
+ 
+    if is_eee:
+        solution_prompt = CircuitVisualizationEngine.build_circuit_prompt(question, topology)
+        solution_system = CIRCUIT_SYSTEM_PROMPT
+    else:
+        solution_prompt = _build_prompt(question, category)
+        solution_system = SYSTEM
+ 
+    async def _run_solution_ai():
         try:
             msg = client.messages.create(
-                model=SOLUTION_MODEL,
-                max_tokens=MAX_TOK,
-                system=SYSTEM,
-                messages=[{"role": "user", "content": solution_prompt}]
-            )
+                model=SOLUTION_MODEL, max_tokens=MAX_TOK,
+                system=solution_system,
+                messages=[{"role": "user", "content": solution_prompt}])
             raw = msg.content[0].text.strip()
-            QAnimLogger.info("SolutionAI", f"model={SOLUTION_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
+            engine_tag = "CircuitAI" if is_eee else "SolutionAI"
+            QAnimLogger.info(engine_tag, f"model={SOLUTION_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}")
             if msg.stop_reason == "max_tokens":
-                QAnimLogger.warn("SolutionAI", "Hit max_tokens — may be truncated!")
+                QAnimLogger.warn(engine_tag, "Hit max_tokens -- may be truncated!")
             return raw
         except Exception as e:
             QAnimLogger.error("SolutionAI", f"API failed: {e}")
             raise
-
+ 
+    QAnimLogger.info("Pipeline", "Launching 3 concurrent AI stages...")
     try:
-        concept_html, sol_raw, quiz_data = await asyncio.gather(
-            _generate_concept_animation(question, category),
+        concept_html, sol_raw, haiku_sol = await asyncio.gather(
+            _generate_concept_animation(question, category, is_eee=is_eee, topology=topology),
             _run_solution_ai(),
-            QuizGeneratorV2.generate(question, category),
+            HaikuSolutionGenerator.generate_async(question),
         )
     except Exception as e:
         QAnimLogger.error("Pipeline", f"Concurrent generation failed: {e}")
         return _build_failure_result(question, f"API error: {e}")
-
-    # ── Parse solution ───────────────────────────────────────────────
+ 
     result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v10.0"
+    result["engine_version"]         = "v11.6"
+    result["engine_type"]            = "circuit" if is_eee else "standard"
+    result["circuit_topology"]       = topology or "N/A"
     result["concept_animation_code"] = concept_html
-    result["quiz_data"]              = quiz_data
     result["to_find"]                = to_find_targets
+    result["haiku_solution"]         = haiku_sol
     result.setdefault("solution_steps", [])
     result.setdefault("final_answer",   "")
     result.setdefault("key_insight",    "")
-
+ 
+    haiku_steps = haiku_sol.get("steps", [])
+    if haiku_steps and (not result["solution_steps"] or len(haiku_steps) > len(result["solution_steps"])):
+        result["solution_steps"] = haiku_steps
+        QAnimLogger.ok("Pipeline", f"Using Haiku solution steps ({len(haiku_steps)} steps)")
+ 
+    def _is_real_answer(s):
+        return bool(s and len(str(s).strip()) > 5 and any(c.isdigit() for c in str(s)))
+ 
+    if not _is_real_answer(result["final_answer"]) and _is_real_answer(haiku_sol.get("final_answer", "")):
+        result["final_answer"] = haiku_sol["final_answer"]
+        QAnimLogger.ok("Pipeline", "Used Haiku final_answer (solution AI returned empty/placeholder)")
+ 
+    if not _is_real_answer(result["final_answer"]):
+        raw_haiku = haiku_sol.get("raw", "").strip()
+        if raw_haiku:
+            _fa_match = re.search(
+                r'(?:\*{0,2}Final Answer\*{0,2})\s*:\s*(.+?)(?:\*{0,2}Key Insight\*{0,2}|$)',
+                raw_haiku, re.DOTALL | re.IGNORECASE)
+            result["final_answer"] = _fa_match.group(1).strip() if _fa_match else raw_haiku[:300]
+            QAnimLogger.warn("Pipeline", "final_answer extracted from Haiku raw text (last resort)")
+        else:
+            result["final_answer"] = "Solution computed -- open the step-by-step for full details."
+            QAnimLogger.warn("Pipeline", "final_answer was empty; used fallback message")
+ 
+    if haiku_sol.get("key_insight") and not result["key_insight"]:
+        result["key_insight"] = haiku_sol["key_insight"]
+ 
     html = result.get("animation_code", "")
-
-    # ── Validate solution HTML ───────────────────────────────────────
+ 
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
@@ -3758,48 +3282,54 @@ async def generate_question_animation(question: str) -> dict:
             result["animation_code"] = RecoveryEngine.fallback_html(question, str(e))
             result["render_status"]  = "fallback"
             return result
-
-    # ── Post-processing: inject all systems ──────────────────────────
+ 
+    answer_targets = _build_answer_targets(
+        to_find_targets  = to_find_targets,
+        haiku_sol        = haiku_sol,
+        final_answer     = result["final_answer"],
+        key_insight      = result["key_insight"],
+    )
+    result["answer_targets"] = answer_targets
+    QAnimLogger.info("Pipeline", f"Answer targets built: {len(answer_targets)}")
+ 
+    # POST-PROCESSING: inject all panels
     html = HtmlSanitizer.sanitize(html)
     html = inject_infrastructure(html)
-    html = inject_solution_system(
-        html    = html,
-        steps   = result["solution_steps"],
-        answer  = result["final_answer"],
-        insight = result["key_insight"],
+    html = inject_final_answer_panel(
+        html           = html,
+        answer_targets = answer_targets,
+        final_answer   = result["final_answer"],
+        key_insight    = result["key_insight"],
     )
     html = inject_to_find_system(html, to_find_targets)
     html = inject_notes_system(html, question)
-    html = inject_quiz_v2_panel(html, quiz_data)
-    html = inject_answer_box_panel(html)
-    html = inject_controls_bar(html)          # ← unified controls bar (LAST before SC)
-    html = inject_step_controller(html)       # ← MUST be absolute last
-
-    # ── Build standalone quiz HTML ───────────────────────────────────
-    quiz_html = QuizGeneratorV2.build_standalone_html(quiz_data, question, category)
-
-    # ── Final validation ─────────────────────────────────────────────
+    html = inject_answer_box_panel(html, answer_targets)
+    html = inject_controls_bar(html)       # injects bar with Prev/Next endpoints
+    html = inject_voice_assistant(html)    # inserts Voice before Next via #ctrl-next-sep
+    html = inject_step_controller(html)    # MUST be absolute last
+ 
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
-        QAnimLogger.warn("FinalValidator", f"Post-injection validation: {e} — continuing")
-
-    result["animation_code"]         = html
-    result["quiz_html"]              = quiz_html
-    result["render_status"]          = "ok"
-
+        QAnimLogger.warn("FinalValidator", f"Post-injection: {e} -- continuing")
+ 
+    result["animation_code"] = html
+    result["render_status"]  = "ok"
+ 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v10 — '{result['title']}' "
+        f"DONE v11.6 -- '{result['title']}' "
+        f"engine={result.get('engine_type','standard')} "
+        f"topology={result.get('circuit_topology','N/A')} "
         f"concept={len(concept_html):,} "
         f"solution={len(html):,} "
-        f"quiz_sets={len(quiz_data.get('sets',[]))} "
-        f"steps={len(result['solution_steps'])} "
-        f"to_find={result['to_find']}"
+        f"haiku_steps={len(haiku_steps)} "
+        f"to_find={result['to_find']} "
+        f"answer_targets={len(answer_targets)}"
     ))
     return result
-
-
-def _build_failure_result(question: str, reason: str) -> dict:
+ 
+ 
+def _build_failure_result(question, reason):
     fallback = RecoveryEngine.fallback_html(question, reason)
     return {
         "title":                  f"Animation: {question[:50]}",
@@ -3808,403 +3338,82 @@ def _build_failure_result(question: str, reason: str) -> dict:
         "design_strategy":        "",
         "animation_code":         fallback,
         "concept_animation_code": fallback,
-        "quiz_html":              fallback,
-        "quiz_data":              {"sets": []},
         "solution_steps":         [],
         "final_answer":           "",
         "key_insight":            "",
         "to_find":                [],
+        "answer_targets":         [],
+        "haiku_solution":         {"steps": [], "final_answer": "", "key_insight": "", "raw": ""},
         "category":               "UNKNOWN",
-        "engine_version":         "v10.0",
+        "engine_version":         "v11.6",
+        "engine_type":            "error",
+        "circuit_topology":       "N/A",
         "render_status":          "error",
     }
-
-
-def generate_question_animation_sync(question: str) -> dict:
-    """Synchronous wrapper for generate_question_animation."""
+ 
+ 
+def generate_question_animation_sync(question):
     return asyncio.run(generate_question_animation(question))
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  SYSTEM PROMPTS + PROMPT BUILDERS  (v10.0 — Light Theme)
-# ══════════════════════════════════════════════════════════════════════
-
-SYSTEM = """You are QAnim v10 — a cinematic SVG motion designer and educational animation engineer.
-
-YOUR MISSION: Turn any student question into a PREMIUM, self-contained SVG animation.
-
-═══════════════════════════════════════════════════════
-CRITICAL: DO NOT REVEAL THE ANSWER IN THE ANIMATION
-═══════════════════════════════════════════════════════
-The animation is a CONCEPTUAL VISUALIZATION LAYER only.
-- NEVER show the final numerical answer
-- NEVER reveal complete solution steps
-- ONLY teach the concept, show relationships, build intuition
-
-═══════════════════════════════════════════════════════
-OUTPUT FORMAT — STRICT (no markdown fences)
-═══════════════════════════════════════════════════════
-{
-  "animation_type": "concise type label",
-  "design_strategy": "2-4 sentences describing visual approach",
-  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ...", "Step 4: ..."],
-  "final_answer": "The complete, precise final answer in 1-2 sentences.",
-  "key_insight": "One memorable conceptual insight in 1 sentence.",
-  "animation_code": "COMPLETE SELF-CONTAINED HTML FILE AS A SINGLE JSON STRING"
-}
-
-═══════════════════════════════════════════════════════
-VISUAL STANDARDS — v10.0 LIGHT THEME (REQUIRED)
-═══════════════════════════════════════════════════════
-BACKGROUND: MUST use LIGHT theme — #f8fafc (very light gray) or #ffffff
-SVG background: light gradient — linear-gradient(135deg, #f1f5f9, #eff6ff) or white (#f8fafc)
-DO NOT use dark backgrounds (#1e1b4b, #2d2a6e, etc.) — use LIGHT backgrounds only
-TYPOGRAPHY: font-family: -apple-system, 'Segoe UI', Arial, sans-serif; color: #1e293b
-CARDS: background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px;
-       box-shadow: 0 4px 20px rgba(0,0,0,0.08)
-SVG TEXT: fill: #1e293b (dark on light background)
-ACCENT COLORS (vivid, on light bg):
-  PHYSICS:  #3b5bdb (royal blue) + #e64980 (crimson pink)
-  MATH:     #7c3aed (electric purple) + #db2777 (hot pink)
-  BIO:      #16a34a (emerald) + #ca8a04 (amber)
-  PROCESS:  #059669 (teal) + #0284c7 (sky blue)
-  ABSTRACT: #d97706 (orange) + #7c3aed (purple)
-  MIXED:    #0284c7 (blue) + #7c3aed (purple)
-NAVIGATION BUTTONS: white/light bg, dark text, rounded, subtle border
-SCENE BACKGROUNDS: white or very light gray (#f8fafc / #f1f5f9)
-
-═══════════════════════════════════════════════════════
-CRITICAL SAFETY RULES FOR animation_code
-═══════════════════════════════════════════════════════
-✅ Must be valid JSON string: escape " → \\", newline → \\n, backslash → \\\\
-✅ Contains complete <!DOCTYPE html>...</html>
-✅ Self-contained: NO external fonts, NO CDN links
-✅ NO document.write()
-✅ ABSOLUTELY NO backtick template literals — use only single/double quoted strings with + concatenation
-   WRONG:  `Hello ${name}`
-   RIGHT:  'Hello ' + name
-✅ All SVG must have xmlns="http://www.w3.org/2000/svg"
-✅ All <script> and <svg> tags must be balanced
-✅ Solution panel DOM must be present: #sol-backdrop, #sol-panel, #sol-close,
-   #sol-steps-container, #sol-answer-text, #sol-insight-text
-✅ Solution panel must be EMPTY (steps injected by post-processor)
-✅ Include: #prevbtn, #nextbtn, #dots for scene navigation
-✅ Include: #qstrip .qtext for question display
-✅ DO NOT include any buttons for "Find", "Quiz", "View Solution", or "Answer Box"
-   — these are injected separately by the post-processor
-
-═══════════════════════════════════════════════════════
-ANIMATION TECHNIQUES
-═══════════════════════════════════════════════════════
-- stroke-dashoffset reveal for paths and arrows
-- fade + translateY rise-in for labels (on light background, dark text)
-- spring scale-in (cubic-bezier(0.34,1.56,0.64,1)) for hero elements
-- Glow pulse: SVG filter + periodic opacity animation (subtle on light bg)
-- Sequential JS setTimeout orchestration (NOT CSS animation-delay)
-- Gradient fills on major shapes (pastels / vivid on white bg)
-- Animated dashed borders for emphasis
-
-SCENE STRUCTURE:
-- 3-5 scenes per animation
-- SVG viewBox="0 0 800 500"
-- MANUAL STEP CONTROL:
-  * NO auto-advance timers between scenes
-  * window.currentStep, window.showScene, window.animateSceneN, window.nextStep, window.prevStep
-  * #nextbtn / #prevbtn for navigation; #dots for progress indicators
-  * Scene 0 animates on DOMContentLoaded via window.showScene(0)"""
-
-SYSTEM_CONCEPT = """You are QAnim Concept Engine v10 — a cinematic SVG educational animator.
-
-YOUR MISSION: Create a premium, self-contained concept animation that teaches
-the CONCEPT visually. Do NOT show the answer. Light theme only.
-
-OUTPUT FORMAT — STRICT:
-{
-  "animation_type": "concise type label",
-  "design_strategy": "2-4 sentences",
-  "concept_code": "COMPLETE SELF-CONTAINED HTML FILE AS A SINGLE JSON STRING"
-}
-
-VISUAL STANDARDS — v10.0 LIGHT THEME (REQUIRED):
-BACKGROUND: #f8fafc or #ffffff — NEVER dark backgrounds
-SVG background: light gradient or white
-Text: color #1e293b on light backgrounds
-Accent colors: vivid (purple #7c3aed, blue #3b5bdb, etc.) on light bg
-Cards: white bg, 1px #e2e8f0 border, soft shadow
-
-SAFETY RULES:
-✅ Valid JSON string in concept_code
-✅ Complete <!DOCTYPE html>...</html>
-✅ Self-contained — no external resources
-✅ NO document.write(), NO backtick template literals
-✅ All SVG/script tags balanced
-✅ NO solution panel DOM elements
-✅ Include: #prevbtn, #nextbtn, #dots, #qstrip .qtext
-✅ MANUAL STEP CONTROL — no auto-advance:
-   window.showScene, window.animateSceneN, window.nextStep, window.prevStep
-✅ 3-5 scenes of progressive concept revelation
-✅ Light theme throughout"""
-
-DESIGN_SYSTEM = """
-TYPOGRAPHY: font-family: -apple-system, 'Segoe UI', Arial, sans-serif
-SVG viewBox: "0 0 800 500"
-BACKGROUNDS: #f8fafc (light), #ffffff (white), #f1f5f9 (very light gray)
-  DO NOT use dark backgrounds — light theme required
-COLOR PALETTES (vivid on light bg):
-  PHYSICS=#3b5bdb/#e64980 | MATH=#7c3aed/#db2777
-  BIOLOGY=#16a34a/#ca8a04 | PROCESS=#059669/#0284c7
-  ABSTRACT=#d97706/#7c3aed | MIXED=#0284c7/#7c3aed
-CARDS: background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; box-shadow:0 4px 16px rgba(0,0,0,0.07)
-SVG TEXT: fill:#1e293b or fill:#334155 (dark on light)
-"""
-
-SVG_TECHNIQUES = """
-KEY TECHNIQUES:
-- stroke-dashoffset path reveal on arrows/curves
-- fade+translateY rise for labels (opacity 0→1, translateY 16px→0)
-- spring scale-in: cubic-bezier(0.34,1.56,0.64,1)
-- Subtle glow: SVG filter feGaussianBlur (not too intense on light bg)
-- Sequential JS setTimeout (NOT CSS animation-delay attributes)
-- Gradient fills: linearGradient/radialGradient — use pastels or vivid on white
-- Animated dashed borders: stroke-dasharray + stroke-dashoffset
-"""
-
-STRATEGY_TEMPLATES = {
-    "VISUAL_PHYSICS": (
-        "Dynamic force/motion diagram on light background: draw physical setup with "
-        "gradient shapes on white SVG, animate force vectors with colored arrowheads, "
-        "show trajectory arc with stroke-dashoffset reveal, reveal formula symbols progressively."
-    ),
-    "PROCESS_BASED": (
-        "Sequential process nodes on light background connected by animated paths. "
-        "Each node reveals with spring scale-in, highlights its mechanism, "
-        "then dims as next activates. Progress bar draws across top."
-    ),
-    "MATHEMATICAL": (
-        "Coordinate axes draw in on white background, function curve traces left-to-right "
-        "with vivid color trail. Shaded region pulses with opacity. Formula symbols "
-        "materialize one token at a time with staggered fade-rise."
-    ),
-    "BIOLOGICAL": (
-        "Organic cell/molecule shapes with gradient fills on light background. Animated "
-        "process arrows trace the biological pathway. Color-coded structures appear "
-        "sequentially with labels rising in."
-    ),
-    "ABSTRACT": (
-        "Clean visual metaphor on white: scales for balance, Venn circles for overlap, "
-        "network graph for relationships. Concept dimensions animate as visual zones."
-    ),
-    "MIXED": (
-        "Split-zone canvas on light gray background. Left zone: physical/visual system. "
-        "Right zone: formula/data visualization. Center connector pulses data between zones."
-    ),
-}
-
-CONCEPT_STRATEGY_TEMPLATES = {
-    "VISUAL_PHYSICS": (
-        "Force diagram on light background: animate setup with gradient shapes, "
-        "draw colored force vectors, show trajectory arc via stroke-dashoffset. "
-        "End on key variable highlight — do NOT solve it."
-    ),
-    "PROCESS_BASED": (
-        "Sequential node graph on white: each stage spring-scales in, highlights "
-        "mechanism, dims as next activates. Traveling dot shows flow direction."
-    ),
-    "MATHEMATICAL": (
-        "Axes draw on white, function curve traces with vivid color trail, "
-        "shaded region pulses. Formula tokens materialize one at a time."
-    ),
-    "BIOLOGICAL": (
-        "Organic shapes on light background with gradient fills. Process arrows "
-        "trace pathway via stroke-dashoffset. Sequential color-coded reveals."
-    ),
-    "ABSTRACT": (
-        "Physical analogy on white: scales, spectrum bars, Venn circles. "
-        "Concept zones animate separately with bridge connectors."
-    ),
-    "MIXED": (
-        "Split canvas on light bg: physical animation left, formula/data right. "
-        "Central bridge connects zones."
-    ),
-}
-
-FALLBACK_RULES = """
-IF STUCK: Use one of these premium fallback layouts (all light theme):
-1. CARD-REVEAL: 3-4 white cards with colored top border, fade+rise staggered
-2. TIMELINE: Horizontal line draws, events spring-scale in at nodes
-3. CONCEPT-MAP: Central node, branch lines draw, satellite nodes appear
-4. DATA-BARS: Animated bar chart on white bg with gradient fills
-NEVER: flat dark backgrounds, neon on black, static text.
-"""
-
-HTML_SHELL_NOTE = """
-REQUIRED HTML STRUCTURE (solution panel DOM must exist but be EMPTY):
-- #sol-backdrop, #sol-panel, #sol-close
-- #sol-steps-container (EMPTY), #sol-answer-text (EMPTY), #sol-insight-text (EMPTY)
-- #sol-answer-card, #sol-insight-card
-- .sol-step class, .formula class
-- All scenes in <g id="scene-N"> groups
-- Navigation: #prevbtn, #nextbtn, #dots
-- Question: #qstrip .qtext
-
-DO NOT include any "Find", "Quiz", "View Solution", or "Answer Box" buttons.
-These are injected by the post-processor.
-
-DO NOT include document.write() or external script src= tags.
-"""
-
-
-def _classify_topic(question: str) -> str:
-    q = question.lower()
-    scores = {
-        "BIOLOGICAL":     sum(1 for k in ["cell","dna","rna","protein","photosynthesis","mitosis","enzyme","hormone","gene","organism","bacteria","virus","chromosome","metabolism"] if k in q),
-        "MATHEMATICAL":   sum(1 for k in ["integral","derivative","matrix","vector","theorem","equation","polynomial","logarithm","trigonometry","calculus","function","graph","proof"] if k in q),
-        "ABSTRACT":       sum(1 for k in ["philosophy","ethics","democracy","capitalism","justice","freedom","psychology","consciousness","society","ideology","culture","politics"] if k in q),
-        "PROCESS_BASED":  sum(1 for k in ["how does","how do","step by step","process","algorithm","mechanism","workflow","procedure","stages","works","function","operation"] if k in q),
-        "VISUAL_PHYSICS": sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit","newton","friction","torque","field","charge","resistance"] if k in q),
-    }
-    max_score = max(scores.values())
-    if max_score >= 2:
-        top = [c for c, s in scores.items() if s == max_score]
-        return top[0] if len(top) == 1 else "MIXED"
-    if sum(1 for s in scores.values() if s > 0) >= 3:
-        return "MIXED"
-    try:
-        resp = client.messages.create(
-            model=Q_MODEL, max_tokens=30,
-            system="Reply with ONLY one of: VISUAL_PHYSICS, PROCESS_BASED, MATHEMATICAL, BIOLOGICAL, ABSTRACT, MIXED",
-            messages=[{"role": "user", "content": f"Classify: {question[:200]}"}]
-        )
-        cat = resp.content[0].text.strip().upper()
-        if cat in STRATEGY_TEMPLATES:
-            return cat
-    except Exception:
-        pass
-    return "PROCESS_BASED"
-
-
-def _build_concept_prompt(question: str, category: str) -> str:
-    strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
-    return f"""Build a CINEMATIC CONCEPT ANIMATION for QAnim v10 Stage 1.
-
-QUESTION: {question}
-CATEGORY: {category}
-VISUAL STRATEGY: {strategy}
-
-{DESIGN_SYSTEM}
-{SVG_TECHNIQUES}
-{FALLBACK_RULES}
-
-CONCEPT ANIMATION REQUIREMENTS:
-- LIGHT THEME: white/light-gray background (#f8fafc or #ffffff) — NO dark backgrounds
-- Cards: white bg, colored border-top/border-left accent
-- Vivid accent colors on light background
-- 3-5 scenes of progressive conceptual revelation
-- NO solution, NO final numeric answer
-- DO NOT include any "Find", "Quiz", "View Solution", or "Answer Box" buttons
-- Navigation: #prevbtn, #nextbtn, #dots
-- All animations visible on light background
-
-IMPORTANT: Return ONLY the raw JSON object. No markdown. No extra text.
-The concept_code field must be a complete <!DOCTYPE html>...</html>
-as a properly escaped JSON string."""
-
-
-def _build_prompt(question: str, category: str) -> str:
-    strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
-    return f"""Build a PREMIUM CINEMATIC SVG animation for QAnim v10.
-
-QUESTION: {question}
-CATEGORY: {category}
-STRATEGY: {strategy}
-
-{DESIGN_SYSTEM}
-{SVG_TECHNIQUES}
-{FALLBACK_RULES}
-{HTML_SHELL_NOTE}
-
-KEY REMINDERS:
-- LIGHT THEME REQUIRED: white/light-gray backgrounds, dark text, vivid accents
-- NEVER show the final answer in the animation body
-- DO NOT include any "Find", "Quiz", "View Solution", or "Answer Box" buttons
-- Include solution panel DOM shell (EMPTY containers)
-
-IMPORTANT: Return ONLY the raw JSON object. No markdown. No extra text.
-The animation_code must be a complete <!DOCTYPE html>...</html>
-as a properly escaped JSON string."""
-
-
-# ══════════════════════════════════════════════════════════════════════
+ 
+ 
+generate_animation       = generate_question_animation
+generate_animation_sync  = generate_question_animation_sync
+ 
+ 
+# ===========================================================================
 #  CLI TEST
-# ══════════════════════════════════════════════════════════════════════
+# ===========================================================================
 if __name__ == "__main__":
     import sys
-
+ 
     TEST_QUESTIONS = {
-        "VISUAL_PHYSICS":  "Two blocks of mass 4kg and 6kg connected by string over pulley. Find acceleration and tension.",
+        "VISUAL_PHYSICS":  "A steam pipe of inner diameter 5 cm and outer diameter 7 cm carries steam at 250 degrees C. The pipe has thermal conductivity 45 W/mK and is exposed to air at 30 degrees C with convection coefficient 12 W/m2K. Find the rate of heat loss per meter and the outer surface temperature.",
         "PROCESS_BASED":   "How does a 4-stroke internal combustion engine work?",
         "MATHEMATICAL":    "Explain the Fundamental Theorem of Calculus with a visual proof.",
         "BIOLOGICAL":      "How does the human immune system fight a bacterial infection?",
-        "ABSTRACT":        "What is the difference between democracy and authoritarianism?",
-        "MIXED":           "How does an MRI machine produce images of the human body?",
-        "TOFIND_TEST":     "A resistor of 10Ω has 20V across it. Find the current and determine the power dissipated.",
+        "EEE_SERIES_RLC":  "A 230 V supply is connected to a circuit containing a 20 Ω resistor, a 0.1 H inductor, and a 100 μF capacitor in series. Supply frequency is 50 Hz. Calculate inductive reactance, capacitive reactance, total impedance, circuit current, and power factor.",
+        "EEE_TRANSFORMER": "A single-phase transformer has 200 primary turns and 50 secondary turns. The primary is connected to a 400 V, 50 Hz supply. Find the secondary voltage, turns ratio, and transformation ratio.",
     }
-
+ 
     if len(sys.argv) > 1:
         questions_to_test = {"CUSTOM": " ".join(sys.argv[1:])}
     else:
-        key = "TOFIND_TEST"
+        key = "VISUAL_PHYSICS"
         questions_to_test = {key: TEST_QUESTIONS[key]}
-
+ 
     for cat, q in questions_to_test.items():
         print("=" * 72)
-        print(f"  QAnim v10.0 — Light Theme | 3×5 Quiz | Answer Box | {cat}")
+        print(f"  QAnim v11.6 -- Quiz Removed | Prev/Next in Bar | Card at y=420 | {cat}")
         print(f"  Q: {q[:65]}...")
         print("=" * 72)
-
-        print("\n[ToFind Smoke Test]")
-        targets = ToFindExtractor.extract(q)
-        print(f"  Targets: {targets}")
-
+ 
         result = generate_question_animation_sync(q)
-
+ 
         concept_html  = result.get("concept_animation_code", "")
         solution_html = result.get("animation_code", "")
-        quiz_html     = result.get("quiz_html", "")
-        quiz_data     = result.get("quiz_data", {})
-
+ 
         print(f"\nTitle               : {result['title']}")
-        print(f"Category            : {result.get('category','N/A')}")
-        print(f"Engine              : {result.get('engine_version','N/A')}")
+        print(f"Engine              : {result.get('engine_version','N/A')} / {result.get('engine_type','standard')}")
         print(f"Render Status       : {result.get('render_status','N/A')}")
-        print(f"[ToFind] Targets    : {result.get('to_find',[])}")
         print(f"[Stage 1] Concept   : {len(concept_html):,} chars")
         print(f"[Stage 2] Solution  : {len(solution_html):,} chars")
-        print(f"[Stage 3] Quiz HTML : {len(quiz_html):,} chars")
-        sets = quiz_data.get('sets', [])
-        print(f"[Stage 3] Quiz Sets : {len(sets)} sets × {len(sets[0].get('questions',[])) if sets else 0} questions each")
-
-        steps = result.get('solution_steps', [])
-        print(f"Solution Steps      : {len(steps)}")
-        for i, s in enumerate(steps, 1):
-            print(f"  Step {i}: {s[:90]}...")
         print(f"Final Answer        : {result.get('final_answer','')[:120]}")
-        print(f"Key Insight         : {result.get('key_insight','')[:100]}")
-
+ 
         slug = cat.lower()
-
-        concept_out  = f"q_anim_v100_{slug}_concept.html"
-        solution_out = f"q_anim_v100_{slug}_solution.html"
-        quiz_out     = f"q_anim_v100_{slug}_quiz.html"
-
+        concept_out  = f"q_anim_v116_{slug}_concept.html"
+        solution_out = f"q_anim_v116_{slug}_solution.html"
+ 
         with open(concept_out,  "w", encoding="utf-8") as f: f.write(concept_html)
         with open(solution_out, "w", encoding="utf-8") as f: f.write(solution_html)
-        with open(quiz_out,     "w", encoding="utf-8") as f: f.write(quiz_html)
-
+ 
         print(f"\n[Stage 1] Concept saved  : {concept_out}")
         print(f"[Stage 2] Solution saved : {solution_out}")
-        print(f"[Stage 3] Quiz saved     : {quiz_out}")
         print()
-        print("Controls injected into solution HTML:")
-        print("  [🔍 Find]  [📝 Quiz]  [💡 View Solution]  [✏️ Answer Box]")
+        print("QAnim v11.6 Changes:")
+        print("  REMOVED -- QuizGeneratorV2 class (quiz data generation)")
+        print("  REMOVED -- NEW_QUIZ_SYSTEM_PROMPT / NEW_QUIZ_PROMPT_TEMPLATE constants")
+        print("  REMOVED -- inject_quiz_v2_panel() function and quiz panel stubs")
+        print("  REMOVED -- Stage 3 Quiz from asyncio.gather (now 3 concurrent stages)")
+        print("  REMOVED -- quiz_data / quiz_html from result dict and failure result")
         print()
+        print("Controls bar: [◀ Prev] [Find] [Final Answer] [Answer Box] [Notes] [Voice] [Next ▶]")
