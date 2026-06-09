@@ -1,44 +1,28 @@
-"""
-sync_routes.py — Cloud Sync Endpoints for GenZet Animations
-============================================================
-Location: backend/sync_routes.py
-
-Endpoints:
-  POST /sync/animations        — save or update one animation (upsert)
-  POST /sync/animations/batch  — bulk upsert (used on first login/migration)
-  GET  /sync/animations        — fetch ALL animations for the authenticated user
-  DELETE /sync/animations/{anim_id} — delete one animation by client-side id
-
-All routes require a valid JWT token in the Authorization header.
-
-Design decisions:
-  - POST /sync/animations is IDEMPOTENT:
-      Same anim_id from the same user → UPDATE instead of INSERT
-      Safe to call multiple times. Prevents duplicates.
-  - GET /sync/animations returns full animation_code so the frontend
-      can fully restore IndexedDB on a new device.
-  - Animations are scoped strictly to user_id — teachers never see
-      each other's content.
-"""
+# sync_routes.py  —  Cloud Sync via Supabase
+# ============================================
+# What changed from v4.x:
+#   - Removed: SQLAlchemy db queries, models.Animation, IntegrityError handling
+#   - Added:   supabase-py calls on `contents` table, always filtered by user_id
+#   - Kept:    Same route paths, same AnimationPayload/SyncResponse schemas,
+#              same upsert semantics (match on user_id + body->>'anim_id').
+#
+# user_id = current_user["id"] (auth.users.id) is extracted
+# from the verified JWT by get_current_user() and injected
+# into every Supabase insert/query.  Teachers never see each
+# other's content because every query is scoped by user_id.
 
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 
-from database import get_db
-import models
-from auth_utils import get_current_user
+from auth_utils import get_current_user, get_supabase
 
 router = APIRouter(prefix="/sync", tags=["Cloud Sync"])
 
 
-# ══════════════════════════════════════════════════════════════════════
-# REQUEST / RESPONSE SCHEMAS
-# ══════════════════════════════════════════════════════════════════════
+# ── Schemas ────────────────────────────────────────────────────────────
 
 class AnimationPayload(BaseModel):
     """
@@ -56,9 +40,9 @@ class AnimationPayload(BaseModel):
 
 class SyncResponse(BaseModel):
     """Response after a successful sync."""
-    success:    bool
-    anim_id:    str
-    message:    str
+    success:  bool
+    anim_id:  str
+    message:  str
 
 
 class BatchSyncRequest(BaseModel):
@@ -66,109 +50,101 @@ class BatchSyncRequest(BaseModel):
 
 
 class BatchSyncResponse(BaseModel):
-    success:   bool
-    synced:    int
-    failed:    int
-    message:   str
+    success:  bool
+    synced:   int
+    failed:   int
+    message:  str
 
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /sync/animations   (single upsert)
-# ══════════════════════════════════════════════════════════════════════
+# ── helpers ────────────────────────────────────────────────────────────
+
+def _parse_iso(s: Optional[str]) -> str:
+    """Return ISO string for created_at, defaulting to now."""
+    if s:
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).isoformat()
+        except (ValueError, AttributeError):
+            pass
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _payload_to_row(payload: AnimationPayload, user_id: str) -> dict:
+    """
+    Convert AnimationPayload → Supabase row dict.
+    user_id (auth.users.id) is injected here so it's always set
+    from the verified token, never from untrusted client input.
+    """
+    return {
+        # user_id flows: JWT → get_current_user() → here → Supabase
+        "user_id":    user_id,
+        "title":      payload.title or "Untitled",
+        "prompt":     payload.prompt or "",
+        "playlist":   payload.playlist or "General",
+        # body is a JSONB column storing the generated content blob
+        "body": {
+            "anim_id":        payload.id,
+            "explanation":    payload.explanation or "",
+            "animation_code": payload.animation_code or "",
+        },
+        "created_at": _parse_iso(payload.created_at),
+    }
+
+
+# ── POST /sync/animations  (single upsert) ────────────────────────────
 
 @router.post("/animations", response_model=SyncResponse, status_code=200)
 def sync_animation(
     payload: AnimationPayload,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),  # ← extracts user_id from JWT
 ):
     """
-    Save or update one animation for the authenticated user.
-
-    Logic:
-      - If (user_id, anim_id) already exists → UPDATE the row
-      - If it doesn't exist              → INSERT a new row
-
+    Upsert one animation for the authenticated teacher.
+    We match on (user_id, body->>'anim_id') — same semantics as before.
     This makes the endpoint safe to retry on network failure.
-    The frontend calls this every time the user saves to library.
     """
-    anim_id = payload.id.strip()
+    supabase = get_supabase()
+    user_id  = current_user["id"]   # auth.users.id — scopes this write
+    anim_id  = payload.id.strip()
 
-    # ── Look for existing row (this user + this client-side id) ──────
-    existing = db.query(models.Animation).filter(
-        models.Animation.user_id == current_user.id,
-        models.Animation.anim_id == anim_id,
-    ).first()
+    # Check if this (user, anim_id) already exists
+    existing = (
+        supabase.table("contents")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("body->>anim_id", anim_id)   # query inside JSONB
+        .maybe_single()
+        .execute()
+    )
 
-    if existing:
-        # ── UPDATE ───────────────────────────────────────────────────
-        existing.title          = payload.title or "Untitled"
-        existing.prompt         = payload.prompt or ""
-        existing.explanation    = payload.explanation or ""
-        existing.animation_code = payload.animation_code or ""
-        existing.playlist       = payload.playlist or "General"
-        existing.updated_at     = datetime.utcnow()
+    row = _payload_to_row(payload, user_id)
 
-        db.commit()
-        print(f"[SYNC]  ↑ Updated anim_id={anim_id!r} for user={current_user.email!r}")
+    if existing.data:
+        # UPDATE — preserve created_at, bump updated_at automatically
+        row.pop("created_at", None)
+        supabase.table("contents") \
+            .update(row) \
+            .eq("id", existing.data["id"]) \
+            .execute()
+        print(f"[SYNC] ↑ Updated anim_id={anim_id!r} user={current_user['email']!r}")
         return SyncResponse(success=True, anim_id=anim_id, message="Animation updated.")
-
     else:
-        # ── INSERT ───────────────────────────────────────────────────
-        # Parse client-side created_at if provided
-        created_dt = datetime.utcnow()
-        if payload.created_at:
-            try:
-                created_dt = datetime.fromisoformat(
-                    payload.created_at.replace("Z", "+00:00")
-                ).replace(tzinfo=None)
-            except (ValueError, AttributeError):
-                pass
-
-        new_anim = models.Animation(
-            anim_id        = anim_id,
-            user_id        = current_user.id,
-            title          = payload.title or "Untitled",
-            prompt         = payload.prompt or "",
-            explanation    = payload.explanation or "",
-            animation_code = payload.animation_code or "",
-            playlist       = payload.playlist or "General",
-            created_at     = created_dt,
-        )
-
-        db.add(new_anim)
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Animation '{anim_id}' could not be saved (duplicate key).",
-            )
-
-        print(f"[SYNC]  ✅ Saved anim_id={anim_id!r} for user={current_user.email!r}")
+        # INSERT
+        supabase.table("contents").insert(row).execute()
+        print(f"[SYNC] ✅ Saved anim_id={anim_id!r} user={current_user['email']!r}")
         return SyncResponse(success=True, anim_id=anim_id, message="Animation saved to cloud.")
 
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /sync/animations/batch   (bulk upsert)
-# ══════════════════════════════════════════════════════════════════════
+# ── POST /sync/animations/batch  (bulk upsert) ────────────────────────
 
 @router.post("/animations/batch", response_model=BatchSyncResponse)
 def batch_sync_animations(
     body: BatchSyncRequest,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Bulk upsert animations — used when user first logs in on a new device
-    and wants to push ALL their local IndexedDB animations to the cloud.
-
-    Processes each animation independently so partial failures don't
-    block the whole batch.
-    """
-    synced = 0
-    failed = 0
+    """Bulk upsert — used on first login to push all local IndexedDB items."""
+    supabase = get_supabase()
+    user_id  = current_user["id"]
+    synced = failed = 0
 
     for payload in body.animations:
         try:
@@ -177,120 +153,107 @@ def batch_sync_animations(
                 failed += 1
                 continue
 
-            existing = db.query(models.Animation).filter(
-                models.Animation.user_id == current_user.id,
-                models.Animation.anim_id == anim_id,
-            ).first()
+            existing = (
+                supabase.table("contents")
+                .select("id")
+                .eq("user_id", user_id)
+                .eq("body->>anim_id", anim_id)
+                .maybe_single()
+                .execute()
+            )
 
-            if existing:
-                existing.title          = payload.title or "Untitled"
-                existing.prompt         = payload.prompt or ""
-                existing.explanation    = payload.explanation or ""
-                existing.animation_code = payload.animation_code or ""
-                existing.playlist       = payload.playlist or "General"
-                existing.updated_at     = datetime.utcnow()
+            row = _payload_to_row(payload, user_id)
+
+            if existing.data:
+                row.pop("created_at", None)
+                supabase.table("contents") \
+                    .update(row) \
+                    .eq("id", existing.data["id"]) \
+                    .execute()
             else:
-                created_dt = datetime.utcnow()
-                if payload.created_at:
-                    try:
-                        created_dt = datetime.fromisoformat(
-                            payload.created_at.replace("Z", "+00:00")
-                        ).replace(tzinfo=None)
-                    except (ValueError, AttributeError):
-                        pass
+                supabase.table("contents").insert(row).execute()
 
-                new_anim = models.Animation(
-                    anim_id        = anim_id,
-                    user_id        = current_user.id,
-                    title          = payload.title or "Untitled",
-                    prompt         = payload.prompt or "",
-                    explanation    = payload.explanation or "",
-                    animation_code = payload.animation_code or "",
-                    playlist       = payload.playlist or "General",
-                    created_at     = created_dt,
-                )
-                db.add(new_anim)
-
-            db.commit()
             synced += 1
-
         except Exception as e:
-            db.rollback()
             failed += 1
-            print(f"[SYNC]  ⚠ Batch item failed: {e}")
+            print(f"[SYNC] ⚠ Batch item failed: {e}")
 
-    print(f"[SYNC]  Batch complete — {synced} synced, {failed} failed — user={current_user.email!r}")
+    print(f"[SYNC] Batch done — {synced} ok, {failed} failed — user={current_user['email']!r}")
     return BatchSyncResponse(
-        success = failed == 0,
-        synced  = synced,
-        failed  = failed,
-        message = f"Synced {synced} animations. {failed} failed.",
+        success=failed == 0, synced=synced, failed=failed,
+        message=f"Synced {synced}. {failed} failed.",
     )
 
 
-# ══════════════════════════════════════════════════════════════════════
-# GET /sync/animations   (fetch all for this user)
-# ══════════════════════════════════════════════════════════════════════
+# ── GET /sync/animations  (fetch all for this user) ───────────────────
 
 @router.get("/animations")
-def get_animations(
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def get_animations(current_user: dict = Depends(get_current_user)):
     """
-    Return ALL animations for the authenticated user.
-
-    Called on every login to restore the full library.
-    Returns full animation_code so IndexedDB can be rebuilt completely.
-
-    The frontend:
-      1. Receives this list
-      2. Merges with local IndexedDB (cloud wins for same anim_id)
-      3. Re-renders the library cards
+    Return ALL contents rows for this teacher.
+    The .eq("user_id", user_id) filter is mandatory — never omit it.
+    RLS is a backup, but explicit scoping is the primary guard.
     """
-    animations = (
-        db.query(models.Animation)
-        .filter(models.Animation.user_id == current_user.id)
-        .order_by(models.Animation.created_at.desc())
-        .all()
+    supabase = get_supabase()
+    user_id  = current_user["id"]   # scopes the SELECT to this teacher only
+
+    res = (
+        supabase.table("contents")
+        .select("*")
+        .eq("user_id", user_id)          # ← user_id from verified JWT
+        .order("created_at", desc=True)
+        .execute()
     )
 
-    print(f"[SYNC]  ↓ Fetched {len(animations)} animations for user={current_user.email!r}")
+    rows = res.data or []
+    # Flatten JSONB body back to the shape the frontend expects
+    animations = [
+        {
+            "id":             r["body"].get("anim_id", r["id"]),
+            "title":          r["title"],
+            "prompt":         r["prompt"],
+            "explanation":    r["body"].get("explanation", ""),
+            "animation_code": r["body"].get("animation_code", ""),
+            "playlist":       r["playlist"],
+            "created_at":     r["created_at"],
+        }
+        for r in rows
+    ]
 
-    return {
-        "user_id":    current_user.id,
-        "count":      len(animations),
-        "animations": [a.to_dict() for a in animations],
-    }
+    print(f"[SYNC] ↓ Fetched {len(animations)} items for user={current_user['email']!r}")
+    return {"user_id": user_id, "count": len(animations), "animations": animations}
 
 
-# ══════════════════════════════════════════════════════════════════════
-# DELETE /sync/animations/{anim_id}
-# ══════════════════════════════════════════════════════════════════════
+# ── DELETE /sync/animations/{anim_id} ─────────────────────────────────
 
 @router.delete("/animations/{anim_id}", response_model=SyncResponse)
 def delete_animation(
     anim_id: str,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Delete one animation from cloud storage.
-    Only the owner can delete their own animations.
-    """
-    animation = db.query(models.Animation).filter(
-        models.Animation.anim_id == anim_id,
-        models.Animation.user_id == current_user.id,
-    ).first()
+    """Delete one animation. Only the owner can delete their rows."""
+    supabase = get_supabase()
+    user_id  = current_user["id"]
 
-    if not animation:
+    existing = (
+        supabase.table("contents")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("body->>anim_id", anim_id)
+        .maybe_single()
+        .execute()
+    )
+
+    if not existing.data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Animation '{anim_id}' not found.",
         )
 
-    db.delete(animation)
-    db.commit()
-    print(f"[SYNC]  🗑 Deleted anim_id={anim_id!r} for user={current_user.email!r}")
+    supabase.table("contents") \
+        .delete() \
+        .eq("id", existing.data["id"]) \
+        .execute()
 
+    print(f"[SYNC] 🗑 Deleted anim_id={anim_id!r} user={current_user['email']!r}")
     return SyncResponse(success=True, anim_id=anim_id, message="Animation deleted from cloud.")
