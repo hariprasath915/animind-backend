@@ -9,13 +9,14 @@ anthropic==0.102.0
 httpx==0.28.1
 
 # ── Authentication ─────────────────────────────────────────────────────
+# python-jose: verifies Supabase-issued HS256 JWTs on every protected request
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.0.1
 
-# ── Database ───────────────────────────────────────────────────────────
-sqlalchemy==2.0.36
-psycopg2-binary==2.9.12
+# ── Supabase — Cloud Database + Auth ───────────────────────────────────
+# supabase 2.31.0 is the latest stable; gotrue 2.12.4 is its compatible peer
+supabase==2.31.0
+
+# ── Environment ────────────────────────────────────────────────────────
 python-dotenv==1.0.1
 
 # ── Data Validation ────────────────────────────────────────────────────
@@ -26,3 +27,10 @@ email-validator==2.3.0
 # ── PDF Processing ─────────────────────────────────────────────────────
 pdfplumber==0.11.0
 PyPDF2==3.0.1
+
+# ── REMOVED (no longer needed after Supabase migration) ────────────────
+# sqlalchemy       — DB ORM replaced by supabase-py client
+# psycopg2-binary  — PostgreSQL driver replaced by Supabase REST API
+# passlib[bcrypt]  — password hashing replaced by Supabase Auth
+# bcrypt           — same as above
+# gotrue           — pulled in automatically as supabase dependency
