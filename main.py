@@ -1,52 +1,67 @@
 """
-main.py  —  SmartBoard AI Backend v5.0 (Supabase)
+main.py  —  SmartBoard AI Backend v5.1 (Supabase)
 ==================================================
 Migrated from SQLAlchemy + bcrypt/jose to Supabase Auth + supabase-py.
 
-New in v5.0:
-  - Removed: database.py / models.py / init_db() — Supabase manages schema
-  - Removed: JWT_SECRET_KEY, DATABASE_URL env vars (no longer needed)
-  - Added:   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY
-  - auth_utils.py: calls supabase.auth.get_user(token) instead of jose decode
-  - auth_routes.py: delegates register/login to Supabase Auth
-  - sync_routes.py: queries `contents` table via supabase-py (always user-scoped)
+New in v5.1 (sync with all sibling modules):
+  - Added:   admin_router + install_error_handler  (admin_router.py)
+  - Fixed:   CORS — removed wildcard+credentials conflict (server.py had this bug)
+  - Fixed:   SUPABASE_SERVICE_KEY env-var name (auth_utils.py uses this name)
+  - Fixed:   /generate-topic-content uses generate_ultimate_learning_content
+  - Kept:    keep-alive pinger, lifespan context, all existing endpoints
 
-Preserved (UNCHANGED):
-  POST /auth/register        POST /auth/login
-  GET  /auth/verify          GET  /auth/me
-  POST /sync/animations      POST /sync/animations/batch
-  GET  /sync/animations      DELETE /sync/animations/{id}
-  GET  /health
-  POST /generate-animation   POST /generate-question-animation
-  POST /generate-from-book   POST /generate-topic-content
+Entry point (render.yaml):
+    uvicorn main:app --host 0.0.0.0 --port $PORT
 
-Run:
-    uvicorn main:app --host 0.0.0.0 --port 8000
+Environment variables (Render Dashboard → Environment):
+    ANTHROPIC_API_KEY        — sk-ant-... key for AI generation
+    SUPABASE_URL             — https://<project-id>.supabase.co
+    SUPABASE_ANON_KEY        — anon/public key (auth_routes sign-up/sign-in)
+    SUPABASE_SERVICE_KEY     — service-role key (backend-only DB CRUD)
+    SUPABASE_JWT_SECRET      — Supabase Dashboard → Settings → API → JWT Secret
+    ADMIN_SECRET_TOKEN       — any long random string for /admin/* endpoints
+    DEBUG_CORS               — "true" | "false"  (allow ALL origins, dev only)
+    EXTRA_ORIGINS            — comma-separated extra Vercel preview URLs
+    KEEP_ALIVE_INTERVAL      — seconds between self-pings (default 600)
 
-Environment variables (in .env / Render):
-    ANTHROPIC_API_KEY=sk-ant-...
-    SUPABASE_URL=https://xxx.supabase.co
-    SUPABASE_SERVICE_ROLE_KEY=eyJ...
-    SUPABASE_ANON_KEY=eyJ...
-    DEBUG_CORS=true   (optional — allows ALL origins, dev only)
+Endpoints:
+    GET  /                              →  health + endpoint list
+    GET  /health                        →  version check
+    POST /auth/register                 →  auth_routes.register()
+    POST /auth/login                    →  auth_routes.login()
+    GET  /auth/verify                   →  auth_routes.verify_token()
+    GET  /auth/me                       →  auth_routes.get_me()
+    POST /sync/animations               →  sync_routes.sync_animation()       (JWT)
+    POST /sync/animations/batch         →  sync_routes.batch_sync_animations() (JWT)
+    GET  /sync/animations               →  sync_routes.get_animations()        (JWT)
+    DELETE /sync/animations/{anim_id}   →  sync_routes.delete_animation()      (JWT)
+    GET  /admin/errors                  →  admin_router.get_errors()      (X-Admin-Token)
+    GET  /admin/users                   →  admin_router.get_users()       (X-Admin-Token)
+    POST /generate-animation            →  claude_client.generate_animation()
+    POST /generate-question-animation   →  q_animation.generate_question_animation()
+    POST /generate-from-book            →  claude_client.generate_genzet_book_content()
+    POST /generate-topic-content        →  claude_client.generate_ultimate_learning_content()
 """
 
-import sys, io, os, asyncio
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+import sys
+import io
+import os
+import asyncio
 
-# ── Load Env Variables (.env) ──────────────────────────────────────────
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+# ── Load .env (local dev) ─────────────────────────────────────────────────────
 try:
     from dotenv import load_dotenv
-    from pathlib import Path
-    _current_dir = Path(__file__).resolve().parent
-    # Attempt to load from script directory
-    load_dotenv(dotenv_path=_current_dir / ".env")
-    # Also load from parent directory in case of repo-root running environment
-    load_dotenv(dotenv_path=_current_dir.parent / ".env")
-    print(f"[STARTUP] ✅ Loaded environment variables from {_current_dir / '.env'} or parent")
-except Exception as env_err:
-    print(f"[STARTUP] ⚠ Could not run load_dotenv: {env_err}")
+    from pathlib import Path as _Path
+
+    _cur = _Path(__file__).resolve().parent
+    load_dotenv(dotenv_path=_cur / ".env")
+    load_dotenv(dotenv_path=_cur.parent / ".env")
+    print(f"[STARTUP] ✅ .env loaded from {_cur}")
+except Exception as _env_err:
+    print(f"[STARTUP] ⚠ load_dotenv failed: {_env_err}")
 
 from contextlib import asynccontextmanager
 import httpx
@@ -57,16 +72,23 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
-# ── Auth + Sync (Supabase-backed) ────────────────────────────────────
-# database.py / init_db() removed — Supabase manages schema
+# ── Auth + Sync (Supabase-backed) ─────────────────────────────────────────────
 from auth_routes import router as auth_router
 from sync_routes import router as sync_router
 
-# ── Existing AI modules (unchanged) ───────────────────────────────────
+# ── Admin (error ring + user list) ────────────────────────────────────────────
+# Wired as instructed in admin_router.py's own docstring:
+#   from admin_router import router as admin_router, install_error_handler
+#   app.include_router(admin_router)
+#   install_error_handler(app)
+from admin_router import router as admin_router_obj, install_error_handler
+
+# ── AI modules ────────────────────────────────────────────────────────────────
 from claude_client import (
     generate_animation,
     generate_genzet_book_content,
     subtopics_json_to_genzet_args,
+    generate_ultimate_learning_content,   # used by /generate-topic-content
 )
 from pdf_handler import (
     extract_pdf_text,
@@ -85,23 +107,21 @@ except ImportError:
 
 import json
 
-# ── Env flags ─────────────────────────────────────────────────────────
+# ── Env flags ─────────────────────────────────────────────────────────────────
 DEBUG_CORS = os.getenv("DEBUG_CORS", "false").lower() == "true"
-
-# ── Keep-alive interval (seconds) ─────────────────────────────────────
-KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))  # 10 min default
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))  # 10 min
 
 
+# ── Keep-alive pinger (prevents Render free-tier spin-down) ──────────────────
 async def _keep_alive_pinger():
     """
-    Background task: pings our own /health endpoint every 10 minutes
-    to prevent Render free-tier from spinning down after 15 min idle.
-    Uses RENDER_EXTERNAL_URL (auto-set by Render) if available.
+    Pings /health every KEEP_ALIVE_INTERVAL seconds so Render doesn't
+    spin down the service after 15 minutes of inactivity.
+    Uses RENDER_EXTERNAL_URL when available (auto-set by Render).
     """
-    # Render sets this automatically; fallback to known URL
     self_url = os.getenv(
         "RENDER_EXTERNAL_URL",
-        "https://animind-backend-y07f.onrender.com"
+        "https://animind-backend-y07f.onrender.com",
     )
     health_url = f"{self_url.rstrip('/')}/health"
     print(f"[KEEP-ALIVE] ✅ Pinger started → {health_url} every {KEEP_ALIVE_INTERVAL}s")
@@ -116,60 +136,59 @@ async def _keep_alive_pinger():
                 print(f"[KEEP-ALIVE] ⚠ Ping failed: {e}")
 
 
-# ── Startup / Shutdown lifecycle ───────────────────────────────────────
+# ── App lifespan (startup / shutdown) ────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Runs once at startup: starts keep-alive pinger.
-    DB init removed — Supabase manages schema, no local init needed.
-    """
-    print("[STARTUP] ✅ GenZet v5.0 ready (Supabase backend)")
-
-    # Start the keep-alive background pinger
-    pinger_task = asyncio.create_task(_keep_alive_pinger())
-
+    """Starts the keep-alive pinger on startup; cancels it on shutdown."""
+    print("[STARTUP] ✅ SmartBoard AI v5.1 ready (Supabase + Admin)")
+    pinger = asyncio.create_task(_keep_alive_pinger())
     yield
-
-    # Graceful shutdown: cancel the pinger
-    pinger_task.cancel()
+    pinger.cancel()
     try:
-        await pinger_task
+        await pinger
     except asyncio.CancelledError:
         pass
-    print("[SHUTDOWN] GenZet shutting down.")
+    print("[SHUTDOWN] SmartBoard AI shutting down.")
 
 
-# ── App ────────────────────────────────────────────────────────────────
+# ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="SmartBoard AI API",
-    version="5.0.0",
+    version="5.1.0",
+    description="AI-powered educational animation platform — Supabase edition",
     lifespan=lifespan,
 )
 
-# ── CORS ───────────────────────────────────────────────────────────────
-# If DEBUG_CORS=true (local dev), allow everything.
-# In production, we list explicit origins + a regex for Vercel previews.
+
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# IMPORTANT: allow_origins=["*"] and allow_credentials=True is INVALID per the
+# CORS spec — browsers will reject the preflight response.  We list explicit
+# origins instead, and use allow_origin_regex for Vercel preview URLs.
 #
-# To add a new Vercel URL without redeploying, set EXTRA_ORIGINS env var:
+# To add a new origin without redeploying, set EXTRA_ORIGINS env var:
 #   EXTRA_ORIGINS=https://your-app-abc123.vercel.app,https://other.vercel.app
 EXTRA_ORIGINS = [
-    o.strip() for o in os.getenv("EXTRA_ORIGINS", "").split(",") if o.strip()
+    o.strip()
+    for o in os.getenv("EXTRA_ORIGINS", "").split(",")
+    if o.strip()
 ]
 
 BASE_ORIGINS = [
-    "https://genzet-app.vercel.app",                                              # ✅ genzet frontend (main)
-    "https://genzet-app-git-main-hari-prasath-genzet-web-project.vercel.app",    # ✅ genzet git-main preview
-    "https://animind-gold.vercel.app",                                            # ✅ animind frontend
+    "https://genzet-app.vercel.app",
+    "https://genzet-app-git-main-hari-prasath-genzet-web-project.vercel.app",
+    "https://animind-gold.vercel.app",
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8000",
 ] + EXTRA_ORIGINS
 
 if DEBUG_CORS:
+    # Dev-only: allow everything but WITHOUT credentials (spec requirement)
     print("[CORS] ⚠ DEBUG_CORS=true — allowing ALL origins (dev only)")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=False,   # credentials + wildcard is not allowed by spec
+        allow_credentials=False,   # wildcard + credentials is NOT allowed by spec
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -178,59 +197,72 @@ else:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=BASE_ORIGINS,
-        allow_origin_regex=r"https://(genzet|animind)[\w-]*\.vercel\.app",  # all preview URLs
+        allow_origin_regex=r"https://(genzet|animind)[\w-]*\.vercel\.app",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-# ── Register routers ───────────────────────────────────────────────────
-app.include_router(auth_router)   # /auth/...
-app.include_router(sync_router)   # /sync/...
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(auth_router)        # /auth/*
+app.include_router(sync_router)        # /sync/*
+app.include_router(admin_router_obj)   # /admin/*
+
+# ── Global error handler (feeds /admin/errors endpoint) ──────────────────────
+install_error_handler(app)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # HEALTH + ROOT
-# ══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health(request: Request):
     """
-    GET  → full JSON status
+    GET  → full JSON status payload
     HEAD → 200 OK with no body (used by Render health checks)
     """
     if request.method == "HEAD":
         return JSONResponse(content=None, status_code=200)
     return {
         "status":  "ok",
-        "version": "5.0.0",
+        "version": "5.1.0",
         "backend": "Supabase",
         "debug_cors": DEBUG_CORS,
         "keep_alive_interval": KEEP_ALIVE_INTERVAL,
         "sub_topics_module": SUB_TOPICS_AVAILABLE,
         "endpoints": {
-            # ── Auth endpoints ──
-            "register":            "POST /auth/register",
-            "login":               "POST /auth/login",
-            "verify":              "GET  /auth/verify",
-            "me":                  "GET  /auth/me",
-            # ── Sync endpoints ──
-            "sync_save":           "POST /sync/animations",
-            "sync_batch":          "POST /sync/animations/batch",
-            "sync_fetch":          "GET  /sync/animations",
-            "sync_delete":         "DELETE /sync/animations/{anim_id}",
-            # ── AI endpoints ──
-            "animation":           "POST /generate-animation",
-            "question_animation":  "POST /generate-question-animation",
-            "book_mode":           "POST /generate-from-book",
-            "skill_workflow":      "POST /generate-topic-content",
+            "auth": {
+                "register": "POST /auth/register",
+                "login":    "POST /auth/login",
+                "verify":   "GET  /auth/verify",
+                "me":       "GET  /auth/me",
+            },
+            "sync": {
+                "pull":   "GET    /sync/animations",
+                "push":   "POST   /sync/animations",
+                "batch":  "POST   /sync/animations/batch",
+                "delete": "DELETE /sync/animations/{anim_id}",
+            },
+            "ai": {
+                "animation":          "POST /generate-animation",
+                "question_animation": "POST /generate-question-animation",
+                "book_mode":          "POST /generate-from-book",
+                "topic_content":      "POST /generate-topic-content",
+            },
+            "admin": {
+                "errors": "GET /admin/errors  (X-Admin-Token header required)",
+                "users":  "GET /admin/users   (X-Admin-Token header required)",
+            },
         },
     }
 
 
-# ══════════════════════════════════════════════════════════════════════
-# EXISTING ENDPOINTS — UNCHANGED FROM v3.7 / v4.0
-# ══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# REQUEST MODELS
+# ══════════════════════════════════════════════════════════════════════════════
 
 class AnimationRequest(BaseModel):
     prompt: str
@@ -242,12 +274,17 @@ class QuestionAnimRequest(BaseModel):
 
 class SkillContentRequest(BaseModel):
     topic:        str
-    subject:      Optional[str] = "Engineering"
+    subject:      Optional[str]  = "Engineering"
     retry_failed: Optional[bool] = True
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# AI GENERATION ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
 @app.post("/generate-animation")
 async def create_animation(request: AnimationRequest):
+    """Generate a full 8-section HTML animation page for the topic."""
     if not request.prompt or not request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
     try:
@@ -259,6 +296,7 @@ async def create_animation(request: AnimationRequest):
 
 @app.post("/generate-question-animation")
 async def create_question_animation(request: QuestionAnimRequest):
+    """Generate a rich Canvas+SVG+anime.js animation that visually answers any educational question."""
     question = (request.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="'question' field cannot be empty")
@@ -271,13 +309,32 @@ async def create_question_animation(request: QuestionAnimRequest):
         raise HTTPException(status_code=500, detail=f"Question animation generation failed: {e}")
 
 
+@app.post("/generate-topic-content")
+async def create_topic_content(request: SkillContentRequest):
+    """
+    Generate comprehensive 10-section educational content as JSON.
+    Uses generate_ultimate_learning_content from claude_client.py.
+    """
+    topic = (request.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+    try:
+        result = await generate_ultimate_learning_content(
+            topic=topic,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Topic content generation failed: {e}")
+
+
 @app.post("/generate-from-book")
 async def create_from_book(
-    topic:    str            = Form(...),
-    file:     UploadFile     = File(...),
-    subtopic: Optional[str]  = Form(default=None),
+    topic:    str           = Form(...),
+    file:     UploadFile    = File(...),
+    subtopic: Optional[str] = Form(default=None),
 ):
-    topic    = (topic or "").strip()
+    """Generate an animation from a PDF/book excerpt (Book Creator tab)."""
+    topic    = (topic    or "").strip()
     subtopic = (subtopic or "").strip() or topic
 
     if not topic:
@@ -301,7 +358,10 @@ async def create_from_book(
 
     pdf_data = extract_pdf_text(pdf_bytes)
     if not pdf_data["success"]:
-        raise HTTPException(status_code=400, detail=f"Could not read PDF: {pdf_data.get('error', 'Unknown')}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read PDF: {pdf_data.get('error', 'Unknown')}",
+        )
 
     full_text  = pdf_data["full_text"]
     word_count = pdf_data["word_count"]
@@ -309,7 +369,7 @@ async def create_from_book(
     if word_count < 50:
         raise HTTPException(status_code=400, detail="PDF has no readable text.")
 
-    topic_data = find_subtopics_in_pdf(full_text, topic)
+    topic_data       = find_subtopics_in_pdf(full_text, topic)
     pdf_context_json = build_subtopics_json(topic, topic_data)
 
     pdf_context = (
@@ -340,35 +400,22 @@ async def create_from_book(
 
     try:
         result = await generate_genzet_book_content(
-            topic=topic, subtopic=subtopic,
-            pdf_context=pdf_context, subtopics_list=subtopics_list,
+            topic=topic,
+            subtopic=subtopic,
+            pdf_context=pdf_context,
+            subtopics_list=subtopics_list,
         )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
 
 
-@app.post("/generate-topic-content")
-async def create_topic_content(request: SkillContentRequest):
-    topic = (request.topic or "").strip()
-    if not topic:
-        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
-    try:
-        from claude_client import generate_skill_content
-        result = await generate_skill_content(
-            topic=topic,
-            subject=request.subject or "Engineering",
-            retry_failed=request.retry_failed if request.retry_failed is not None else True,
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SKILL.md generation failed: {e}")
-
-
+# ── Direct run ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
+
     _port = int(os.getenv("PORT", "8000"))
     print("=" * 65)
-    print(f"  SmartBoard AI API v5.0 (Supabase) — Auth + Cloud Sync + Keep-Alive on port {_port}")
+    print(f"  SmartBoard AI API v5.1 — port {_port}")
     print("=" * 65)
-    uvicorn.run("main:app", host="0.0.0.0", port=_port)
+    uvicorn.run("main:app", host="0.0.0.0", port=_port, reload=True)
