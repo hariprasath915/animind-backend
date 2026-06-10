@@ -21,19 +21,32 @@ Optional:
   LOG_LEVEL            — debug | info | warning | error (default: debug)
   SHOW_ERROR_DETAILS   — true | false (default: true)
 
+Environment variables (set in Render Dashboard → Environment):
+  ANTHROPIC_API_KEY    — Claude AI key
+  SUPABASE_URL         — https://<project>.supabase.co
+  SUPABASE_ANON_KEY    — anon/public key
+  SUPABASE_SERVICE_KEY — service-role key (backend-only)
+  SUPABASE_JWT_SECRET  — JWT secret from Supabase Dashboard → Settings → API
+  ADMIN_SECRET_TOKEN   — for /admin/* endpoints
+  FRONTEND_URL         — e.g. https://genzet-app.vercel.app (for OAuth redirect)
+  EXTRA_ORIGINS        — comma-separated extra frontend URLs
+
 Endpoints:
   GET  /                              →  health + endpoint list
   GET  /health                        →  version check
-  POST /auth/register                 →  auth_routes.register()
-  POST /auth/login                    →  auth_routes.login()
-  GET  /auth/verify                   →  auth_routes.verify_token()
-  GET  /auth/me                       →  auth_routes.get_me()
-  POST /sync/animations               →  sync_routes.sync_animation()       (JWT required)
-  POST /sync/animations/batch         →  sync_routes.batch_sync_animations() (JWT required)
-  GET  /sync/animations               →  sync_routes.get_animations()        (JWT required)
-  DELETE /sync/animations/{anim_id}   →  sync_routes.delete_animation()      (JWT required)
-  GET  /admin/errors                  →  admin_router.get_errors()      (X-Admin-Token required)
-  GET  /admin/users                   →  admin_router.get_users()       (X-Admin-Token required)
+  POST /auth/register                 →  register + create public.users row
+  POST /auth/login                    →  login  + update public.users.last_login
+  POST /auth/logout                   →  revoke session
+  GET  /auth/verify                   →  validate existing JWT
+  GET  /auth/me                       →  profile from public.users
+  GET  /auth/google                   →  start Google OAuth flow
+  POST /auth/google/callback          →  finish Google OAuth + create profile
+  POST /sync/animations               →  sync_routes (JWT required)
+  POST /sync/animations/batch         →  sync_routes (JWT required)
+  GET  /sync/animations               →  sync_routes (JWT required)
+  DELETE /sync/animations/{anim_id}   →  sync_routes (JWT required)
+  GET  /admin/errors                  →  admin_router (X-Admin-Token required)
+  GET  /admin/users                   →  admin_router (X-Admin-Token required)
   POST /generate-animation            →  claude_client.generate_animation()
   POST /generate-topic-content        →  claude_client.generate_topic_content()
   POST /generate-question-animation   →  q_animation.generate_question_animation()
@@ -128,15 +141,17 @@ class QuestionAnimRequest(BaseModel):
 async def root():
     return {
         "status": "ok",
-        "message": "Animind / GenZet API v4.0 (Supabase edition) 🎓",
-        "auth":    "Supabase Auth — JWT verified with SUPABASE_JWT_SECRET",
-        "storage": "Supabase `contents` table — scoped by user_id on every query",
+        "version": "4.1.0",
+        "message": "GenZet / Animind API — Supabase edition 🎓",
         "endpoints": {
             "auth": {
-                "register": "POST /auth/register",
-                "login":    "POST /auth/login",
-                "verify":   "GET  /auth/verify",
-                "me":       "GET  /auth/me",
+                "register":       "POST /auth/register      → creates public.users row",
+                "login":          "POST /auth/login          → updates last_login",
+                "logout":         "POST /auth/logout",
+                "verify":         "GET  /auth/verify         → validate JWT",
+                "me":             "GET  /auth/me             → profile from DB",
+                "google":         "GET  /auth/google         → Google OAuth URL",
+                "google_finish":  "POST /auth/google/callback → finish Google OAuth",
             },
             "sync": {
                 "pull":   "GET    /sync/animations",
