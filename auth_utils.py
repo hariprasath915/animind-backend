@@ -1,115 +1,136 @@
 """
-auth_utils.py — JWT + bcrypt utilities for GenZet
-===================================================
+auth_utils.py — Supabase JWT verification for GenZet / Animind
+==============================================================
 Location: backend/auth_utils.py
 
 Responsibilities:
-  - Hash passwords with bcrypt (never store plain text)
-  - Verify password hashes on login
-  - Create JWT access tokens signed with HS256
-  - Decode and validate JWT tokens
-  - FastAPI dependency: get_current_user() — extracts user from Authorization header
+  - Verify Supabase-issued JWTs (HS256, signed with SUPABASE_JWT_SECRET)
+  - Extract user identity (id, email, name) from the verified token
+  - Provide a service-role Supabase client for data operations
+  - FastAPI dependency: get_current_user() — extracts user dict from
+    Authorization: Bearer <token> header on every protected route
+
+What changed from v4.x (SQLAlchemy version):
+  - REMOVED: bcrypt hashing, local JWT creation, DB session dependency,
+             SQLAlchemy User model lookup on every request
+  - ADDED:   Supabase JWT verification using SUPABASE_JWT_SECRET,
+             get_supabase() returning a service-role client for DB ops
+  - KEPT:    Same get_current_user() FastAPI dependency signature —
+             all routes that do `Depends(get_current_user)` work unchanged,
+             except the return value is now a plain dict instead of models.User.
+
+JWT flow:
+  Browser → POST /auth/login → Supabase issues access_token (JWT)
+  Browser → any protected route → Authorization: Bearer <access_token>
+  Backend → decode_supabase_token() verifies signature + expiry
+  Backend → injects { id, email, name } dict into route handler
+
+user_id = current_user["id"] is always auth.users.id (UUID).
+This is the foreign key used in all `contents` table rows.
 """
 
 import os
-from datetime import datetime, timedelta
 from typing import Optional
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from supabase import create_client, Client
 
-from database import get_db
-import models
+# ── Configuration — load from environment ─────────────────────────────
+# SUPABASE_URL         — e.g. https://xyzxyz.supabase.co
+# SUPABASE_ANON_KEY    — public anon key (used in auth_routes for sign-up/sign-in)
+# SUPABASE_SERVICE_KEY — service-role key (never expose to browser; used here for DB ops)
+# SUPABASE_JWT_SECRET  — found in Supabase Dashboard → Settings → API → JWT Secret
+#                        Used to VERIFY tokens the Supabase auth server issues.
 
-# ── Configuration (loaded from .env) ──────────────────────────────────
-SECRET_KEY      = os.getenv("JWT_SECRET_KEY", "CHANGE_THIS_TO_A_LONG_RANDOM_STRING_IN_PRODUCTION")
-ALGORITHM       = "HS256"
-TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "30"))  # 30-day tokens
+SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+SUPABASE_JWT_SECRET  = os.getenv("SUPABASE_JWT_SECRET", "")
 
-# ── bcrypt context ─────────────────────────────────────────────────────
-# bcrypt is the gold standard for password hashing:
-# - Adaptive cost factor (slow by design — defeats brute force)
-# - Built-in salt (no rainbow table attacks)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ALGORITHM = "HS256"   # Supabase signs JWTs with HS256 by default
 
 # ── Bearer token extractor ─────────────────────────────────────────────
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# PASSWORD HASHING
+# SUPABASE SERVICE CLIENT  (service-role key — never sent to browser)
 # ══════════════════════════════════════════════════════════════════════
 
-def hash_password(plain_password: str) -> str:
+def get_supabase() -> Client:
     """
-    Hash a plain-text password using bcrypt.
-    Returns a 60-character bcrypt hash string.
+    Return a Supabase client authenticated with the service-role key.
+    This client bypasses Row-Level Security, so every query MUST include
+    an explicit .eq("user_id", user_id) filter to scope data correctly.
 
-    Example:
-        stored_hash = hash_password("MySecretPass123")
+    Used by:
+      - sync_routes.py  → all CRUD on `contents` table
+      - admin_router.py → admin.list_users()
+
+    Never pass this client to the frontend.
     """
-    return pwd_context.hash(plain_password)
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a plain-text password against its stored bcrypt hash.
-    Returns True if they match, False otherwise.
-
-    Example:
-        is_valid = verify_password("MySecretPass123", stored_hash)
-    """
-    return pwd_context.verify(plain_password, hashed_password)
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment. "
+            "Add them in Render Dashboard → Environment."
+        )
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# JWT TOKEN CREATION & VERIFICATION
+# JWT VERIFICATION  (Supabase-issued tokens)
 # ══════════════════════════════════════════════════════════════════════
 
-def create_access_token(user_id: str, email: str, name: str) -> str:
+def decode_supabase_token(token: str) -> Optional[dict]:
     """
-    Create a signed JWT token containing user identity.
+    Decode and verify a Supabase-issued JWT.
 
-    Payload:
-      sub   — user_id (subject, used to fetch user from DB)
-      email — user email (for display purposes)
-      name  — user display name
-      exp   — expiry timestamp (TOKEN_EXPIRE_DAYS from now)
-
-    Returns a compact JWT string safe to store in localStorage.
-    """
-    expire = datetime.utcnow() + timedelta(days=TOKEN_EXPIRE_DAYS)
-    payload = {
-        "sub":   user_id,
-        "email": email,
-        "name":  name,
-        "exp":   expire,
-    }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def decode_token(token: str) -> Optional[dict]:
-    """
-    Decode and validate a JWT token.
-
-    Returns the payload dict on success, or None if invalid/expired.
-
-    The payload contains:
+    Supabase tokens are HS256-signed with the project's JWT secret.
+    The payload shape Supabase issues:
       {
-        "sub":   "<user_id>",
-        "email": "<email>",
-        "name":  "<name>",
-        "exp":   <timestamp>
+        "sub":   "<auth.users.id>",          ← user UUID
+        "email": "user@example.com",
+        "role":  "authenticated",
+        "exp":   <unix timestamp>,
+        "aud":   "authenticated",
+        "user_metadata": { "name": "..." },  ← from sign_up options.data
+        ...
       }
+
+    Returns the payload dict on success, None if invalid or expired.
+    Raises RuntimeError if SUPABASE_JWT_SECRET is not configured.
     """
+    if not SUPABASE_JWT_SECRET:
+        raise RuntimeError(
+            "SUPABASE_JWT_SECRET is not set. "
+            "Find it in: Supabase Dashboard → Settings → API → JWT Secret. "
+            "Then add it as an environment variable on Render."
+        )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=[ALGORITHM],
+            audience="authenticated",   # Supabase sets aud="authenticated" for user tokens
+            options={"verify_aud": True},
+        )
         return payload
     except JWTError:
         return None
+
+
+def _extract_name(payload: dict) -> str:
+    """Pull display name from Supabase JWT payload."""
+    # Supabase puts custom sign-up data in user_metadata
+    meta = payload.get("user_metadata") or {}
+    return (
+        meta.get("name")
+        or meta.get("full_name")
+        or payload.get("name")
+        or payload.get("email", "")
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -118,21 +139,31 @@ def decode_token(token: str) -> Optional[dict]:
 
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-    db: Session = Depends(get_db),
-) -> models.User:
+) -> dict:
     """
-    FastAPI dependency that extracts and validates the JWT from the
-    Authorization header, then returns the authenticated User object.
+    FastAPI dependency that verifies the Supabase JWT from the Authorization
+    header and returns the authenticated user as a plain dict.
 
-    Usage:
+    Return shape (mirrors old models.User fields used by routes):
+        {
+          "id":    "<auth.users.id UUID>",   ← primary key for all DB rows
+          "email": "user@example.com",
+          "name":  "Teacher Name",
+        }
+
+    Usage (unchanged from v4.x):
         @router.get("/protected")
-        def protected(current_user: User = Depends(get_current_user)):
-            return {"hello": current_user.name}
+        def protected(current_user: dict = Depends(get_current_user)):
+            user_id = current_user["id"]
 
     Raises HTTP 401 if:
-      - No Authorization header
-      - Token is invalid or expired
-      - User no longer exists in DB
+      - No Authorization header present
+      - Token is invalid, expired, or has wrong audience
+      - SUPABASE_JWT_SECRET env var is not configured
+
+    Note: We do NOT query the database on every request. The JWT itself
+    is the source of truth — Supabase signs it and sets the expiry.
+    If you need to check `is_active` or similar, add a Supabase DB check here.
     """
     if not credentials:
         raise HTTPException(
@@ -142,7 +173,15 @@ def get_current_user(
         )
 
     token = credentials.credentials
-    payload = decode_token(token)
+
+    try:
+        payload = decode_supabase_token(token)
+    except RuntimeError as e:
+        # Server misconfiguration — surface clearly
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
 
     if payload is None:
         raise HTTPException(
@@ -151,24 +190,46 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_id: str = payload.get("sub")
+    # sub = auth.users.id — the UUID that keys all content rows
+    user_id: str = payload.get("sub", "").strip()
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Malformed token payload.",
+            detail="Malformed token: missing subject (user ID).",
         )
 
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account not found.",
-        )
+    email: str = payload.get("email", "")
+    name:  str = _extract_name(payload)
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled.",
-        )
+    return {"id": user_id, "email": email, "name": name}
 
-    return user
+
+# ══════════════════════════════════════════════════════════════════════
+# LEGACY STUBS — kept so older imports don't break during transition
+# These were used in the SQLAlchemy v4.x version of auth_utils.py.
+# They raise clear errors if accidentally called.
+# ══════════════════════════════════════════════════════════════════════
+
+def hash_password(plain_password: str) -> str:
+    """DEPRECATED — passwords are now managed by Supabase Auth."""
+    raise NotImplementedError(
+        "hash_password() is no longer used. "
+        "Password hashing is handled by Supabase Auth (supabase.auth.sign_up)."
+    )
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """DEPRECATED — password verification is now handled by Supabase Auth."""
+    raise NotImplementedError(
+        "verify_password() is no longer used. "
+        "Use supabase.auth.sign_in_with_password() instead."
+    )
+
+
+def create_access_token(user_id: str, email: str, name: str) -> str:
+    """DEPRECATED — JWTs are now issued by Supabase Auth, not the backend."""
+    raise NotImplementedError(
+        "create_access_token() is no longer used. "
+        "Supabase Auth issues the JWT on sign-in. "
+        "The backend only VERIFIES tokens, not creates them."
+    )
