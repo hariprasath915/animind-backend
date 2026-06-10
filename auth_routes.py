@@ -1,54 +1,50 @@
-"""
-auth_routes.py — Registration, Login, Token Verification
-=========================================================
-Location: backend/auth_routes.py
+# auth_routes.py  —  Thin wrapper around Supabase Auth
+# ======================================================
+# What changed from v4.x:
+#   - Removed: SQLAlchemy db queries, bcrypt hashing, local JWT issuance
+#   - Added:   Delegates register → supabase.auth.sign_up()
+#                                   login    → supabase.auth.sign_in_with_password()
+#   - Kept:    Same route paths, same AuthResponse/UserProfile schemas,
+#              same /verify and /me dependency patterns.
+#
+# The backend no longer stores passwords or issues JWTs.
+# Supabase Auth is the single source of truth for users.
 
-Endpoints:
-  POST /auth/register   — create a new teacher account
-  POST /auth/login      — verify credentials, return JWT
-  GET  /auth/verify     — validate existing JWT (auto-login check)
-  GET  /auth/me         — return current user profile
-
-All endpoints return a consistent JSON shape so the frontend
-can handle them uniformly.
-"""
-
+import os
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy.orm import Session
-import uuid
+from supabase import create_client
 
-from database import get_db
-import models
-from auth_utils import (
-    hash_password,
-    verify_password,
-    create_access_token,
-    get_current_user,
-)
+from auth_utils import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+SUPABASE_URL      = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
-# ══════════════════════════════════════════════════════════════════════
-# REQUEST / RESPONSE SCHEMAS
-# ══════════════════════════════════════════════════════════════════════
+
+def _anon_client():
+    """Anon client for auth operations (sign-up, sign-in)."""
+    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+
+# ── Schemas ────────────────────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
-    name:     str   = Field(..., min_length=2, max_length=120, description="Teacher's full name")
     email:    EmailStr
-    password: str   = Field(..., min_length=6, max_length=128, description="Minimum 6 characters")
+    password: str = Field(..., min_length=6)
+    name:     str = Field(..., min_length=2, max_length=120)
 
 
 class LoginRequest(BaseModel):
     email:    EmailStr
-    password: str   = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
 
 
 class AuthResponse(BaseModel):
-    """Unified response for register and login."""
-    token:   str
-    user_id: str
+    """Unified response for register and login — same shape as before."""
+    token:   str    # Supabase access_token — frontend stores in localStorage
+    user_id: str    # auth.users.id (UUID)
     email:   str
     name:    str
     message: str
@@ -60,150 +56,105 @@ class UserProfile(BaseModel):
     name:    str
 
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /auth/register
-# ══════════════════════════════════════════════════════════════════════
+# ── POST /auth/register ────────────────────────────────────────────────
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
+def register(body: RegisterRequest):
     """
-    Register a new teacher account.
-
-    Steps:
-      1. Check email is not already in use
-      2. Hash the password with bcrypt
-      3. Create and persist the User row
-      4. Return a fresh JWT + user identity
-
-    Frontend stores the JWT in localStorage immediately on success.
+    Create a new Supabase Auth user.
+    On success, returns the Supabase JWT (access_token).
+    The frontend stores this token and sends it as Bearer on every request.
+    user_id = auth.users.id is the UUID that keys all content in Supabase.
     """
-    # ── 1. Check for existing account ───────────────────────────────
-    existing = db.query(models.User).filter(
-        models.User.email == body.email.lower().strip()
-    ).first()
+    supabase = _anon_client()
+    try:
+        res = supabase.auth.sign_up({
+            "email":    body.email.lower().strip(),
+            "password": body.password,
+            "options":  {"data": {"name": body.name.strip()}},
+        })
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    if existing:
+    if res.user is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists. Please log in.",
+            detail="Registration failed. Email may already be in use.",
         )
 
-    # ── 2. Create user with hashed password ─────────────────────────
-    new_user = models.User(
-        id            = str(uuid.uuid4()),
-        name          = body.name.strip(),
-        email         = body.email.lower().strip(),
-        password_hash = hash_password(body.password),
-    )
+    token   = res.session.access_token if res.session else ""
+    # user_id flows from Supabase → token payload → backend → DB
+    user_id = res.user.id
+    email   = res.user.email or body.email
+    name    = (res.user.user_metadata or {}).get("name", body.name)
 
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
-    print(f"[AUTH]  ✅ Registered: {new_user.email} (id={new_user.id})")
-
-    # ── 3. Generate JWT ──────────────────────────────────────────────
-    token = create_access_token(
-        user_id = new_user.id,
-        email   = new_user.email,
-        name    = new_user.name,
-    )
-
+    print(f"[AUTH] ✅ Registered: {email} (user_id={user_id})")
     return AuthResponse(
-        token   = token,
-        user_id = new_user.id,
-        email   = new_user.email,
-        name    = new_user.name,
-        message = f"Welcome to GenZet, {new_user.name}!",
+        token=token, user_id=user_id, email=email, name=name,
+        message=f"Welcome to GenZet, {name}!",
     )
 
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /auth/login
-# ══════════════════════════════════════════════════════════════════════
+# ── POST /auth/login ───────────────────────────────────────────────────
 
 @router.post("/login", response_model=AuthResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(body: LoginRequest):
     """
-    Authenticate a teacher and return a fresh JWT.
-
-    Steps:
-      1. Look up user by email
-      2. Verify bcrypt password hash
-      3. Return fresh JWT + user identity
-
-    Frontend:
-      - Stores JWT in localStorage
-      - Calls GET /sync/animations to restore library
+    Sign in with email + password via Supabase Auth.
+    Returns a fresh Supabase JWT. user_id = auth.users.id.
     """
-    # ── 1. Find user ─────────────────────────────────────────────────
-    user = db.query(models.User).filter(
-        models.User.email == body.email.lower().strip()
-    ).first()
-
-    # ── 2. Verify credentials (same error message for both cases) ────
-    # Never reveal whether the email exists or not — security best practice
-    if not user or not verify_password(body.password, user.password_hash):
+    supabase = _anon_client()
+    try:
+        res = supabase.auth.sign_in_with_password({
+            "email":    body.email.lower().strip(),
+            "password": body.password,
+        })
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
         )
 
-    if not user.is_active:
+    if res.user is None or res.session is None:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account has been disabled.",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password.",
         )
 
-    print(f"[AUTH]  ✅ Login: {user.email} (id={user.id})")
+    token   = res.session.access_token
+    user_id = res.user.id      # ← auth.users.id — the key for all content
+    email   = res.user.email or ""
+    name    = (res.user.user_metadata or {}).get("name", email)
 
-    # ── 3. Issue fresh JWT ───────────────────────────────────────────
-    token = create_access_token(
-        user_id = user.id,
-        email   = user.email,
-        name    = user.name,
-    )
-
+    print(f"[AUTH] ✅ Login: {email} (user_id={user_id})")
     return AuthResponse(
-        token   = token,
-        user_id = user.id,
-        email   = user.email,
-        name    = user.name,
-        message = f"Welcome back, {user.name}!",
+        token=token, user_id=user_id, email=email, name=name,
+        message=f"Welcome back, {name}!",
     )
 
 
-# ══════════════════════════════════════════════════════════════════════
-# GET /auth/verify
-# ══════════════════════════════════════════════════════════════════════
+# ── GET /auth/verify ───────────────────────────────────────────────────
 
 @router.get("/verify", response_model=UserProfile)
-def verify_token(current_user: models.User = Depends(get_current_user)):
+def verify_token(current_user: dict = Depends(get_current_user)):
     """
-    Validate an existing JWT token (for auto-login on app load).
-
-    Frontend calls this on every page load:
-      - If 200  → user is still authenticated, skip login screen
-      - If 401  → token expired or invalid, show login screen
-
-    Returns the current user's profile (no new token issued).
+    Validate existing JWT (for auto-login on page load).
+    Returns 200 + profile if valid, 401 if expired/invalid.
     """
     return UserProfile(
-        user_id = current_user.id,
-        email   = current_user.email,
-        name    = current_user.name,
+        user_id=current_user["id"],
+        email=current_user["email"],
+        name=current_user.get("name", ""),
     )
 
 
-# ══════════════════════════════════════════════════════════════════════
-# GET /auth/me
-# ══════════════════════════════════════════════════════════════════════
+# ── GET /auth/me ───────────────────────────────────────────────────────
 
 @router.get("/me", response_model=UserProfile)
-def get_me(current_user: models.User = Depends(get_current_user)):
+def get_me(current_user: dict = Depends(get_current_user)):
     """Return the authenticated user's profile."""
     return UserProfile(
-        user_id = current_user.id,
-        email   = current_user.email,
-        name    = current_user.name,
+        user_id=current_user["id"],
+        email=current_user["email"],
+        name=current_user.get("name", ""),
     )
