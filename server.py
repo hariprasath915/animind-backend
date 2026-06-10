@@ -67,11 +67,31 @@ app = FastAPI(
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────
-# In production, replace "*" with your frontend domain(s).
-# e.g. allow_origins=["https://yourapp.com", "https://www.yourapp.com"]
+# CRITICAL: allow_origins=["*"] + allow_credentials=True is INVALID per
+# the CORS spec. Browsers reject the preflight response — this is the root
+# cause of "Failed to Fetch" on login. Use explicit origins instead.
+#
+# Add new Vercel preview URLs without redeploying via EXTRA_ORIGINS env var:
+#   EXTRA_ORIGINS=https://your-preview-abc.vercel.app
+_EXTRA_ORIGINS = [
+    o.strip()
+    for o in os.getenv("EXTRA_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+_ALLOWED_ORIGINS = [
+    "https://genzet-app.vercel.app",
+    "https://genzet-app-git-main-hari-prasath-genzet-web-project.vercel.app",
+    "https://animind-gold.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+] + _EXTRA_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://(genzet|animind)[\w-]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
