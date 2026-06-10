@@ -4,19 +4,32 @@ services:
     runtime: python
     pythonVersion: "3.11.0"
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
-      # ── REQUIRED — Set these in Render Dashboard → Environment ───────
-      # ANTHROPIC_API_KEY  — your sk-ant-... key  (required for AI features)
-      # JWT_SECRET_KEY     — long random string    (required for auth)
-      #
-      # ── DATABASE (choose one) ───────────────────────────────────────────
-      # DATABASE_URL       — leave UNSET to use SQLite (⚠ ephemeral on free tier!)
-      #                      OR set to a PostgreSQL URL (Neon/Supabase — recommended)
-      #
+      # ── REQUIRED — Set ALL of these in Render Dashboard → Environment ──
+
+      # AI Generation (Claude)
+      # ANTHROPIC_API_KEY:  your sk-ant-... key
+
+      # Supabase — Auth + Database
+      # SUPABASE_URL:          https://<project-id>.supabase.co
+      # SUPABASE_ANON_KEY:     anon/public key  (safe to use in auth_routes for sign-up/sign-in)
+      # SUPABASE_SERVICE_KEY:  service-role key (NEVER expose; backend-only for DB CRUD)
+      # SUPABASE_JWT_SECRET:   Supabase Dashboard → Settings → API → JWT Secret
+      #                        Backend uses this to VERIFY tokens Supabase Auth issues.
+
+      # Admin endpoint protection
+      # ADMIN_SECRET_TOKEN:  any long random string  (e.g. openssl rand -hex 32)
+
       # ── OPTIONAL ────────────────────────────────────────────────────────
-      # DEBUG_CORS         — set to "true" while debugging, then remove
-      # KEEP_ALIVE_INTERVAL — self-ping interval in seconds (default: 600 = 10 min)
+      - key: LOG_LEVEL
+        value: "info"
+      - key: SHOW_ERROR_DETAILS
+        value: "true"
       - key: JWT_EXPIRE_DAYS
-        value: "900"
+        value: "900"    # Not used by Supabase; kept for compatibility only
+
+      # ── REMOVED — no longer needed after Supabase migration ─────────────
+      # JWT_SECRET_KEY:   replaced by SUPABASE_JWT_SECRET
+      # DATABASE_URL:     replaced by SUPABASE_URL + SUPABASE_SERVICE_KEY
