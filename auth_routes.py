@@ -129,15 +129,33 @@ class LoginRequest(BaseModel):
     password: str   = Field(..., min_length=1)
 
 
+class RegisterResponse(BaseModel):
+    """
+    Returned after a successful account creation.
+    NO token — user must sign in separately.
+    Frontend should: show 'Account Created' notification, then show login form.
+    """
+    success:    bool = True
+    user_id:    str            # auth.users.id — unique ID created for this user
+    email:      str
+    name:       str
+    provider:   str
+    message:    str            # e.g. "Account created! Please sign in."
+    next_step:  str = "login"  # tells frontend what to show next
+
+
 class AuthResponse(BaseModel):
-    """Unified response for register and login."""
+    """
+    Returned after a successful LOGIN (not register).
+    Frontend should read dashboard_url and redirect there.
+    """
     token:         str   # Supabase access_token — store in localStorage
     user_id:       str   # auth.users.id (UUID)
     email:         str
     name:          str
     provider:      str   # "email" | "google"
     avatar_url:    str
-    dashboard_url: str   # frontend should redirect here after login
+    dashboard_url: str   # frontend redirects here after login
     message:       str
 
 
@@ -153,13 +171,17 @@ class UserProfile(BaseModel):
 # POST /auth/register
 # ══════════════════════════════════════════════════════════════════════
 
-@router.post("/register", response_model=AuthResponse, status_code=201)
+@router.post("/register", response_model=RegisterResponse, status_code=201)
 def register(body: RegisterRequest):
     """
-    Create a new Supabase Auth user.
-    Also creates a row in public.users so the rest of the app can
-    JOIN against a real user table.
-    Returns a Supabase JWT + dashboard_url for the frontend to redirect.
+    Create a new Supabase Auth user + write row to public.users.
+
+    Returns RegisterResponse (NO session token, NO dashboard redirect).
+    Frontend flow:
+      1. POST /auth/register  → 201 + RegisterResponse
+      2. Show 'Account Created ✅' notification with the user_id
+      3. Switch UI to the Sign-In form (do NOT redirect to dashboard)
+      4. User signs in → POST /auth/login → gets token + dashboard_url → redirect
     """
     supabase = _anon_client()
     try:
@@ -180,14 +202,13 @@ def register(body: RegisterRequest):
             detail="Registration failed. Email may already be in use.",
         )
 
-    token      = res.session.access_token if res.session else ""
     user_id    = res.user.id
     email      = res.user.email or body.email
     meta       = res.user.user_metadata or {}
     name       = meta.get("name", body.name)
     avatar_url = meta.get("avatar_url", "")
 
-    # ── Create user profile in public.users ──
+    # ── Write user profile to public.users ──────────────────────────
     _upsert_user_profile(
         user_id=user_id,
         email=email,
@@ -197,15 +218,17 @@ def register(body: RegisterRequest):
     )
 
     print(f"[AUTH] ✅ Registered: {email} (user_id={user_id})")
-    return AuthResponse(
-        token=token,
-        user_id=user_id,
+
+    # ── Return RegisterResponse — NO token, NO dashboard_url ─────────
+    # Frontend should show 'Account Created' and switch to Sign-In form.
+    return RegisterResponse(
+        success=True,
+        user_id=str(user_id),
         email=email,
         name=name,
         provider="email",
-        avatar_url=avatar_url,
-        dashboard_url=f"{FRONTEND_URL}/dashboard",
-        message=f"Welcome to GenZet, {name}! 🎉",
+        message=f"Account created! Please sign in, {name}.",
+        next_step="login",
     )
 
 
