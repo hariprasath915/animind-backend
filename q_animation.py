@@ -1,112 +1,89 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v11.7
+q_animation.py  --  QAnim Question Animation Generator  v11.6
 =============================================================
-v11.7 -- CHANGES FROM v11.6:
-  CLARITY OVERHAUL -- The core animation problem was that scenes were
-  visually complex, abstract, and hard for students to connect to the
-  actual question. Every prompt, scene rule, and design token has been
-  rewritten around ONE principle: "A student should understand both the
-  question AND the concept within 3 seconds of seeing the animation."
-
-  KEY CHANGES:
-  * Scene 0 now always shows the EXACT QUESTION restated visually with
-    clearly labeled known values and the unknown (what to find) highlighted
-    in a distinct color -- students immediately see "this is MY question."
-  * Scene labels use plain English only (no formula names in titles).
-  * Info card text is conversational: written like a tutor talking to
-    a student, not like a textbook.
-  * Each scene has a ONE-LINE "plain English headline" displayed large
-    at the top -- the big idea in 8 words or fewer.
-  * Known values shown as a clean list with icons. Unknown shown with
-    a question-mark / highlight box so the student knows what is being found.
-  * Formulas are introduced AFTER the setup (Scene 1), not in Scene 0.
-  * Animations are simplified: max 2 moving elements per scene.
-    No decorative noise. Every shape has a purpose.
-  * Color system is strictly semantic:
-      GREEN  (#16a34a) = given / known values
-      PURPLE (#7c3aed) = what we are finding (unknown)
-      BLUE   (#2563eb) = formulas / equations
-      AMBER  (#d97706) = key insight / warning
-      GRAY   (#64748b) = labels / secondary info
-  * QUESTION STRIP: The actual question text is always visible at the
-    top of every scene in a clearly readable box.
-  * CIRCUIT ANIMATIONS: Circuit topology is drawn with maximum symbol
-    clarity -- each component labeled with both its symbol AND its value
-    from the question. No unlabeled components.
-  * BOTTOM INFO CARD: Rewritten to always contain:
-      Line 1: What this scene is showing (plain English)
-      Line 2: Why it matters for THIS question
-      Line 3 (optional): What to notice / remember
-
-  v11.6 features fully preserved:
+v11.6 -- CHANGES FROM v11.5:
+  - TASK: Quiz system completely removed.
+    * QuizGeneratorV2 class deleted entirely.
+    * NEW_QUIZ_SYSTEM_PROMPT, NEW_QUIZ_PROMPT_TEMPLATE constants deleted.
+    * inject_quiz_v2_panel() function deleted (was already a no-op in v11.5,
+      now fully excised including its _QUIZ_PANEL_CSS/_DOM/_JS stubs).
+    * Stage 3 (Quiz Generation) removed from asyncio.gather() pipeline.
+    * quiz_data / quiz_html removed from result dict, _build_failure_result,
+      and the CLI output block.
+    * Pipeline docstring updated: now 3 concurrent AI stages (Concept,
+      Solution, Solution Steps).
+    * Version header updated to v11.6 throughout.
+ 
+v11.5 features fully preserved:
   - FINAL ANSWER PANEL (numbered i, ii, iii results)
   - ANSWER BOX unchanged (Find-condition chip, multi-target)
   - EEE/ECE Circuit Visualization Pipeline (Module 15 & 16)
   - Solution step generator: claude-sonnet-4-6
   - Prev/Next navigation buttons inside controls bar
   - Scene explanation box at y=420
-  - Quiz system remains removed (v11.6 change)
-
-PIPELINE (v11.7 -- unchanged from v11.6):
+ 
+PIPELINE (v11.6):
   Stage 0 -- ToFind Extraction    (sync, no AI)
-  Stage 1 -- Concept Animation    (claude-sonnet-4-6)
-  Stage 2 -- Solution Animation   (claude-sonnet-4-6)
+  Stage 1 -- Concept Animation    (claude-sonnet-4-6) + StepController
+             [EEE/ECE: CircuitVisualizationEngine concept prompt]
+  Stage 2 -- Solution Animation   (claude-sonnet-4-6) + StepController
+             [EEE/ECE: CircuitVisualizationEngine solution prompt]
   Stage 3 -- Solution Steps       (claude-sonnet-4-6)
              [all 3 run concurrently via asyncio.gather]
 """
-
+ 
 import anthropic
 import json
 import re
 import asyncio
 import html as html_module
 from typing import Optional
-
+ 
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
 client = anthropic.Anthropic()
-
+ 
 CONCEPT_MODEL        = "claude-sonnet-4-6"
 SOLUTION_MODEL       = "claude-sonnet-4-6"
 Q_MODEL              = SOLUTION_MODEL
 HAIKU_SOLUTION_MODEL = "claude-sonnet-4-6"
-
+ 
 MAX_TOK                = 20000
 MAX_TOK_CONCEPT        = 12000
 MAX_TOK_HAIKU_SOLUTION = 12000
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 1 -- QAnimLogger
 # ===========================================================================
 class QAnimLogger:
-    PREFIX = "[QAnim v11.7]"
-
+    PREFIX = "[QAnim v11.6]"
+ 
     @classmethod
     def info(cls, stage, msg):
         print(f"{cls.PREFIX} i  [{stage}] {msg}")
-
+ 
     @classmethod
     def warn(cls, stage, msg):
         print(f"{cls.PREFIX} !  [{stage}] {msg}")
-
+ 
     @classmethod
     def error(cls, stage, msg):
         print(f"{cls.PREFIX} X  [{stage}] {msg}")
-
+ 
     @classmethod
     def ok(cls, stage, msg):
         print(f"{cls.PREFIX} OK [{stage}] {msg}")
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 2 -- GenerationValidator
 # ===========================================================================
 class ValidationError(Exception):
     pass
-
-
+ 
+ 
 class GenerationValidator:
     DANGEROUS_PATTERNS = [
         (r'document\.write\s*\(',  "document.write() is forbidden"),
@@ -126,7 +103,7 @@ class GenerationValidator:
         ("<svg",   "No SVG element found"),
         ("</svg>", "SVG element not closed"),
     ]
-
+ 
     @classmethod
     def validate(cls, html, require_svg=True):
         if not html or not html.strip():
@@ -152,8 +129,8 @@ class GenerationValidator:
         if open_svgs != close_svgs:
             raise ValidationError(f"Unbalanced <svg> tags: {open_svgs} open, {close_svgs} close")
         QAnimLogger.ok("Validator", f"HTML passed validation ({len(html):,} chars)")
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 2.5 -- ToFindExtractor
 # ===========================================================================
@@ -188,7 +165,7 @@ class ToFindExtractor:
     _TRIGGER_VERB_RE = re.compile(r'^(?:find|determine|calculate|evaluate|compute|obtain|identify|estimate|derive|prove|show|express|solve\s+for)\s+(?:the\s+|an?\s+)?', re.IGNORECASE)
     _MATH_VAR_RE  = re.compile(r'^[A-Za-z\u03b1-\u03c9\u0391-\u03a9][0-9\u2080-\u2089]?$')
     MAX_LEN = 120
-
+ 
     @classmethod
     def extract(cls, question):
         if not question or not question.strip():
@@ -208,7 +185,7 @@ class ToFindExtractor:
         except Exception as exc:
             QAnimLogger.error("ToFindExtractor", f"Unhandled error: {exc}")
             return []
-
+ 
     @classmethod
     def _run_patterns(cls, question):
         found = []
@@ -221,7 +198,7 @@ class ToFindExtractor:
                 except IndexError:
                     pass
         return found
-
+ 
     @classmethod
     def _split_conjunctions(cls, targets):
         result = []
@@ -229,7 +206,7 @@ class ToFindExtractor:
             parts = cls._SPLIT_RE.split(t)
             result.extend(p.strip() for p in parts if p.strip())
         return result
-
+ 
     @classmethod
     def _clean(cls, target):
         t = target.strip().rstrip(".,;:?!")
@@ -241,7 +218,7 @@ class ToFindExtractor:
         t = cls._TRIGGER_VERB_RE.sub("", t).strip()
         t = cls._ARTICLE_RE.sub("", t).strip()
         return t.rstrip(".,;:?!")
-
+ 
     @classmethod
     def _deduplicate(cls, targets):
         seen, result = set(), []
@@ -251,11 +228,11 @@ class ToFindExtractor:
                 seen.add(key)
                 result.append(t)
         return result
-
+ 
     @classmethod
     def _cap(cls, s):
         return s[0].upper() + s[1:] if s else s
-
+ 
     @classmethod
     def _fallback(cls, question):
         try:
@@ -267,13 +244,13 @@ class ToFindExtractor:
             return []
         except Exception:
             return []
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 3 -- HtmlSanitizer
 # ===========================================================================
 class HtmlSanitizer:
-
+ 
     @classmethod
     def sanitize(cls, html):
         html = html.replace('\ufeff', '')
@@ -294,7 +271,7 @@ class HtmlSanitizer:
         html = html.replace('\x00', '')
         QAnimLogger.ok("Sanitizer", "HTML sanitized")
         return html
-
+ 
     _SUB_PATTERN = re.compile(
         r'(?<![A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'
         r'([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'
@@ -304,7 +281,7 @@ class HtmlSanitizer:
         r'|([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d]+)'
         r')'
     )
-
+ 
     @classmethod
     def _replace_sub_in_text_content(cls, content):
         def replacer(m):
@@ -314,12 +291,12 @@ class HtmlSanitizer:
                     + '<tspan dy="5" font-size="0.72em">' + sub + '</tspan>'
                     + '<tspan dy="-5" font-size="1em"></tspan>')
         return cls._SUB_PATTERN.sub(replacer, content)
-
+ 
     @classmethod
     def _fix_svg_subscripts(cls, html):
         def fix_svg_block(svg_match):
             svg_content = svg_match.group(0)
-
+ 
             def fix_text_tag(t_match):
                 full   = t_match.group(0)
                 open_t = t_match.group(1)
@@ -333,7 +310,7 @@ class HtmlSanitizer:
                 if fixed != inner:
                     QAnimLogger.info("Sanitizer", f"Subscript fixed in <text>: {inner[:60]!r}")
                 return open_t + fixed + close_t
-
+ 
             svg_content = re.sub(
                 r'(<text\b[^>]*>)(.*?)(</text>)',
                 fix_text_tag,
@@ -341,10 +318,10 @@ class HtmlSanitizer:
                 flags=re.DOTALL | re.IGNORECASE
             )
             return svg_content
-
+ 
         html = re.sub(r'<svg[\s\S]*?</svg>', fix_svg_block, html, flags=re.IGNORECASE)
         return html
-
+ 
     @classmethod
     def _wrap_scripts_in_error_boundary(cls, html):
         def wrap_script(match):
@@ -369,7 +346,7 @@ class HtmlSanitizer:
                 "  })();\n}\n")
             return f"{tag}{wrapped}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', wrap_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+ 
     @classmethod
     def _fix_template_literals(cls, html):
         def process_script(script_match):
@@ -395,7 +372,7 @@ class HtmlSanitizer:
                 QAnimLogger.warn("Sanitizer", "Backtick template literals replaced")
             return f"{tag}{body}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+ 
     @classmethod
     def _fix_const_let(cls, html):
         def process_script(m):
@@ -406,7 +383,7 @@ class HtmlSanitizer:
             body = re.sub(r'\blet\b',   'var', body)
             return f"{tag}{body}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+ 
     @classmethod
     def _fix_arrow_functions(cls, html):
         def process_script(m):
@@ -419,7 +396,7 @@ class HtmlSanitizer:
             body = re.sub(r'(?<![\w$])([A-Za-z_$][\w$]*)\s*=>\s*([^{;\n][^;\n]*)', r'function(\1) { return \2; }', body)
             return f"{tag}{body}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
+ 
     @classmethod
     def _fix_single_quote_apostrophes(cls, html):
         def process_script(m):
@@ -435,13 +412,13 @@ class HtmlSanitizer:
             body = re.sub(r"'((?:[^'\\\n]|\\.)*)'", fix_sq_string, body)
             return f"{tag}{body}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 4 -- RecoveryEngine
 # ===========================================================================
 class RecoveryEngine:
-
+ 
     @staticmethod
     def fallback_html(question, reason):
         q_safe      = html_module.escape(question[:120])
@@ -471,7 +448,7 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#f1f5f9;
 <div class="question">"{q_safe}"</div>
 <div class="retry-hint">Please regenerate the animation</div>
 </div></body></html>"""
-
+ 
     @staticmethod
     def partial_html(question, animation_code):
         if '<!DOCTYPE' in animation_code or '<html' in animation_code:
@@ -484,8 +461,8 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#f1f5f9;
 <div style="font-size:11px;color:#64748b;position:fixed;top:8px;left:0;right:0;text-align:center">
   {q_safe}</div>
 {animation_code}</body></html>"""
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 5 -- IframeLifecycleManager JS constant
 # ===========================================================================
@@ -549,8 +526,8 @@ IFRAME_RUNTIME_JS = r"""
   Log.ok('IframeLifecycleManager v11 initialized');
 })();
 """
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 6 -- Error Boundary & Infrastructure
 # ===========================================================================
@@ -572,7 +549,7 @@ ERROR_BOUNDARY_HTML = """
   </div>
 </div>
 """
-
+ 
 QANIM_INNER_LOGGER_JS = """
 <script>
 window.QLog={
@@ -591,8 +568,8 @@ window.addEventListener('unhandledrejection',function(e){
 });
 </script>
 """
-
-
+ 
+ 
 def inject_infrastructure(html):
     html = re.sub(r'(<body[^>]*>)', r'\1\n' + ERROR_BOUNDARY_HTML, html, count=1, flags=re.IGNORECASE)
     first_script = re.search(r'<script(?:\s[^>]*)?>(?!.*type\s*=\s*["\']application/json)', html, re.IGNORECASE)
@@ -601,6 +578,7 @@ def inject_infrastructure(html):
         html = html[:pos] + QANIM_INNER_LOGGER_JS + '\n' + html[pos:]
     else:
         html = html.replace('</body>', QANIM_INNER_LOGGER_JS + '\n</body>', 1)
+    # v11.5/v11.6: Nav buttons live inside controls bar
     _scroll_fix = (
         '\n<style id="qanim-scroll-fix">\n'
         'html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}\n'
@@ -635,8 +613,8 @@ def inject_infrastructure(html):
         html = _scroll_fix + html
     QAnimLogger.ok("Infrastructure", "Error fallback + inner logger + scroll-fix injected")
     return html
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 6.5 -- ToFind Injection System
 # ===========================================================================
@@ -644,8 +622,8 @@ def _build_to_find_data_tag(targets):
     payload = {"targets": [str(t) for t in (targets or [])]}
     return ('<script type="application/json" id="__tofind_data__">\n'
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
-
-
+ 
+ 
 _TO_FIND_DOM = """
 <div id="tofind-backdrop" aria-hidden="true"></div>
 <aside id="tofind-panel" role="dialog" aria-labelledby="tofind-heading" aria-hidden="true">
@@ -665,7 +643,7 @@ _TO_FIND_DOM = """
   <div id="tofind-items-container" class="tf-items-container"></div>
 </aside>
 """
-
+ 
 _TO_FIND_CSS = """
 <style id="qanim-tofind-styles">
 #tofind-backdrop {
@@ -679,7 +657,7 @@ _TO_FIND_CSS = """
   transition: opacity 0.22s ease;
 }
 #tofind-backdrop.open { display: block; opacity: 1; }
-
+ 
 #tofind-panel {
   display: flex;
   flex-direction: column;
@@ -774,7 +752,7 @@ _TO_FIND_CSS = """
 }
 </style>
 """
-
+ 
 TO_FIND_JS_MODULE = r"""
 (function initToFindSystem(){
   'use strict';
@@ -815,8 +793,8 @@ TO_FIND_JS_MODULE = r"""
   });
 })();
 """
-
-
+ 
+ 
 def inject_to_find_system(html, targets):
     html = re.sub(r'<script[^>]+id=["\']__tofind_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     try:
@@ -849,12 +827,12 @@ def inject_to_find_system(html, targets):
         QAnimLogger.warn("ToFindInjector", f"JS module insertion failed: {e}")
     QAnimLogger.ok("ToFindInjector", f"Injected {len(targets)} target(s)")
     return html
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 7 -- Final Answer Panel System  (v11.2)
 # ===========================================================================
-
+ 
 def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
     ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
     items = []
@@ -864,7 +842,7 @@ def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
         unit    = str(t.get("unit",  "")).strip()
         roman   = ROMAN[idx] if idx < len(ROMAN) else str(idx + 1)
         items.append({"roman": roman, "label": label, "value": value, "unit": unit})
-
+ 
     if not items and final_answer:
         import re as _re
         _num_re = _re.compile(
@@ -878,7 +856,7 @@ def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
                 "value": m.group(2).strip(),
                 "unit":  (m.group(3) or "").strip(),
             })
-
+ 
     payload = {
         "items":       items,
         "raw_answer":  str(final_answer  or ""),
@@ -886,12 +864,12 @@ def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
     }
     return ('<script type="application/json" id="__final_answer_data__">\n'
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
-
-
+ 
+ 
 _FINAL_ANSWER_PANEL_DOM = """
 <div id="fa-backdrop" aria-hidden="true"></div>
 <aside id="fa-panel" role="dialog" aria-labelledby="fa-heading" aria-hidden="true">
-
+ 
   <div class="fa-header">
     <div class="fa-header-left">
       <div class="fa-icon-wrap">&#x2705;</div>
@@ -902,7 +880,7 @@ _FINAL_ANSWER_PANEL_DOM = """
     </div>
     <button id="fa-close" class="fa-close-btn" aria-label="Close">&#x2715;</button>
   </div>
-
+ 
   <div class="fa-body">
     <div id="fa-items-container" class="fa-items-container"></div>
     <div id="fa-insight-card" class="fa-insight-card">
@@ -910,10 +888,10 @@ _FINAL_ANSWER_PANEL_DOM = """
       <div id="fa-insight-text" class="fa-insight-text"></div>
     </div>
   </div>
-
+ 
 </aside>
 """
-
+ 
 _FINAL_ANSWER_PANEL_CSS = """
 <style id="qanim-fa-styles">
 #fa-backdrop {
@@ -928,7 +906,7 @@ _FINAL_ANSWER_PANEL_CSS = """
   transition: opacity 0.24s ease;
 }
 #fa-backdrop.open { display: block; opacity: 1; }
-
+ 
 #fa-panel {
   display: flex;
   flex-direction: column;
@@ -1075,7 +1053,7 @@ _FINAL_ANSWER_PANEL_CSS = """
 }
 </style>
 """
-
+ 
 _FINAL_ANSWER_JS = r"""
 (function initFinalAnswerSystem(){
   'use strict';
@@ -1084,7 +1062,7 @@ _FINAL_ANSWER_JS = r"""
   function _el(id){ return document.getElementById(id); }
   function _onReady(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else setTimeout(fn,0); }
   function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
+ 
   function _loadData(){
     try{
       var tag = _el('__final_answer_data__');
@@ -1092,7 +1070,7 @@ _FINAL_ANSWER_JS = r"""
       return JSON.parse(tag.textContent) || {};
     } catch(e){ return {}; }
   }
-
+ 
   function _buildPanel(){
     if(_built) return;
     _built = true;
@@ -1100,7 +1078,7 @@ _FINAL_ANSWER_JS = r"""
     var items = Array.isArray(data.items) ? data.items : [];
     var container = _el('fa-items-container');
     if(!container) return;
-
+ 
     if(items.length === 0 && data.raw_answer){
       container.innerHTML = '<div class="fa-item visible">'
         + '<div class="fa-item-roman">i</div>'
@@ -1125,11 +1103,11 @@ _FINAL_ANSWER_JS = r"""
       }
       container.innerHTML = html;
     }
-
+ 
     var insEl = _el('fa-insight-text');
     if(insEl) insEl.textContent = data.key_insight || '';
   }
-
+ 
   function _animateReveal(){
     var items = document.querySelectorAll('.fa-item');
     for(var i = 0; i < items.length; i++){
@@ -1150,7 +1128,7 @@ _FINAL_ANSWER_JS = r"""
       }, 80 + items.length * 110 + 120);
     }
   }
-
+ 
   function openFinalAnswer(){
     _buildPanel();
     var backdrop = _el('fa-backdrop');
@@ -1162,7 +1140,7 @@ _FINAL_ANSWER_JS = r"""
     faOpen = true;
     setTimeout(_animateReveal, 80);
   }
-
+ 
   function closeFinalAnswer(){
     var backdrop = _el('fa-backdrop');
     var panel    = _el('fa-panel');
@@ -1171,11 +1149,11 @@ _FINAL_ANSWER_JS = r"""
     faOpen = false;
     _built = false;
   }
-
+ 
   window.openFinalAnswer  = openFinalAnswer;
   window.closeFinalAnswer = closeFinalAnswer;
   window.toggleFinalAnswer = function(){ faOpen ? closeFinalAnswer() : openFinalAnswer(); };
-
+ 
   _onReady(function(){
     function wireBtn(){
       var btn = document.getElementById('fa-ctrl-btn');
@@ -1185,19 +1163,19 @@ _FINAL_ANSWER_JS = r"""
       } else { setTimeout(wireBtn, 80); }
     }
     wireBtn();
-
+ 
     var closeBtn = _el('fa-close');
     if(closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeFinalAnswer(); });
-
+ 
     var backdrop = _el('fa-backdrop');
     if(backdrop) backdrop.addEventListener('click', function(e){ if(e.target === backdrop) closeFinalAnswer(); });
-
+ 
     document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && faOpen) closeFinalAnswer(); });
   });
 })();
 """
-
-
+ 
+ 
 def inject_final_answer_panel(html, answer_targets, final_answer, key_insight):
     html = re.sub(r'<script[^>]+id=["\']__sol_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     html = re.sub(r'<(?:div|aside)[^>]+id=["\']sol-backdrop["\'][^>]*>.*?</(?:div|aside)>', '', html, flags=re.DOTALL | re.IGNORECASE)
@@ -1205,39 +1183,39 @@ def inject_final_answer_panel(html, answer_targets, final_answer, key_insight):
     html = re.sub(r'<style[^>]+id=["\']qanim-solution-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<script[^>]+id=["\']__final_answer_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     html = re.sub(r'<style[^>]+id=["\']qanim-fa-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-
+ 
     data_tag = _build_final_answer_data_tag(answer_targets, final_answer, key_insight)
     if '</head>' in html:
         html = html.replace('</head>', data_tag + '\n</head>', 1)
     else:
         html = data_tag + '\n' + html
-
+ 
     if '</head>' in html:
         html = html.replace('</head>', _FINAL_ANSWER_PANEL_CSS + '\n</head>', 1)
-
+ 
     body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
     if body_match:
         ins = body_match.end()
         html = html[:ins] + '\n' + _FINAL_ANSWER_PANEL_DOM + html[ins:]
-
+ 
     fa_script = '<script>\n' + _FINAL_ANSWER_JS + '\n</script>'
     if '</body>' in html:
         html = html.replace('</body>', fa_script + '\n</body>', 1)
     else:
         html += '\n' + fa_script
-
+ 
     QAnimLogger.ok("FinalAnswer", f"Injected v11.2 Final Answer panel ({len(answer_targets or [])} item(s))")
     return html
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 7.5 -- Solution Step Generator
 # ===========================================================================
-
+ 
 _HAIKU_SOLUTION_SYSTEM = """You are a patient, expert tutor generating a detailed step-by-step solution for a student.
 You are powered by claude-sonnet-4-6, which means you must use your full reasoning capability for
 accurate calculations, clear explanations, and structured mathematical working.
-
+ 
 RULES (follow every one):
 1. Number every step: "Step 1:", "Step 2:", etc. -- never skip numbering.
 2. At the START of each step, name the concept or formula being used in BOLD using **formula/concept name**.
@@ -1256,27 +1234,27 @@ RULES (follow every one):
 7. Do NOT use LaTeX notation -- write math in plain text (e.g. "F = m x a" not "F=ma^{}").
 8. End with a one-sentence "Key Insight:" that captures the most important concept.
 9. For multi-part questions, address EVERY asked quantity. Never skip any asked value.
-
+ 
 FORMAT EXAMPLE:
 Step 1: **Identify the given information**
 We know the mass m = 5 kg and acceleration a = 3 m/s^2. Write these down first.
-
+ 
 Step 2: **Apply Newton's Second Law**
 The formula is F = m x a. Substitute the values: F = 5 x 3 = 15 N.
-
+ 
 Final Answer:
 F = 15 N
-
+ 
 Key Insight: Newton's Second Law links force, mass, and acceleration -- if mass doubles, force doubles for the same acceleration."""
-
+ 
 _HAIKU_SOLUTION_USER_TEMPLATE = """Generate a detailed, numbered step-by-step solution for this question.
 Follow the system instructions exactly.
-
+ 
 QUESTION: {question}"""
-
-
+ 
+ 
 class HaikuSolutionGenerator:
-
+ 
     @classmethod
     def generate(cls, question):
         QAnimLogger.info("HaikuSolution", f"Generating via {HAIKU_SOLUTION_MODEL}")
@@ -1294,12 +1272,12 @@ class HaikuSolutionGenerator:
         except Exception as e:
             QAnimLogger.error("HaikuSolution", f"Generation failed: {e}")
             return cls._fallback(question)
-
+ 
     @classmethod
     async def generate_async(cls, question):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, cls.generate, question)
-
+ 
     @classmethod
     def _parse(cls, raw):
         steps = []
@@ -1323,7 +1301,7 @@ class HaikuSolutionGenerator:
             steps = paragraphs[:10]
         QAnimLogger.ok("HaikuSolution", f"Parsed {len(steps)} steps, answer={len(final_answer)} chars")
         return {"steps": steps, "final_answer": final_answer, "key_insight": key_insight, "raw": raw}
-
+ 
     @classmethod
     def _fallback(cls, question):
         return {
@@ -1337,18 +1315,18 @@ class HaikuSolutionGenerator:
             "key_insight":  "Always identify knowns and unknowns before applying any formula.",
             "raw": "",
         }
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 9 -- Answer Box System  (v11.1)
 # ===========================================================================
-
+ 
 def _build_answer_targets_tag(answer_targets):
     payload = {"answer_targets": answer_targets or []}
     return ('<script type="application/json" id="__answer_targets__">\n'
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
-
-
+ 
+ 
 def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight):
     targets = []
     _num_re = re.compile(
@@ -1361,7 +1339,7 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
             val   = m.group(2).strip()
             unit  = (m.group(3) or "").strip()
             found_pairs[sym.lower()] = {"sym": sym, "val": val, "unit": unit}
-
+ 
     used_syms = set()
     for tf in (to_find_targets or []):
         tf_lower = tf.lower()
@@ -1386,7 +1364,7 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
                 "unit":    "",
                 "insight": key_insight or "Apply the relevant formula step by step.",
             })
-
+ 
     if not targets:
         targets.append({
             "label":   "Final Answer",
@@ -1394,10 +1372,10 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
             "unit":    "",
             "insight": key_insight or "Follow the step-by-step solution to reach the answer.",
         })
-
+ 
     return targets
-
-
+ 
+ 
 _ANSWER_BOX_CSS = """
 <style id="qanim-answerbox-styles">
 #answerbox-backdrop {
@@ -1550,7 +1528,7 @@ _ANSWER_BOX_CSS = """
 .ab-alldone-sub { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #166534; line-height: 1.6; }
 </style>
 """
-
+ 
 _ANSWER_BOX_DOM = """
 <div id="answerbox-backdrop" aria-hidden="true">
 <div id="answerbox-panel" role="dialog" aria-label="Answer Box" aria-hidden="true">
@@ -1596,7 +1574,7 @@ _ANSWER_BOX_DOM = """
 </div>
 </div>
 """
-
+ 
 _ANSWER_BOX_JS = r"""
 (function initAnswerBox(){
   'use strict';
@@ -1604,10 +1582,10 @@ _ANSWER_BOX_JS = r"""
   var _targets = [];
   var _currentIdx = 0;
   var _loaded = false;
-
+ 
   function _el(id){ return document.getElementById(id); }
   function _onReady(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else setTimeout(fn,0); }
-
+ 
   function _loadTargets(){
     if(_loaded) return;
     _loaded = true;
@@ -1619,7 +1597,7 @@ _ANSWER_BOX_JS = r"""
     }catch(e){ _targets = []; }
     if(_targets.length === 0) _useFallback();
   }
-
+ 
   function _useFallback(){
     try{
       var tag = _el('__sol_data__');
@@ -1633,7 +1611,7 @@ _ANSWER_BOX_JS = r"""
       }];
     }catch(e){ _targets = []; }
   }
-
+ 
   function _renderTarget(idx){
     var t = _targets[idx];
     if(!t) return;
@@ -1666,12 +1644,12 @@ _ANSWER_BOX_JS = r"""
     var unit = t.unit ? ' (' + t.unit + ')' : '';
     if(inp) inp.placeholder = 'Type your answer' + unit + '...';
   }
-
+ 
   function _extractNums(s){
     var m = s.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g);
     return m ? m.map(parseFloat).filter(function(n){ return isFinite(n); }) : [];
   }
-
+ 
   function _validate(userAns, correctAns){
     if(!userAns || !userAns.trim()) return 'empty';
     var userNums    = _extractNums(userAns);
@@ -1698,14 +1676,14 @@ _ANSWER_BOX_JS = r"""
     if(overlap >= 0.40) return 'almost';
     return 'wrong';
   }
-
+ 
   var _FB = {
     correct: { icon:'✅', verdict:'Correct!',       cls:'correct' },
     almost:  { icon:'〰️', verdict:'Almost Correct', cls:'almost'  },
     wrong:   { icon:'❌', verdict:'Wrong Answer',   cls:'wrong'   },
     empty:   { icon:'❓', verdict:'No Answer',      cls:'wrong'   }
   };
-
+ 
   function _showFeedback(verdict, insight){
     var info = _FB[verdict] || _FB['wrong'];
     var fb   = _el('ab-feedback');
@@ -1743,7 +1721,7 @@ _ANSWER_BOX_JS = r"""
       }, 900);
     }
   }
-
+ 
   function _advanceTarget(){
     if(_currentIdx < _targets.length - 1){
       _currentIdx++;
@@ -1752,7 +1730,7 @@ _ANSWER_BOX_JS = r"""
       if(inp) inp.focus();
     }
   }
-
+ 
   function openAnswerBox(){
     _loadTargets();
     _currentIdx = 0;
@@ -1768,7 +1746,7 @@ _ANSWER_BOX_JS = r"""
       if(inp) inp.focus();
     }, 220);
   }
-
+ 
   function closeAnswerBox(){
     var backdrop = _el('answerbox-backdrop');
     var panel    = _el('answerbox-panel');
@@ -1776,17 +1754,17 @@ _ANSWER_BOX_JS = r"""
     if(panel){    panel.classList.remove('open');    panel.setAttribute('aria-hidden','true');    }
     abOpen = false;
   }
-
+ 
   function resetAnswerBox(){
     _loaded = false;
     _targets = [];
     _currentIdx = 0;
   }
-
+ 
   window.openAnswerBox  = openAnswerBox;
   window.closeAnswerBox = closeAnswerBox;
   window.resetAnswerBox = resetAnswerBox;
-
+ 
   _onReady(function(){
     function wireCtrlBtn(){
       var btn = document.getElementById('answerbox-ctrl-btn');
@@ -1839,8 +1817,8 @@ _ANSWER_BOX_JS = r"""
   });
 })();
 """
-
-
+ 
+ 
 def inject_answer_box_panel(html, answer_targets=None):
     html = re.sub(r'<style[^>]+id=["\']qanim-answerbox-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
     if answer_targets:
@@ -1874,12 +1852,12 @@ def inject_answer_box_panel(html, answer_targets=None):
         QAnimLogger.warn("AnswerBoxInjector", f"JS failed: {e}")
     QAnimLogger.ok("AnswerBoxInjector", f"Answer box panel v11.1 injected ({len(answer_targets or [])} target(s))")
     return html
-
-
+ 
+ 
 # ===========================================================================
-#  MODULE 10 -- Floating Controls Bar
+#  MODULE 10 -- Floating Controls Bar  (v11.5 -- Prev/Next in bar)
 # ===========================================================================
-
+ 
 _CONTROLS_BAR_CSS = """
 <style id="qanim-controls-bar-styles">
 #qanim-controls-bar {
@@ -1943,6 +1921,7 @@ _CONTROLS_BAR_CSS = """
   box-shadow: 0 4px 14px rgba(124, 58, 237, 0.22);
 }
 .qanim-ctrl-btn:active { transform: translateY(0); box-shadow: none; }
+/* ── Prev/Next nav buttons inside bar ── */
 #ctrl-prevbtn,
 #ctrl-nextbtn {
   background: linear-gradient(135deg, #ede9fe 0%, #e0d9fb 100%);
@@ -1980,7 +1959,9 @@ _CONTROLS_BAR_CSS = """
 }
 </style>
 """
-
+ 
+# v11.5/v11.6: [◀ Prev] [Find] [Final Answer] [Answer Box] [Notes] [Voice*] [Next ▶]
+# * Voice is appended dynamically by inject_voice_assistant
 _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
   <button class="qanim-ctrl-btn" id="ctrl-prevbtn" title="Previous scene" disabled>
@@ -2008,8 +1989,8 @@ _CONTROLS_BAR_DOM = """
   </button>
 </div>
 """
-
-
+ 
+ 
 def inject_controls_bar(html):
     try:
         if '</head>' in html:
@@ -2021,16 +2002,16 @@ def inject_controls_bar(html):
             html = html.replace('</body>', _CONTROLS_BAR_DOM + '\n</body>', 1)
         else:
             html += '\n' + _CONTROLS_BAR_DOM
-        QAnimLogger.ok("ControlsBar", "Controls bar injected (v11.7)")
+        QAnimLogger.ok("ControlsBar", "Controls bar injected (v11.5/v11.6 -- Prev/Next in bar)")
     except Exception as e:
         QAnimLogger.warn("ControlsBar", f"DOM failed: {e}")
     return html
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 11 -- Notes System
 # ===========================================================================
-
+ 
 _NOTES_CSS = """
 <style id="qanim-notes-styles">
 #qanim-notes-btn {
@@ -2138,7 +2119,7 @@ _NOTES_CSS = """
 .notes-action-btn:hover { background: #ede9fe; border-color: #7c3aed; color: #7c3aed; }
 </style>
 """
-
+ 
 _NOTES_DOM = """
 <div id="qanim-notes-panel" role="dialog" aria-label="Notes" aria-hidden="true">
   <div id="qanim-notes-header">
@@ -2179,7 +2160,7 @@ _NOTES_DOM = """
   </div>
 </div>
 """
-
+ 
 _NOTES_JS = r"""
 (function initNotesSystem(){
   'use strict';
@@ -2224,8 +2205,8 @@ _NOTES_JS = r"""
   });
 })();
 """
-
-
+ 
+ 
 def inject_notes_system(html, question=""):
     try:
         if '</head>' in html:
@@ -2249,12 +2230,12 @@ def inject_notes_system(html, question=""):
         QAnimLogger.warn("NotesInjector", f"JS module insertion failed: {e}")
     QAnimLogger.ok("NotesInjector", "Notes whiteboard injected")
     return html
-
-
+ 
+ 
 # ===========================================================================
 #  MODULE 14 -- Voice Assistant System
 # ===========================================================================
-
+ 
 _VOICE_ASSISTANT_CSS = """
 <style id="qanim-voice-styles">
 #qanim-voice-btn {
@@ -2280,7 +2261,7 @@ _VOICE_ASSISTANT_CSS = """
 }
 </style>
 """
-
+ 
 _VOICE_ASSISTANT_JS = r"""
 <script id="qanim-voice-assistant">
 (function initVoiceAssistant(){
@@ -2344,6 +2325,7 @@ _VOICE_ASSISTANT_JS = r"""
     var bar=document.getElementById('qanim-controls-bar');
     var nextSep=document.getElementById('ctrl-next-sep');
     if(bar && nextSep){
+      /* Insert Voice button + separator BEFORE the Next separator/button */
       var voiceSep=document.createElement('div');voiceSep.className='qanim-ctrl-sep';
       _btn=document.createElement('button');_btn.id='qanim-voice-btn';_btn.title='Toggle voice narration';
       _btn.innerHTML='<span>&#x1F50A;</span><span class="ctrl-label">Voice</span>';
@@ -2368,8 +2350,8 @@ _VOICE_ASSISTANT_JS = r"""
 })();
 </script>
 """
-
-
+ 
+ 
 def inject_voice_assistant(html):
     try:
         if '</head>' in html:
@@ -2385,18 +2367,21 @@ def inject_voice_assistant(html):
     except Exception as e:
         QAnimLogger.warn("VoiceAssistant", f"JS injection failed: {e}")
     return html
-
-
+ 
+ 
 # ===========================================================================
-#  MODULE 12 -- StepController Patcher
+#  MODULE 12 -- StepController Patcher  (v11.5 -- prefers bar buttons)
 # ===========================================================================
-
+ 
 _STEP_CONTROLLER_JS = r"""
 <script id="qanim-step-controller">
 (function patchStepController(){
   'use strict';
   function initSC(){
     try{
+      /* v11.5/v11.6: prefer #ctrl-nextbtn / #ctrl-prevbtn (inside controls bar).
+         Fall back to legacy #nextbtn / #prevbtn for animations without the bar,
+         and create standalone fixed-position buttons as last resort. */
       var nextBtn=document.getElementById('ctrl-nextbtn')||document.getElementById('nextbtn');
       var prevBtn=document.getElementById('ctrl-prevbtn')||document.getElementById('prevbtn');
       if(!nextBtn){
@@ -2450,31 +2435,31 @@ _STEP_CONTROLLER_JS = r"""
         var src=fn?fn.toString():'';
         if(ms&&ms<8000&&(src.indexOf('showScene')!==-1||src.indexOf('currentStep')!==-1||src.indexOf('nextStep')!==-1)){console.log('[SC] Blocked auto-advance interval ('+ms+'ms)');return -1;}
         return _ri.apply(window,arguments);};
-      showScene(0);console.log('[QAnim SC v11.7] '+scenes.length+' scenes ready -- bar buttons wired');
+      showScene(0);console.log('[QAnim SC v11.6] '+scenes.length+' scenes ready -- bar buttons wired');
     }catch(err){console.error('[QAnim SC] Fatal:',err);}
   }
   if(document.readyState==='complete')initSC();else window.addEventListener('load',initSC);
 })();
 </script>
 """
-
-
+ 
+ 
 def inject_step_controller(html):
     try:
         if '</body>' in html:
             html = html.replace('</body>', _STEP_CONTROLLER_JS + '\n</body>', 1)
         else:
             html += '\n' + _STEP_CONTROLLER_JS
-        QAnimLogger.ok("StepController", "Manual step controller injected (v11.7)")
+        QAnimLogger.ok("StepController", "Manual step controller injected (v11.6)")
     except Exception as e:
         QAnimLogger.warn("StepController", f"Injection failed: {e}")
     return html
-
-
+ 
+ 
 # ===========================================================================
 #  RESPONSE PARSING UTILITIES
 # ===========================================================================
-
+ 
 def _parse_response(raw, question):
     strategies = [
         _parse_direct_json,
@@ -2494,27 +2479,27 @@ def _parse_response(raw, question):
     QAnimLogger.error("Parser", "All strategies failed")
     return {"title": f"Animation: {question[:50]}", "explanation": "Parse failed",
             "animation_code": "", "solution_steps": [], "final_answer": "", "key_insight": ""}
-
-
+ 
+ 
 def _parse_direct_json(raw, question):
     data = json.loads(raw)
     return _normalize_parsed(data, question)
-
-
+ 
+ 
 def _parse_stripped_json(raw, question):
     stripped = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
     data = json.loads(stripped)
     return _normalize_parsed(data, question)
-
-
+ 
+ 
 def _parse_brace_extracted(raw, question):
     m = re.search(r'\{.*\}', raw, re.DOTALL)
     if not m:
         return None
     data = json.loads(m.group(0))
     return _normalize_parsed(data, question)
-
-
+ 
+ 
 def _parse_field_by_field(raw, question):
     def extract_string(field):
         pat = r'"' + re.escape(field) + r'"\s*:\s*"((?:[^"\\]|\\.)*)"'
@@ -2536,8 +2521,8 @@ def _parse_field_by_field(raw, question):
             "final_answer": extract_string("final_answer"),
             "key_insight": extract_string("key_insight"),
             "animation_code": code}
-
-
+ 
+ 
 def _extract_animation_code_field(raw):
     key_pos = raw.find('"animation_code"')
     if key_pos == -1: return ""
@@ -2549,8 +2534,8 @@ def _extract_animation_code_field(raw):
     end = _find_json_string_end(content)
     if end == -1: return ""
     return _unescape_json_string(content[:end])
-
-
+ 
+ 
 def _parse_bare_html(raw, question):
     for marker in ['<!DOCTYPE html>', '<html', '<svg']:
         idx = raw.find(marker)
@@ -2562,8 +2547,8 @@ def _parse_bare_html(raw, question):
                         "animation_code": code.strip(), "solution_steps": [],
                         "final_answer": "", "key_insight": ""}
     return None
-
-
+ 
+ 
 def _normalize_parsed(data, question):
     if not isinstance(data, dict): raise ValueError("Not a dict")
     result = {
@@ -2578,8 +2563,8 @@ def _normalize_parsed(data, question):
     sol = data.get("solution_steps")
     result["solution_steps"] = sol if isinstance(sol, list) else []
     return result
-
-
+ 
+ 
 def _find_json_string_end(s):
     i = 0
     while i < len(s):
@@ -2587,386 +2572,190 @@ def _find_json_string_end(s):
         elif s[i] == '"': return i
         else: i += 1
     return -1
-
-
+ 
+ 
 def _unescape_json_string(s):
     return (s.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
              .replace('\\r', '\r').replace("\\'", "'").replace('\\\\', '\\'))
-
-
+ 
+ 
 # ===========================================================================
-#  SYSTEM PROMPTS  (v11.7 -- CLARITY OVERHAUL)
+#  SYSTEM PROMPTS  (v11.6)
 # ===========================================================================
-
-# ---------------------------------------------------------------------------
-# SHARED DESIGN TOKENS (v11.7)
-# ---------------------------------------------------------------------------
-DESIGN_SYSTEM = """
-=== v11.7 CLARITY DESIGN SYSTEM ===
-
-THEME: White/light-gray background (#f8fafc). NEVER dark backgrounds.
-SVG viewBox: "0 0 1000 600"
-
-SEMANTIC COLOR PALETTE (strictly enforced):
-  GREEN  #16a34a  = known/given values (what the question gives us)
-  PURPLE #7c3aed  = unknown / what we are finding (highlighted)
-  BLUE   #2563eb  = formulas and equations
-  AMBER  #d97706  = key insight / warning / important note
-  GRAY   #64748b  = secondary labels, axes, decorative
-
-TYPOGRAPHY HIERARCHY:
-  Scene headline (top center): font-size=22, font-weight=800, fill=#1e293b
-    -- Plain English, 8 words or fewer, e.g. "Here's what we're finding"
-  Section labels: font-size=16, font-weight=700
-  Body text: font-size=14, font-weight=400, fill=#334155
-  Small labels: font-size=12, fill=#64748b
-
-QUESTION STRIP (#qstrip):
-  - Always visible at top of every scene
-  - White bg, subtle border, rounded, 14px font-weight=700
-  - Actual question text (not paraphrased)
-
-KNOWN VALUES BOX (v11.7 REQUIRED in Scene 0 and Scene 1):
-  - White card, green left-accent bar (#16a34a, 6px wide)
-  - List each given value: green circle bullet + symbol = value unit
-  - Position: left side, y=120 to y=340
-
-UNKNOWN TARGET BOX (v11.7 REQUIRED in Scene 0):
-  - Purple card (#ede9fe bg, #7c3aed border, 2px)
-  - Label: "? Find:" in purple bold
-  - List each unknown in purple text
-  - Position: right side, y=120 to y=260
-
-BOTTOM INFO CARD (REQUIRED every scene):
-  rect: x=30, y=420, width=940, height=130, rx=12, fill=white, stroke=#e2e8f0
-  Left accent bar: x=30, y=420, width=8, height=130, fill=scene_accent_color
-  Line 1 (title): font-size=15, font-weight=700, x=55, y=448
-  Line 2 (body): font-size=13.5, x=55, y=470
-  Line 3 (body): font-size=13.5, x=55, y=492 (optional)
-  Max 3 lines. Write like a tutor talking to a student.
-  NEVER use jargon or formula names in card text -- use plain English.
-
-ANIMATION RULES (v11.7 SIMPLICITY):
-  - MAX 2 moving/animated elements per scene
-  - Every shape must serve a purpose -- no decoration
-  - Opacity 0->1 fade-ins: max 4 elements per scene, staggered 150ms
-  - NO spinning, rotating, or bouncing animations (distracting)
-  - Arrows: simple straight lines with arrowhead marker
-  - stroke-dashoffset only for drawing circuit wires or flow paths
-
-SUBSCRIPTS: ALWAYS <tspan dy="5" font-size="0.72em">sub</tspan>
-            NEVER underscore notation (f_s, T_1, etc.)
-"""
-
-SVG_TECHNIQUES = """
-=== SVG ANIMATION TECHNIQUES (v11.7) ===
-
-FADE IN (preferred):
-  element.style.opacity = '0';
-  setTimeout(function(){ el.style.transition='opacity .4s ease'; el.style.opacity='1'; }, delay);
-
-SCALE IN (for icons/circles only):
-  el.style.transform='scale(0)'; el.style.transition='none';
-  setTimeout(function(){ el.style.transition='transform .3s cubic-bezier(0.34,1.56,0.64,1)';
-    el.style.transform='scale(1)'; }, delay);
-
-DRAW LINE (for wires/arrows):
-  Use stroke-dasharray + stroke-dashoffset with CSS transition.
-
-KEEP IT SIMPLE:
-  Use setTimeout chains, NOT CSS animation-delay (more reliable cross-browser).
-  Never stack more than 4 sequential animations per scene.
-
-FORMULA DISPLAY:
-  Show formula in a rounded rect (blue border, light-blue bg #eff6ff).
-  Write formula in plain text with spaces: "F = m x a" not LaTeX.
-  Font: monospace or bold sans-serif for readability.
-"""
-
-FALLBACK_RULES = """
-IF STUCK: Use one of these clarity-first fallback layouts:
-1. TWO-COLUMN: Left = known values (green), Right = unknown (purple), Center = formula (blue)
-2. BEFORE/AFTER: Left half shows starting state, right half shows result
-3. LABELED DIAGRAM: Simple shape + clearly labeled arrows
-4. CHECKLIST: Numbered steps in white cards with icons
-NEVER: dark backgrounds, neon colors, spinning animations, 3D effects.
-"""
-
-# ---------------------------------------------------------------------------
-# MAIN SOLUTION SYSTEM PROMPT  (v11.7)
-# ---------------------------------------------------------------------------
-SYSTEM = """You are QAnim v11.7 -- a clarity-first educational SVG animation designer.
-
-YOUR MISSION: Turn any student question into a CRYSTAL-CLEAR 5-scene animation.
-The #1 rule: When a student opens Scene 0, they must INSTANTLY understand what
-the question is asking -- what is given, and what they need to find.
-
-=== SCENE STRUCTURE (v11.7 CLARITY MODEL) ===
-
-Scene 0 "Here's the Question" (MOST IMPORTANT):
-  TOP: Plain-English headline (22px bold): "Here's what we're working with"
-  LEFT SIDE -- GIVEN VALUES BOX (green card):
-    Title: "What we know" (green, bold)
-    Each given value on its own line: green bullet + "symbol = value unit"
-    Example: "• m = 5 kg", "• a = 3 m/s²", "• t = 10 s"
-  RIGHT SIDE -- FIND BOX (purple card):
-    Title: "? What to find" (purple, bold)
-    Each unknown: purple bullet + description
-    Example: "• Force (F)", "• Velocity (v)"
-  CENTER: Simple picture of the physical situation (object, system, or setup)
-    -- labeled with the given values on the picture itself
-  BOTTOM CARD: "This question gives us [list knowns] and asks us to find [list unknowns]."
-  ANIMATION: Each item in the cards fades in one by one (150ms apart)
-
-Scene 1 "The Key Idea":
-  TOP: Plain-English headline: "The formula that connects everything"
-  CENTER: The formula in a large, clear blue box -- written in plain text
-    Example: "Force = Mass × Acceleration" then below: "F = m × a"
-  LEFT: Small reminder of what each symbol means (symbol: plain English name)
-  BOTTOM CARD: "This formula connects [variable1], [variable2], and [variable3].
-    Because we know [knowns], we can find [unknown]."
-  ANIMATION: Formula box scales in, then symbol list fades in
-
-Scene 2 "How It Works":
-  TOP: Plain-English headline: "Visualizing what's happening"
-  CENTER: A clear diagram showing the physical mechanism
-    -- arrows show direction/flow
-    -- labels use actual values from the question
-    -- highlight the unknown with a purple question mark
-  BOTTOM CARD: "In plain terms: [one sentence explaining the physical situation]"
-  ANIMATION: Diagram builds up left to right
-
-Scene 3 "Setting It Up":
-  TOP: Plain-English headline: "Plugging in the numbers"
-  CENTER: Show the substitution step visually:
-    Formula template (blue) → values substituted (green) → result placeholder (purple ?)
-    Example layout:
-      F = m × a
-      F = 5 × 3
-      F = ?
-  LEFT: A reminder card showing all given values again
-  BOTTOM CARD: "We substitute the known values into the formula.
-    The answer is one calculation away."
-  ANIMATION: Each line of substitution appears with a short delay
-
-Scene 4 "Solving It -- Your Turn":
-  TOP: Plain-English headline: "Step-by-step approach"
-  CENTER: A clean numbered checklist (4-5 steps):
-    ① Identify what's given (with checkmarks)
-    ② Write the formula
-    ③ Substitute values
-    ④ Calculate
-    ⑤ Check units
-  BOTTOM CARD: "Follow these steps in order and you'll get the answer every time."
-  ANIMATION: Steps appear one by one with a 200ms stagger
-
-=== IMPORTANT RULES ===
-- Scene 0 MUST show the actual values from the question (not generic labels)
-- NEVER use formula names as scene titles -- use plain English
-- NEVER show the computed numerical answer in any scene
-- PUT the fully computed answer in the "final_answer" JSON field
-- Write bottom card text like a friendly tutor, not a textbook
-- Use the SEMANTIC COLORS: green=known, purple=unknown, blue=formula
-- MAX 2 animated elements per scene (fade-in is not counted as animation)
-- Every text element must be readable: minimum font-size 12, fill #1e293b or #334155
-
-=== TECHNICAL REQUIREMENTS ===
+ 
+SYSTEM = """You are QAnim v11.6 -- a cinematic SVG motion designer and educational animation engineer.
+ 
+YOUR MISSION: Turn any student question into a PREMIUM 5-scene SVG animation
+that teaches the concept progressively. The animation SCENES must NOT show
+the computed numerical answer -- but you MUST fully solve the question and
+provide the complete final answer in the "final_answer" JSON field so it
+appears in the dedicated "Final Answer" panel when the student clicks the button.
+ 
+SCENE STRUCTURE (exactly 5 scenes, Feynman-style):
+ 
+Scene 0 "What Are We Looking At?":
+  - Draw the physical setup as a simple, friendly picture
+  - Use big clear shapes, short fun labels (avoid jargon)
+  - Bottom info card: one plain-English sentence saying what the picture shows
+  - Animate parts appearing one by one
+ 
+Scene 1 "The Big Idea":
+  - Show the ONE main idea or rule that solves this problem
+  - Show the formula name and structure in friendly words, NOT solved numbers
+  - Bottom info card: "The key idea is..." in plain, friendly language
+ 
+Scene 2 "Another Thing That Matters":
+  - Show the second effect or mechanism with a simple animation
+  - Bottom info card: one short plain-English sentence explaining it
+ 
+Scene 3 "Putting It Together":
+  - Show a simple diagram connecting the two ideas
+  - Bottom info card: "Together, these two things give us..." short explanation
+ 
+Scene 4 "How We Solve It -- Step by Step":
+  - Show a friendly numbered checklist of the 3-4 solving steps
+  - DO NOT show computed numerical results -- only the method steps
+ 
+IMPORTANT -- FINAL ANSWER FIELD:
+  Solve the question completely. Put the FULL computed answer (with all values
+  and units) into the "final_answer" JSON field.
+  Do NOT leave "final_answer" empty or as a placeholder string.
+ 
+VISUAL STANDARDS -- v11.6 LIGHT THEME (REQUIRED):
+- SVG viewBox="0 0 1000 600"
+- Background: #f8fafc or white gradient
+- NEVER use dark backgrounds
+- Text color: #1e293b (dark on light)
+- Cards: white fill, 1px #e2e8f0 border, border-radius 8-14px
+- Bottom info card: white bg, 1px border, positioned at y=420-540
+  * Card rect y=420, height MINIMUM 120px
+  * Card rect width: x=30 to x=970 (width=940)
+  * Title text: font-size 15px, font-weight 700, y offset 28px from card top (y=448)
+  * Body text lines: font-size 13.5px, line-height 22px, first line y=470
+  * Internal padding: 20px left (x=55), 24px top
+  * Allow 3 body text lines maximum
+  * Use colored left border-rect (8px wide, full card height) for visual hierarchy
+- Gradient fills, arrow markers, glow filter
+- Navigation: #prevbtn / #nextbtn (or #ctrl-prevbtn / #ctrl-nextbtn in bar)
+- Dots: .dot class
+- FORMULA SUBSCRIPTS: ALWAYS use <tspan dy="5" font-size="0.72em">subscript</tspan>
+  NEVER use underscore notation like f_s, T_s, Q_1
+ 
+ANIMATION TECHNIQUE:
+- Circles/shapes: opacity 0->1 with setTimeout + CSS transition
+- Arrows/lines: stroke-dasharray + stroke-dashoffset animation
+- Text labels: opacity 0->1
+- Spring scale-in: cubic-bezier(0.34,1.56,0.64,1)
+- Sequential setTimeout (100-400ms apart)
+ 
+JS ARCHITECTURE:
+- window.currentStep = 0; window.totalSteps = 5;
+- function showScene(n), animateScene0/1/2/3/4(), nextStep(), prevStep()
+- DOMContentLoaded: showScene(0)
+ 
+DEFS REQUIRED: linearGradients, arrowhead marker, glow filter
+ 
+SAFETY RULES:
 - Complete <!DOCTYPE html>...</html>
-- SVG viewBox="0 0 1000 600", white/light background
-- NO external scripts, NO backtick template literals, NO document.write()
-- Balanced SVG and script tags
-- Include: #prevbtn, #nextbtn, #dots, #qstrip .qtext
+- NO external CDN/fonts/scripts, NO backtick template literals, NO document.write()
+- Balanced SVG/script tags
+- Include: #prevbtn, #nextbtn, #dots, #qstrip .qtext (bold question)
 - DO NOT include Find/Solution/Answer Box buttons
-- scene-0 through scene-4 as <g id="scene-N"> elements
-
+- DO NOT generate #sol-backdrop or #sol-panel
+ 
 OUTPUT FORMAT (strict JSON, no markdown fences):
 {
   "animation_type": "concise label",
   "design_strategy": "2-4 sentence description",
-  "solution_steps": ["Step 1: ...", "Step 2: ...", ...],
-  "final_answer": "<fully computed answer with all values and units>",
-  "key_insight": "one memorable sentence",
-  "animation_code": "COMPLETE HTML AS ESCAPED JSON STRING"
+  "solution_steps": ["Concept: ...", "Formula: ...", "Given: ...", "Find: ...", "Approach: ..."],
+  "final_answer": "<your fully computed answer with all numerical values and units here>",
+  "key_insight": "one memorable insight sentence",
+  "animation_code": "COMPLETE SELF-CONTAINED HTML AS A SINGLE PROPERLY-ESCAPED JSON STRING"
 }"""
-
-# ---------------------------------------------------------------------------
-# CONCEPT SYSTEM PROMPT  (v11.7)
-# ---------------------------------------------------------------------------
-SYSTEM_CONCEPT = """You are QAnim Concept Engine v11.7 -- clarity-first concept animator.
-
-YOUR MISSION: 5-scene CONCEPT animation. No computed answers in scenes.
-Students should instantly understand the physical/mathematical concept.
-
-=== SCENE STRUCTURE (v11.7 CONCEPT MODEL) ===
-
-Scene 0 "What Is This About?":
-  Show the real-world situation this concept applies to.
-  Use a clear, labeled diagram. Plain-English headline (22px).
-  Bottom card: "This concept explains [plain description]."
-
-Scene 1 "The Main Idea":
-  Show the core formula/rule in a large blue box.
-  Label every symbol in plain English.
-  Bottom card: "The key relationship is: [plain English version of formula]."
-
-Scene 2 "How It Behaves":
-  Show what happens when one variable changes (simple arrow diagram or graph).
-  Use green for increases, red for decreases.
-  Bottom card: "When [A] increases, [B] [increases/decreases] because..."
-
-Scene 3 "Connecting the Pieces":
-  Show how two or more ideas from this topic connect.
-  Simple arrows or flow diagram.
-  Bottom card: "Together, [concept1] and [concept2] determine [outcome]."
-
-Scene 4 "How to Use This":
-  Show a 4-step approach checklist for solving problems with this concept.
-  Each step is plain English and actionable.
-  Bottom card: "Use these 4 steps every time you see this type of problem."
-
+ 
+ 
+SYSTEM_CONCEPT = """You are QAnim Concept Engine v11.6 -- cinematic SVG concept animator.
+ 
+YOUR MISSION: 5-scene concept animation. LIGHT THEME. No dark backgrounds.
+No final answer shown. Each scene reveals ONE concept progressively.
+ 
+Scenes:
+  0: Physical setup / visual system overview
+  1: Core formula structure (named, not solved)
+  2: Secondary mechanism
+  3: Key relationships / abstract model
+  4: Summary of what to calculate + approach
+ 
 OUTPUT FORMAT (strict JSON):
 {
   "animation_type": "label",
   "design_strategy": "2-4 sentences",
   "concept_code": "COMPLETE <!DOCTYPE html>...</html> AS ESCAPED JSON STRING"
 }
-
-SAFETY: White/light bg only, no backticks, no external scripts, balanced tags,
+ 
+SAFETY: No dark bg, no backticks, no external scripts, balanced tags,
 5 scenes, include #prevbtn/#nextbtn/#dots, manual step control.
-SUBSCRIPTS: NEVER underscores. ALWAYS <tspan dy="5" font-size="0.72em">sub</tspan>."""
-
-# ---------------------------------------------------------------------------
-# STRATEGY TEMPLATES  (v11.7 -- clarity-first descriptions)
-# ---------------------------------------------------------------------------
+SUBSCRIPTS: NEVER use underscores. ALWAYS use <tspan dy="5" font-size="0.72em">sub</tspan>.
+BOTTOM INFO CARDS: Each scene MUST have a bottom info card.
+rect: x=30, y=420, width=940, height=120, rx=12. Colored left accent bar width=8.
+Title: font-size=15 bold. Body: font-size=13.5 with dy=22 line spacing. Max 3 lines."""
+ 
+ 
+DESIGN_SYSTEM = """
+LIGHT THEME: background #f8fafc or white gradient
+CARD STYLE: white bg, 1px #e2e8f0 border, border-radius 10-14px
+COLORS: PHYSICS=#3b5bdb/#e64980 | MATH=#7c3aed/#db2777 | BIO=#16a34a/#ca8a04
+TEXT: #1e293b on light bg
+SVG viewBox: "0 0 1000 600"
+BOTTOM INFO CARD:
+  - rect: x=30, y=420, width=940, height=120-140, rx=12
+  - Colored accent bar: x=30, y=420, width=8, height=120-140, rx=4 (no right radius)
+  - Title: font-size=15, font-weight=700, x=55, y=card_y+28
+  - Body lines: font-size=13.5, x=55, first line y=card_y+52, dy=22 between lines
+  - Max 3 body lines. Use tspan x=55 dy=22 for wrapping
+  - Total card must be readable and spacious -- never cramped
+"""
+ 
+SVG_TECHNIQUES = """
+TECHNIQUES:
+- stroke-dashoffset arrows/curves
+- opacity fade + translateY rise for labels
+- spring scale: cubic-bezier(0.34,1.56,0.64,1)
+- feGaussianBlur glow filter
+- Sequential setTimeout (NOT CSS animation-delay)
+- linearGradient fills
+ 
+FORMULA SUBSCRIPTS (CRITICAL):
+- NEVER write subscripts with underscores like f_s, T_s, Q_out, v_1
+- ALWAYS use SVG <tspan> subscripts:
+    <text>f<tspan dy="5" font-size="0.72em">s</tspan></text>
+- After subscript: reset with <tspan dy="-5" font-size="1em">
+"""
+ 
 STRATEGY_TEMPLATES = {
-    "VISUAL_PHYSICS":
-        "Scene 0: labeled diagram of the physical system with all given values annotated directly on the drawing. "
-        "Scene 1: the governing formula in a large blue box with each symbol explained in plain English. "
-        "Scene 2: animated arrows or vectors showing direction and magnitude. "
-        "Scene 3: substitution layout showing formula → numbers → unknown. "
-        "Scene 4: 4-step solving checklist.",
-
-    "PROCESS_BASED":
-        "Scene 0: a labeled diagram of the system/machine with parts identified. "
-        "Scene 1: the key principle or law that governs this process. "
-        "Scene 2: a left-to-right flow diagram showing the process stages. "
-        "Scene 3: input/output labeled clearly with given values. "
-        "Scene 4: numbered steps to analyze or solve this type of problem.",
-
-    "MATHEMATICAL":
-        "Scene 0: coordinate axes or geometric setup with all given values plotted/labeled. "
-        "Scene 1: the main formula or theorem in a large clear blue box. "
-        "Scene 2: a graph or geometric illustration of the relationship. "
-        "Scene 3: the substitution layout from formula to numbers. "
-        "Scene 4: step-by-step approach checklist.",
-
-    "BIOLOGICAL":
-        "Scene 0: a simple labeled diagram of the biological structure. "
-        "Scene 1: the key process or mechanism labeled in plain English. "
-        "Scene 2: a left-to-right flow of the biological process. "
-        "Scene 3: cause and effect labeled with arrows. "
-        "Scene 4: a checklist of what to identify and describe.",
-
-    "ABSTRACT":
-        "Scene 0: a real-world example that represents the abstract concept. "
-        "Scene 1: the core principle stated simply in a card. "
-        "Scene 2: a comparison showing what changes vs what stays constant. "
-        "Scene 3: how the concept connects to the specific question. "
-        "Scene 4: a step-by-step approach for this type of question.",
-
-    "MIXED":
-        "Scene 0: labeled diagram of the situation with all given values clearly shown. "
-        "Scene 1: the primary formula in a large blue box, all symbols explained. "
-        "Scene 2: visualization of the primary effect with labeled arrows. "
-        "Scene 3: the substitution layout. "
-        "Scene 4: numbered solving steps.",
+    "VISUAL_PHYSICS": "Dynamic force/motion/field diagram on light background. 5 scenes: geometry, force vectors, secondary effect, circuit model, full summary.",
+    "PROCESS_BASED":  "Sequential process nodes on white. 5 scenes: input, first step, second step, combined model, complete flow summary.",
+    "MATHEMATICAL":   "Coordinate geometry on white. 5 scenes: axes/setup, primary formula, secondary relationship, graphical model, full equation summary.",
+    "BIOLOGICAL":     "Organic shapes on light bg. 5 scenes: cell/molecule setup, first mechanism, second mechanism, pathway model, complete system summary.",
+    "ABSTRACT":       "Clean metaphor on white. 5 scenes: analogy setup, first principle, second principle, combined model, complete concept summary.",
+    "MIXED":          "Split canvas light bg. 5 scenes: physical setup, primary formula, secondary formula, combined model, full parameter summary.",
 }
-
+ 
 CONCEPT_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES
-
-# ---------------------------------------------------------------------------
-# SHARED PROMPT BUILDERS  (v11.7)
-# ---------------------------------------------------------------------------
-HTML_SHELL_NOTE = """
-REQUIRED HTML ELEMENTS:
-- All scenes in <g id="scene-N"> groups (scene-0 to scene-4)
-- #prevbtn, #nextbtn, #dots for navigation
-- #qstrip containing a .qtext element showing the question (bold)
-- DO NOT include Find/Solution/Answer Box buttons
-- DO NOT generate #sol-backdrop or #sol-panel
-- Include empty containers: <g id="sol-steps-container"></g>
+ 
+FALLBACK_RULES = """
+IF STUCK: Use one of these premium fallback layouts (light theme):
+1. CARD-REVEAL: 4 white cards with accent border-left, staggered fade
+2. TIMELINE: horizontal line draws, events spring-scale at nodes
+3. CONCEPT-MAP: central node, branch lines, satellite nodes appear
+4. DATA-BARS: animated bar chart on white with gradient fills
+NEVER flat dark backgrounds or neon-on-black.
 """
-
-CLARITY_REMINDER = """
-=== v11.7 CLARITY CHECKLIST (verify before outputting) ===
-[ ] Scene 0 shows ACTUAL VALUES from the question (not "m = value", but "m = 5 kg")
-[ ] Given values use GREEN color (#16a34a)
-[ ] Unknown values use PURPLE color (#7c3aed)
-[ ] Formulas use BLUE color (#2563eb) in clearly readable boxes
-[ ] Bottom info card text sounds like a friendly tutor, not a textbook
-[ ] Scene headlines are 8 words or fewer in plain English
-[ ] No dark backgrounds anywhere
-[ ] No more than 2 animated elements per scene
-[ ] final_answer field contains the fully computed numerical answer
-"""
-
-
-def _build_concept_prompt(question, category):
-    strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
-    return f"""Build a CLEAR, STUDENT-FRIENDLY 5-scene concept animation for QAnim v11.7.
-
-QUESTION: {question}
-CATEGORY: {category}
-VISUAL STRATEGY: {strategy}
-
-{DESIGN_SYSTEM}
-{SVG_TECHNIQUES}
-{FALLBACK_RULES}
-
-CONCEPT ANIMATION v11.7 REQUIREMENTS:
-- White/light background always
-- Exactly 5 scenes (scene-0 to scene-4)
-- Scene 0 MUST show the actual context from this specific question
-- Plain English headlines -- maximum 8 words
-- Bottom info card per scene: rect x=30 y=420 width=940 height=130 rx=12
-- Manual navigation: showScene(), animateScene0-4(), nextStep(), prevStep()
-- DO NOT include Find/Solution/Answer Box buttons
-
-{CLARITY_REMINDER}
-
-Return ONLY raw JSON. concept_code must be complete <!DOCTYPE html>...</html> as escaped JSON string."""
-
-
-def _build_prompt(question, category):
-    strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
-    return f"""Build a CRYSTAL-CLEAR 5-scene SVG animation for QAnim v11.7.
-
-QUESTION: {question}
-CATEGORY: {category}
-STRATEGY: {strategy}
-
-{DESIGN_SYSTEM}
-{SVG_TECHNIQUES}
-{FALLBACK_RULES}
-{HTML_SHELL_NOTE}
-
-v11.7 KEY REQUIREMENTS:
-- Scene 0 MUST display ALL actual given values from the question in green
-- Scene 0 MUST display ALL unknowns from the question in purple
-- Plain English scene headlines (8 words max)
-- Bottom info card: rect x=30 y=420 width=940 height=130 rx=12
-- final_answer: REQUIRED -- fully computed with all values and units
-- Write card text like a tutor, not a textbook
-
-{CLARITY_REMINDER}
-
-Return ONLY raw JSON. animation_code must be complete <!DOCTYPE html>...</html> as escaped JSON string."""
-
-
+ 
 # ===========================================================================
 #  MODULE 15 -- EEE/ECE Domain Classifier
 # ===========================================================================
-
+ 
 class EEEClassifier:
     _COMPONENT_KEYWORDS = {
         "resistor", "capacitor", "inductor", "impedance", "reactance",
@@ -2999,7 +2788,7 @@ class EEEClassifier:
         "load flow", "fault analysis", "short circuit", "open circuit",
         "per unit", "bus bar", "feeder", "transmission",
     }
-
+ 
     _TOPIC_KEYWORDS = {
         "electrical", "electronics", "circuit", "voltage", "current",
         "watt", "ampere", "volt", "frequency", "hertz", "hz",
@@ -3011,7 +2800,7 @@ class EEEClassifier:
         "magnetic field", "electromagnetic", "flux", "faraday",
         "maxwell", "coulomb", "lenz",
     }
-
+ 
     _NON_EEE_EXCLUSIONS = {
         "photosynthesis", "mitosis", "dna", "rna", "protein", "cell membrane",
         "animal", "plant", "ecosystem", "evolution", "bacteria", "virus",
@@ -3024,7 +2813,7 @@ class EEEClassifier:
         "regression", "clustering", "reinforcement learning",
         "chemistry", "reaction", "mole", "atom", "molecule", "bond",
     }
-
+ 
     @classmethod
     def is_eee_ece(cls, question: str) -> bool:
         if not question or not question.strip():
@@ -3057,12 +2846,12 @@ class EEEClassifier:
                 return False
         QAnimLogger.info("EEEClassifier", "No EEE/ECE signals detected")
         return False
-
-
+ 
+ 
 # ===========================================================================
-#  MODULE 16 -- Circuit Visualization Engine  (v11.7 -- clarity overhaul)
+#  MODULE 16 -- Circuit Visualization Engine
 # ===========================================================================
-
+ 
 _CIRCUIT_TOPOLOGIES = {
     "series_rlc":        ["series rlc", "rlc series", "series r l c"],
     "parallel_rlc":      ["parallel rlc", "rlc parallel", "parallel r l c"],
@@ -3086,8 +2875,8 @@ _CIRCUIT_TOPOLOGIES = {
     "dc_motor":          ["dc motor", "armature", "back emf"],
     "induction_motor":   ["induction motor", "slip", "synchronous speed"],
 }
-
-
+ 
+ 
 def _detect_circuit_topology(question: str) -> str:
     q_lower = question.lower()
     for topology, patterns in _CIRCUIT_TOPOLOGIES.items():
@@ -3096,200 +2885,137 @@ def _detect_circuit_topology(question: str) -> str:
                 QAnimLogger.info("CircuitEngine", f"Topology detected: {topology}")
                 return topology
     return "generic_circuit"
-
-
-CIRCUIT_SYSTEM_PROMPT = """You are QAnim CircuitEngine v11.7 -- a clarity-first electrical engineering circuit animator.
-
-YOUR MISSION: Generate a STUDENT-FRIENDLY 5-scene circuit animation.
-Students must instantly understand what circuit this is and what we are calculating.
-
-=== SCENE STRUCTURE (v11.7 CIRCUIT CLARITY MODEL) ===
-
-Scene 0 "Here's the Circuit":
-  HEADLINE (22px bold): "Here's the circuit we're analyzing"
-  CENTER: Complete, clearly labeled circuit schematic
-    -- Every component labeled with both its symbol AND its value from the question
-    -- Example: resistor labeled "R = 20 Ω", inductor "L = 0.1 H"
-    -- Supply labeled "V = 230 V, f = 50 Hz"
-  LEFT CARD (green): "What we know" -- list every given value
-  RIGHT CARD (purple): "What to find" -- list every unknown
-  ANIMATED current flow: dashed path loops around the circuit
-  BOTTOM CARD: "This is a [topology name] circuit. We know [given values] and need to find [unknowns]."
-
-Scene 1 "The Formula":
-  HEADLINE: "The formula that solves this"
-  CENTER: Large blue formula box showing the main equation
-    -- Written in plain text, all symbols labeled
-  SECONDARY: Phasor diagram or impedance triangle IF applicable
-  BOTTOM CARD: "This formula connects [variables]. Since we know [knowns], we can find [unknown]."
-
-Scene 2 "Each Component":
-  HEADLINE: "What each component does"
-  CENTER: Component-by-component breakdown
-    -- Each component highlighted in sequence
-    -- Plain English description of its role
-  BOTTOM CARD: "The [component] [does this] in the circuit."
-
-Scene 3 "The Calculation Setup":
-  HEADLINE: "Plugging in our numbers"
-  CENTER: Substitution layout:
-    Formula → Numbers substituted → Result placeholder
-    Use color: blue formula, green numbers, purple unknown
-  BOTTOM CARD: "We substitute [values] into the formula. One calculation left."
-
-Scene 4 "Step-by-Step Approach":
-  HEADLINE: "How to solve this type of problem"
-  CENTER: Numbered checklist (4-5 steps), plain English
-  BOTTOM CARD: "Follow these steps for any [topology] circuit problem."
-
-=== CIRCUIT SYMBOL GUIDE ===
-RESISTOR: zigzag path with 6 peaks
-CAPACITOR: two parallel vertical lines separated 8px
-INDUCTOR: series of 4 semicircular bumps
-AC SOURCE: circle with sine wave, labeled V and Hz
+ 
+ 
+CIRCUIT_SYSTEM_PROMPT = """You are QAnim CircuitEngine v11.6 -- a premium electrical engineering circuit animator.
+ 
+YOUR MISSION: Generate a PROFESSIONAL, TEXTBOOK-QUALITY 5-scene circuit animation for EEE/ECE students.
+Every component must use PROPER ENGINEERING SYMBOLS.
+ 
+CIRCUIT SYMBOL GUIDE:
+RESISTOR: zigzag path with 6 peaks between endpoints (±14px from center)
+CAPACITOR: two parallel vertical lines (plates) separated 8px
+INDUCTOR: series of 4 semicircular bumps above wire baseline
+AC SOURCE: circle with sine wave inside, labeled V/Hz
 DC SOURCE: circle with + and - symbols
+DIODE: triangle pointing right with vertical bar at tip
 WIRE: straight lines stroke="#475569" stroke-width="2"
-GROUND: three decreasing horizontal lines
-
-CURRENT FLOW ANIMATION (Scene 0, required):
-  Dashed overlay path: stroke-dasharray="12 8"
-  CSS @keyframes flow { to { stroke-dashoffset: -200; } }
-  animation="flow 1.5s linear infinite"
-
-BOTTOM INFO CARD: rect x=30 y=420 width=940 height=130 rx=12
-
+GROUND: three decreasing horizontal lines below connection point
+NODE: small filled circle + letter label
+ 
+BOTTOM INFO CARDS:
+  - rect: x=30, y=420, width=940, height=120, rx=12
+  - Colored left accent bar: x=30, y=420, width=8, height=120
+  - Title: font-size=15 bold, x=55, y=448
+  - Body: font-size=13.5, x=55, first line y=470, dy=22
+ 
+SCENE STRUCTURE:
+Scene 0: Complete circuit schematic + animated current flow (stroke-dashoffset loop)
+Scene 1: Core formula / principle with phasor or symbolic diagram
+Scene 2: Component-by-component analysis
+Scene 3: Impedance/phasor/power triangle or equivalent circuit
+Scene 4: Step-by-step solving approach (no numerical answers)
+ 
+CURRENT FLOW ANIMATION (required Scene 0):
+  Dashed overlay path around full circuit loop.
+  CSS: @keyframes flow { to { stroke-dashoffset: -200; } }
+  style="stroke-dasharray:12 8;animation:flow 1.5s linear infinite"
+ 
 SAFETY: Complete HTML, no external scripts, no backticks, balanced tags.
 Include #prevbtn, #nextbtn, #dots, #qstrip .qtext. NO Find/Answer buttons.
-
+ 
 OUTPUT FORMAT (strict JSON):
 {
   "animation_type": "circuit_diagram",
   "design_strategy": "2-4 sentence description",
-  "solution_steps": ["Step 1: ...", "Step 2: ...", ...],
+  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ...", "Step 4: ..."],
   "final_answer": "<fully computed numerical answer with all values and units>",
-  "key_insight": "one memorable sentence",
+  "key_insight": "one memorable sentence about the core circuit behaviour",
   "animation_code": "COMPLETE SELF-CONTAINED HTML AS ESCAPED JSON STRING"
 }"""
-
-
-CIRCUIT_CONCEPT_SYSTEM_PROMPT = """You are QAnim CircuitEngine v11.7 -- clarity-first circuit concept animator.
-
+ 
+ 
+CIRCUIT_CONCEPT_SYSTEM_PROMPT = """You are QAnim CircuitEngine v11.6 -- premium circuit concept animator for EEE/ECE.
+ 
 Same as main circuit engine but CONCEPT only (no computed answers in scenes).
-Show circuit topology, component roles, and principles clearly.
-
-Scene 0: Circuit topology with labeled component symbols (no specific values)
-Scene 1: Core formula with plain-English explanation of every symbol
-Scene 2: Component roles and behaviors
-Scene 3: Phasor diagram or equivalent circuit
-Scene 4: Step-by-step approach checklist
-
-BOTTOM INFO CARDS: rect x=30 y=420 width=940 height=130 rx=12
-
+Show circuit, formulas, and principles only.
+ 
+BOTTOM INFO CARDS: rect y=420, height=120.
+ 
 OUTPUT FORMAT (strict JSON):
 {
   "animation_type": "circuit_concept",
   "design_strategy": "2-4 sentences",
   "concept_code": "COMPLETE <!DOCTYPE html>...</html> AS ESCAPED JSON STRING"
 }"""
-
-
+ 
+ 
 class CircuitVisualizationEngine:
-
+ 
     @classmethod
     def build_circuit_prompt(cls, question: str, topology: str) -> str:
         topology_hint = cls._get_topology_hint(topology)
-        return f"""Generate a CRYSTAL-CLEAR 5-scene circuit animation for QAnim v11.7.
-
+        return f"""Generate a PREMIUM ENGINEERING-QUALITY 5-scene circuit animation.
+ 
 QUESTION: {question}
 DETECTED TOPOLOGY: {topology}
 TOPOLOGY-SPECIFIC GUIDANCE: {topology_hint}
-
+ 
 {DESIGN_SYSTEM}
 {SVG_TECHNIQUES}
 {FALLBACK_RULES}
-
-v11.7 CIRCUIT CLARITY RULES:
-- Scene 0: Label EVERY component with its VALUE from the question
-- Scene 0: Green card showing all given values, purple card showing all unknowns
-- All formulas in large blue boxes -- readable at a glance
-- Bottom card text = plain English tutor explanation
+ 
+CIRCUIT ENGINE RULES (v11.6):
+- All components as proper engineering symbols
+- Scene 0: complete schematic + animated wire drawing + current flow loop
+- Scenes use info cards at y=420
+- All component values labeled; voltage polarities marked
 - final_answer MUST contain the complete computed numerical answer
-- Current flow animation required in Scene 0
-
-{CLARITY_REMINDER}
-
+ 
 Return ONLY raw JSON. animation_code must be complete HTML as escaped JSON string."""
-
+ 
     @classmethod
     def build_concept_prompt(cls, question: str, topology: str) -> str:
         topology_hint = cls._get_topology_hint(topology)
-        return f"""Generate a CLEAR 5-scene CONCEPT circuit animation for QAnim v11.7.
-
+        return f"""Generate a PREMIUM 5-scene CONCEPT circuit animation (no final answer in scenes).
+ 
 QUESTION: {question}
 DETECTED TOPOLOGY: {topology}
 TOPOLOGY-SPECIFIC GUIDANCE: {topology_hint}
-
+ 
 {DESIGN_SYSTEM}
 {SVG_TECHNIQUES}
 {FALLBACK_RULES}
-
-Info cards at y=420, height=130.
-Plain English throughout. White/light background only.
-
+ 
+Info cards at y=420.
 Return ONLY raw JSON. concept_code must be complete <!DOCTYPE html>...</html>."""
-
+ 
     @classmethod
     def _get_topology_hint(cls, topology: str) -> str:
         hints = {
-            "series_rlc": (
-                "Scene 0: Draw AC source → R (zigzag, label value) → L (bumps, label value) → C (plates, label value) → back to source. "
-                "Label V_supply and frequency. Green given-values card: R, L, C, V, f. Purple find-card: X_L, X_C, Z, I, PF. "
-                "Scene 1: Impedance formula Z = sqrt(R² + (X_L - X_C)²) in large blue box. "
-                "Scene 3: Substitution showing actual numbers from question."
-            ),
-            "parallel_rlc": (
-                "Scene 0: Vertical bus bars. Three horizontal branches: R (labeled), L (labeled), C (labeled). "
-                "Label supply voltage and frequency. Green/purple info cards. "
-                "Scene 1: Admittance formula or branch current formulas."
-            ),
-            "half_wave_rect": (
-                "Scene 0: AC source → diode (triangle symbol, labeled) → R_L (labeled). "
-                "Scene 1: Half-wave output formula V_dc = V_m/π. "
-                "Scene 2: Input waveform (full sine) vs output waveform (half bumps)."
-            ),
-            "full_wave_rect": (
-                "Scene 0: 4 diodes in diamond. Label each D1-D4. AC input at sides, DC output at top/bottom. "
-                "Scene 1: V_dc = 2V_m/π formula. "
-                "Scene 2: Current path arrows for positive and negative half-cycles (different colors)."
-            ),
-            "ce_amplifier": (
-                "Scene 0: NPN BJT center. R_B1/R_B2 labeled with values. R_C to Vcc labeled. R_E labeled. "
-                "C_E bypass capacitor. C_in/C_out coupling capacitors. All values from question shown. "
-                "Scene 1: Voltage gain formula A_v = -g_m × R_C."
-            ),
-            "transformer_basic": (
-                "Scene 0: Two coil symbols with core. Primary: N1 turns, V1 voltage (labeled with values). "
-                "Secondary: N2 turns, V2 (unknown, shown in purple with ?). "
-                "Scene 1: Turns ratio formula V1/V2 = N1/N2 in large blue box."
-            ),
-            "series_resonance": (
-                "Scene 0: Series RLC with all values labeled. Supply voltage and frequency shown. "
-                "Scene 1: Resonant frequency formula f_0 = 1/(2π√(LC)) in blue box. "
-                "Scene 2: Frequency response curve -- dip at f_0 clearly labeled."
-            ),
-            "generic_circuit": (
-                "Scene 0: Draw the complete circuit with every component labeled with its value from the question. "
-                "Green card: all given values. Purple card: all unknowns. "
-                "Scene 1: The primary governing equation in a large blue box."
-            ),
+            "series_rlc": "Draw: AC source -> R (zigzag) -> L (bumps) -> C (plates) -> back. Label V_R, V_L, V_C. Scene 3: impedance triangle Z=sqrt(R²+(X_L-X_C)²).",
+            "parallel_rlc": "Vertical bus bars. Three horizontal branches: R, L, C. Current I_R, I_L, I_C labeled. Scene 3: phasor diagram.",
+            "half_wave_rect": "AC source -> diode -> R_L. Scene 2: waveform showing half-cycles passing/blocked.",
+            "full_wave_rect": "4 diodes in diamond bridge. AC at left/right corners, DC at top/bottom. Current path arrows for both half-cycles.",
+            "ce_amplifier": "NPN BJT center. R_B1/R_B2 divider on base. R_C to Vcc top. R_E to ground. C_E bypass. C_in/C_out coupling.",
+            "transformer_basic": "Two coil symbols with core between. Primary N1/V1 left, secondary N2/V2 right. Turns ratio label. Flux arrow through core.",
+            "series_resonance": "Series RLC. Scene 1: f_0=1/(2π√LC). Scene 2: frequency response curve with minimum at f_0. Scene 3: Q factor.",
+            "generic_circuit": "Identify components from question and draw in clear loop. Use proper engineering symbols. Animated current flow.",
         }
         return hints.get(topology, hints["generic_circuit"])
-
-
-# ===========================================================================
-#  TOPIC CLASSIFIER
-# ===========================================================================
-
+ 
+ 
+HTML_SHELL_NOTE = """
+REQUIRED:
+- DO NOT generate #sol-backdrop, #sol-panel, or their CSS/JS
+- Include: <div id="sol-steps-container"></div> <div id="sol-answer-text"></div> <div id="sol-insight-text"></div>
+- All scenes in <g id="scene-N"> groups
+- #prevbtn, #nextbtn, #dots for navigation
+- #qstrip .qtext for question display (bold)
+- DO NOT include Find/Solution/Answer Box buttons
+"""
+ 
+ 
 def _classify_topic(question):
     q = question.lower()
     scores = {
@@ -3316,15 +3042,62 @@ def _classify_topic(question):
     except Exception:
         pass
     return "PROCESS_BASED"
-
-
+ 
+ 
+def _build_concept_prompt(question, category):
+    strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
+    return f"""Build a CINEMATIC 5-SCENE CONCEPT ANIMATION for QAnim v11.6.
+ 
+QUESTION: {question}
+CATEGORY: {category}
+VISUAL STRATEGY: {strategy}
+ 
+{DESIGN_SYSTEM}
+{SVG_TECHNIQUES}
+{FALLBACK_RULES}
+ 
+CONCEPT ANIMATION v11.6 REQUIREMENTS:
+- LIGHT THEME: white/light-gray background
+- Exactly 5 scenes (scene-0 to scene-4)
+- Progressive concept revelation -- no final answer
+- Bottom info card per scene: rect y=420 height=120
+- Manual navigation: showScene(), animateScene0-4(), nextStep(), prevStep()
+- DO NOT include Find/Solution/Answer Box buttons
+ 
+Return ONLY raw JSON. concept_code must be complete <!DOCTYPE html>...</html> as escaped JSON string."""
+ 
+ 
+def _build_prompt(question, category):
+    strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
+    return f"""Build a PREMIUM CINEMATIC 5-SCENE SVG ANIMATION for QAnim v11.6.
+ 
+QUESTION: {question}
+CATEGORY: {category}
+STRATEGY: {strategy}
+ 
+{DESIGN_SYSTEM}
+{SVG_TECHNIQUES}
+{FALLBACK_RULES}
+{HTML_SHELL_NOTE}
+ 
+KEY REMINDERS v11.6:
+- LIGHT THEME: white/light-gray backgrounds, dark text, vivid accents
+- Exactly 5 scenes
+- Bottom info card y=420 height=120
+- final_answer: REQUIRED -- fully solved answer with all computed values and units
+- key_insight: one memorable sentence
+- DO NOT include Find/Solution/Answer Box buttons
+ 
+Return ONLY raw JSON. animation_code must be complete <!DOCTYPE html>...</html> as escaped JSON string."""
+ 
+ 
 # ===========================================================================
-#  MODULE 13 -- Full Generation Pipeline  (v11.7)
+#  MODULE 13 -- Full Generation Pipeline  (v11.6)
 # ===========================================================================
-
+ 
 async def _generate_concept_animation(question, category, is_eee=False, topology=None):
     QAnimLogger.info("ConceptPipeline", f"START  category={category}  is_eee={is_eee}")
-
+ 
     if is_eee:
         prompt = CircuitVisualizationEngine.build_concept_prompt(question, topology or "generic_circuit")
         system = CIRCUIT_CONCEPT_SYSTEM_PROMPT
@@ -3332,7 +3105,7 @@ async def _generate_concept_animation(question, category, is_eee=False, topology
     else:
         prompt = _build_concept_prompt(question, category)
         system = SYSTEM_CONCEPT
-
+ 
     try:
         msg = client.messages.create(
             model=CONCEPT_MODEL, max_tokens=MAX_TOK_CONCEPT,
@@ -3345,11 +3118,11 @@ async def _generate_concept_animation(question, category, is_eee=False, topology
     except Exception as e:
         QAnimLogger.error("ConceptAI", f"API call failed: {e}")
         return RecoveryEngine.fallback_html(question, f"Concept AI error: {e}")
-
+ 
     raw_for_concept = raw.replace('"concept_code"', '"animation_code"')
     parsed_c = _parse_response(raw_for_concept, question)
     concept_html = parsed_c.get("animation_code", "").strip()
-
+ 
     if not concept_html:
         for marker in ['<!DOCTYPE html>', '<html', '<svg']:
             idx = raw.find(marker)
@@ -3357,10 +3130,10 @@ async def _generate_concept_animation(question, category, is_eee=False, topology
                 end = raw.rfind('</html>')
                 concept_html = raw[idx:end + 7] if end != -1 else raw[idx:]
                 break
-
+ 
     if not concept_html:
         return RecoveryEngine.fallback_html(question, "Concept parse failed")
-
+ 
     try:
         GenerationValidator.validate(concept_html, require_svg=True)
     except ValidationError as e:
@@ -3369,45 +3142,43 @@ async def _generate_concept_animation(question, category, is_eee=False, topology
             concept_html = RecoveryEngine.partial_html(question, concept_html)
         else:
             return RecoveryEngine.fallback_html(question, str(e))
-
+ 
     concept_html = HtmlSanitizer.sanitize(concept_html)
     concept_html = inject_infrastructure(concept_html)
     concept_html = inject_notes_system(concept_html, question)
     concept_html = inject_voice_assistant(concept_html)
     concept_html = inject_step_controller(concept_html)
-
+ 
     QAnimLogger.ok("ConceptPipeline", f"DONE -- len={len(concept_html):,}")
     return concept_html
-
-
+ 
+ 
 async def generate_question_animation(question):
     """
-    THREE-STAGE CONCURRENT PIPELINE (v11.7):
-
+    THREE-STAGE CONCURRENT PIPELINE (v11.6):
+ 
     Stage 0 -- ToFind Extraction   (sync, no AI)
     Stage 1 -- Concept Animation   (claude-sonnet-4-6)
     Stage 2 -- Solution Animation  (claude-sonnet-4-6)
     Stage 3 -- Solution Steps      (claude-sonnet-4-6)
                [Stages 1-3 run concurrently via asyncio.gather]
-
-    v11.7 changes vs v11.6:
-      - Complete clarity overhaul of all system prompts
-      - Scene 0 now always shows actual question values (given/unknown)
-      - Semantic color system enforced (green=known, purple=unknown, blue=formula)
-      - Plain English headlines and card text throughout
-      - Simplified animations (max 2 moving elements per scene)
-      - Circuit animations label every component with its actual value
+ 
+    v11.6 changes vs v11.5:
+      - Quiz system (Stage 3 in v11.5) completely removed.
+        No QuizGeneratorV2, no quiz_data, no quiz_html in result dict.
+      - Solution Steps is now Stage 3 (was Stage 4).
+      - asyncio.gather now runs 3 coroutines instead of 4.
     """
     question = (question or "").strip()
     if not question:
         raise ValueError("Question cannot be empty")
-
+ 
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v11.7 -- '{short_q}'")
-
+    QAnimLogger.info("Pipeline", f"START v11.6 -- '{short_q}'")
+ 
     to_find_targets = ToFindExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
-
+ 
     is_eee = EEEClassifier.is_eee_ece(question)
     if is_eee:
         topology = _detect_circuit_topology(question)
@@ -3415,17 +3186,17 @@ async def generate_question_animation(question):
     else:
         topology = None
         QAnimLogger.info("Pipeline", "Non-EEE/ECE question -> standard animation pipeline")
-
+ 
     category = _classify_topic(question)
     QAnimLogger.info("Classifier", f"Category: {category}")
-
+ 
     if is_eee:
         solution_prompt = CircuitVisualizationEngine.build_circuit_prompt(question, topology)
         solution_system = CIRCUIT_SYSTEM_PROMPT
     else:
         solution_prompt = _build_prompt(question, category)
         solution_system = SYSTEM
-
+ 
     async def _run_solution_ai():
         try:
             msg = client.messages.create(
@@ -3441,7 +3212,7 @@ async def generate_question_animation(question):
         except Exception as e:
             QAnimLogger.error("SolutionAI", f"API failed: {e}")
             raise
-
+ 
     QAnimLogger.info("Pipeline", "Launching 3 concurrent AI stages...")
     try:
         concept_html, sol_raw, haiku_sol = await asyncio.gather(
@@ -3452,10 +3223,10 @@ async def generate_question_animation(question):
     except Exception as e:
         QAnimLogger.error("Pipeline", f"Concurrent generation failed: {e}")
         return _build_failure_result(question, f"API error: {e}")
-
+ 
     result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v11.7"
+    result["engine_version"]         = "v11.6"
     result["engine_type"]            = "circuit" if is_eee else "standard"
     result["circuit_topology"]       = topology or "N/A"
     result["concept_animation_code"] = concept_html
@@ -3464,19 +3235,19 @@ async def generate_question_animation(question):
     result.setdefault("solution_steps", [])
     result.setdefault("final_answer",   "")
     result.setdefault("key_insight",    "")
-
+ 
     haiku_steps = haiku_sol.get("steps", [])
     if haiku_steps and (not result["solution_steps"] or len(haiku_steps) > len(result["solution_steps"])):
         result["solution_steps"] = haiku_steps
         QAnimLogger.ok("Pipeline", f"Using Haiku solution steps ({len(haiku_steps)} steps)")
-
+ 
     def _is_real_answer(s):
         return bool(s and len(str(s).strip()) > 5 and any(c.isdigit() for c in str(s)))
-
+ 
     if not _is_real_answer(result["final_answer"]) and _is_real_answer(haiku_sol.get("final_answer", "")):
         result["final_answer"] = haiku_sol["final_answer"]
         QAnimLogger.ok("Pipeline", "Used Haiku final_answer (solution AI returned empty/placeholder)")
-
+ 
     if not _is_real_answer(result["final_answer"]):
         raw_haiku = haiku_sol.get("raw", "").strip()
         if raw_haiku:
@@ -3488,12 +3259,12 @@ async def generate_question_animation(question):
         else:
             result["final_answer"] = "Solution computed -- open the step-by-step for full details."
             QAnimLogger.warn("Pipeline", "final_answer was empty; used fallback message")
-
+ 
     if haiku_sol.get("key_insight") and not result["key_insight"]:
         result["key_insight"] = haiku_sol["key_insight"]
-
+ 
     html = result.get("animation_code", "")
-
+ 
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
@@ -3511,7 +3282,7 @@ async def generate_question_animation(question):
             result["animation_code"] = RecoveryEngine.fallback_html(question, str(e))
             result["render_status"]  = "fallback"
             return result
-
+ 
     answer_targets = _build_answer_targets(
         to_find_targets  = to_find_targets,
         haiku_sol        = haiku_sol,
@@ -3520,7 +3291,7 @@ async def generate_question_animation(question):
     )
     result["answer_targets"] = answer_targets
     QAnimLogger.info("Pipeline", f"Answer targets built: {len(answer_targets)}")
-
+ 
     # POST-PROCESSING: inject all panels
     html = HtmlSanitizer.sanitize(html)
     html = inject_infrastructure(html)
@@ -3533,20 +3304,20 @@ async def generate_question_animation(question):
     html = inject_to_find_system(html, to_find_targets)
     html = inject_notes_system(html, question)
     html = inject_answer_box_panel(html, answer_targets)
-    html = inject_controls_bar(html)
-    html = inject_voice_assistant(html)
-    html = inject_step_controller(html)  # MUST be absolute last
-
+    html = inject_controls_bar(html)       # injects bar with Prev/Next endpoints
+    html = inject_voice_assistant(html)    # inserts Voice before Next via #ctrl-next-sep
+    html = inject_step_controller(html)    # MUST be absolute last
+ 
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
         QAnimLogger.warn("FinalValidator", f"Post-injection: {e} -- continuing")
-
+ 
     result["animation_code"] = html
     result["render_status"]  = "ok"
-
+ 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v11.7 -- '{result['title']}' "
+        f"DONE v11.6 -- '{result['title']}' "
         f"engine={result.get('engine_type','standard')} "
         f"topology={result.get('circuit_topology','N/A')} "
         f"concept={len(concept_html):,} "
@@ -3556,8 +3327,8 @@ async def generate_question_animation(question):
         f"answer_targets={len(answer_targets)}"
     ))
     return result
-
-
+ 
+ 
 def _build_failure_result(question, reason):
     fallback = RecoveryEngine.fallback_html(question, reason)
     return {
@@ -3574,27 +3345,27 @@ def _build_failure_result(question, reason):
         "answer_targets":         [],
         "haiku_solution":         {"steps": [], "final_answer": "", "key_insight": "", "raw": ""},
         "category":               "UNKNOWN",
-        "engine_version":         "v11.7",
+        "engine_version":         "v11.6",
         "engine_type":            "error",
         "circuit_topology":       "N/A",
         "render_status":          "error",
     }
-
-
+ 
+ 
 def generate_question_animation_sync(question):
     return asyncio.run(generate_question_animation(question))
-
-
+ 
+ 
 generate_animation       = generate_question_animation
 generate_animation_sync  = generate_question_animation_sync
-
-
+ 
+ 
 # ===========================================================================
 #  CLI TEST
 # ===========================================================================
 if __name__ == "__main__":
     import sys
-
+ 
     TEST_QUESTIONS = {
         "VISUAL_PHYSICS":  "A steam pipe of inner diameter 5 cm and outer diameter 7 cm carries steam at 250 degrees C. The pipe has thermal conductivity 45 W/mK and is exposed to air at 30 degrees C with convection coefficient 12 W/m2K. Find the rate of heat loss per meter and the outer surface temperature.",
         "PROCESS_BASED":   "How does a 4-stroke internal combustion engine work?",
@@ -3603,48 +3374,46 @@ if __name__ == "__main__":
         "EEE_SERIES_RLC":  "A 230 V supply is connected to a circuit containing a 20 Ω resistor, a 0.1 H inductor, and a 100 μF capacitor in series. Supply frequency is 50 Hz. Calculate inductive reactance, capacitive reactance, total impedance, circuit current, and power factor.",
         "EEE_TRANSFORMER": "A single-phase transformer has 200 primary turns and 50 secondary turns. The primary is connected to a 400 V, 50 Hz supply. Find the secondary voltage, turns ratio, and transformation ratio.",
     }
-
+ 
     if len(sys.argv) > 1:
         questions_to_test = {"CUSTOM": " ".join(sys.argv[1:])}
     else:
         key = "VISUAL_PHYSICS"
         questions_to_test = {key: TEST_QUESTIONS[key]}
-
+ 
     for cat, q in questions_to_test.items():
         print("=" * 72)
-        print(f"  QAnim v11.7 -- Clarity Overhaul | {cat}")
+        print(f"  QAnim v11.6 -- Quiz Removed | Prev/Next in Bar | Card at y=420 | {cat}")
         print(f"  Q: {q[:65]}...")
         print("=" * 72)
-
+ 
         result = generate_question_animation_sync(q)
-
+ 
         concept_html  = result.get("concept_animation_code", "")
         solution_html = result.get("animation_code", "")
-
+ 
         print(f"\nTitle               : {result['title']}")
         print(f"Engine              : {result.get('engine_version','N/A')} / {result.get('engine_type','standard')}")
         print(f"Render Status       : {result.get('render_status','N/A')}")
         print(f"[Stage 1] Concept   : {len(concept_html):,} chars")
         print(f"[Stage 2] Solution  : {len(solution_html):,} chars")
         print(f"Final Answer        : {result.get('final_answer','')[:120]}")
-
+ 
         slug = cat.lower()
-        concept_out  = f"q_anim_v117_{slug}_concept.html"
-        solution_out = f"q_anim_v117_{slug}_solution.html"
-
+        concept_out  = f"q_anim_v116_{slug}_concept.html"
+        solution_out = f"q_anim_v116_{slug}_solution.html"
+ 
         with open(concept_out,  "w", encoding="utf-8") as f: f.write(concept_html)
         with open(solution_out, "w", encoding="utf-8") as f: f.write(solution_html)
-
+ 
         print(f"\n[Stage 1] Concept saved  : {concept_out}")
         print(f"[Stage 2] Solution saved : {solution_out}")
         print()
-        print("QAnim v11.7 Clarity Changes:")
-        print("  IMPROVED -- Scene 0 now shows actual question values (given/unknown)")
-        print("  IMPROVED -- Semantic colors: green=known, purple=unknown, blue=formula")
-        print("  IMPROVED -- Plain English scene headlines (8 words max)")
-        print("  IMPROVED -- Bottom cards written as tutor dialogue, not textbook")
-        print("  IMPROVED -- Circuit scenes label every component with its actual value")
-        print("  IMPROVED -- Max 2 animated elements per scene (reduced visual noise)")
-        print("  IMPROVED -- CLARITY_REMINDER checklist enforced in all prompts")
+        print("QAnim v11.6 Changes:")
+        print("  REMOVED -- QuizGeneratorV2 class (quiz data generation)")
+        print("  REMOVED -- NEW_QUIZ_SYSTEM_PROMPT / NEW_QUIZ_PROMPT_TEMPLATE constants")
+        print("  REMOVED -- inject_quiz_v2_panel() function and quiz panel stubs")
+        print("  REMOVED -- Stage 3 Quiz from asyncio.gather (now 3 concurrent stages)")
+        print("  REMOVED -- quiz_data / quiz_html from result dict and failure result")
         print()
         print("Controls bar: [◀ Prev] [Find] [Final Answer] [Answer Box] [Notes] [Voice] [Next ▶]")
