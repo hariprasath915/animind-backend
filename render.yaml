@@ -4,7 +4,7 @@ services:
     runtime: python
     pythonVersion: "3.11.0"
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       # ── REQUIRED — Set ALL of these in Render Dashboard → Environment ──
