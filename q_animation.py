@@ -3805,7 +3805,7 @@ if __name__ == "__main__":
         print(f"[Stage 3] Haiku Sol : {len(haiku_sol.get('steps',[]))} steps  ({len(haiku_sol.get('raw',''))} chars raw)")
         print(f"[v11.1] Ans Targets : {len(ans_targets)} target(s)")
         for t in ans_targets:
-            print(f"  label={t['label'][:40]}  value={t['value'][:30]}")
+            print(f"           label={t['label'][:40]}  value={t['value'][:30]}")
 
         steps = result.get('solution_steps', [])
         print(f"Solution Steps      : {len(steps)}")
