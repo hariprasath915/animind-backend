@@ -70,7 +70,7 @@ SOLUTION_MODEL       = "claude-sonnet-4-6"
 Q_MODEL              = SOLUTION_MODEL
 HAIKU_SOLUTION_MODEL = "claude-haiku-4-5"
 
-MAX_TOK                = 20000
+MAX_TOK                = 16000   # claude-sonnet-4-6 hard cap is 16 384 tokens
 MAX_TOK_CONCEPT        = 12000
 MAX_TOK_HAIKU_SOLUTION = 8000
 
@@ -594,14 +594,10 @@ window.addEventListener('unhandledrejection',function(e){
 
 
 def inject_infrastructure(html):
-    # Ensure viewport meta tag exists for proper mobile scaling
-    if '<meta name="viewport"' not in html and '<meta name=\'viewport\'' not in html:
-        viewport_meta = '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">\n'
-        if '<head>' in html:
-            html = html.replace('<head>', '<head>\n' + viewport_meta, 1)
-        elif '</head>' in html:
-            html = html.replace('</head>', viewport_meta + '</head>', 1)
-
+    # Inject viewport meta tag for mobile-responsive scaling
+    _viewport_meta = '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">'
+    if '<meta name="viewport"' not in html and "<meta name='viewport'" not in html:
+        html = re.sub(r'(<head[^>]*>)', r'\1\n' + _viewport_meta, html, count=1, flags=re.IGNORECASE)
     html = re.sub(r'(<body[^>]*>)', r'\1\n' + ERROR_BOUNDARY_HTML, html, count=1, flags=re.IGNORECASE)
     first_script = re.search(r'<script(?:\s[^>]*)?>(?!.*type\s*=\s*["\']application/json)', html, re.IGNORECASE)
     if first_script:
@@ -1315,6 +1311,8 @@ class HaikuSolutionGenerator:
 
     @classmethod
     async def generate_async(cls, question):
+        # FIXED: run_in_executor so sync client.messages.create does not block
+        # the asyncio event loop during asyncio.gather()
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, cls.generate, question)
 
@@ -3673,14 +3671,15 @@ REQUIRED:
 """
 
 
-def _classify_topic(question):
+def _classify_topic_sync(question):
+    """Pure sync classifier -- safe to call from run_in_executor."""
     q = question.lower()
     scores = {
         "BIOLOGICAL":     sum(1 for k in ["cell","dna","rna","protein","photosynthesis","mitosis","enzyme","hormone","gene","organism","bacteria","virus","chromosome","metabolism"] if k in q),
         "MATHEMATICAL":   sum(1 for k in ["integral","derivative","matrix","vector","theorem","equation","polynomial","logarithm","trigonometry","calculus","function","graph","proof"] if k in q),
         "ABSTRACT":       sum(1 for k in ["philosophy","ethics","democracy","capitalism","justice","freedom","psychology","consciousness","society","ideology","culture","politics"] if k in q),
         "PROCESS_BASED":  sum(1 for k in ["how does","how do","step by step","process","algorithm","mechanism","workflow","procedure","stages","works","function","operation"] if k in q),
-        "VISUAL_PHYSICS": sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit","newton","friction","torque","field","charge","resistance","heat","thermal","temperature","pipe","cylinder","conduction","convection"] if k in q),
+        "VISUAL_PHYSICS": sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit","newton","friction","torque","field","charge","resistance","heat","thermal","temperature","pipe","cylinder","conduction","convection","knapsack","greedy","dynamic","sorting","graph","tree","binary"] if k in q),
     }
     max_score = max(scores.values())
     if max_score >= 2:
@@ -3688,17 +3687,28 @@ def _classify_topic(question):
         return top[0] if len(top) == 1 else "MIXED"
     if sum(1 for s in scores.values() if s > 0) >= 3:
         return "MIXED"
-    try:
-        resp = client.messages.create(
-            model=Q_MODEL, max_tokens=30,
-            system="Reply with ONLY one of: VISUAL_PHYSICS, PROCESS_BASED, MATHEMATICAL, BIOLOGICAL, ABSTRACT, MIXED",
-            messages=[{"role": "user", "content": f"Classify: {question[:200]}"}])
-        cat = resp.content[0].text.strip().upper()
-        if cat in STRATEGY_TEMPLATES:
+    # Fallback: keyword-based classification without calling AI
+    # (avoids blocking the event loop and wastes a token budget)
+    for kw, cat in [
+        ("sort", "MATHEMATICAL"), ("search", "MATHEMATICAL"),
+        ("flow", "VISUAL_PHYSICS"), ("heat", "VISUAL_PHYSICS"),
+        ("cell", "BIOLOGICAL"), ("gene", "BIOLOGICAL"),
+        ("prove", "MATHEMATICAL"), ("theorem", "MATHEMATICAL"),
+    ]:
+        if kw in q:
             return cat
-    except Exception:
-        pass
     return "PROCESS_BASED"
+
+
+def _classify_topic(question):
+    """Sync wrapper kept for backward compatibility."""
+    return _classify_topic_sync(question)
+
+
+async def _classify_topic_async(question):
+    """Non-blocking async classifier -- uses run_in_executor."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _classify_topic_sync, question)
 
 
 def _build_concept_prompt(question, category):
@@ -3793,11 +3803,18 @@ def _build_prompt(question, category):
 async def _generate_concept_animation(question, category):
     QAnimLogger.info("ConceptPipeline", f"START  category={category}")
     system_blocks, user_content = _build_concept_prompt(question, category)
-    try:
-        msg = client.messages.create(
+
+    def _call_concept_api():
+        return client.messages.create(
             model=CONCEPT_MODEL, max_tokens=MAX_TOK_CONCEPT,
             system=system_blocks,
             messages=[{"role": "user", "content": user_content}])
+
+    try:
+        # FIXED: run sync Anthropic call in a thread so it does not block the
+        # asyncio event loop while asyncio.gather() is running all 3 stages.
+        loop = asyncio.get_event_loop()
+        msg = await loop.run_in_executor(None, _call_concept_api)
         raw = msg.content[0].text.strip()
         QAnimLogger.info(
             "ConceptAI",
@@ -3806,7 +3823,7 @@ async def _generate_concept_animation(question, category):
             f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
         )
         if msg.stop_reason == "max_tokens":
-            QAnimLogger.warn("ConceptAI", "Hit max_tokens -- may be truncated!")
+            QAnimLogger.warn("ConceptAI", "Hit max_tokens -- response may be truncated!")
     except Exception as e:
         QAnimLogger.error("ConceptAI", f"API call failed: {e}")
         return RecoveryEngine.fallback_html(question, f"Concept AI error: {e}")
@@ -3873,17 +3890,23 @@ async def generate_question_animation(question):
     to_find_targets = ToFindExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
 
-    category = _classify_topic(question)
+    # FIXED: use non-blocking async classifier so we don't block the event loop
+    category = await _classify_topic_async(question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
     system_blocks, user_content = _build_prompt(question, category)
 
     async def _run_solution_ai():
-        try:
-            msg = client.messages.create(
+        """Runs solution AI call in a thread pool so asyncio.gather is truly concurrent."""
+        def _call():
+            return client.messages.create(
                 model=SOLUTION_MODEL, max_tokens=MAX_TOK,
                 system=system_blocks,
                 messages=[{"role": "user", "content": user_content}])
+        try:
+            # FIXED: run_in_executor prevents blocking the asyncio loop
+            loop = asyncio.get_event_loop()
+            msg = await loop.run_in_executor(None, _call)
             raw = msg.content[0].text.strip()
             QAnimLogger.info(
                 "SolutionAI",
@@ -3892,13 +3915,13 @@ async def generate_question_animation(question):
                 f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
             )
             if msg.stop_reason == "max_tokens":
-                QAnimLogger.warn("SolutionAI", "Hit max_tokens -- may be truncated!")
+                QAnimLogger.warn("SolutionAI", "Hit max_tokens -- response may be truncated!")
             return raw
         except Exception as e:
             QAnimLogger.error("SolutionAI", f"API failed: {e}")
             raise
 
-    QAnimLogger.info("Pipeline", "Launching 3 concurrent AI stages...")
+    QAnimLogger.info("Pipeline", "Launching 3 truly-concurrent AI stages (all run_in_executor)...")
     try:
         concept_html, sol_raw, haiku_sol = await asyncio.gather(
             _generate_concept_animation(question, category),
