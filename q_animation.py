@@ -2770,7 +2770,7 @@ def inject_voice_assistant(html):
 
 _STEP_CONTROLLER_JS = r"""
 <script id="qanim-step-controller">
-/* QAnim StepController v12.1 — RC-1, RC-2, RC-3, RC-4 fixed */
+/* QAnim StepController v12.2 — scene-navigation conflict fix */
 (function patchStepController(){
   "use strict";
 
@@ -2794,9 +2794,6 @@ _STEP_CONTROLLER_JS = r"""
         document.body.appendChild(prevBtn);
       }
 
-      /* RC-1 FIX: removeAttribute onclick only — no cloneNode/replaceChild.
-         cloneNode orphans the layout button element and can break existing
-         event wiring.  Clearing onclick is sufficient. */
       nextBtn.removeAttribute("onclick");
       prevBtn.removeAttribute("onclick");
 
@@ -2807,29 +2804,37 @@ _STEP_CONTROLLER_JS = r"""
         if(s){ scenes.push(s); } else if(i > 0){ break; }
       }
       if(scenes.length < 1){
-        console.warn("[QAnim SC] No scene-N elements found");
+        console.warn("[QAnim SC] No scene-N elements found — retrying in 500ms");
+        setTimeout(initSC, 500);
         return;
       }
 
       var currentStep = 0;
 
-      /* ── 3. showScene — RC-1 + RC-2 + RC-3 FIX ──────────────────────
-         setAttribute("display") matches the AI-generated showScene() exactly.
-         Never style.opacity for scene group visibility: the two mechanisms are
-         independent and writing opacity:1 onto a node with attribute
-         display="none" leaves it invisible in SVG.
-         Call animateSceneN() every time — the AI function calls resetScene()
-         first so re-invocation is always safe (no stale opacity state).
+      /* ── 3. showScene ─────────────────────────────────────────────────
+         CRITICAL FIX v12.2:
+         The AI-generated anim_script contains its own showScene() function
+         that uses opacity on child elements, while we use setAttribute("display")
+         on the scene <g> group.  Both mechanisms must cooperate:
+           a) We set display="block"/"none" on the scene <g> group.
+           b) We ALSO call the AI's animateSceneN() which handles opacity/animation
+              of child elements inside the scene.
+         This makes both the SVG display attribute AND the child opacity correct.
       ─────────────────────────────────────────────────────────────────── */
       function showScene(idx){
         if(idx < 0 || idx >= scenes.length) return;
         currentStep = idx;
 
+        /* Show/hide the scene <g> groups using SVG display attribute */
         for(var j = 0; j < scenes.length; j++){
-          scenes[j].setAttribute("display", j === idx ? "block" : "none");
-          scenes[j].style.pointerEvents = j === idx ? "auto" : "none";
+          var scEl = scenes[j];
+          scEl.setAttribute("display", j === idx ? "block" : "none");
+          scEl.style.pointerEvents = j === idx ? "auto" : "none";
+          /* Also reset opacity to 1 on the group itself (some AI code sets group opacity=0) */
+          if(j === idx) scEl.setAttribute("opacity", "1");
         }
 
+        _buildDots();
         _updateDots();
         _updateNavBtns();
 
@@ -2854,16 +2859,31 @@ _STEP_CONTROLLER_JS = r"""
         });
       }
 
-      /* ── 4. Dot and button state helpers ─────────────────────────────── */
+      /* ── 4. Dot helpers ──────────────────────────────────────────────── */
+      function _buildDots(){
+        var dc = document.getElementById("dots");
+        if(!dc) return;
+        /* Only build dots if container is empty or dot count changed */
+        var existing = dc.querySelectorAll(".dot");
+        if(existing.length === scenes.length) return;
+        dc.innerHTML = "";
+        for(var d = 0; d < scenes.length; d++){
+          var dot = document.createElement("span");
+          dot.className = "dot" + (d === currentStep ? " active" : "");
+          (function(idx){ dot.addEventListener("click", function(){ showScene(idx); }); })(d);
+          dc.appendChild(dot);
+        }
+      }
+
       function _updateDots(){
         var dc = document.getElementById("dots");
         if(!dc) return;
-        var ds = dc.querySelectorAll(".dot, circle");
-        if(!ds.length) ds = dc.children;
+        var ds = dc.querySelectorAll(".dot");
         for(var k = 0; k < ds.length; k++){
           var active = (k === currentStep);
-          ds[k].style.opacity = active ? "1" : "0.35";
-          if(ds[k].classList) ds[k].classList.toggle("active", active);
+          if(ds[k].classList){
+            ds[k].classList.toggle("active", active);
+          }
         }
       }
 
@@ -2884,7 +2904,7 @@ _STEP_CONTROLLER_JS = r"""
         }
       }
 
-      /* ── 5. Click listeners — RC-1 FIX: addEventListener, not cloneNode ─ */
+      /* ── 5. Click listeners ──────────────────────────────────────────── */
       nextBtn.addEventListener("click", function(e){
         e.stopPropagation();
         if(currentStep < scenes.length - 1) showScene(currentStep + 1);
@@ -2894,36 +2914,50 @@ _STEP_CONTROLLER_JS = r"""
         if(currentStep > 0) showScene(currentStep - 1);
       });
 
-      /* ── 6. Initial state sync — RC-2 FIX ───────────────────────────
-         By window.load the AI DOMContentLoaded has already run showScene(0),
-         setting scene-0 display=block and others display=none via setAttribute.
-         We re-enforce that state, sync dots/buttons, and replay animateScene0()
-         in case it finished before our event listener was attached.
+      /* ── 6. Initial state ─────────────────────────────────────────────
+         CRITICAL FIX v12.2:
+         Do NOT forcibly set display=none on all scenes here — the AI's
+         DOMContentLoaded may have already run and set up correct state.
+         Instead, detect which scene is currently visible (or default to 0)
+         and call showScene() once to synchronise everything.
       ─────────────────────────────────────────────────────────────────── */
+      var visibleIdx = 0;
       for(var ii = 0; ii < scenes.length; ii++){
-        scenes[ii].setAttribute("display", ii === 0 ? "block" : "none");
+        var disp = scenes[ii].getAttribute("display");
+        var op   = parseFloat(scenes[ii].getAttribute("opacity") || "1");
+        if(disp !== "none" && op > 0.1){
+          visibleIdx = ii;
+          break;
+        }
+      }
+
+      /* Wire up dots */
+      _buildDots();
+
+      /* Synchronise state without re-triggering the animation that already ran */
+      currentStep = visibleIdx;
+      for(var jj = 0; jj < scenes.length; jj++){
+        scenes[jj].setAttribute("display", jj === visibleIdx ? "block" : "none");
+        if(jj === visibleIdx) scenes[jj].setAttribute("opacity", "1");
       }
       _updateDots();
       _updateNavBtns();
 
+      /* Fire scene-0 animation only if no animateScene function has run yet */
       requestAnimationFrame(function(){
         requestAnimationFrame(function(){
           try{
-            if(typeof window.animateScene0 === "function") window.animateScene0();
+            if(typeof window.animateScene0 === "function" && visibleIdx === 0){
+              window.animateScene0();
+            }
           }catch(e){}
         });
       });
 
-      console.log("[QAnim SC v12.1] " + scenes.length + " scenes ready");
+      console.log("[QAnim SC v12.2] " + scenes.length + " scenes ready, visible=" + visibleIdx);
 
     }catch(err){ console.error("[QAnim SC] Fatal:", err); }
   }
-
-  /* RC-4 FIX: setInterval patch REMOVED.
-     The old patch blocked every setInterval whose function source contained
-     the string "showScene", intending to stop auto-advance timers — but it
-     also killed any AI initialization timer that referenced showScene, breaking
-     deferred first-play animations. */
 
   /* Run after window.load so AI DOMContentLoaded fires first */
   if(document.readyState === "complete"){
@@ -3095,44 +3129,126 @@ def _build_given_strip_html(given_cards):
 
 def _extract_svg_from_html(html_str):
     """
-    Extract the SVG block (and optionally a single animation script block)
-    from the AI-generated HTML.  Returns (svg_block, anim_script).
-    Uses balanced tag counting to correctly handle nested <svg> elements.
+    Extract the SVG block and the animation script block from AI-generated HTML.
+    Returns (svg_block, anim_script).
+
+    FIX: SVG depth counting now only matches real SVG open tags — the character
+    immediately after '<svg' must be whitespace, '>' or '/' to avoid false
+    positives on SVG namespace prefixes like '<svg:title>' or text containing '<svg'.
+
+    FIX: anim_script is now wrapped in a self-executing function that exposes
+    only animateSceneN functions to window scope, so the AI's showScene() and
+    buildDots() do NOT pollute the global namespace and conflict with
+    StepController's own showScene implementation.
     """
-    # Find the main SVG using balanced tag counting
-    svg_start = html_str.lower().find('<svg')
+    html_lower = html_str.lower()
+
+    # ── 1. Find the main SVG block with balanced tag counting ──
+    svg_start = html_lower.find('<svg')
+    if svg_start == -1:
+        return "", ""
+
+    # Validate it's a real SVG open tag (must be followed by space, >, /).
+    while svg_start != -1:
+        next_ch_idx = svg_start + 4
+        if next_ch_idx < len(html_str) and html_str[next_ch_idx] in (' ', '\t', '\n', '\r', '>', '/'):
+            break
+        svg_start = html_lower.find('<svg', next_ch_idx)
     if svg_start == -1:
         return "", ""
 
     depth = 0
     i = svg_start
     svg_end = -1
-    while i < len(html_str):
-        if html_str[i:i+4].lower() == '<svg':
-            depth += 1
-            i += 4
-        elif html_str[i:i+6].lower() == '</svg>':
+    while i < len(html_lower):
+        if html_lower[i:i+4] == '<svg':
+            # Must be a real SVG tag
+            nc = html_lower[i + 4] if i + 4 < len(html_lower) else ''
+            if nc in (' ', '\t', '\n', '\r', '>', '/'):
+                depth += 1
+                i += 4
+                continue
+        if html_lower[i:i+6] == '</svg>':
             depth -= 1
             if depth == 0:
                 svg_end = i + 6
                 break
             i += 6
-        else:
-            i += 1
+            continue
+        i += 1
 
     if svg_end == -1:
         return "", ""
     svg_block = html_str[svg_start:svg_end]
 
-    # Extract the primary animation <script> (the one with showScene / animateScene)
+    # ── 2. Extract the primary animation <script> ──
+    # We look for a script containing animateScene functions.
+    # CRITICAL FIX: We wrap it so that:
+    #   - animateScene0..animateSceneN are exposed on window (StepController calls them)
+    #   - showScene, buildDots, nextStep, prevStep are NOT re-exposed globally
+    #     (they conflict with StepController's own implementations)
     anim_script = ""
     for m in re.finditer(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', html_str, re.DOTALL | re.IGNORECASE):
         body = m.group(2)
-        if 'animateScene' in body or 'showScene' in body:
-            anim_script = m.group(0)
-            break
+        if 'animateScene' not in body:
+            continue
+        # Found the AI animation script. Wrap it to prevent global showScene conflicts.
+        # The wrapper:
+        #   1. Runs the full AI script body inside a try/catch
+        #   2. Hoists animateScene0..4 to window scope for StepController
+        #   3. Suppresses the AI's DOMContentLoaded call (StepController owns init)
+        safe_body = _wrap_anim_script_body(body)
+        anim_script = '<script>\n' + safe_body + '\n</script>'
+        break
 
     return svg_block, anim_script
+
+
+def _wrap_anim_script_body(body):
+    """
+    Wraps the AI animation script body so that:
+    - animateScene0..animateScene9 are promoted to window scope
+    - showScene / buildDots / nextStep / prevStep are NOT re-exposed globally
+      (they would override StepController's versions)
+    - The AI's DOMContentLoaded init is neutralised (StepController handles init)
+    """
+    # Neutralise the AI's DOMContentLoaded block so it doesn't double-init.
+    # Replace: document.addEventListener('DOMContentLoaded', function() { buildDots(); showScene(0); });
+    # and variants, with a no-op comment.
+    body = re.sub(
+        r"document\.addEventListener\s*\(\s*['\"]DOMContentLoaded['\"]\s*,\s*function\s*\([^)]*\)\s*\{[^}]{0,300}\}\s*\)\s*;",
+        "/* DOMContentLoaded neutralised by QAnim wrapper */",
+        body, flags=re.DOTALL
+    )
+    # Also neutralise window.onload forms
+    body = re.sub(
+        r"window\.onload\s*=\s*function\s*\([^)]*\)\s*\{[^}]{0,300}\}",
+        "/* window.onload neutralised by QAnim wrapper */",
+        body, flags=re.DOTALL
+    )
+
+    wrapped = (
+        "/* QAnim anim-script wrapper: exposes animateSceneN, hides showScene/buildDots */\n"
+        "(function _qanimAnimWrapper() {\n"
+        "  try {\n"
+        + body + "\n"
+        "  } catch(e) { console.warn('[QAnim wrapper init]', e); }\n"
+        "  /* Hoist animateSceneN to window scope for StepController.\n"
+        "     Each hoist is individually try-catched: typeof prevents ReferenceError\n"
+        "     for functions the AI didn't define (e.g. animateScene5..9 when only 5 scenes). */\n"
+        "  try { if(typeof animateScene0==='function') window.animateScene0=animateScene0; } catch(e){}\n"
+        "  try { if(typeof animateScene1==='function') window.animateScene1=animateScene1; } catch(e){}\n"
+        "  try { if(typeof animateScene2==='function') window.animateScene2=animateScene2; } catch(e){}\n"
+        "  try { if(typeof animateScene3==='function') window.animateScene3=animateScene3; } catch(e){}\n"
+        "  try { if(typeof animateScene4==='function') window.animateScene4=animateScene4; } catch(e){}\n"
+        "  try { if(typeof animateScene5==='function') window.animateScene5=animateScene5; } catch(e){}\n"
+        "  try { if(typeof animateScene6==='function') window.animateScene6=animateScene6; } catch(e){}\n"
+        "  try { if(typeof animateScene7==='function') window.animateScene7=animateScene7; } catch(e){}\n"
+        "  try { if(typeof animateScene8==='function') window.animateScene8=animateScene8; } catch(e){}\n"
+        "  try { if(typeof animateScene9==='function') window.animateScene9=animateScene9; } catch(e){}\n"
+        "})();"
+    )
+    return wrapped
 
 
 def _extract_scene_descriptions_from_parsed(result):
@@ -3540,7 +3656,13 @@ The animation JS MUST follow this exact pattern:
 ═══ SVG STRUCTURE ═══
 - viewBox="0 0 1000 600"
 - All scenes in <g id="scene-N" class="scene"> groups
-- Scenes start hidden (opacity=0 on animated elements)
+- Scene 0 (first scene): NO display attribute (visible by default)
+- Scenes 1-4: MUST have display="none" attribute directly on the <g> tag:
+    <g id="scene-1" class="scene" display="none">
+    <g id="scene-2" class="scene" display="none">
+    (etc.)
+  This is CRITICAL — the StepController sets display="block" when switching scenes.
+- Child elements inside each scene start with opacity="0" for animation
 - Background: #f8fafc per scene
 - Bottom info card inside each scene group at y=490
 
