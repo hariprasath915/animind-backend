@@ -2686,7 +2686,7 @@ _VOICE_ASSISTANT_JS = r"""
     }
     var root=document.querySelector('svg')||document.body;
     var obs=new MutationObserver(function(){clearTimeout(_obDebounce);_obDebounce=setTimeout(_obCheck,60);});
-    obs.observe(root,{attributes:true,subtree:true,attributeFilter:['style','opacity']});
+    obs.observe(root,{attributes:true,subtree:true,attributeFilter:['style','opacity','display']});
     setTimeout(function(){if(_lastSpokenIdx===-1){_lastSpokenIdx=-1;_onSceneChange(0);}},950);
   }
   function _init(){
@@ -2730,73 +2730,208 @@ def inject_voice_assistant(html):
 
 
 # ===========================================================================
-#  MODULE 12 -- StepController
+#  MODULE 12 -- StepController  (v12.1 — 4 root-cause fixes)
+#
+#  ROOT CAUSES FIXED:
+#
+#  RC-1  SHOW/HIDE MECHANISM MISMATCH
+#    Old code: StepController used style.opacity to hide/show scene <g> groups.
+#    AI code:  showScene() uses SVG setAttribute("display","none"/"block").
+#    Result:   Setting opacity=1 on a scene still holding display="none" (SVG
+#              attribute) leaves it invisible.  All scenes beyond scene-0 never
+#              appeared because the display attribute was never cleared.
+#    Fix:      StepController now uses setAttribute("display") exclusively.
+#
+#  RC-2  _sceneSnapshots CAPTURED AT WRONG TIME / WRONG PROPERTY
+#    Old code: Snapshots taken at window.load read scEl.style.display (CSS
+#              style property).  But by that time the AI's DOMContentLoaded
+#              had already set display via setAttribute("display","none"), which
+#              writes to the SVG attribute — NOT to style.display.  So every
+#              snapshot recorded style.display = "" (empty string = unset).
+#              When _resetScene restored "" to style.display, the SVG attribute
+#              "display=none" persisted, keeping all restored scenes hidden.
+#    Fix:      Removed snapshot/restore entirely.  State is driven by fresh
+#              setAttribute calls on every showScene().
+#
+#  RC-3  _animFired GUARD PREVENTING RE-ANIMATION ON REVISIT
+#    Old code: _fireAnim checked `if(_animFired[idx])return` and never re-ran
+#              the animation on a revisit.  The reset path was coupled to the
+#              broken snapshot restore (RC-2), making it doubly broken.
+#    Fix:      Removed _animFired entirely.  AI's animateSceneN() calls its own
+#              resetScene() before staggering, so calling it again is safe.
+#
+#  RC-4  window.setInterval PATCH BLOCKING LEGITIMATE AI TIMERS
+#    Old code: Patched window.setInterval to block any interval whose function
+#              source contained "showScene", intending to stop auto-advance.
+#              But it also killed legitimate AI initialization timers that
+#              happened to reference showScene in their source string.
+#    Fix:      Removed the setInterval patch entirely.
 # ===========================================================================
 
 _STEP_CONTROLLER_JS = r"""
 <script id="qanim-step-controller">
+/* QAnim StepController v12.1 — RC-1, RC-2, RC-3, RC-4 fixed */
 (function patchStepController(){
-  'use strict';
+  "use strict";
+
   function initSC(){
     try{
-      var nextBtn=document.getElementById('nextbtn');
-      var prevBtn=document.getElementById('prevbtn');
+
+      /* ── 1. Button wiring ─────────────────────────────────────────────── */
+      var nextBtn = document.getElementById("nextbtn");
+      var prevBtn = document.getElementById("prevbtn");
+
       if(!nextBtn){
-        nextBtn=document.createElement('button');nextBtn.id='nextbtn';nextBtn.textContent='Next';
-        nextBtn.style.cssText='position:fixed;bottom:70px;right:20px;z-index:6500;padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;background:#7c3aed;color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.12);';
-        document.body.appendChild(nextBtn);}
+        nextBtn = document.createElement("button");
+        nextBtn.id = "nextbtn"; nextBtn.textContent = "Next";
+        nextBtn.style.cssText = "position:fixed;bottom:70px;right:20px;z-index:6500;padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;background:#7c3aed;color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.12);";
+        document.body.appendChild(nextBtn);
+      }
       if(!prevBtn){
-        prevBtn=document.createElement('button');prevBtn.id='prevbtn';prevBtn.textContent='Prev';
-        prevBtn.style.cssText='position:fixed;bottom:70px;left:20px;z-index:6500;padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;color:#334155;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.12);';
-        document.body.appendChild(prevBtn);}
-      var scenes=[];
-      for(var i=0;i<20;i++){var s=document.getElementById('scene-'+i);if(s){scenes.push(s);}else if(i>0){break;}}
-      if(scenes.length<1){console.warn('[QAnim SC] No scene-N elements found');return;}
-      var _sceneSnapshots=[];
-      for(var si=0;si<scenes.length;si++){
-        var scEl=scenes[si];
-        _sceneSnapshots.push({display:scEl.style.display,opacity:scEl.style.opacity,visibility:scEl.style.visibility,transform:scEl.style.transform,transition:scEl.style.transition,
-          children:(function(root){var result=[],all=root.querySelectorAll('*');for(var ci=0;ci<all.length;ci++)result.push({el:all[ci],opacity:all[ci].style.opacity,transform:all[ci].style.transform,display:all[ci].style.display,visibility:all[ci].style.visibility,transition:all[ci].style.transition});return result;})(scEl)});}
-      var _animFired={};
-      var _aiShowScene=(typeof window.showScene==='function')?window.showScene:null;
-      var currentStep=0;
-      function _resetScene(idx){
-        var snap=_sceneSnapshots[idx];if(!snap)return;var scEl=scenes[idx];
-        scEl.style.transition='none';scEl.style.opacity=snap.opacity;scEl.style.display=snap.display!==''?snap.display:'';scEl.style.visibility=snap.visibility!==''?snap.visibility:'';scEl.style.transform=snap.transform!==''?snap.transform:'';
-        for(var ci=0;ci<snap.children.length;ci++){var c=snap.children[ci];c.el.style.transition='none';c.el.style.opacity=c.opacity;c.el.style.transform=c.transform;c.el.style.display=c.display;c.el.style.visibility=c.visibility;}
-        requestAnimationFrame(function(){scEl.style.transition='';for(var ci2=0;ci2<snap.children.length;ci2++)snap.children[ci2].el.style.transition='';});}
-      function _fireAnim(idx){
-        if(_animFired[idx])return;_animFired[idx]=true;
-        var fn=window['animateScene'+idx];if(typeof fn==='function'){try{fn();}catch(e){}return;}
-        if(_aiShowScene){try{_aiShowScene(idx);}catch(e){}}}
+        prevBtn = document.createElement("button");
+        prevBtn.id = "prevbtn"; prevBtn.textContent = "Prev";
+        prevBtn.style.cssText = "position:fixed;bottom:70px;left:20px;z-index:6500;padding:8px 18px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;color:#334155;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.12);";
+        document.body.appendChild(prevBtn);
+      }
+
+      /* RC-1 FIX: removeAttribute onclick only — no cloneNode/replaceChild.
+         cloneNode orphans the layout button element and can break existing
+         event wiring.  Clearing onclick is sufficient. */
+      nextBtn.removeAttribute("onclick");
+      prevBtn.removeAttribute("onclick");
+
+      /* ── 2. Collect scene <g> elements ───────────────────────────────── */
+      var scenes = [];
+      for(var i = 0; i < 20; i++){
+        var s = document.getElementById("scene-" + i);
+        if(s){ scenes.push(s); } else if(i > 0){ break; }
+      }
+      if(scenes.length < 1){
+        console.warn("[QAnim SC] No scene-N elements found");
+        return;
+      }
+
+      var currentStep = 0;
+
+      /* ── 3. showScene — RC-1 + RC-2 + RC-3 FIX ──────────────────────
+         setAttribute("display") matches the AI-generated showScene() exactly.
+         Never style.opacity for scene group visibility: the two mechanisms are
+         independent and writing opacity:1 onto a node with attribute
+         display="none" leaves it invisible in SVG.
+         Call animateSceneN() every time — the AI function calls resetScene()
+         first so re-invocation is always safe (no stale opacity state).
+      ─────────────────────────────────────────────────────────────────── */
       function showScene(idx){
-        if(idx<0||idx>=scenes.length)return;currentStep=idx;
-        for(var j=0;j<scenes.length;j++){
-          if(j===idx){if(_animFired[j]){delete _animFired[j];_resetScene(j);}(function(sceneEl){requestAnimationFrame(function(){sceneEl.style.transition='opacity .35s ease';sceneEl.style.opacity='1';sceneEl.style.display=sceneEl.style.display==='none'?'':sceneEl.style.display;sceneEl.style.visibility='visible';sceneEl.style.pointerEvents='auto';});})(scenes[j]);}
-          else{scenes[j].style.transition='opacity .35s ease';scenes[j].style.opacity='0';scenes[j].style.pointerEvents='none';}
+        if(idx < 0 || idx >= scenes.length) return;
+        currentStep = idx;
+
+        for(var j = 0; j < scenes.length; j++){
+          scenes[j].setAttribute("display", j === idx ? "block" : "none");
+          scenes[j].style.pointerEvents = j === idx ? "auto" : "none";
         }
-        _updateDots();_updateNavBtns();if(typeof window.resetAnswerBox==='function')window.resetAnswerBox();
-        try{document.dispatchEvent(new CustomEvent('qanim:sceneChange',{detail:{idx:idx}}));}catch(e){}
-        (function(capturedIdx){requestAnimationFrame(function(){requestAnimationFrame(function(){_fireAnim(capturedIdx);});});})(idx);}
+
+        _updateDots();
+        _updateNavBtns();
+
+        if(typeof window.resetAnswerBox === "function") window.resetAnswerBox();
+
+        try{
+          document.dispatchEvent(
+            new CustomEvent("qanim:sceneChange", {detail: {idx: idx}})
+          );
+        }catch(e){}
+
+        /* Double-rAF: let display=block paint before animation reads layout */
+        var capturedIdx = idx;
+        requestAnimationFrame(function(){
+          requestAnimationFrame(function(){
+            var fn = window["animateScene" + capturedIdx];
+            if(typeof fn === "function"){
+              try{ fn(); }
+              catch(e){ console.error("[QAnim SC] animateScene" + capturedIdx + ":", e); }
+            }
+          });
+        });
+      }
+
+      /* ── 4. Dot and button state helpers ─────────────────────────────── */
       function _updateDots(){
-        var dc=document.getElementById('dots');if(!dc)return;
-        var ds=dc.querySelectorAll('.dot,circle');if(!ds.length)ds=dc.children;
-        for(var k=0;k<ds.length;k++){var active=(k===currentStep);ds[k].style.opacity=active?'1':'0.35';if(ds[k].classList)ds[k].classList.toggle('active',active);}}
+        var dc = document.getElementById("dots");
+        if(!dc) return;
+        var ds = dc.querySelectorAll(".dot, circle");
+        if(!ds.length) ds = dc.children;
+        for(var k = 0; k < ds.length; k++){
+          var active = (k === currentStep);
+          ds[k].style.opacity = active ? "1" : "0.35";
+          if(ds[k].classList) ds[k].classList.toggle("active", active);
+        }
+      }
+
       function _updateNavBtns(){
-        if(prevBtn){if(currentStep===0){prevBtn.setAttribute('disabled','true');prevBtn.style.opacity='0.3';}else{prevBtn.removeAttribute('disabled');prevBtn.style.opacity='1';}}
-        if(nextBtn){if(currentStep===scenes.length-1){nextBtn.setAttribute('disabled','true');nextBtn.style.opacity='0.3';}else{nextBtn.removeAttribute('disabled');nextBtn.style.opacity='1';}}}
-      var nb2=nextBtn.cloneNode(true);nextBtn.parentNode.replaceChild(nb2,nextBtn);nextBtn=nb2;
-      if(prevBtn){var pb2=prevBtn.cloneNode(true);prevBtn.parentNode.replaceChild(pb2,prevBtn);prevBtn=pb2;}
-      nextBtn.addEventListener('click',function(e){e.stopPropagation();if(currentStep<scenes.length-1)showScene(currentStep+1);});
-      if(prevBtn)prevBtn.addEventListener('click',function(e){e.stopPropagation();if(currentStep>0)showScene(currentStep-1);});
-      var _ri=window.setInterval;window.setInterval=function(fn,ms){
-        var src=fn?fn.toString():'';
-        if(ms&&ms<8000&&(src.indexOf('showScene')!==-1||src.indexOf('currentStep')!==-1||src.indexOf('nextStep')!==-1)){return -1;}
-        return _ri.apply(window,arguments);};
-      showScene(0);console.log('[QAnim SC v12.0] '+scenes.length+' scenes ready');
-    }catch(err){console.error('[QAnim SC] Fatal:',err);}
+        if(prevBtn){
+          if(currentStep === 0){
+            prevBtn.setAttribute("disabled", "true"); prevBtn.style.opacity = "0.3";
+          } else {
+            prevBtn.removeAttribute("disabled"); prevBtn.style.opacity = "1";
+          }
+        }
+        if(nextBtn){
+          if(currentStep === scenes.length - 1){
+            nextBtn.setAttribute("disabled", "true"); nextBtn.style.opacity = "0.3";
+          } else {
+            nextBtn.removeAttribute("disabled"); nextBtn.style.opacity = "1";
+          }
+        }
+      }
+
+      /* ── 5. Click listeners — RC-1 FIX: addEventListener, not cloneNode ─ */
+      nextBtn.addEventListener("click", function(e){
+        e.stopPropagation();
+        if(currentStep < scenes.length - 1) showScene(currentStep + 1);
+      });
+      prevBtn.addEventListener("click", function(e){
+        e.stopPropagation();
+        if(currentStep > 0) showScene(currentStep - 1);
+      });
+
+      /* ── 6. Initial state sync — RC-2 FIX ───────────────────────────
+         By window.load the AI DOMContentLoaded has already run showScene(0),
+         setting scene-0 display=block and others display=none via setAttribute.
+         We re-enforce that state, sync dots/buttons, and replay animateScene0()
+         in case it finished before our event listener was attached.
+      ─────────────────────────────────────────────────────────────────── */
+      for(var ii = 0; ii < scenes.length; ii++){
+        scenes[ii].setAttribute("display", ii === 0 ? "block" : "none");
+      }
+      _updateDots();
+      _updateNavBtns();
+
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          try{
+            if(typeof window.animateScene0 === "function") window.animateScene0();
+          }catch(e){}
+        });
+      });
+
+      console.log("[QAnim SC v12.1] " + scenes.length + " scenes ready");
+
+    }catch(err){ console.error("[QAnim SC] Fatal:", err); }
   }
-  if(document.readyState==='complete')initSC();else window.addEventListener('load',initSC);
+
+  /* RC-4 FIX: setInterval patch REMOVED.
+     The old patch blocked every setInterval whose function source contained
+     the string "showScene", intending to stop auto-advance timers — but it
+     also killed any AI initialization timer that referenced showScene, breaking
+     deferred first-play animations. */
+
+  /* Run after window.load so AI DOMContentLoaded fires first */
+  if(document.readyState === "complete"){
+    initSC();
+  } else {
+    window.addEventListener("load", initSC);
+  }
+
 })();
 </script>
 """
@@ -2804,11 +2939,11 @@ _STEP_CONTROLLER_JS = r"""
 
 def inject_step_controller(html):
     try:
-        if '</body>' in html:
-            html = html.replace('</body>', _STEP_CONTROLLER_JS + '\n</body>', 1)
+        if "</body>" in html:
+            html = html.replace("</body>", _STEP_CONTROLLER_JS + "\n</body>", 1)
         else:
-            html += '\n' + _STEP_CONTROLLER_JS
-        QAnimLogger.ok("StepController", "Manual step controller injected")
+            html += "\n" + _STEP_CONTROLLER_JS
+        QAnimLogger.ok("StepController", "Manual step controller v12.1 injected")
     except Exception as e:
         QAnimLogger.warn("StepController", f"Injection failed: {e}")
     return html
@@ -2962,13 +3097,32 @@ def _extract_svg_from_html(html_str):
     """
     Extract the SVG block (and optionally a single animation script block)
     from the AI-generated HTML.  Returns (svg_block, anim_script).
+    Uses balanced tag counting to correctly handle nested <svg> elements.
     """
-    # Find the main SVG
-    svg_start = html_str.find('<svg')
-    svg_end   = html_str.rfind('</svg>')
-    if svg_start == -1 or svg_end == -1:
+    # Find the main SVG using balanced tag counting
+    svg_start = html_str.lower().find('<svg')
+    if svg_start == -1:
         return "", ""
-    svg_block = html_str[svg_start:svg_end + 6]
+
+    depth = 0
+    i = svg_start
+    svg_end = -1
+    while i < len(html_str):
+        if html_str[i:i+4].lower() == '<svg':
+            depth += 1
+            i += 4
+        elif html_str[i:i+6].lower() == '</svg>':
+            depth -= 1
+            if depth == 0:
+                svg_end = i + 6
+                break
+            i += 6
+        else:
+            i += 1
+
+    if svg_end == -1:
+        return "", ""
+    svg_block = html_str[svg_start:svg_end]
 
     # Extract the primary animation <script> (the one with showScene / animateScene)
     anim_script = ""
@@ -3140,6 +3294,9 @@ svg{{width:100%!important;height:100%!important;}}
 
 <!-- ========= ANIMATION SCRIPT ========= -->
 {anim_script}
+
+</body>
+</html>
 """
     return page, scene_descs
 
