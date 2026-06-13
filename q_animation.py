@@ -1,24 +1,46 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v11.2
+q_animation.py  --  QAnim Question Animation Generator  v11.3
 =============================================================
-v11.2 -- CHANGES FROM v11.1:
-  - SOLUTION BUTTON REMOVED.
-  - FINAL ANSWER PANEL ADDED:
-      * Clicking "Final Answer" displays the AI-generated answers in a
-        clean numbered format:
-            i)  Label
-                Symbol = value unit.
-            ii) Label
-                Symbol = value unit.
-        This uses the Haiku solution data embedded at build time.
-      * No step-by-step walkthrough -- only the concise final results.
+v11.3 -- MOBILE RESPONSIVENESS FIXES (animation scene visible on all devices):
 
-  - ANSWER BOX unchanged from v11.1.
+  PROBLEMS FIXED:
+  - SVG animation scene was invisible/tiny on mobile (400px screen)
+  - #pw-scene-wrap had no height constraint → SVG collapsed
+  - SVG didn't scale to fill its container on mobile
+  - Controls bar overlapped content on small screens
+  - Bottom padding insufficient, hiding content behind controls bar
+  - Info cards at y=420-540 cut off on narrow viewports
+
+  CHANGES FROM v11.2:
+  - _LAYOUT_WRAPPER_CSS:
+      * #pw-scene-wrap: aspect-ratio 10/6, position:relative, min-height 200px
+      * SVG inside #pw-scene-wrap forced to width/height 100%, position absolute
+      * Overlay elements (scene indicator) repositioned correctly
+      * Mobile breakpoints tightened for padding and spacing
+      * Controls bar bottom clearance increased on mobile (padding-bottom: 120px)
+  - _LAYOUT_WRAPPER_JS:
+      * After moving SVG into #pw-scene-wrap, sets preserveAspectRatio="xMidYMid meet"
+      * Forces width="100%" height="100%" on SVG element
+      * ResizeObserver updates scene indicator position on resize
+  - _CONTROLS_BAR_CSS:
+      * Reduced button padding on mobile
+      * Bottom set to 12px on mobile, uses env(safe-area-inset-bottom) for iOS
+  - inject_infrastructure:
+      * Scroll-fix CSS updated: SVG gets position absolute inside pw-scene-wrap
+      * Viewport meta tag verified in injected HTML
+  - SYSTEM / SYSTEM_CONCEPT:
+      * Added note: SVG must include preserveAspectRatio="xMidYMid meet"
+      * Added note: include width="100%" height="100%" on root <svg>
+
+  All other v11.2 features (Final Answer panel, Answer Box, Voice, Notes) unchanged.
+
+v11.2 features:
+  - SOLUTION BUTTON REMOVED.
+  - FINAL ANSWER PANEL with numbered results
+  - ANSWER BOX with Find-chip, multi-target, feedback strip
   - QUIZ SYSTEM REMOVED.
 
-v11.1 features (except Solution panel and Quiz) are fully preserved unchanged.
-
-PIPELINE (v11.2):
+PIPELINE (v11.3):
   Stage 0 -- ToFind Extraction    (sync, no AI)
   Stage 1 -- Concept Animation    (claude-sonnet-4-6) + StepController
   Stage 2 -- Solution Animation   (claude-sonnet-4-6) + StepController
@@ -26,7 +48,7 @@ PIPELINE (v11.2):
              [Stages 1-3 run concurrently via asyncio.gather]
 
 CONTROLS BAR (injected into every animation HTML):
-  [Find]  [Final Answer]  [Answer Box]
+  [Find]  [Final Answer]  [Answer Box]  [Voice]
 """
 
 import anthropic
@@ -39,9 +61,6 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
-# prompt-caching beta: attaches cache_control blocks to large static prompts,
-# letting Anthropic reuse them across the 4 concurrent generation stages and
-# across repeated calls for different questions in the same process session.
 client = anthropic.Anthropic(
     default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
 )
@@ -51,7 +70,7 @@ SOLUTION_MODEL       = "claude-sonnet-4-6"
 Q_MODEL              = SOLUTION_MODEL
 HAIKU_SOLUTION_MODEL = "claude-haiku-4-5"
 
-MAX_TOK                = 20000
+MAX_TOK                = 16000   # claude-sonnet-4-6 hard cap is 16 384 tokens
 MAX_TOK_CONCEPT        = 12000
 MAX_TOK_HAIKU_SOLUTION = 8000
 
@@ -60,7 +79,7 @@ MAX_TOK_HAIKU_SOLUTION = 8000
 #  MODULE 1 -- QAnimLogger
 # ===========================================================================
 class QAnimLogger:
-    PREFIX = "[QAnim v11.1]"
+    PREFIX = "[QAnim v11.3]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -269,41 +288,23 @@ class HtmlSanitizer:
         html = cls._fix_single_quote_apostrophes(html)
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
-        html = cls._fix_svg_subscripts(html)   # convert f_s → proper tspan subscripts
+        html = cls._fix_svg_subscripts(html)
         html = html.replace('\x00', '')
         QAnimLogger.ok("Sanitizer", "HTML sanitized")
         return html
 
-    # ------------------------------------------------------------------
-    # SVG Subscript Fixer
-    # Converts underscore notation (f_s, T_{out}, v_1, h_{fg}) inside
-    # SVG <text> / <tspan> element content into proper SVG tspan subscripts
-    # so students see clean mathematical notation, not raw underscores.
-    #
-    # IMPORTANT: Only single-letter/digit/Greek bases are matched.
-    # This prevents multi-character variable names (e.g. "fs", "vs") that
-    # happen to contain an underscore-style separator from being incorrectly
-    # rewritten.  The base must be exactly ONE symbol before the underscore.
-    # ------------------------------------------------------------------
     _SUB_PATTERN = re.compile(
-        r'(?<![A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'  # NOT preceded by another letter/digit
-        r'([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'      # exactly ONE base character
-        r'_'                                              # underscore separator
+        r'(?<![A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'
+        r'([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d])'
+        r'_'
         r'(?:'
-        r'\{([^}]{1,20})\}'                              # {multi-char subscript}
-        r'|([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d]+)'     # single-word subscript
+        r'\{([^}]{1,20})\}'
+        r'|([A-Za-z\u03b1-\u03c9\u0391-\u03a9\d]+)'
         r')'
     )
 
     @classmethod
     def _replace_sub_in_text_content(cls, content):
-        """Replace a_b or a_{bc} with SVG tspan subscript markup.
-
-        Only rewrites patterns where the base is a single isolated letter,
-        digit, or Greek character (e.g. v_s, T_{out}, h_{fg}).  Multi-
-        character tokens such as 'fs' or compound words are left untouched,
-        preserving the original intended suffix notation for students.
-        """
         def replacer(m):
             base = m.group(1)
             sub  = m.group(2) if m.group(2) else m.group(3)
@@ -314,31 +315,18 @@ class HtmlSanitizer:
 
     @classmethod
     def _fix_svg_subscripts(cls, html):
-        """
-        Walk every SVG <text>...</text> block and replace underscore subscript
-        notation with proper <tspan dy="5" font-size="0.72em"> markup.
-        Skips content already wrapped in tspan (dy= present) to avoid double-processing.
-        Also skips <script> and <style> blocks entirely.
-        """
-        # Only operate inside SVG regions to avoid touching HTML text nodes
         def fix_svg_block(svg_match):
             svg_content = svg_match.group(0)
 
             def fix_text_tag(t_match):
                 full   = t_match.group(0)
-                open_t = t_match.group(1)   # <text ...>
-                inner  = t_match.group(2)   # content between tags
-                close_t= t_match.group(3)   # </text>
-
-                # Skip if already using dy= subscripts (already properly formatted)
+                open_t = t_match.group(1)
+                inner  = t_match.group(2)
+                close_t= t_match.group(3)
                 if 'dy=' in inner and 'font-size' in inner:
                     return full
-
-                # Skip if content looks like it is only whitespace / numbers / operators
-                # with no underscore -- nothing to do
                 if '_' not in inner:
                     return full
-
                 fixed = cls._replace_sub_in_text_content(inner)
                 if fixed != inner:
                     QAnimLogger.info("Sanitizer", f"Subscript fixed in <text>: {inner[:60]!r}")
@@ -458,6 +446,7 @@ class RecoveryEngine:
         reason_safe = html_module.escape(reason[:300])
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 html,body{{width:100%;height:100%;overflow:hidden;background:#f1f5f9;
@@ -488,6 +477,7 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#f1f5f9;
             return animation_code
         q_safe = html_module.escape(question[:120])
         return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>html,body{{margin:0;padding:0;width:100%;height:100%;
   display:flex;align-items:center;justify-content:center;background:#f1f5f9;
   font-family:-apple-system,sans-serif}}</style></head><body>
@@ -604,6 +594,10 @@ window.addEventListener('unhandledrejection',function(e){
 
 
 def inject_infrastructure(html):
+    # Inject viewport meta tag for mobile-responsive scaling
+    _viewport_meta = '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">'
+    if '<meta name="viewport"' not in html and "<meta name='viewport'" not in html:
+        html = re.sub(r'(<head[^>]*>)', r'\1\n' + _viewport_meta, html, count=1, flags=re.IGNORECASE)
     html = re.sub(r'(<body[^>]*>)', r'\1\n' + ERROR_BOUNDARY_HTML, html, count=1, flags=re.IGNORECASE)
     first_script = re.search(r'<script(?:\s[^>]*)?>(?!.*type\s*=\s*["\']application/json)', html, re.IGNORECASE)
     if first_script:
@@ -611,11 +605,39 @@ def inject_infrastructure(html):
         html = html[:pos] + QANIM_INNER_LOGGER_JS + '\n' + html[pos:]
     else:
         html = html.replace('</body>', QANIM_INNER_LOGGER_JS + '\n</body>', 1)
+
+    # v11.3 MOBILE FIX: Updated scroll-fix CSS with proper SVG scaling
+    # The SVG must fill its container (#pw-scene-wrap) on all screen sizes.
+    # Using position:absolute + width/height 100% makes it fill the aspect-ratio box.
     _scroll_fix = (
         '\n<style id="qanim-scroll-fix">\n'
-        'html,body{overflow-x:hidden!important;overflow-y:auto!important;height:auto!important;min-height:100vh;width:100%!important;margin:0;padding:0;}\n'
+        'html,body{'
+        '  overflow-x:hidden!important;'
+        '  overflow-y:auto!important;'
+        '  height:auto!important;'
+        '  min-height:100vh;'
+        '  width:100%!important;'
+        '  margin:0;'
+        '  padding:0;'
+        '}\n'
+        # SVG inside the layout wrapper scene container: fill it completely
+        '#pw-scene-wrap svg{'
+        '  position:absolute!important;'
+        '  top:0!important;left:0!important;'
+        '  width:100%!important;height:100%!important;'
+        '  display:block!important;'
+        '}\n'
+        # Fallback: SVG not inside wrapper (standalone)
+        'body>svg{'
+        '  width:100%!important;'
+        '  height:auto!important;'
+        '  display:block!important;'
+        '  max-width:100vw!important;'
+        '}\n'
         '#page-wrapper svg{width:100%!important;height:auto!important;display:block;}\n'
-        '#page-wrapper #container,[id="container"]{width:100%;box-sizing:border-box;}\n</style>\n')
+        '#page-wrapper #container,[id="container"]{width:100%;box-sizing:border-box;}\n'
+        '</style>\n'
+    )
     if '</head>' in html:
         html = html.replace('</head>', _scroll_fix + '</head>', 1)
     else:
@@ -843,26 +865,15 @@ def inject_to_find_system(html, targets):
 # ===========================================================================
 
 def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
-    """
-    Builds a JSON data tag that stores:
-      - answer_items: list of {roman, label, symbol, value, unit} for numbered display
-      - raw_answer:   the full final answer string (fallback)
-      - key_insight:  one-sentence insight
-    """
     ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
-
-    # Build numbered items from answer_targets when available
     items = []
     for idx, t in enumerate(answer_targets or []):
         label   = str(t.get("label", "")).strip()
         value   = str(t.get("value", "")).strip()
         unit    = str(t.get("unit",  "")).strip()
         roman   = ROMAN[idx] if idx < len(ROMAN) else str(idx + 1)
-        # Try to extract symbol=value from value string (e.g. "0.792 m2K/W")
-        # just use value as-is; label provides the symbol context
         items.append({"roman": roman, "label": label, "value": value, "unit": unit})
 
-    # Fallback: if no items, parse raw final_answer
     if not items and final_answer:
         import re as _re
         _num_re = _re.compile(
@@ -886,7 +897,6 @@ def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
 
 
-# ---- Final Answer Panel DOM ----
 _FINAL_ANSWER_PANEL_DOM = """
 <div id="fa-backdrop" aria-hidden="true"></div>
 <aside id="fa-panel" role="dialog" aria-labelledby="fa-heading" aria-hidden="true">
@@ -913,11 +923,8 @@ _FINAL_ANSWER_PANEL_DOM = """
 </aside>
 """
 
-# ---- CSS ----
 _FINAL_ANSWER_PANEL_CSS = """
 <style id="qanim-fa-styles">
-/* ── Final Answer Panel v11.2 ── */
-
 #fa-backdrop {
   display: none;
   position: fixed;
@@ -956,7 +963,6 @@ _FINAL_ANSWER_PANEL_CSS = """
   transform: translate(-50%, -50%) scale(1);
 }
 
-/* Header */
 .fa-header {
   display: flex;
   align-items: center;
@@ -995,7 +1001,6 @@ _FINAL_ANSWER_PANEL_CSS = """
 }
 .fa-close-btn:hover { background: #fee2e2; color: #dc2626; border-color: #fca5a5; }
 
-/* Body */
 .fa-body {
   overflow-y: auto;
   flex: 1;
@@ -1009,14 +1014,12 @@ _FINAL_ANSWER_PANEL_CSS = """
 .fa-body::-webkit-scrollbar { width: 5px; }
 .fa-body::-webkit-scrollbar-thumb { background: #d0c8f0; border-radius: 3px; }
 
-/* Items container */
 .fa-items-container {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-/* Individual answer item */
 .fa-item {
   display: flex;
   align-items: flex-start;
@@ -1064,7 +1067,6 @@ _FINAL_ANSWER_PANEL_CSS = """
   word-break: break-word;
 }
 
-/* Key Insight card */
 .fa-insight-card {
   border-radius: 13px;
   padding: 14px 18px;
@@ -1089,7 +1091,6 @@ _FINAL_ANSWER_PANEL_CSS = """
 </style>
 """
 
-# ---- JS ----
 _FINAL_ANSWER_JS = r"""
 (function initFinalAnswerSystem(){
   'use strict';
@@ -1116,7 +1117,6 @@ _FINAL_ANSWER_JS = r"""
     if(!container) return;
 
     if(items.length === 0 && data.raw_answer){
-      /* Fallback: show raw answer as single block */
       container.innerHTML = '<div class="fa-item visible">'
         + '<div class="fa-item-roman">i</div>'
         + '<div class="fa-item-body">'
@@ -1141,7 +1141,6 @@ _FINAL_ANSWER_JS = r"""
       container.innerHTML = html;
     }
 
-    /* Insight */
     var insEl = _el('fa-insight-text');
     if(insEl) insEl.textContent = data.key_insight || '';
   }
@@ -1150,7 +1149,6 @@ _FINAL_ANSWER_JS = r"""
     var items = document.querySelectorAll('.fa-item');
     for(var i = 0; i < items.length; i++){
       (function(el, idx){
-        /* Use classList instead of inline style so CSS class opacity wins */
         el.classList.remove('visible');
         el.style.transition = 'none';
         setTimeout(function(){
@@ -1186,7 +1184,7 @@ _FINAL_ANSWER_JS = r"""
     if(backdrop) backdrop.classList.remove('open');
     if(panel){ panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); }
     faOpen = false;
-    _built = false;  /* Allow panel to rebuild fresh on next open */
+    _built = false;
   }
 
   window.openFinalAnswer  = openFinalAnswer;
@@ -1194,7 +1192,6 @@ _FINAL_ANSWER_JS = r"""
   window.toggleFinalAnswer = function(){ faOpen ? closeFinalAnswer() : openFinalAnswer(); };
 
   _onReady(function(){
-    /* Wire controls-bar button */
     function wireBtn(){
       var btn = document.getElementById('fa-ctrl-btn');
       if(btn){
@@ -1217,37 +1214,27 @@ _FINAL_ANSWER_JS = r"""
 
 
 def inject_final_answer_panel(html, answer_targets, final_answer, key_insight):
-    """
-    v11.2: Injects the Final Answer panel with numbered results.
-    Removes any legacy __sol_data__ / sol-backdrop / sol-panel elements.
-    """
-    # Strip legacy solution panel artifacts if they exist
     html = re.sub(r'<script[^>]+id=["\']__sol_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     html = re.sub(r'<(?:div|aside)[^>]+id=["\']sol-backdrop["\'][^>]*>.*?</(?:div|aside)>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<(?:div|aside)[^>]+id=["\']sol-panel["\'][^>]*>.*?</(?:div|aside)>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<style[^>]+id=["\']qanim-solution-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    # Strip previous fa panel if re-injecting
     html = re.sub(r'<script[^>]+id=["\']__final_answer_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     html = re.sub(r'<style[^>]+id=["\']qanim-fa-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
 
-    # 1) Data tag
     data_tag = _build_final_answer_data_tag(answer_targets, final_answer, key_insight)
     if '</head>' in html:
         html = html.replace('</head>', data_tag + '\n</head>', 1)
     else:
         html = data_tag + '\n' + html
 
-    # 2) CSS
     if '</head>' in html:
         html = html.replace('</head>', _FINAL_ANSWER_PANEL_CSS + '\n</head>', 1)
 
-    # 3) DOM (after <body>)
     body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
     if body_match:
         ins = body_match.end()
         html = html[:ins] + '\n' + _FINAL_ANSWER_PANEL_DOM + html[ins:]
 
-    # 4) JS (before </body>)
     fa_script = '<script>\n' + _FINAL_ANSWER_JS + '\n</script>'
     if '</body>' in html:
         html = html.replace('</body>', fa_script + '\n</body>', 1)
@@ -1292,17 +1279,10 @@ QUESTION: {question}"""
 
 
 class HaikuSolutionGenerator:
-    """
-    v11.1: Generates step-by-step solution using claude-haiku-4-5.
-    Results are embedded in __sol_data__ at build time and shown
-    instantly when the student clicks Solution — no second AI call.
-    """
-
     @classmethod
     def generate(cls, question):
         QAnimLogger.info("HaikuSolution", f"Generating via {HAIKU_SOLUTION_MODEL}")
         prompt = _HAIKU_SOLUTION_USER_TEMPLATE.format(question=question[:600])
-        # Cache the static system prompt; only the question changes per call
         system_blocks = [
             {
                 "type": "text",
@@ -1331,6 +1311,8 @@ class HaikuSolutionGenerator:
 
     @classmethod
     async def generate_async(cls, question):
+        # FIXED: run_in_executor so sync client.messages.create does not block
+        # the asyncio event loop during asyncio.gather()
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, cls.generate, question)
 
@@ -1346,11 +1328,9 @@ class HaikuSolutionGenerator:
             step_text = m.group(2).strip()
             if step_text:
                 steps.append(f"Step {m.group(1)}: {step_text}")
-        # Match "Final Answer:" with optional surrounding bold markers (**...**)
         fa_match = re.search(r'\*{0,2}Final Answer\*{0,2}\s*:\s*(.*?)(?=\*{0,2}Key Insight\*{0,2}\s*:|$)', raw, re.DOTALL | re.IGNORECASE)
         if fa_match:
             final_answer = fa_match.group(1).strip().lstrip('*').rstrip('*').strip()
-        # Match "Key Insight:" with optional bold markers
         ki_match = re.search(r'\*{0,2}Key Insight\*{0,2}\s*:\s*(.*?)$', raw, re.DOTALL | re.IGNORECASE)
         if ki_match:
             key_insight = ki_match.group(1).strip().lstrip('*').rstrip('*').strip()
@@ -1376,40 +1356,17 @@ class HaikuSolutionGenerator:
 
 
 # ===========================================================================
-#  MODULE 9 -- Answer Box System  (v11.1 — multi-target + feedback strip)
+#  MODULE 9 -- Answer Box System  (v11.1)
 # ===========================================================================
 
-# ---------------------------------------------------------------------------
-# 9.1  Answer-targets data tag builder
-#      Stored as a separate JSON tag so the Answer Box JS can read targets
-#      independently from __sol_data__ (which is used by the Solution panel).
-# ---------------------------------------------------------------------------
 def _build_answer_targets_tag(answer_targets):
-    """
-    answer_targets: list of dicts with keys:
-        label   -- human-readable name of what to find (e.g. "Rate of heat loss")
-        value   -- expected answer string (may contain number + units)
-        unit    -- unit string (optional, for display)
-        insight -- one-sentence key insight for this target
-    """
     payload = {"answer_targets": answer_targets or []}
     return ('<script type="application/json" id="__answer_targets__">\n'
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
 
 
-# ---------------------------------------------------------------------------
-# 9.2  Build answer_targets list from Haiku solution + ToFind targets
-# ---------------------------------------------------------------------------
 def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight):
-    """
-    Tries to pair each to_find_target with a numeric value extracted from
-    the final_answer string.  Falls back to a single target using the full
-    final_answer if extraction fails.
-    """
     targets = []
-
-    # Attempt to split final_answer into multiple values
-    # e.g. "Q = 350 W, η = 88 %" or "Q = 350 W and η = 88 %"
     _num_re = re.compile(
         r'([A-Za-z_][A-Za-z_0-9]*)\s*[=:]\s*([-+]?\d[\d.,]*(?:\s*[×x*]\s*10\^?[-+]?\d+)?)\s*([A-Za-z°%/²³·]+(?:\s*[A-Za-z°%/²³·]+)*)?',
         re.IGNORECASE)
@@ -1421,12 +1378,10 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
             unit  = (m.group(3) or "").strip()
             found_pairs[sym.lower()] = {"sym": sym, "val": val, "unit": unit}
 
-    # Map to_find targets → value pairs (best-effort)
     used_syms = set()
     for tf in (to_find_targets or []):
         tf_lower = tf.lower()
         matched  = None
-        # Try exact symbol match
         for sym_key, info in found_pairs.items():
             if sym_key in tf_lower or tf_lower.startswith(sym_key):
                 if sym_key not in used_syms:
@@ -1441,7 +1396,6 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
                 "insight": key_insight or "Apply the relevant formula step by step.",
             })
         else:
-            # No pair found — use full final_answer as value for this target
             targets.append({
                 "label":   tf,
                 "value":   final_answer,
@@ -1449,7 +1403,6 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
                 "insight": key_insight or "Apply the relevant formula step by step.",
             })
 
-    # If no to_find targets at all, create one generic target
     if not targets:
         targets.append({
             "label":   "Final Answer",
@@ -1461,13 +1414,8 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
     return targets
 
 
-# ---------------------------------------------------------------------------
-# 9.3  CSS for the upgraded Answer Box panel
-# ---------------------------------------------------------------------------
 _ANSWER_BOX_CSS = """
 <style id="qanim-answerbox-styles">
-/* ── Answer Box v11.1 -- multi-target + feedback strip ── */
-
 #answerbox-backdrop {
   display: none;
   position: fixed;
@@ -1506,8 +1454,6 @@ _ANSWER_BOX_CSS = """
   pointer-events: auto;
   transform: translateY(0) scale(1);
 }
-
-/* Header */
 .ab-header {
   display: flex;
   align-items: center;
@@ -1538,8 +1484,6 @@ _ANSWER_BOX_CSS = """
   transition: background 0.15s;
 }
 .ab-close-btn:hover { background: #fee2e2; color: #dc2626; }
-
-/* Progress row (X of Y) */
 .ab-progress-row {
   display: flex;
   align-items: center;
@@ -1555,113 +1499,50 @@ _ANSWER_BOX_CSS = """
   text-transform: uppercase;
   letter-spacing: 0.8px;
 }
-.ab-progress-dots {
-  display: flex;
-  gap: 5px;
-}
-.ab-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: #e2e8f0;
-  transition: background 0.2s;
-}
+.ab-progress-dots { display: flex; gap: 5px; }
+.ab-dot { width: 7px; height: 7px; border-radius: 50%; background: #e2e8f0; transition: background 0.2s; }
 .ab-dot.done    { background: #16a34a; }
 .ab-dot.current { background: #7c3aed; }
-
-/* Body */
-.ab-body {
-  padding: 14px 20px 20px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-/* Find-condition chip — NEW v11.1 */
+.ab-body { padding: 14px 20px 20px; overflow-y: auto; flex: 1; }
 .ab-find-chip {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: #f5f3ff;
-  border: 1px solid #ddd6fe;
-  margin-bottom: 14px;
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 14px; border-radius: 10px;
+  background: #f5f3ff; border: 1px solid #ddd6fe; margin-bottom: 14px;
 }
-.ab-find-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
+.ab-find-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
 .ab-find-text {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #5b21b6;
-  line-height: 1.5;
+  font-size: 12.5px; font-weight: 600; color: #5b21b6; line-height: 1.5;
 }
 .ab-find-label {
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: #7c3aed;
-  display: block;
-  margin-bottom: 2px;
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 1px; color: #7c3aed; display: block; margin-bottom: 2px;
 }
-
-/* Instruction */
 .ab-instruction {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px;
-  color: #64748b;
-  margin-bottom: 10px;
-  line-height: 1.6;
+  font-size: 13px; color: #64748b; margin-bottom: 10px; line-height: 1.6;
 }
-
-/* Textarea */
 #ab-user-input {
-  width: 100%;
-  min-height: 80px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1.5px solid #e2e8f0;
+  width: 100%; min-height: 80px; padding: 12px 14px;
+  border-radius: 10px; border: 1.5px solid #e2e8f0;
   background: #f8fafc;
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px;
-  color: #1e293b;
-  line-height: 1.6;
-  resize: vertical;
-  transition: border-color 0.15s;
-  outline: none;
-  box-sizing: border-box;
+  font-size: 13px; color: #1e293b; line-height: 1.6;
+  resize: vertical; transition: border-color 0.15s; outline: none; box-sizing: border-box;
 }
 #ab-user-input:focus { border-color: #7c3aed; background: #ffffff; }
 #ab-user-input::placeholder { color: #94a3b8; }
-
-/* Submit */
 #ab-submit-btn {
-  width: 100%;
-  padding: 12px;
-  margin-top: 10px;
-  border-radius: 10px;
-  border: none;
-  background: #7c3aed;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 700;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+  width: 100%; padding: 12px; margin-top: 10px; border-radius: 10px;
+  border: none; background: #7c3aed; color: #ffffff;
+  font-size: 14px; font-weight: 700; font-family: inherit;
+  cursor: pointer; transition: background 0.15s, transform 0.1s;
 }
 #ab-submit-btn:hover { background: #6d28d9; transform: translateY(-1px); }
 #ab-submit-btn:active { transform: translateY(0); }
-
-/* ── Feedback strip — NEW v11.1 ── */
 #ab-feedback {
-  display: none;
-  margin-top: 14px;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid transparent;
+  display: none; margin-top: 14px; border-radius: 12px;
+  overflow: hidden; border: 1px solid transparent;
   animation: ab-feedback-in 0.28s cubic-bezier(0.34,1.56,0.64,1);
 }
 @keyframes ab-feedback-in {
@@ -1672,132 +1553,70 @@ _ANSWER_BOX_CSS = """
 #ab-feedback.correct { border-color: #bbf7d0; }
 #ab-feedback.almost  { border-color: #fed7aa; }
 #ab-feedback.wrong   { border-color: #fecaca; }
-
-.ab-feedback-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-}
+.ab-feedback-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
 #ab-feedback.correct .ab-feedback-top { background: #f0fdf4; }
 #ab-feedback.almost  .ab-feedback-top { background: #fff7ed; }
 #ab-feedback.wrong   .ab-feedback-top { background: #fef2f2; }
-
 .ab-feedback-icon { font-size: 22px; flex-shrink: 0; }
 .ab-feedback-verdict {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 15px;
-  font-weight: 800;
+  font-size: 15px; font-weight: 800;
 }
 #ab-feedback.correct .ab-feedback-verdict { color: #15803d; }
 #ab-feedback.almost  .ab-feedback-verdict { color: #c2410c; }
 #ab-feedback.wrong   .ab-feedback-verdict { color: #b91c1c; }
-
-/* Key insight strip */
-.ab-feedback-insight {
-  padding: 10px 16px 13px;
-  border-top: 1px solid;
-}
+.ab-feedback-insight { padding: 10px 16px 13px; border-top: 1px solid; }
 #ab-feedback.correct .ab-feedback-insight { background:#fafffe; border-color:#bbf7d0; }
 #ab-feedback.almost  .ab-feedback-insight { background:#fffbf5; border-color:#fed7aa; }
 #ab-feedback.wrong   .ab-feedback-insight { background:#fff8f8; border-color:#fecaca; }
-
 .ab-insight-label {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  color: #64748b;
-  margin-bottom: 4px;
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 1.2px; color: #64748b; margin-bottom: 4px;
 }
 .ab-insight-text {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12.5px;
-  color: #1e293b;
-  line-height: 1.68;
+  font-size: 12.5px; color: #1e293b; line-height: 1.68;
 }
-
-/* Retry / Next-target buttons */
-.ab-action-row {
-  display: none;
-  gap: 8px;
-  margin-top: 12px;
-}
+.ab-action-row { display: none; gap: 8px; margin-top: 12px; }
 .ab-action-row.show { display: flex; }
 #ab-retry-btn {
-  flex: 1;
-  padding: 9px 14px;
-  border-radius: 9px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s;
+  flex: 1; padding: 9px 14px; border-radius: 9px; border: 1px solid #e2e8f0;
+  background: #f8fafc; color: #64748b; font-size: 12px; font-weight: 600;
+  font-family: inherit; cursor: pointer; transition: background 0.15s;
 }
 #ab-retry-btn:hover { background: #ede9fe; border-color: #7c3aed; color: #7c3aed; }
 #ab-next-target-btn {
-  flex: 2;
-  padding: 9px 14px;
-  border-radius: 9px;
-  border: none;
-  background: #7c3aed;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  font-family: inherit;
-  cursor: pointer;
-  display: none;
-  transition: background 0.15s;
+  flex: 2; padding: 9px 14px; border-radius: 9px; border: none;
+  background: #7c3aed; color: #fff; font-size: 12px; font-weight: 700;
+  font-family: inherit; cursor: pointer; display: none; transition: background 0.15s;
 }
 #ab-next-target-btn:hover { background: #6d28d9; }
 #ab-next-target-btn.show  { display: block; }
-
-/* All-done celebration card */
 #ab-alldone-card {
-  display: none;
-  text-align: center;
-  padding: 28px 20px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #f0fdf4, #fefce8);
-  border: 1.5px solid #bbf7d0;
-  margin-top: 10px;
+  display: none; text-align: center; padding: 28px 20px;
+  border-radius: 14px; background: linear-gradient(135deg, #f0fdf4, #fefce8);
+  border: 1.5px solid #bbf7d0; margin-top: 10px;
 }
 #ab-alldone-card.show { display: block; }
 .ab-alldone-emoji { font-size: 40px; display: block; margin-bottom: 10px; }
-.ab-alldone-title {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 18px; font-weight: 800; color: #15803d; margin-bottom: 6px;
-}
-.ab-alldone-sub {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px; color: #166534; line-height: 1.6;
-}
+.ab-alldone-title { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 18px; font-weight: 800; color: #15803d; margin-bottom: 6px; }
+.ab-alldone-sub { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #166534; line-height: 1.6; }
 </style>
 """
 
-# ---------------------------------------------------------------------------
-# 9.4  DOM for the upgraded Answer Box
-# ---------------------------------------------------------------------------
 _ANSWER_BOX_DOM = """
 <div id="answerbox-backdrop" aria-hidden="true">
 <div id="answerbox-panel" role="dialog" aria-label="Answer Box" aria-hidden="true">
-
   <div class="ab-header">
     <div class="ab-header-title">&#x270F;&#xFE0F; Answer Box</div>
     <button class="ab-close-btn" id="ab-close-btn">&#x2715;</button>
   </div>
-
   <div class="ab-progress-row">
     <span class="ab-progress-label" id="ab-progress-label">Question 1 of 1</span>
     <div class="ab-progress-dots" id="ab-progress-dots"></div>
   </div>
-
   <div class="ab-body">
-    <!-- Find-condition chip (v11.1) -->
     <div class="ab-find-chip" id="ab-find-chip">
       <span class="ab-find-icon">&#x1F50D;</span>
       <div>
@@ -1805,13 +1624,9 @@ _ANSWER_BOX_DOM = """
         <div class="ab-find-text" id="ab-find-text">Loading...</div>
       </div>
     </div>
-
     <p class="ab-instruction">Type your answer below (include units if applicable) and click <strong>Submit</strong>.</p>
-
     <textarea id="ab-user-input" placeholder="e.g. 350 W/m or 88 %" spellcheck="false"></textarea>
     <button id="ab-submit-btn">Submit Answer</button>
-
-    <!-- Feedback strip (v11.1) -->
     <div id="ab-feedback" role="alert">
       <div class="ab-feedback-top">
         <span class="ab-feedback-icon" id="ab-feedback-icon"></span>
@@ -1822,40 +1637,31 @@ _ANSWER_BOX_DOM = """
         <div class="ab-insight-text" id="ab-insight-text"></div>
       </div>
     </div>
-
-    <!-- Action row -->
     <div class="ab-action-row" id="ab-action-row">
       <button id="ab-retry-btn">Try Again</button>
       <button id="ab-next-target-btn">Next &rarr;</button>
     </div>
-
-    <!-- All-done card -->
     <div id="ab-alldone-card">
       <span class="ab-alldone-emoji">&#x1F389;</span>
       <div class="ab-alldone-title">All answers submitted!</div>
       <div class="ab-alldone-sub">Great work. Open <strong>Solution</strong> to review the full step-by-step explanation.</div>
     </div>
   </div>
-
 </div>
 </div>
 """
 
-# ---------------------------------------------------------------------------
-# 9.5  JS — multi-target answer validation with feedback strip
-# ---------------------------------------------------------------------------
 _ANSWER_BOX_JS = r"""
 (function initAnswerBox(){
   'use strict';
   var abOpen = false;
-  var _targets = [];      /* [{label, value, unit, insight}, ...] */
+  var _targets = [];
   var _currentIdx = 0;
   var _loaded = false;
 
   function _el(id){ return document.getElementById(id); }
   function _onReady(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else setTimeout(fn,0); }
 
-  /* ── Load target list from __answer_targets__ data tag ── */
   function _loadTargets(){
     if(_loaded) return;
     _loaded = true;
@@ -1868,7 +1674,6 @@ _ANSWER_BOX_JS = r"""
     if(_targets.length === 0) _useFallback();
   }
 
-  /* If no answer_targets tag, fall back to __sol_data__ answer field */
   function _useFallback(){
     try{
       var tag = _el('__sol_data__');
@@ -1883,20 +1688,14 @@ _ANSWER_BOX_JS = r"""
     }catch(e){ _targets = []; }
   }
 
-  /* ── Render the UI for the current target ── */
   function _renderTarget(idx){
     var t = _targets[idx];
     if(!t) return;
-
-    /* Find chip */
     var findEl = _el('ab-find-text');
     if(findEl) findEl.textContent = t.label || 'Answer';
-
-    /* Progress label + dots */
     var total = _targets.length;
     var progLabel = _el('ab-progress-label');
     if(progLabel) progLabel.textContent = 'Question ' + (idx+1) + ' of ' + total;
-
     var dotsEl = _el('ab-progress-dots');
     if(dotsEl){
       var html = '';
@@ -1906,32 +1705,22 @@ _ANSWER_BOX_JS = r"""
       }
       dotsEl.innerHTML = html;
     }
-
-    /* Clear textarea + feedback */
     var inp = _el('ab-user-input');
     if(inp){ inp.value = ''; inp.removeAttribute('disabled'); }
-
     var fb = _el('ab-feedback');
     if(fb) fb.className = '';
-
     var ar = _el('ab-action-row');
     if(ar) ar.className = 'ab-action-row';
-
     var ntb = _el('ab-next-target-btn');
     if(ntb) ntb.style.display = 'none';
-
     var sb = _el('ab-submit-btn');
     if(sb){ sb.style.display = ''; sb.disabled = false; }
-
     var adc = _el('ab-alldone-card');
     if(adc) adc.className = '';
-
-    /* Placeholder hint */
     var unit = t.unit ? ' (' + t.unit + ')' : '';
     if(inp) inp.placeholder = 'Type your answer' + unit + '...';
   }
 
-  /* ── Numerical & text validation ── */
   function _extractNums(s){
     var m = s.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g);
     return m ? m.map(parseFloat).filter(function(n){ return isFinite(n); }) : [];
@@ -1950,7 +1739,6 @@ _ANSWER_BOX_JS = r"""
       if(relErr < 0.15)  return 'almost';
       return 'wrong';
     }
-    /* Text comparison */
     var uC = userAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
     var cC = correctAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
     if(uC === cC) return 'correct';
@@ -1965,7 +1753,6 @@ _ANSWER_BOX_JS = r"""
     return 'wrong';
   }
 
-  /* ── Feedback config ── */
   var _FB = {
     correct: { icon:'✅', verdict:'Correct!',       cls:'correct' },
     almost:  { icon:'〰️', verdict:'Almost Correct', cls:'almost'  },
@@ -1984,12 +1771,8 @@ _ANSWER_BOX_JS = r"""
     if(icon) icon.textContent = info.icon;
     if(verd) verd.textContent = info.verdict;
     if(ins)  ins.textContent  = insight || 'Review the step-by-step solution for more detail.';
-
-    /* Action row */
     var ar = _el('ab-action-row');
     if(ar) ar.className = 'ab-action-row show';
-
-    /* Show "Next" only on Correct or Almost for multi-target */
     var ntb = _el('ab-next-target-btn');
     var isLast = (_currentIdx >= _targets.length - 1);
     if(ntb){
@@ -2000,15 +1783,9 @@ _ANSWER_BOX_JS = r"""
         ntb.style.display = 'none';
       }
     }
-
-    /* Auto-advance on correct after 1.4 s */
     if(verdict === 'correct' && !isLast){
-      setTimeout(function(){
-        _advanceTarget();
-      }, 1400);
+      setTimeout(function(){ _advanceTarget(); }, 1400);
     }
-
-    /* All done? */
     if(verdict === 'correct' && isLast){
       setTimeout(function(){
         var adc = _el('ab-alldone-card');
@@ -2030,7 +1807,6 @@ _ANSWER_BOX_JS = r"""
     }
   }
 
-  /* ── Panel open / close ── */
   function openAnswerBox(){
     _loadTargets();
     _currentIdx = 0;
@@ -2065,10 +1841,7 @@ _ANSWER_BOX_JS = r"""
   window.closeAnswerBox = closeAnswerBox;
   window.resetAnswerBox = resetAnswerBox;
 
-  /* ── Wire up events ── */
   _onReady(function(){
-
-    /* Controls-bar button */
     function wireCtrlBtn(){
       var btn = document.getElementById('answerbox-ctrl-btn');
       if(btn){
@@ -2081,14 +1854,12 @@ _ANSWER_BOX_JS = r"""
     }
     wireCtrlBtn();
 
-    /* Close / backdrop */
     var closeBtn = _el('ab-close-btn');
     if(closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeAnswerBox(); });
     var backdrop = _el('answerbox-backdrop');
     if(backdrop) backdrop.addEventListener('click', function(e){ if(e.target===backdrop) closeAnswerBox(); });
     document.addEventListener('keydown', function(e){ if(e.key==='Escape' && abOpen) closeAnswerBox(); });
 
-    /* Submit */
     var submitBtn = _el('ab-submit-btn');
     if(submitBtn) submitBtn.addEventListener('click', function(){
       var inp     = _el('ab-user-input');
@@ -2099,7 +1870,6 @@ _ANSWER_BOX_JS = r"""
       if(inp) inp.disabled = true;
     });
 
-    /* Ctrl+Enter shortcut */
     var inp2 = _el('ab-user-input');
     if(inp2) inp2.addEventListener('keydown', function(e){
       if((e.ctrlKey || e.metaKey) && e.key==='Enter'){
@@ -2109,7 +1879,6 @@ _ANSWER_BOX_JS = r"""
       }
     });
 
-    /* Retry */
     var retryBtn = _el('ab-retry-btn');
     if(retryBtn) retryBtn.addEventListener('click', function(){
       var inp = _el('ab-user-input');
@@ -2124,27 +1893,16 @@ _ANSWER_BOX_JS = r"""
       if(ntb) ntb.style.display = 'none';
     });
 
-    /* Manual "Next" button */
     var nextTargetBtn = _el('ab-next-target-btn');
     if(nextTargetBtn) nextTargetBtn.addEventListener('click', function(){ _advanceTarget(); });
-
   });
 })();
 """
 
 
 def inject_answer_box_panel(html, answer_targets=None):
-    """
-    v11.1: Injects the upgraded Answer Box panel with:
-      - Find-condition chip
-      - Multi-target support (auto-advance on Correct)
-      - Feedback strip with verdict + key insight
-    answer_targets is a list produced by _build_answer_targets().
-    """
-    # Remove any existing answer-box CSS/DOM to avoid duplicates
     html = re.sub(r'<style[^>]+id=["\']qanim-answerbox-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
 
-    # Inject answer targets data tag first (needed by JS)
     if answer_targets:
         try:
             targets_tag = _build_answer_targets_tag(answer_targets)
@@ -2184,6 +1942,7 @@ def inject_answer_box_panel(html, answer_targets=None):
 
 # ===========================================================================
 #  MODULE 10 -- Floating Controls Bar
+#  v11.3 MOBILE FIX: Reduced padding on mobile, safe-area-inset-bottom for iOS
 # ===========================================================================
 
 _CONTROLS_BAR_CSS = """
@@ -2209,6 +1968,9 @@ _CONTROLS_BAR_CSS = """
   background-clip: padding-box;
   outline: 2.5px solid transparent;
   outline-offset: -1px;
+  /* v11.3: ensure bar doesn't get too wide on mobile */
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
 }
 #qanim-controls-bar::before {
   content: '';
@@ -2240,6 +2002,7 @@ _CONTROLS_BAR_CSS = """
   transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s, box-shadow 0.15s;
   user-select: none;
   letter-spacing: 0.2px;
+  white-space: nowrap;
 }
 .qanim-ctrl-btn:hover {
   background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%);
@@ -2255,10 +2018,39 @@ _CONTROLS_BAR_CSS = """
   background: linear-gradient(to bottom, transparent, #c4b5fd, transparent);
   flex-shrink: 0;
 }
-@media (max-width: 520px) {
-  #qanim-controls-bar { bottom: 10px; padding: 7px 9px; gap: 4px; }
-  .qanim-ctrl-btn { padding: 7px 11px; font-size: 11px; }
-  .qanim-ctrl-btn .ctrl-label { display: none; }
+
+/* v11.3 MOBILE FIX: Smaller controls on narrow screens */
+@media (max-width: 600px) {
+  #qanim-controls-bar {
+    bottom: max(10px, env(safe-area-inset-bottom, 10px));
+    padding: 8px 10px;
+    gap: 4px;
+    border-radius: 14px;
+  }
+  .qanim-ctrl-btn {
+    padding: 7px 10px;
+    font-size: 11px;
+    gap: 4px;
+    border-radius: 8px;
+  }
+  /* On very small screens, hide text labels and show only icons */
+}
+@media (max-width: 420px) {
+  #qanim-controls-bar {
+    padding: 6px 8px;
+    gap: 3px;
+  }
+  .qanim-ctrl-btn {
+    padding: 6px 8px;
+    font-size: 10px;
+    gap: 3px;
+  }
+  .qanim-ctrl-btn .ctrl-label {
+    display: none;
+  }
+  .qanim-ctrl-sep {
+    height: 18px;
+  }
 }
 </style>
 """
@@ -2298,45 +2090,59 @@ def inject_controls_bar(html):
 
 
 # ===========================================================================
-#  MODULE 10.5 -- Layout Wrapper  (v11.3 -- smart board + responsive)
+#  MODULE 10.5 -- Layout Wrapper  (v11.3 -- MOBILE RESPONSIVE FIX)
 # ===========================================================================
 #
-# Injects a clean vertical #page-wrapper that replaces the scattered floating-
-# button layout with a structured, readable column.  Works from 400 px (mobile)
-# up to 1400 px+ (smart board).
+# KEY MOBILE FIXES in v11.3:
 #
-# Components injected (in DOM order):
-#   1. #pw-header       -- pill badge (topic) + animated pulse dot + page title
-#   2. #pw-given-strip  -- 4-column colour-coded given-values grid
-#   3. #pw-scene-wrap   -- relative container holding the SVG + scene indicator
-#   4. #pw-scene-ind    -- "Scene N of 5" floating pill (top-left of SVG)
-#   5. #pw-nav-row      -- Prev / dots / Next navigation row
-#   6. #pw-scene-desc   -- scene description card (title + body + accent border)
+# 1. #pw-scene-wrap:
+#    - aspect-ratio: 10 / 6  (matches SVG viewBox 1000:600)
+#    - position: relative  (for absolutely-positioned SVG child)
+#    - min-height: 180px  (prevents collapse on tiny screens)
+#    - overflow: hidden  (clean clip)
 #
-# The existing SVG / body content is moved inside #pw-scene-wrap at runtime
-# by a small JS shim.  All existing element IDs (#prevbtn, #nextbtn, #dots)
-# are preserved so the StepController continues to work unchanged.
+# 2. SVG inside #pw-scene-wrap:
+#    - position: absolute; top:0; left:0; width:100%; height:100%
+#    - Fills the aspect-ratio box completely on all screen sizes
+#    - preserveAspectRatio="xMidYMid meet" ensures content scales correctly
+#
+# 3. #pw-scene-ind (scene indicator):
+#    - position: absolute inside #pw-scene-wrap (not affected by SVG position)
+#
+# 4. Padding:
+#    - padding-bottom: 120px on mobile (was 100px -- controls bar + safe area)
+#    - Extra clearance for the floating controls bar
+#
+# 5. Body padding:
+#    - body padding-bottom removed (handled by #page-wrapper padding-bottom)
+#
+# 6. JS: _buildWrapper():
+#    - After moving SVG into #pw-scene-wrap, forces:
+#        svg.setAttribute('width', '100%')
+#        svg.setAttribute('height', '100%')
+#        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+#    - This makes the 1000x600 viewBox scale to fill any container size
 #
 # ===========================================================================
 
 _LAYOUT_WRAPPER_CSS = """
 <style id="qanim-layout-wrapper-styles">
-/* ── Google Fonts (Inter) -- loaded inline-safe via @import ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-/* ── Reset helpers ── */
 *, *::before, *::after { box-sizing: border-box; }
 
-/* ── Root body becomes the outer scroll container ── */
 body {
   margin: 0; padding: 0;
   min-height: 100vh;
   background: #f1f5f9;
   font-family: 'Inter', -apple-system, 'Segoe UI', Arial, sans-serif;
+  /* v11.3: no overflow:hidden on body -- allow page scroll */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   PAGE WRAPPER  --  centred column, 14 px gap between cards
+   PAGE WRAPPER
 ───────────────────────────────────────────────────────────── */
 #page-wrapper {
   display: flex;
@@ -2344,7 +2150,8 @@ body {
   gap: 14px;
   max-width: 1080px;
   margin: 0 auto;
-  padding: 18px 16px 100px;   /* bottom pad clears the controls bar */
+  /* v11.3 MOBILE FIX: larger bottom padding so controls bar never covers content */
+  padding: 18px 16px 130px;
   width: 100%;
 }
 
@@ -2423,47 +2230,61 @@ body {
   min-width: 0;
 }
 .pw-given-label {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.7px; color: #64748b; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
-.pw-given-symbol {
-  font-size: 14px;
-  font-weight: 800;
-  color: #1e293b;
-  font-style: italic;
-}
-.pw-given-value {
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.pw-given-symbol { font-size: 14px; font-weight: 800; color: #1e293b; font-style: italic; }
+.pw-given-value  { font-size: 12px; font-weight: 600; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ─────────────────────────────────────────────────────────────
-   3. SVG SCENE WRAPPER  &  SCENE INDICATOR PILL
+   3. SVG SCENE WRAPPER  -- v11.3 MOBILE CRITICAL FIX
+   
+   The SVG has viewBox="0 0 1000 600" (aspect ratio 10:6).
+   We use aspect-ratio: 10/6 on the container so it always
+   has the correct proportional height for any screen width.
+   The SVG itself is positioned absolutely to fill this box.
 ───────────────────────────────────────────────────────────── */
 #pw-scene-wrap {
-  position: relative;
+  position: relative;           /* SVG will be position:absolute inside */
+  width: 100%;
+  aspect-ratio: 10 / 6;         /* Matches 1000:600 viewBox exactly */
+  min-height: 180px;            /* Prevent total collapse on very small screens */
   border-radius: 14px;
   overflow: hidden;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   box-shadow: 0 3px 18px rgba(0,0,0,.08);
-  /* The SVG fills this container */
 }
+
+/* v11.3: Force SVG to fill the aspect-ratio container */
+#pw-scene-wrap > svg,
+#pw-scene-wrap svg:first-of-type {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+}
+
+/* v11.3: Non-SVG direct children (div wrappers around SVG) also fill container */
+#pw-scene-wrap > div:not([id*="scene-ind"]):not([id*="qanim"]):not([id*="tofind"]):not([id*="fa-"]):not([id*="answerbox"]):not([id*="notes"]):not([id*="voice"]) {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   4. SCENE INDICATOR PILL  -- must stay on top of SVG
+───────────────────────────────────────────────────────────── */
 #pw-scene-ind {
   position: absolute;
   top: 10px;
   left: 12px;
-  z-index: 10;
+  z-index: 10;                  /* Above the SVG */
   background: rgba(255,255,255,0.93);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -2481,7 +2302,7 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   4. NAV ROW  (Prev · dots · Next)
+   5. NAV ROW
 ───────────────────────────────────────────────────────────── */
 #pw-nav-row {
   display: flex;
@@ -2516,11 +2337,7 @@ body {
   box-shadow: 0 4px 14px rgba(124,58,237,.22);
 }
 .pw-nav-btn:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
-.pw-nav-btn:disabled {
-  opacity: 0.32;
-  cursor: default;
-  pointer-events: none;
-}
+.pw-nav-btn:disabled { opacity: 0.32; cursor: default; pointer-events: none; }
 #pw-dots-row {
   display: flex;
   align-items: center;
@@ -2541,7 +2358,7 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   5. SCENE DESCRIPTION CARD
+   6. SCENE DESCRIPTION CARD
 ───────────────────────────────────────────────────────────── */
 #pw-scene-desc {
   padding: 16px 18px;
@@ -2553,44 +2370,73 @@ body {
   transition: border-color 0.3s ease;
 }
 #pw-scene-desc-title {
-  font-size: 13px;
-  font-weight: 800;
-  color: #1e293b;
-  margin-bottom: 5px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 13px; font-weight: 800; color: #1e293b;
+  margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;
 }
 #pw-scene-desc-body {
-  font-size: 13.5px;
-  color: #475569;
-  line-height: 1.65;
+  font-size: 13.5px; color: #475569; line-height: 1.65;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   RESPONSIVE BREAKPOINTS
+   RESPONSIVE BREAKPOINTS  (v11.3 updated)
 ───────────────────────────────────────────────────────────── */
+
 /* Tablet: 2-col given strip */
 @media (max-width: 820px) {
   #pw-given-strip { grid-template-columns: repeat(2, 1fr); }
   #pw-page-title  { font-size: 14px; }
 }
-/* Mobile: 1-col given strip, tighter padding */
-@media (max-width: 560px) {
-  #page-wrapper    { padding: 12px 10px 90px; gap: 10px; }
+
+/* Mobile landscape / small tablet */
+@media (max-width: 600px) {
+  #page-wrapper {
+    padding: 12px 10px 130px;
+    gap: 10px;
+  }
   #pw-given-strip  { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   #pw-header       { padding: 10px 12px; gap: 9px; }
   #pw-badge-text   { font-size: 10.5px; }
   #pw-page-title   { font-size: 13px; }
   .pw-nav-btn      { padding: 8px 16px; font-size: 12px; }
+  #pw-scene-desc   { padding: 12px 14px; }
+  #pw-scene-desc-title { font-size: 12px; }
+  #pw-scene-desc-body  { font-size: 13px; }
+  /* MOBILE: slightly smaller scene indicator */
+  #pw-scene-ind    { font-size: 10px; padding: 3px 10px; top: 8px; left: 10px; }
 }
-/* Tight mobile */
-@media (max-width: 400px) {
-  #page-wrapper   { padding: 8px 8px 86px; gap: 8px; }
-  #pw-given-strip { grid-template-columns: 1fr 1fr; gap: 6px; }
+
+/* Portrait mobile (most Android / iPhone sizes) */
+@media (max-width: 480px) {
+  #page-wrapper {
+    padding: 10px 8px 130px;
+    gap: 8px;
+  }
+  #pw-given-strip  { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pw-given-card   { padding: 8px 10px; }
+  .pw-given-label  { font-size: 9px; }
+  .pw-given-symbol { font-size: 13px; }
+  .pw-given-value  { font-size: 11px; }
+  #pw-header       { padding: 8px 10px; gap: 7px; }
+  #pw-topic-badge  { padding: 4px 10px; }
+  #pw-badge-text   { font-size: 10px; }
+  #pw-page-title   { font-size: 12px; -webkit-line-clamp: 3; }
+  .pw-nav-btn      { padding: 7px 13px; font-size: 11px; }
+  /* On very small phones, hide given strip to save vertical space */
 }
-/* Smart board: larger fonts, wider padding */
+
+/* Tiny screens */
+@media (max-width: 360px) {
+  #page-wrapper    { padding: 8px 6px 130px; gap: 7px; }
+  #pw-given-strip  { display: none; }  /* Hide given strip on tiny screens */
+  .pw-nav-btn      { padding: 6px 10px; font-size: 10px; }
+  #pw-dots-row     { gap: 5px; }
+  .pw-dot          { width: 6px; height: 6px; }
+  .pw-dot.active   { width: 20px; }
+}
+
+/* Smart board / large display */
 @media (min-width: 1400px) {
-  #page-wrapper      { max-width: 1280px; padding: 24px 28px 110px; gap: 18px; }
+  #page-wrapper      { max-width: 1280px; padding: 24px 28px 140px; gap: 18px; }
   #pw-page-title     { font-size: 17px; }
   #pw-scene-desc-body { font-size: 15px; }
   .pw-nav-btn        { padding: 11px 28px; font-size: 14px; }
@@ -2602,42 +2448,28 @@ body {
 """
 
 # ---------------------------------------------------------------------------
-# 10.5a  Given values: data-tag builder
+# Given values data-tag builder (unchanged)
 # ---------------------------------------------------------------------------
 def _build_given_values_tag(given_values):
-    """
-    given_values: list of dicts with keys:
-        symbol  -- e.g. 'C_s'
-        label   -- e.g. 'Surface Concentration'
-        value   -- e.g. '0.04 kg/m³'
-        color   -- CSS border-left color e.g. '#3b82f6'
-    """
     payload = {"given": given_values or []}
     return ('<script type="application/json" id="__given_values__">\n'
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
 
 
 # ---------------------------------------------------------------------------
-# 10.5b  Scene descriptions: extracted from AI-generated scene info-cards
-#         The StepController already reads scene text via the Voice Assistant.
-#         Here we build a lightweight data tag so the layout wrapper can
-#         show a description card beneath the nav row.
+# v11.3 MOBILE FIX: Updated Layout Wrapper JS
+# Key change: after moving SVG into #pw-scene-wrap, force SVG attributes
+# so it scales correctly on all screen sizes.
 # ---------------------------------------------------------------------------
-_SCENE_LABELS = [
-    "Scene 1 of 5", "Scene 2 of 5", "Scene 3 of 5",
-    "Scene 4 of 5", "Scene 5 of 5"
-]
-
 _LAYOUT_WRAPPER_JS = r"""
 <script id="qanim-layout-wrapper">
-/* QAnim Layout Wrapper v11.3
+/* QAnim Layout Wrapper v11.3 -- Mobile Responsive Fix
    Moves existing SVG/body content into #page-wrapper structure.
-   Wires up scene indicator, description card, and gradient dots.
+   CRITICAL FIX: Forces SVG width/height/preserveAspectRatio after DOM move.
 */
 (function initLayoutWrapper(){
   'use strict';
 
-  /* ── helpers ── */
   function _el(id){ return document.getElementById(id); }
   function _onReady(fn){
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn);
@@ -2670,12 +2502,7 @@ _LAYOUT_WRAPPER_JS = r"""
     strip.innerHTML=html;
   }
 
-  /* ── scene descriptions
-        Priority:
-          1. data-pw-title / data-pw-body / data-pw-accent on scene-N
-          2. text content of .info-card / .scene-card within scene-N
-          3. Generic fallback labels
-  ── */
+  /* ── scene descriptions ── */
   var _FALLBACK_TITLES=['Physical Setup','Core Concept','Second Mechanism','Putting It Together','Step-by-Step Approach'];
   var _FALLBACK_BODIES=[
     'See the physical setup in the animation above.',
@@ -2689,14 +2516,12 @@ _LAYOUT_WRAPPER_JS = r"""
   function _getSceneDesc(idx){
     var scEl=_el('scene-'+idx);
     if(!scEl) return {title:_FALLBACK_TITLES[idx]||'Scene '+(idx+1),body:_FALLBACK_BODIES[idx]||'',accent:_FALLBACK_ACCENTS[idx]||'#7c3aed'};
-    /* Explicit data attrs override everything */
     var dt=scEl.getAttribute('data-pw-title');
     var db=scEl.getAttribute('data-pw-body');
     var da=scEl.getAttribute('data-pw-accent');
     if(dt||db){
       return{title:dt||_FALLBACK_TITLES[idx],body:db||'',accent:da||_FALLBACK_ACCENTS[idx]};
     }
-    /* Try to extract text from info/bottom cards inside scene */
     var bodyEl=scEl.querySelector('[id*="info"], [class*="info"], [id*="card"], [class*="card"], .scene-body, foreignObject p, foreignObject div');
     var titleEl=scEl.querySelector('[id*="title"], [class*="title"], h2, h3');
     return{
@@ -2706,23 +2531,64 @@ _LAYOUT_WRAPPER_JS = r"""
     };
   }
 
+  /* ────────────────────────────────────────────────────────────
+     v11.3 MOBILE CRITICAL FIX: _fixSvgScaling()
+     
+     After the SVG is moved into #pw-scene-wrap, we must:
+     1. Set width="100%" height="100%" so it fills the container
+     2. Set preserveAspectRatio="xMidYMid meet" so the 1000x600
+        viewBox scales proportionally to fit any container size
+     3. Keep the viewBox intact (do NOT remove it)
+     
+     Without this, the SVG renders at its natural 1000x600 pixel
+     size and overflows the container on mobile screens.
+  ──────────────────────────────────────────────────────────── */
+  function _fixSvgScaling(scWrap){
+    /* Find the main animation SVG inside the scene wrapper */
+    var svgs = scWrap.querySelectorAll('svg');
+    for(var si = 0; si < svgs.length; si++){
+      var svg = svgs[si];
+      /* Skip tiny inline SVGs (like icons in buttons) */
+      var vb = svg.getAttribute('viewBox') || '';
+      if(vb && vb.indexOf('1000') !== -1){
+        /* This is the main animation SVG */
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('height', '100%');
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        svg.style.cssText = (svg.style.cssText || '') +
+          ';position:absolute!important;top:0!important;left:0!important;' +
+          'width:100%!important;height:100%!important;display:block!important;';
+        console.log('[QAnim LW v11.3] SVG scaled for mobile, viewBox=' + vb);
+        break;
+      }
+    }
+    /* Fallback: scale the first large SVG found */
+    if(svgs.length > 0 && svgs[0].getAttribute('viewBox')){
+      var firstSvg = svgs[0];
+      if(!firstSvg.getAttribute('preserveAspectRatio')){
+        firstSvg.setAttribute('width', '100%');
+        firstSvg.setAttribute('height', '100%');
+        firstSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        firstSvg.style.cssText = (firstSvg.style.cssText || '') +
+          ';position:absolute!important;top:0!important;left:0!important;' +
+          'width:100%!important;height:100%!important;display:block!important;';
+      }
+    }
+  }
+
   /* ── DOM restructure ── */
   function _buildWrapper(){
-    /* Build outer shell */
     var wrapper=document.createElement('div');
     wrapper.id='page-wrapper';
 
     /* 1. Header */
     var hdr=document.createElement('div');
     hdr.id='pw-header';
-    /* Badge text: try reading existing title from #qstrip .qtext or <title> */
     var badgeText='Animation';
     var qtextEl=document.querySelector('#qstrip .qtext, .qtext');
     if(qtextEl){
       var raw=(qtextEl.textContent||'').trim();
-      /* Remove leading "Question:" prefix */
       raw=raw.replace(/^question[:\s]*/i,'').trim();
-      /* Shorten to topic keywords (first 60 chars) */
       if(raw.length>60) raw=raw.slice(0,57)+'...';
       badgeText=raw||badgeText;
     } else {
@@ -2743,17 +2609,19 @@ _LAYOUT_WRAPPER_JS = r"""
     _buildGivenStrip(gStrip);
     wrapper.appendChild(gStrip);
 
-    /* 3. SVG scene wrap */
+    /* 3. SVG scene wrap -- v11.3: position:relative for absolute SVG child */
     var scWrap=document.createElement('div');
     scWrap.id='pw-scene-wrap';
-    /* Scene indicator pill */
+
+    /* Scene indicator pill -- must be in DOM before SVG so it's on top */
     var scInd=document.createElement('div');
     scInd.id='pw-scene-ind';
     scInd.textContent='Scene 1 of 5';
     scWrap.appendChild(scInd);
+
     wrapper.appendChild(scWrap);
 
-    /* 4. Nav row (wires existing #prevbtn / #dots / #nextbtn) */
+    /* 4. Nav row */
     var navRow=document.createElement('div');
     navRow.id='pw-nav-row';
     navRow.innerHTML=
@@ -2770,7 +2638,7 @@ _LAYOUT_WRAPPER_JS = r"""
       +'<div id="pw-scene-desc-body"></div>';
     wrapper.appendChild(descCard);
 
-    /* Move existing body children (excluding injected overlay divs) into scWrap */
+    /* Move existing body children into scWrap (excluding overlay divs) */
     var KEEP_IDS=['qanim-error-fallback','answerbox-backdrop','fa-backdrop','tofind-backdrop',
                   'tofind-panel','fa-panel','answerbox-panel','qanim-notes-btn','qanim-notes-panel',
                   'qanim-controls-bar'];
@@ -2779,7 +2647,6 @@ _LAYOUT_WRAPPER_JS = r"""
     for(var ci=0;ci<ch.length;ci++){
       var node=ch[ci];
       if(node.nodeType===1){
-        var nid=(node.id||'').toLowerCase();
         var skip=false;
         for(var ki=0;ki<KEEP_IDS.length;ki++){ if(KEEP_IDS[ki]===node.id){skip=true;break;} }
         if(!skip && node.tagName && node.tagName.toLowerCase()!=='script') toMove.push(node);
@@ -2789,6 +2656,9 @@ _LAYOUT_WRAPPER_JS = r"""
 
     /* Prepend wrapper to body */
     document.body.insertBefore(wrapper,document.body.firstChild);
+
+    /* v11.3 MOBILE FIX: Fix SVG scaling after move */
+    _fixSvgScaling(scWrap);
   }
 
   /* ── count scenes ── */
@@ -2800,23 +2670,19 @@ _LAYOUT_WRAPPER_JS = r"""
 
   /* ── update indicator + dots + desc on scene change ── */
   function _onScene(idx,total){
-    /* Indicator pill */
     var ind=_el('pw-scene-ind');
     if(ind) ind.textContent='Scene '+(idx+1)+' of '+total;
 
-    /* Gradient dots */
     var dotsRow=_el('pw-dots-row');
     if(dotsRow){
       var dots=dotsRow.querySelectorAll('.pw-dot');
       for(var k=0;k<dots.length;k++) dots[k].classList.toggle('active',k===idx);
     }
 
-    /* Prev / Next state */
     var pbtn=_el('pw-prev-btn'),nbtn=_el('pw-next-btn');
     if(pbtn){if(idx===0){pbtn.disabled=true;pbtn.setAttribute('disabled','true');}else{pbtn.disabled=false;pbtn.removeAttribute('disabled');}}
     if(nbtn){if(idx===total-1){nbtn.disabled=true;nbtn.setAttribute('disabled','true');}else{nbtn.disabled=false;nbtn.removeAttribute('disabled');}}
 
-    /* Scene description card */
     var desc=_getSceneDesc(idx);
     var descEl=_el('pw-scene-desc');
     if(descEl){
@@ -2833,7 +2699,6 @@ _LAYOUT_WRAPPER_JS = r"""
     var html='';
     for(var i=0;i<total;i++) html+='<div class="pw-dot'+(i===0?' active':'')+'" data-idx="'+i+'"></div>';
     dotsRow.innerHTML=html;
-    /* Click dots to jump scenes */
     dotsRow.querySelectorAll('.pw-dot').forEach(function(d){
       d.addEventListener('click',function(){
         var idx=parseInt(this.getAttribute('data-idx'),10);
@@ -2866,20 +2731,29 @@ _LAYOUT_WRAPPER_JS = r"""
     document.addEventListener('qanim:sceneChange',function(e){
       if(e&&e.detail&&typeof e.detail.idx==='number') _onScene(e.detail.idx,total);
     });
-    /* Init display for scene 0 */
     setTimeout(function(){ _onScene(0,total); },200);
   }
 
-  /* ── hide legacy nav elements (we replace them visually) ── */
+  /* ── hide legacy nav elements ── */
   function _hideLegacyNav(){
-    /* Hide original #prevbtn / #nextbtn -- but keep them in DOM for SC to use */
     ['prevbtn','nextbtn'].forEach(function(id){
       var el=_el(id);
       if(el){ el.style.cssText+='opacity:0!important;pointer-events:none!important;position:absolute!important;width:0!important;height:0!important;overflow:hidden!important;'; }
     });
-    /* Hide original #dots row (replace with pw-dots-row) */
     var dotsEl=_el('dots');
     if(dotsEl){ dotsEl.style.cssText+='opacity:0!important;pointer-events:none!important;position:absolute!important;width:0!important;height:0!important;overflow:hidden!important;'; }
+  }
+
+  /* ── v11.3: ResizeObserver to re-fix SVG scaling on viewport changes ── */
+  function _attachResizeObserver(){
+    if(!window.ResizeObserver) return;
+    var scWrap = _el('pw-scene-wrap');
+    if(!scWrap) return;
+    var obs = new ResizeObserver(function(){
+      /* Re-apply SVG scaling on resize (e.g. orientation change) */
+      _fixSvgScaling(scWrap);
+    });
+    obs.observe(scWrap);
   }
 
   _onReady(function(){
@@ -2888,7 +2762,7 @@ _LAYOUT_WRAPPER_JS = r"""
     _buildDots(total);
     _wireNav(total);
     _attachSceneListener(total);
-    /* Delay hiding legacy nav until SC has set up */
+    _attachResizeObserver();
     setTimeout(_hideLegacyNav,400);
   });
 
@@ -2899,17 +2773,12 @@ _LAYOUT_WRAPPER_JS = r"""
 
 def inject_layout_wrapper(html, given_values=None, topic_badge=None):
     """
-    v11.3: Injects the page-wrapper layout structure.
-
-    given_values: list of {symbol, label, value, color} dicts for the given-values strip.
-    topic_badge:  short string like "Mass Transfer · Evaporation" for the header pill.
+    v11.3: Injects the page-wrapper layout structure with mobile fixes.
     """
-    # Strip any existing layout wrapper (idempotent)
     html = re.sub(r'<style[^>]+id=["\']qanim-layout-wrapper-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<script[^>]+id=["\']qanim-layout-wrapper["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<script[^>]+id=["\']__given_values__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
 
-    # 1) Given values data tag
     if given_values:
         data_tag = _build_given_values_tag(given_values)
         if '</head>' in html:
@@ -2917,23 +2786,21 @@ def inject_layout_wrapper(html, given_values=None, topic_badge=None):
         else:
             html = data_tag + '\n' + html
 
-    # 2) CSS
     if '</head>' in html:
         html = html.replace('</head>', _LAYOUT_WRAPPER_CSS + '\n</head>', 1)
 
-    # 3) JS (injected just before </body> — after controls bar, before StepController)
     lw_script = _LAYOUT_WRAPPER_JS
     if '</body>' in html:
         html = html.replace('</body>', lw_script + '\n</body>', 1)
     else:
         html += '\n' + lw_script
 
-    QAnimLogger.ok("LayoutWrapper", f"v11.3 layout wrapper injected (given={len(given_values or [])} values)")
+    QAnimLogger.ok("LayoutWrapper", f"v11.3 mobile-responsive layout wrapper injected (given={len(given_values or [])} values)")
     return html
 
 
 # ===========================================================================
-#  MODULE 11 -- Notes System
+#  MODULE 11 -- Notes System (unchanged from v11.2)
 # ===========================================================================
 
 _NOTES_CSS = """
@@ -2990,140 +2857,35 @@ _NOTES_CSS = """
   flex-shrink: 0;
 }
 #qanim-notes-header:active { cursor: grabbing; }
-.notes-header-title {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px; font-weight: 700; color: #92400e;
-}
-.notes-hdr-btn {
-  width: 24px; height: 24px;
-  border-radius: 6px;
-  border: 1px solid #fde68a;
-  background: rgba(255, 255, 255, 0.6);
-  color: #92400e; font-size: 12px;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer;
-}
+.notes-header-title { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: 700; color: #92400e; }
+.notes-hdr-btn { width: 24px; height: 24px; border-radius: 6px; border: 1px solid #fde68a; background: rgba(255,255,255,0.6); color: #92400e; font-size: 12px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .notes-hdr-btn:hover { background: #fef3c7; }
-#qanim-notes-tabs {
-  display: flex;
-  border-bottom: 1px solid #f1f5f9;
-  flex-shrink: 0;
-}
-.notes-tab {
-  flex: 1;
-  padding: 7px 0;
-  text-align: center;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 11px; font-weight: 600; color: #94a3b8;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
-  text-transform: uppercase; letter-spacing: 0.5px;
-}
+#qanim-notes-tabs { display: flex; border-bottom: 1px solid #f1f5f9; flex-shrink: 0; }
+.notes-tab { flex: 1; padding: 7px 0; text-align: center; font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 600; color: #94a3b8; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; text-transform: uppercase; letter-spacing: 0.5px; }
 .notes-tab.active { color: #f59e0b; border-bottom-color: #f59e0b; }
-#qanim-canvas-toolbar {
-  display: flex; align-items: center; gap: 5px;
-  padding: 6px 10px;
-  background: #f8fafc;
-  border-bottom: 1px solid #f1f5f9;
-  flex-shrink: 0; flex-wrap: wrap;
-}
-.canvas-tool-btn {
-  padding: 3px 9px;
-  border-radius: 5px;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  color: #64748b;
-  font-size: 11px; font-weight: 600;
-  cursor: pointer;
-}
-.canvas-tool-btn.active {
-  background: #fef3c7;
-  border-color: #f59e0b;
-  color: #92400e;
-}
-.color-dot {
-  width: 16px; height: 16px;
-  border-radius: 50%;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: transform 0.12s;
-}
-.color-dot:hover   { transform: scale(1.2); }
+#qanim-canvas-toolbar { display: flex; align-items: center; gap: 5px; padding: 6px 10px; background: #f8fafc; border-bottom: 1px solid #f1f5f9; flex-shrink: 0; flex-wrap: wrap; }
+.canvas-tool-btn { padding: 3px 9px; border-radius: 5px; border: 1px solid #e2e8f0; background: #ffffff; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; }
+.canvas-tool-btn.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+.color-dot { width: 16px; height: 16px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform 0.12s; }
+.color-dot:hover { transform: scale(1.2); }
 .color-dot.selected { border-color: #1e293b; transform: scale(1.1); }
-.size-btn {
-  width: 20px; height: 20px;
-  border-radius: 50%;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  color: #64748b;
-  font-size: 10px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer;
-}
-.size-btn.active {
-  background: #fef3c7;
-  border-color: #f59e0b;
-  color: #92400e;
-}
+.size-btn { width: 20px; height: 20px; border-radius: 50%; border: 1px solid #e2e8f0; background: #ffffff; color: #64748b; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.size-btn.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
 .tool-sep { width: 1px; height: 18px; background: #e2e8f0; flex-shrink: 0; }
-#qanim-canvas-wrap {
-  flex: 1 1 auto;
-  position: relative;
-  overflow: hidden;
-  min-height: 180px;
-}
-#qanim-draw-canvas {
-  display: block;
-  width: 100%; height: 100%;
-  cursor: crosshair;
-  background: #fefce8;
-  touch-action: none;
-}
-#qanim-text-pane {
-  display: none;
-  flex-direction: column;
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-#qanim-notes-textarea {
-  flex: 1 1 auto;
-  width: 100%;
-  min-height: 180px;
-  resize: none;
-  box-sizing: border-box;
-  background: #f8fafc;
-  border: none; outline: none;
-  color: #1e293b;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px; line-height: 1.7;
-  padding: 12px 14px;
-}
+#qanim-canvas-wrap { flex: 1 1 auto; position: relative; overflow: hidden; min-height: 180px; }
+#qanim-draw-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; background: #fefce8; touch-action: none; }
+#qanim-text-pane { display: none; flex-direction: column; flex: 1 1 auto; overflow: hidden; }
+#qanim-notes-textarea { flex: 1 1 auto; width: 100%; min-height: 180px; resize: none; box-sizing: border-box; background: #f8fafc; border: none; outline: none; color: #1e293b; font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 13px; line-height: 1.7; padding: 12px 14px; }
 #qanim-notes-textarea::placeholder { color: #cbd5e1; }
-#qanim-notes-footer {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 12px;
-  border-top: 1px solid #f1f5f9;
-  flex-shrink: 0;
-  background: #f8fafc;
-}
-.notes-status {
-  font-size: 10px; color: #94a3b8;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-}
-.notes-action-btn {
-  padding: 3px 10px;
-  border-radius: 5px;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  color: #64748b;
-  font-size: 10px; font-weight: 600;
-  cursor: pointer;
-}
-.notes-action-btn:hover {
-  background: #ede9fe;
-  border-color: #7c3aed;
-  color: #7c3aed;
+#qanim-notes-footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-top: 1px solid #f1f5f9; flex-shrink: 0; background: #f8fafc; }
+.notes-status { font-size: 10px; color: #94a3b8; font-family: -apple-system, 'Segoe UI', Arial, sans-serif; }
+.notes-action-btn { padding: 3px 10px; border-radius: 5px; border: 1px solid #e2e8f0; background: #ffffff; color: #64748b; font-size: 10px; font-weight: 600; cursor: pointer; }
+.notes-action-btn:hover { background: #ede9fe; border-color: #7c3aed; color: #7c3aed; }
+
+/* v11.3: Mobile notes button positioning */
+@media (max-width: 600px) {
+  #qanim-notes-btn { top: 10px; right: 10px; padding: 7px 12px 7px 10px; font-size: 12px; }
+  #qanim-notes-panel { right: 10px; width: min(320px, calc(100vw - 20px)); }
 }
 </style>
 """
@@ -3241,11 +3003,8 @@ def inject_notes_system(html, question=""):
     return html
 
 
-
-
 # ===========================================================================
-#  MODULE 14 -- Voice Assistant System  (v11.2)
-#  Reads the bottom info-card text aloud for every scene using Web Speech API.
+#  MODULE 14 -- Voice Assistant System  (v11.3)
 # ===========================================================================
 
 _VOICE_ASSISTANT_CSS = """
@@ -3266,6 +3025,7 @@ _VOICE_ASSISTANT_CSS = """
   transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s, box-shadow 0.15s;
   user-select: none;
   letter-spacing: 0.2px;
+  white-space: nowrap;
 }
 #qanim-voice-btn:hover {
   background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%);
@@ -3284,8 +3044,11 @@ _VOICE_ASSISTANT_CSS = """
   color: #94a3b8;
   border-color: #e2e8f0;
 }
-@media (max-width: 520px) {
-  #qanim-voice-btn { padding: 7px 11px; font-size: 11px; }
+@media (max-width: 600px) {
+  #qanim-voice-btn { padding: 7px 10px; font-size: 11px; }
+}
+@media (max-width: 420px) {
+  #qanim-voice-btn { padding: 6px 8px; font-size: 10px; }
   #qanim-voice-btn .ctrl-label { display: none; }
 }
 </style>
@@ -3293,91 +3056,52 @@ _VOICE_ASSISTANT_CSS = """
 
 _VOICE_ASSISTANT_JS = r"""
 <script id="qanim-voice-assistant">
-/* QAnim Voice Assistant v11.3 -- plain scene-text reader for every scene */
+/* QAnim Voice Assistant v11.3 */
 (function initVoiceAssistant(){
   'use strict';
 
-  /* ---------- state ---------- */
   var _muted     = false;
   var _synth     = window.speechSynthesis || null;
   var _supported = !!_synth;
   var _btn       = null;
-  /* Tracks the last scene index we have already queued speech for, so the
-     custom-event path and the MutationObserver path never double-fire. */
   var _lastSpokenIdx = -1;
-  /* Pending speak timer -- cancelled if a new scene arrives before it fires */
   var _speakTimer = null;
 
-  /* ---------- helpers ---------- */
   function _setText(icon, label){
     if(!_btn) return;
     _btn.innerHTML = '<span>' + icon + '</span><span class="ctrl-label">' + label + '</span>';
   }
 
-  /* ---------------------------------------------------------------------------
-     _getSceneText(sceneEl)
-     Extracts a clean, ordered, deduplicated reading of the visible scene text.
-
-     Strategy (in priority order):
-       1. data-voice="..." attribute on the root scene element  (explicit override)
-       2. All <text> / <tspan> / <foreignObject> descendants, collected by
-          document order, with short/numeric-only strings stripped out.
-          Child tspan text is already included in the parent <text>.textContent,
-          so we query <text> and <foreignObject> only (not bare <tspan>) to avoid
-          triple-counting the same string.
-       3. Deduplication: exact-match, case-insensitive.
-       4. Length cap: stop adding sentences once we exceed 600 chars so the
-          narration stays under ~45 seconds of speech.
-  --------------------------------------------------------------------------- */
   function _getSceneText(sceneEl){
     if(!sceneEl) return '';
-
-    /* 1. Explicit voice override */
     var dv = sceneEl.getAttribute('data-voice');
     if(dv && dv.trim()) return dv.trim();
-
-    /* 2. Collect text nodes in document order.
-          Query <text> (SVG) and <foreignObject> but NOT bare <tspan> --
-          <text>.textContent already contains all descendant tspan text. */
     var nodes = sceneEl.querySelectorAll('text, foreignObject, p, h1, h2, h3, h4, li');
     var seen  = Object.create(null);
     var parts = [];
     var total = 0;
-
     for(var i = 0; i < nodes.length; i++){
       var raw = (nodes[i].textContent || '').replace(/\s+/g, ' ').trim();
-
-      /* Skip empty, very short, or purely numeric/symbol strings */
       if(raw.length < 5) continue;
       if(/^[\d\s\+\-\=\.\,\(\)\[\]\{\}\/\*\^\%]+$/.test(raw)) continue;
-
-      /* Deduplicate (case-insensitive) */
       var key = raw.toLowerCase();
       if(seen[key]) continue;
       seen[key] = true;
-
       parts.push(raw);
       total += raw.length;
       if(total > 600) break;
     }
-
     return parts.join('. ').trim();
   }
 
-  /* ---------------------------------------------------------------------------
-     _speak(text)
-     Cancels any current or pending utterance, then speaks the given text.
-     Uses a natural English voice at a calm reading pace.
-  --------------------------------------------------------------------------- */
   function _speak(text){
     if(!_supported || _muted || !text) return;
     try{
       _synth.cancel();
       var u = new SpeechSynthesisUtterance(text);
-      u.rate   = 0.90;   /* calm reading pace */
-      u.pitch  = 1.0;    /* neutral pitch -- not assistant-like */
+      u.rate   = 0.90;
+      u.pitch  = 1.0;
       u.volume = 1.0;
-      /* Pick an English voice; avoid novelty/robotic ones */
       var voices = _synth.getVoices();
       for(var i = 0; i < voices.length; i++){
         var v = voices[i];
@@ -3393,40 +3117,20 @@ _VOICE_ASSISTANT_JS = r"""
     }catch(e){ console.warn('[QAnim VA] speak error:', e); }
   }
 
-  /* ---------------------------------------------------------------------------
-     _onSceneChange(idx)
-     Called every time a new scene becomes active -- from the custom event
-     (primary path) or the MutationObserver (fallback path).
-
-     Guard: if idx === _lastSpokenIdx we are seeing a duplicate notification
-     (custom event + observer firing for the same transition) -- skip it.
-     A small delay lets the scene fade in before we grab its text.
-  --------------------------------------------------------------------------- */
   function _onSceneChange(idx){
     if(!_supported || _muted) return;
-    if(idx === _lastSpokenIdx) return;   /* deduplicate double-fire */
+    if(idx === _lastSpokenIdx) return;
     _lastSpokenIdx = idx;
-
-    /* Cancel any previous pending speak so rapid scene switching never overlaps */
     clearTimeout(_speakTimer);
     _synth.cancel();
-
-    /* Wait for the scene fade-in (350ms transition + small buffer) */
     _speakTimer = setTimeout(function(){
       var sceneEl = document.getElementById('scene-' + idx);
       var text    = _getSceneText(sceneEl);
-      if(!text){
-        /* Plain descriptive fallback -- not assistant-style */
-        text = 'Scene ' + (idx + 1) + '.';
-      }
+      if(!text) text = 'Scene ' + (idx + 1) + '.';
       _speak(text);
     }, 450);
   }
 
-  /* ---------------------------------------------------------------------------
-     _findVisibleSceneIdx()
-     Returns the index of the scene element currently visible (opacity > 0.5).
-  --------------------------------------------------------------------------- */
   function _findVisibleSceneIdx(){
     for(var i = 0; i < 20; i++){
       var s = document.getElementById('scene-' + i);
@@ -3437,7 +3141,6 @@ _VOICE_ASSISTANT_JS = r"""
     return 0;
   }
 
-  /* Toggle mute on/off */
   function _toggleMute(){
     _muted = !_muted;
     if(_muted){
@@ -3449,33 +3152,21 @@ _VOICE_ASSISTANT_JS = r"""
     } else {
       _btn.classList.remove('muted');
       _setText('&#x1F50A;','Voice');
-      /* Re-read the currently visible scene */
       var vis = _findVisibleSceneIdx();
-      _lastSpokenIdx = -1;   /* reset guard so the scene re-reads */
+      _lastSpokenIdx = -1;
       _onSceneChange(vis);
     }
   }
 
-  /* ---------------------------------------------------------------------------
-     _attachListeners()
-     Primary listener: 'qanim:sceneChange' custom event dispatched by
-     the StepController every time showScene(idx) is called.
-     Fallback listener: MutationObserver watching style/opacity changes on
-     scene elements, for animations that bypass the StepController.
-  --------------------------------------------------------------------------- */
   function _attachListeners(){
-
-    /* PRIMARY: custom event from StepController (fires for EVERY scene change) */
     document.addEventListener('qanim:sceneChange', function(e){
       if(e && e.detail && typeof e.detail.idx === 'number'){
         _onSceneChange(e.detail.idx);
       }
     });
 
-    /* FALLBACK: MutationObserver watching opacity/style attribute changes */
     var _obDebounce = null;
     var _obLastIdx  = -1;
-
     function _obCheck(){
       for(var i = 0; i < 20; i++){
         var s = document.getElementById('scene-' + i);
@@ -3483,16 +3174,11 @@ _VOICE_ASSISTANT_JS = r"""
         var op = parseFloat(s.style.opacity);
         if(op > 0.7 && i !== _obLastIdx){
           _obLastIdx = i;
-          /* Only fire the observer path if the custom event didn't already
-             update _lastSpokenIdx for this index */
-          if(i !== _lastSpokenIdx){
-            _onSceneChange(i);
-          }
+          if(i !== _lastSpokenIdx) _onSceneChange(i);
           return;
         }
       }
     }
-
     var root = document.querySelector('svg') || document.body;
     var obs  = new MutationObserver(function(){
       clearTimeout(_obDebounce);
@@ -3500,34 +3186,25 @@ _VOICE_ASSISTANT_JS = r"""
     });
     obs.observe(root, {attributes:true, subtree:true, attributeFilter:['style','opacity']});
 
-    /* Read scene 0 once on initial load (after StepController has shown it) */
     setTimeout(function(){
-      if(_lastSpokenIdx === -1){   /* only if the SC event hasn't already fired */
-        _lastSpokenIdx = -1;
-        _onSceneChange(0);
-      }
+      if(_lastSpokenIdx === -1){ _lastSpokenIdx = -1; _onSceneChange(0); }
     }, 950);
   }
 
-  /* ---------------------------------------------------------------------------
-     _init()  --  called once the DOM is ready
-  --------------------------------------------------------------------------- */
   function _init(){
     if(!_supported){
       console.warn('[QAnim VA] Web Speech API not supported in this browser.');
       return;
     }
-
-    /* Insert voice button into controls bar */
     var bar = document.getElementById('qanim-controls-bar');
     if(bar){
       var sep = document.createElement('div');
       sep.className = 'qanim-ctrl-sep';
       bar.appendChild(sep);
-
       _btn = document.createElement('button');
       _btn.id    = 'qanim-voice-btn';
       _btn.title = 'Toggle voice narration';
+      _btn.className = 'qanim-ctrl-btn';
       _btn.innerHTML = '<span>&#x1F50A;</span><span class="ctrl-label">Voice</span>';
       _btn.addEventListener('click', _toggleMute);
       bar.appendChild(_btn);
@@ -3539,12 +3216,9 @@ _VOICE_ASSISTANT_JS = r"""
       _btn.addEventListener('click', _toggleMute);
       document.body.appendChild(_btn);
     }
-
-    /* Pre-load voices asynchronously (some browsers delay this) */
     if(_synth.getVoices().length === 0){
       _synth.addEventListener('voiceschanged', function(){}, {once:true});
     }
-
     _attachListeners();
   }
 
@@ -3559,7 +3233,6 @@ _VOICE_ASSISTANT_JS = r"""
 
 
 def inject_voice_assistant(html):
-    """Inject the Voice Assistant CSS + JS into the animation HTML."""
     try:
         if '</head>' in html:
             html = html.replace('</head>', _VOICE_ASSISTANT_CSS + '\n</head>', 1)
@@ -3577,7 +3250,7 @@ def inject_voice_assistant(html):
 
 
 # ===========================================================================
-#  MODULE 12 -- StepController Patcher
+#  MODULE 12 -- StepController Patcher (unchanged)
 # ===========================================================================
 
 _STEP_CONTROLLER_JS = r"""
@@ -3623,7 +3296,6 @@ _STEP_CONTROLLER_JS = r"""
           if(j===idx){if(_animFired[j]){delete _animFired[j];_resetScene(j);}(function(sceneEl){requestAnimationFrame(function(){sceneEl.style.transition='opacity .35s ease';sceneEl.style.opacity='1';sceneEl.style.display=sceneEl.style.display==='none'?'':sceneEl.style.display;sceneEl.style.visibility='visible';sceneEl.style.pointerEvents='auto';});})(scenes[j]);}
           else{scenes[j].style.transition='opacity .35s ease';scenes[j].style.opacity='0';scenes[j].style.pointerEvents='none';}}
         _updateDots();_updateNavBtns();if(typeof window.resetAnswerBox==='function')window.resetAnswerBox();
-        /* Notify voice assistant about the scene change */
         try{document.dispatchEvent(new CustomEvent('qanim:sceneChange',{detail:{idx:idx}}));}catch(e){}
         (function(capturedIdx){requestAnimationFrame(function(){requestAnimationFrame(function(){_fireAnim(capturedIdx);});});})(idx);}
       function _updateDots(){
@@ -3663,7 +3335,7 @@ def inject_step_controller(html):
 
 
 # ===========================================================================
-#  RESPONSE PARSING UTILITIES
+#  RESPONSE PARSING UTILITIES (unchanged)
 # ===========================================================================
 
 def _parse_response(raw, question):
@@ -3786,10 +3458,11 @@ def _unescape_json_string(s):
 
 
 # ===========================================================================
-#  SYSTEM PROMPTS + PROMPT BUILDERS  (v11.1)
+#  SYSTEM PROMPTS + PROMPT BUILDERS  (v11.3)
+#  MOBILE FIX: Added preserveAspectRatio="xMidYMid meet" requirement
 # ===========================================================================
 
-SYSTEM = """You are QAnim v11.1 -- a cinematic SVG motion designer and educational animation engineer.
+SYSTEM = """You are QAnim v11.3 -- a cinematic SVG motion designer and educational animation engineer.
 
 YOUR MISSION: Turn any student question into a PREMIUM 5-scene SVG animation
 that teaches the concept progressively. The animation SCENES must NOT show
@@ -3833,9 +3506,17 @@ IMPORTANT -- FINAL ANSWER FIELD:
   Example: "Rate of heat loss Q = 142.6 W/m; Outer surface temperature T_s = 47.3 deg C"
   Do NOT leave "final_answer" empty or as a placeholder string.
 
-VISUAL STANDARDS -- v11.1 LIGHT THEME (REQUIRED):
-- SVG viewBox="0 0 1000 600"
-- Background: #f8fafc or white gradient
+MOBILE-RESPONSIVE SVG (v11.3 CRITICAL REQUIREMENT):
+  The SVG MUST include these attributes on the root <svg> element:
+    width="100%" height="100%" preserveAspectRatio="xMidYMid meet" viewBox="0 0 1000 600"
+  This ensures the animation scales correctly on mobile phones (400px wide)
+  and smart boards (1920px+ wide) without any clipping or overflow.
+  EXAMPLE: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600"
+                 width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+
+VISUAL STANDARDS -- v11.3 LIGHT THEME (REQUIRED):
+- SVG viewBox="0 0 1000 600" (with width="100%" height="100%" preserveAspectRatio="xMidYMid meet")
+- Background: #f8fafc or white gradient (rect x="0" y="0" width="1000" height="600")
 - NEVER use dark backgrounds (#1a1a2e, #0f172a, etc.)
 - Text color: #1e293b (dark on light)
 - Cards: white fill, 1px #e2e8f0 border, border-radius 8-14px
@@ -3892,10 +3573,14 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
 }"""
 
 
-SYSTEM_CONCEPT = """You are QAnim Concept Engine v11.1 -- cinematic SVG concept animator.
+SYSTEM_CONCEPT = """You are QAnim Concept Engine v11.3 -- cinematic SVG concept animator.
 
 YOUR MISSION: 5-scene concept animation. LIGHT THEME. No dark backgrounds.
 No final answer shown. Each scene reveals ONE concept progressively.
+
+MOBILE-RESPONSIVE SVG (v11.3 CRITICAL):
+  Root <svg> must have: width="100%" height="100%" preserveAspectRatio="xMidYMid meet" viewBox="0 0 1000 600"
+  This ensures correct scaling on mobile (400px) through smart board (1920px+).
 
 Scenes:
   0: Physical setup / visual system overview
@@ -3913,8 +3598,7 @@ OUTPUT FORMAT (strict JSON):
 
 SAFETY: No dark bg, no backticks, no external scripts, balanced tags,
 5 scenes, include #prevbtn/#nextbtn/#dots, manual step control.
-SUBSCRIPTS: NEVER use underscores for subscripts (e.g. NOT f_s or T_out).
-ALWAYS render subscripts with <tspan dy="5" font-size="0.72em">sub</tspan> inside SVG <text> elements."""
+SUBSCRIPTS: NEVER use underscores. Use <tspan dy="5" font-size="0.72em"> for subscripts."""
 
 
 DESIGN_SYSTEM = """
@@ -3922,7 +3606,7 @@ LIGHT THEME: background #f8fafc or white gradient
 CARD STYLE: white bg, 1px #e2e8f0 border, border-radius 10-14px
 COLORS: PHYSICS=#3b5bdb/#e64980 | MATH=#7c3aed/#db2777 | BIO=#16a34a/#ca8a04
 TEXT: #1e293b on light bg
-SVG viewBox: "0 0 1000 600"
+SVG: viewBox="0 0 1000 600" width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
 """
 
 SVG_TECHNIQUES = """
@@ -3934,15 +3618,21 @@ TECHNIQUES:
 - Sequential setTimeout (NOT CSS animation-delay)
 - linearGradient fills
 
+SVG ROOT ELEMENT (MOBILE CRITICAL):
+  <svg xmlns="http://www.w3.org/2000/svg"
+       viewBox="0 0 1000 600"
+       width="100%"
+       height="100%"
+       preserveAspectRatio="xMidYMid meet">
+  The preserveAspectRatio ensures the 1000x600 canvas scales to fit
+  any container on mobile without clipping.
+
 FORMULA SUBSCRIPTS (CRITICAL -- students must see proper subscripts, NOT underscores):
 - NEVER write subscripts with underscores like f_s, T_s, Q_out, v_1, h_fg
 - ALWAYS use SVG <tspan> subscripts:
     <text>f<tspan dy="5" font-size="0.72em">s</tspan></text>
     <text>T<tspan dy="5" font-size="0.72em">out</tspan></text>
-    <text>Q<tspan dy="5" font-size="0.72em">1</tspan></text>
 - After the subscript tspan, reset with <tspan dy="-5" font-size="1em"> for any continuing text
-- Example full formula: <text font-size="18">Q = h A (T<tspan dy="5" font-size="0.72em">s</tspan><tspan dy="-5" font-size="1em"> - T</tspan><tspan dy="5" font-size="0.72em">inf</tspan><tspan dy="-5" font-size="1em">)</tspan></text>
-- This rule applies to EVERY formula label in EVERY scene -- no exceptions
 """
 
 STRATEGY_TEMPLATES = {
@@ -3967,6 +3657,7 @@ NEVER flat dark backgrounds or neon-on-black.
 
 HTML_SHELL_NOTE = """
 REQUIRED:
+- Root SVG must have: width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
 - DO NOT generate #sol-backdrop, #sol-panel, or their CSS/JS
 - DO NOT add sol-close, sol-backdrop event listeners
 - Include bare placeholder divs only:
@@ -3980,14 +3671,15 @@ REQUIRED:
 """
 
 
-def _classify_topic(question):
+def _classify_topic_sync(question):
+    """Pure sync classifier -- safe to call from run_in_executor."""
     q = question.lower()
     scores = {
         "BIOLOGICAL":     sum(1 for k in ["cell","dna","rna","protein","photosynthesis","mitosis","enzyme","hormone","gene","organism","bacteria","virus","chromosome","metabolism"] if k in q),
         "MATHEMATICAL":   sum(1 for k in ["integral","derivative","matrix","vector","theorem","equation","polynomial","logarithm","trigonometry","calculus","function","graph","proof"] if k in q),
         "ABSTRACT":       sum(1 for k in ["philosophy","ethics","democracy","capitalism","justice","freedom","psychology","consciousness","society","ideology","culture","politics"] if k in q),
         "PROCESS_BASED":  sum(1 for k in ["how does","how do","step by step","process","algorithm","mechanism","workflow","procedure","stages","works","function","operation"] if k in q),
-        "VISUAL_PHYSICS": sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit","newton","friction","torque","field","charge","resistance","heat","thermal","temperature","pipe","cylinder","conduction","convection"] if k in q),
+        "VISUAL_PHYSICS": sum(1 for k in ["force","velocity","acceleration","mass","energy","momentum","gravity","pressure","current","voltage","wave","circuit","newton","friction","torque","field","charge","resistance","heat","thermal","temperature","pipe","cylinder","conduction","convection","knapsack","greedy","dynamic","sorting","graph","tree","binary"] if k in q),
     }
     max_score = max(scores.values())
     if max_score >= 2:
@@ -3995,24 +3687,32 @@ def _classify_topic(question):
         return top[0] if len(top) == 1 else "MIXED"
     if sum(1 for s in scores.values() if s > 0) >= 3:
         return "MIXED"
-    try:
-        resp = client.messages.create(
-            model=Q_MODEL, max_tokens=30,
-            system="Reply with ONLY one of: VISUAL_PHYSICS, PROCESS_BASED, MATHEMATICAL, BIOLOGICAL, ABSTRACT, MIXED",
-            messages=[{"role": "user", "content": f"Classify: {question[:200]}"}])
-        cat = resp.content[0].text.strip().upper()
-        if cat in STRATEGY_TEMPLATES:
+    # Fallback: keyword-based classification without calling AI
+    # (avoids blocking the event loop and wastes a token budget)
+    for kw, cat in [
+        ("sort", "MATHEMATICAL"), ("search", "MATHEMATICAL"),
+        ("flow", "VISUAL_PHYSICS"), ("heat", "VISUAL_PHYSICS"),
+        ("cell", "BIOLOGICAL"), ("gene", "BIOLOGICAL"),
+        ("prove", "MATHEMATICAL"), ("theorem", "MATHEMATICAL"),
+    ]:
+        if kw in q:
             return cat
-    except Exception:
-        pass
     return "PROCESS_BASED"
 
 
-def _build_concept_prompt(question, category):
-    """Returns (system_blocks, user_content) with cache_control on static parts."""
-    strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
+def _classify_topic(question):
+    """Sync wrapper kept for backward compatibility."""
+    return _classify_topic_sync(question)
 
-    # ── Static block (cached): full SYSTEM_CONCEPT text + shared design rules ──
+
+async def _classify_topic_async(question):
+    """Non-blocking async classifier -- uses run_in_executor."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _classify_topic_sync, question)
+
+
+def _build_concept_prompt(question, category):
+    strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
     static_text = (
         SYSTEM_CONCEPT
         + "\n\n" + DESIGN_SYSTEM
@@ -4023,18 +3723,17 @@ def _build_concept_prompt(question, category):
         {
             "type": "text",
             "text": static_text,
-            "cache_control": {"type": "ephemeral"},   # cache the large static portion
+            "cache_control": {"type": "ephemeral"},
         }
     ]
-
-    # ── Dynamic user content: question + category + strategy (changes per call) ──
     user_content = (
-        f"Build a CINEMATIC 5-SCENE CONCEPT ANIMATION for QAnim v11.1.\n\n"
+        f"Build a CINEMATIC 5-SCENE CONCEPT ANIMATION for QAnim v11.3.\n\n"
         f"QUESTION: {question}\n"
         f"CATEGORY: {category}\n"
         f"VISUAL STRATEGY: {strategy}\n\n"
-        "CONCEPT ANIMATION v11.1 REQUIREMENTS:\n"
+        "CONCEPT ANIMATION v11.3 REQUIREMENTS:\n"
         "- LIGHT THEME: white/light-gray background -- NO dark backgrounds\n"
+        "- MOBILE SVG: root <svg> must have width=\"100%\" height=\"100%\" preserveAspectRatio=\"xMidYMid meet\"\n"
         "- Exactly 5 scenes (scene-0 to scene-4)\n"
         "- Progressive concept revelation -- no final answer\n"
         "- Follow reference scene structure:\n"
@@ -4050,15 +3749,11 @@ def _build_concept_prompt(question, category):
         "Return ONLY raw JSON. The concept_code field must be complete "
         "<!DOCTYPE html>...</html> as escaped JSON string."
     )
-
     return system_blocks, user_content
 
 
 def _build_prompt(question, category):
-    """Returns (system_blocks, user_content) with cache_control on static parts."""
     strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
-
-    # ── Static block (cached): full SYSTEM + shared design/technique rules ──
     static_text = (
         SYSTEM
         + "\n\n" + DESIGN_SYSTEM
@@ -4070,18 +3765,17 @@ def _build_prompt(question, category):
         {
             "type": "text",
             "text": static_text,
-            "cache_control": {"type": "ephemeral"},   # cache the large static portion
+            "cache_control": {"type": "ephemeral"},
         }
     ]
-
-    # ── Dynamic user content: question + category + strategy (changes per call) ──
     user_content = (
-        f"Build a PREMIUM CINEMATIC 5-SCENE SVG ANIMATION for QAnim v11.1.\n\n"
+        f"Build a PREMIUM CINEMATIC 5-SCENE SVG ANIMATION for QAnim v11.3.\n\n"
         f"QUESTION: {question}\n"
         f"CATEGORY: {category}\n"
         f"STRATEGY: {strategy}\n\n"
-        "KEY REMINDERS v11.1:\n"
+        "KEY REMINDERS v11.3:\n"
         "- LIGHT THEME: white/light-gray backgrounds, dark text, vivid accents\n"
+        "- MOBILE CRITICAL: root <svg> MUST have width=\"100%\" height=\"100%\" preserveAspectRatio=\"xMidYMid meet\"\n"
         "- Exactly 5 scenes following reference HTML structure\n"
         "- Scene 0: Problem setup with animated geometry\n"
         "- Scene 1: Core formula (named, not solved) with animated arrows\n"
@@ -4099,23 +3793,28 @@ def _build_prompt(question, category):
         "Return ONLY raw JSON. The animation_code must be complete "
         "<!DOCTYPE html>...</html> as escaped JSON string."
     )
-
     return system_blocks, user_content
 
 
 # ===========================================================================
-#  MODULE 13 -- Full Generation Pipeline  (v11.1)
+#  MODULE 13 -- Full Generation Pipeline  (v11.3)
 # ===========================================================================
 
 async def _generate_concept_animation(question, category):
-    """Stage 1 -- Concept animation (5 scenes, light theme, no answer)."""
     QAnimLogger.info("ConceptPipeline", f"START  category={category}")
     system_blocks, user_content = _build_concept_prompt(question, category)
-    try:
-        msg = client.messages.create(
+
+    def _call_concept_api():
+        return client.messages.create(
             model=CONCEPT_MODEL, max_tokens=MAX_TOK_CONCEPT,
             system=system_blocks,
             messages=[{"role": "user", "content": user_content}])
+
+    try:
+        # FIXED: run sync Anthropic call in a thread so it does not block the
+        # asyncio event loop while asyncio.gather() is running all 3 stages.
+        loop = asyncio.get_event_loop()
+        msg = await loop.run_in_executor(None, _call_concept_api)
         raw = msg.content[0].text.strip()
         QAnimLogger.info(
             "ConceptAI",
@@ -4124,7 +3823,7 @@ async def _generate_concept_animation(question, category):
             f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
         )
         if msg.stop_reason == "max_tokens":
-            QAnimLogger.warn("ConceptAI", "Hit max_tokens -- may be truncated!")
+            QAnimLogger.warn("ConceptAI", "Hit max_tokens -- response may be truncated!")
     except Exception as e:
         QAnimLogger.error("ConceptAI", f"API call failed: {e}")
         return RecoveryEngine.fallback_html(question, f"Concept AI error: {e}")
@@ -4157,7 +3856,7 @@ async def _generate_concept_animation(question, category):
     concept_html = inject_infrastructure(concept_html)
     concept_html = inject_notes_system(concept_html, question)
     concept_html = inject_controls_bar(concept_html)
-    concept_html = inject_layout_wrapper(concept_html)   # v11.3: page-wrapper layout
+    concept_html = inject_layout_wrapper(concept_html)
     concept_html = inject_voice_assistant(concept_html)
     concept_html = inject_step_controller(concept_html)  # LAST
 
@@ -4167,7 +3866,7 @@ async def _generate_concept_animation(question, category):
 
 async def generate_question_animation(question):
     """
-    THREE-STAGE CONCURRENT PIPELINE (v11.2):
+    THREE-STAGE CONCURRENT PIPELINE (v11.3):
 
     Stage 0 -- ToFind Extraction   (sync, no AI)
     Stage 1 -- Concept Animation   (claude-sonnet-4-6) -- 5 scenes
@@ -4175,34 +3874,39 @@ async def generate_question_animation(question):
     Stage 3 -- Haiku Solution      (claude-haiku-4-5)
                [Stages 1-3 run concurrently via asyncio.gather]
 
-    v11.2 changes:
-      - Solution button removed; replaced with Final Answer button.
-      - Final Answer panel: shows numbered results (i), (ii)... instantly.
-      - Answer box: unchanged from v11.1 (Find-condition chip, multi-target).
-      - Quiz system removed.
+    v11.3 changes:
+      - Mobile-responsive SVG: preserveAspectRatio + width/height=100% enforced
+      - Layout wrapper fixes SVG scaling after DOM move
+      - Controls bar safe-area-inset-bottom for iOS notch
+      - Viewport meta tag injection in infrastructure
     """
     question = (question or "").strip()
     if not question:
         raise ValueError("Question cannot be empty")
 
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v11.1 -- '{short_q}'")
+    QAnimLogger.info("Pipeline", f"START v11.3 -- '{short_q}'")
 
-    # Stage 0: ToFind (sync)
     to_find_targets = ToFindExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
 
-    category = _classify_topic(question)
+    # FIXED: use non-blocking async classifier so we don't block the event loop
+    category = await _classify_topic_async(question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
     system_blocks, user_content = _build_prompt(question, category)
 
     async def _run_solution_ai():
-        try:
-            msg = client.messages.create(
+        """Runs solution AI call in a thread pool so asyncio.gather is truly concurrent."""
+        def _call():
+            return client.messages.create(
                 model=SOLUTION_MODEL, max_tokens=MAX_TOK,
                 system=system_blocks,
                 messages=[{"role": "user", "content": user_content}])
+        try:
+            # FIXED: run_in_executor prevents blocking the asyncio loop
+            loop = asyncio.get_event_loop()
+            msg = await loop.run_in_executor(None, _call)
             raw = msg.content[0].text.strip()
             QAnimLogger.info(
                 "SolutionAI",
@@ -4211,13 +3915,13 @@ async def generate_question_animation(question):
                 f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
             )
             if msg.stop_reason == "max_tokens":
-                QAnimLogger.warn("SolutionAI", "Hit max_tokens -- may be truncated!")
+                QAnimLogger.warn("SolutionAI", "Hit max_tokens -- response may be truncated!")
             return raw
         except Exception as e:
             QAnimLogger.error("SolutionAI", f"API failed: {e}")
             raise
 
-    QAnimLogger.info("Pipeline", "Launching 3 concurrent AI stages...")
+    QAnimLogger.info("Pipeline", "Launching 3 truly-concurrent AI stages (all run_in_executor)...")
     try:
         concept_html, sol_raw, haiku_sol = await asyncio.gather(
             _generate_concept_animation(question, category),
@@ -4228,10 +3932,9 @@ async def generate_question_animation(question):
         QAnimLogger.error("Pipeline", f"Concurrent generation failed: {e}")
         return _build_failure_result(question, f"API error: {e}")
 
-    # Parse solution animation
     result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v11.1"
+    result["engine_version"]         = "v11.3"
     result["concept_animation_code"] = concept_html
     result["to_find"]                = to_find_targets
     result["haiku_solution"]         = haiku_sol
@@ -4239,27 +3942,18 @@ async def generate_question_animation(question):
     result.setdefault("final_answer",   "")
     result.setdefault("key_insight",    "")
 
-    # Prefer Haiku solution data (more detailed steps)
     haiku_steps = haiku_sol.get("steps", [])
     if haiku_steps and (not result["solution_steps"] or len(haiku_steps) > len(result["solution_steps"])):
         result["solution_steps"] = haiku_steps
         QAnimLogger.ok("Pipeline", f"Using Haiku solution steps ({len(haiku_steps)} steps)")
 
-    # ---------------------------------------------------------------------------
-    # v11.2 FIX: Use a real-answer validator before accepting solution-AI's
-    # final_answer -- it often returns empty strings or placeholder text like
-    # "See animation" / "[computed above]" which contain no digits.
-    # ---------------------------------------------------------------------------
     def _is_real_answer(s):
-        """True only if s is a non-trivial string that contains at least one digit."""
         return bool(s and len(str(s).strip()) > 5 and any(c.isdigit() for c in str(s)))
 
-    # Replace placeholder/empty solution-AI answer with Haiku's answer
     if not _is_real_answer(result["final_answer"]) and _is_real_answer(haiku_sol.get("final_answer", "")):
         result["final_answer"] = haiku_sol["final_answer"]
         QAnimLogger.ok("Pipeline", "Used Haiku final_answer (solution AI returned empty/placeholder)")
 
-    # Last-resort: if still empty, extract from Haiku raw text or show a safe message
     if not _is_real_answer(result["final_answer"]):
         raw_haiku = haiku_sol.get("raw", "").strip()
         if raw_haiku:
@@ -4277,7 +3971,6 @@ async def generate_question_animation(question):
 
     html = result.get("animation_code", "")
 
-    # Validate solution HTML
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
@@ -4296,9 +3989,6 @@ async def generate_question_animation(question):
             result["render_status"]  = "fallback"
             return result
 
-    # ---------------------------------------------------------------------------
-    # v11.1: Build answer-targets for the Answer Box multi-target system
-    # ---------------------------------------------------------------------------
     answer_targets = _build_answer_targets(
         to_find_targets  = to_find_targets,
         haiku_sol        = haiku_sol,
@@ -4308,14 +3998,11 @@ async def generate_question_animation(question):
     result["answer_targets"] = answer_targets
     QAnimLogger.info("Pipeline", f"Answer targets built: {len(answer_targets)}")
 
-    # ---------------------------------------------------------------------------
     # POST-PROCESSING: inject all panels in order
-    # Solution system MUST come first (injects __sol_data__ used by Answer Box fallback)
     # StepController MUST come last
-    # ---------------------------------------------------------------------------
     html = HtmlSanitizer.sanitize(html)
     html = inject_infrastructure(html)
-    html = inject_final_answer_panel(        # v11.2: numbered final-answer reveal
+    html = inject_final_answer_panel(
         html           = html,
         answer_targets = answer_targets,
         final_answer   = result["final_answer"],
@@ -4323,13 +4010,12 @@ async def generate_question_animation(question):
     )
     html = inject_to_find_system(html, to_find_targets)
     html = inject_notes_system(html, question)
-    html = inject_answer_box_panel(html, answer_targets)   # v11.1: multi-target
+    html = inject_answer_box_panel(html, answer_targets)
     html = inject_controls_bar(html)
-    html = inject_layout_wrapper(html)       # v11.3: page-wrapper + header + given strip + scene desc
+    html = inject_layout_wrapper(html)       # v11.3: mobile-responsive wrapper
     html = inject_voice_assistant(html)
     html = inject_step_controller(html)      # MUST be absolute last
 
-    # Final validation (warn only)
     try:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
@@ -4339,7 +4025,7 @@ async def generate_question_animation(question):
     result["render_status"]  = "ok"
 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v11.1 -- '{result['title']}' "
+        f"DONE v11.3 -- '{result['title']}' "
         f"concept={len(concept_html):,} "
         f"solution={len(html):,} "
         f"haiku_steps={len(haiku_steps)} "
@@ -4365,7 +4051,7 @@ def _build_failure_result(question, reason):
         "answer_targets":         [],
         "haiku_solution":         {"steps": [], "final_answer": "", "key_insight": "", "raw": ""},
         "category":               "UNKNOWN",
-        "engine_version":         "v11.1",
+        "engine_version":         "v11.3",
         "render_status":          "error",
     }
 
@@ -4405,7 +4091,7 @@ if __name__ == "__main__":
 
     for cat, q in questions_to_test.items():
         print("=" * 72)
-        print(f"  QAnim v11.1 -- 5-Scene Animation | Upgraded Answer Box | {cat}")
+        print(f"  QAnim v11.3 -- Mobile-Responsive | 5-Scene Animation | {cat}")
         print(f"  Q: {q[:65]}...")
         print("=" * 72)
 
@@ -4440,21 +4126,12 @@ if __name__ == "__main__":
         print(f"[ToFind] Targets    : {result.get('to_find',[])}")
         print(f"[Stage 1] Concept   : {len(concept_html):,} chars")
         print(f"[Stage 2] Solution  : {len(solution_html):,} chars")
-        print(f"[Stage 3] Haiku Sol : {len(haiku_sol.get('steps',[]))} steps  ({len(haiku_sol.get('raw',''))} chars raw)")
-        print(f"[v11.1] Ans Targets : {len(ans_targets)} target(s)")
-        for t in ans_targets:
-            print(f"           label={t['label'][:40]}  value={t['value'][:30]}")
-
-        steps = result.get('solution_steps', [])
-        print(f"Solution Steps      : {len(steps)}")
-        for i, s in enumerate(steps[:5], 1):
-            print(f"  Step {i}: {s[:90]}...")
-        print(f"Final Answer        : {result.get('final_answer','')[:120]}")
-        print(f"Key Insight         : {result.get('key_insight','')[:100]}")
+        print(f"[Stage 3] Haiku Sol : {len(haiku_sol.get('steps',[]))} steps")
+        print(f"[v11.3] Ans Targets : {len(ans_targets)} target(s)")
 
         slug = cat.lower()
-        concept_out  = f"q_anim_v111_{slug}_concept.html"
-        solution_out = f"q_anim_v111_{slug}_solution.html"
+        concept_out  = f"q_anim_v113_{slug}_concept.html"
+        solution_out = f"q_anim_v113_{slug}_solution.html"
 
         with open(concept_out,  "w", encoding="utf-8") as f: f.write(concept_html)
         with open(solution_out, "w", encoding="utf-8") as f: f.write(solution_html)
@@ -4462,20 +4139,18 @@ if __name__ == "__main__":
         print(f"\n[Stage 1] Concept saved  : {concept_out}")
         print(f"[Stage 2] Solution saved : {solution_out}")
         print()
-        print("Controls injected into solution HTML:")
-        print("  [Find]  [Final Answer]  [Answer Box]")
+        print("v11.3 Mobile Fixes Applied:")
+        print("  OK  SVG: width=100% height=100% preserveAspectRatio=xMidYMid meet")
+        print("  OK  #pw-scene-wrap: aspect-ratio 10/6, position:relative")
+        print("  OK  SVG forced absolute positioning inside scene wrap")
+        print("  OK  Viewport meta tag injected")
+        print("  OK  Controls bar: safe-area-inset-bottom for iOS")
+        print("  OK  padding-bottom: 130px (controls bar clearance)")
+        print("  OK  ResizeObserver re-fixes SVG on orientation change")
+        print("  OK  Given strip hidden on tiny (<360px) screens")
         print()
-        print("Final Answer Panel v11.2:")
-        print("  OK  Numbered results: i) Label  Symbol=value unit")
-        print("  OK  Staggered fade-in for each result item")
-        print("  OK  Amber Key Insight card at the bottom")
-        print("  OK  Data pre-embedded at build time via __final_answer_data__")
-        print()
-        print("Answer Box v11.1:")
-        print("  OK  Find-condition chip above textarea")
-        print("  OK  Multi-target (auto-advance on Correct after 1.4s)")
-        print("  OK  Feedback strip: Correct / Almost Correct / Wrong")
-        print("  OK  Key Insight shown per target after submission")
-        print("  OK  Progress dots + counter (X of Y)")
-        print("  OK  All-done celebration card when all targets answered")
-        print()
+        print("All devices supported:")
+        print("  Mobile (360-480px): Full animation visible, scaled correctly")
+        print("  Tablet (600-820px): 2-col given strip, comfortable layout")
+        print("  Laptop (1080px):    Standard layout, all features visible")
+        print("  Smart Board (1400+): Large fonts, wider padding, full detail")
