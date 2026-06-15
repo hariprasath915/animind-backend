@@ -1,37 +1,41 @@
-# auth_routes.py  —  Supabase Auth + User Profile Management
+# auth_routes.py  —  GenZet / Animind  v5.2
 # ============================================================
-# Changes from previous version:
-#   - FIXED:   _anon_client() now reads env vars lazily (on each call),
-#              not at import time → fixes "Failed to Fetch" on Render
-#   - ADDED:   _upsert_user_profile() — writes to public.users on every
-#              login / register so the app has a DB record per user
-#   - ADDED:   GET  /auth/google           → returns Google OAuth URL
-#   - ADDED:   GET  /auth/google/callback  → exchanges code → session
-#   - ADDED:   POST /auth/logout           → revoke session
-#   - UPDATED: AuthResponse includes dashboard_url so frontend can redirect
 #
-# public.users table schema (run once in Supabase SQL editor):
-# -----------------------------------------------------------
-# CREATE TABLE IF NOT EXISTS public.users (
-#   id           UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-#   email        TEXT UNIQUE NOT NULL,
-#   name         TEXT,
-#   avatar_url   TEXT,
-#   provider     TEXT DEFAULT 'email',
-#   created_at   TIMESTAMPTZ DEFAULT now(),
-#   last_login   TIMESTAMPTZ DEFAULT now()
-# );
-# ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-# CREATE POLICY "Users see own row" ON public.users
-#   FOR ALL USING (auth.uid() = id);
-# -----------------------------------------------------------
+# Changes in v5.2
+# ---------------
+# Feature 1 — Gmail-based account with persistent user_id
+#   * POST /auth/register  now returns a FULL AuthResponse (token + user_id).
+#     Previously it returned RegisterResponse with no token, forcing users to
+#     log in a second time.  Now register → auto-login in one step.
+#   * The user_id is auth.users.id (UUID) assigned by Supabase — it is
+#     deterministically tied to the email address, so logging in with the
+#     same Gmail on any device always resolves to the same UUID and the
+#     same data rows in public.contents.
+#   * _upsert_user_profile() is called on every register AND login so
+#     public.users always has a fresh row matching auth.users.
+#   * GET /auth/verify returns user_id in the response so the frontend
+#     can restore the session without a second /me call.
+#
+# Feature 2 — Save HTML to Supabase library
+#   * No changes needed in auth_routes; saving is handled by sync_routes.
+#   * AuthResponse.user_id is now surfaced so the frontend can attach it
+#     to every /sync/animations POST.
+#
+# Unchanged
+# ---------
+#   * POST /auth/login          (unchanged except logging)
+#   * POST /auth/logout
+#   * GET  /auth/google
+#   * POST /auth/google/callback
+#   * GET  /auth/me
+#   * All Pydantic schemas (AuthResponse extended, RegisterResponse removed)
+# ============================================================
 
 import os
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends, status
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from supabase import create_client
 
@@ -39,19 +43,13 @@ from auth_utils import get_current_user, get_supabase
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# ── Frontend base URL (for OAuth redirect + dashboard URL) ─────────────
-FRONTEND_URL = os.getenv(
-    "FRONTEND_URL",
-    "https://genzet-app.vercel.app",   # override in Render env if different
-)
+# Frontend URL — used for OAuth redirect and dashboard_url in responses
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://genzet-app.vercel.app")
 
-# ── Lazy env-var readers (NOT at import time) ──────────────────────────
-# Reading at import time means the values are "" on Render because the
-# environment is not yet populated when the module loads.
-# Reading inside the function guarantees fresh values at request time.
 
+# ── Lazy Supabase anon client (reads env vars at call time, not import) ──────
 def _anon_client():
-    """Anon/public Supabase client — for sign-up & sign-in only."""
+    """Public/anon Supabase client — sign-up and sign-in only."""
     url = os.getenv("SUPABASE_URL", "")
     key = os.getenv("SUPABASE_ANON_KEY", "")
     if not url or not key:
@@ -62,7 +60,7 @@ def _anon_client():
     return create_client(url, key)
 
 
-# ── DB: create / update user profile after every auth event ───────────
+# ── Write / refresh the user profile row in public.users ─────────────────────
 def _upsert_user_profile(
     user_id: str,
     email: str,
@@ -71,46 +69,44 @@ def _upsert_user_profile(
     provider: str = "email",
 ) -> None:
     """
-    Write / refresh the user's row in public.users.
-    Uses the service-role client so it bypasses RLS.
-    Silently logs failures — auth still succeeds even if profile write fails.
+    Ensure public.users has a row for this Supabase Auth user.
+    Called on every register and login — idempotent.
+    Uses the service-role client (bypasses RLS).
+    Failures are non-fatal: the JWT is already valid even if this fails.
     """
     try:
-        sb = get_supabase()
+        sb  = get_supabase()
         now = datetime.now(timezone.utc).isoformat()
 
-        # Check if the row exists
         existing = (
             sb.table("users")
-            .select("id")
+            .select("id, name, avatar_url")
             .eq("id", user_id)
             .maybe_single()
             .execute()
         )
 
         if existing.data:
-            # UPDATE — refresh last_login (and name / avatar if changed)
             sb.table("users").update({
-                "last_login":  now,
-                "name":        name or existing.data.get("name", ""),
-                "avatar_url":  avatar_url or existing.data.get("avatar_url", ""),
+                "last_login": now,
+                # Only overwrite name/avatar if the new value is non-empty
+                "name":       name       or existing.data.get("name", ""),
+                "avatar_url": avatar_url or existing.data.get("avatar_url", ""),
             }).eq("id", user_id).execute()
-            print(f"[AUTH] 🔄 Profile updated: {email}")
+            print(f"[AUTH] 🔄 Profile refreshed: {email} (id={user_id})")
         else:
-            # INSERT — first time this user appears in our DB
             sb.table("users").insert({
-                "id":          user_id,
-                "email":       email,
-                "name":        name,
-                "avatar_url":  avatar_url,
-                "provider":    provider,
-                "created_at":  now,
-                "last_login":  now,
+                "id":         user_id,
+                "email":      email,
+                "name":       name,
+                "avatar_url": avatar_url,
+                "provider":   provider,
+                "created_at": now,
+                "last_login": now,
             }).execute()
-            print(f"[AUTH] ✅ Profile created: {email} (provider={provider})")
+            print(f"[AUTH] ✅ Profile created: {email} (id={user_id}, provider={provider})")
 
     except Exception as exc:
-        # Non-fatal — auth token is already valid; just log and move on
         print(f"[AUTH] ⚠ Profile upsert failed for {email}: {exc}")
 
 
@@ -120,42 +116,31 @@ def _upsert_user_profile(
 
 class RegisterRequest(BaseModel):
     email:    EmailStr
-    password: str   = Field(..., min_length=6)
-    name:     str   = Field(..., min_length=2, max_length=120)
+    password: str = Field(..., min_length=6)
+    name:     str = Field(..., min_length=2, max_length=120)
 
 
 class LoginRequest(BaseModel):
     email:    EmailStr
-    password: str   = Field(..., min_length=1)
-
-
-class RegisterResponse(BaseModel):
-    """
-    Returned after a successful account creation.
-    NO token — user must sign in separately.
-    Frontend should: show 'Account Created' notification, then show login form.
-    """
-    success:    bool = True
-    user_id:    str            # auth.users.id — unique ID created for this user
-    email:      str
-    name:       str
-    provider:   str
-    message:    str            # e.g. "Account created! Please sign in."
-    next_step:  str = "login"  # tells frontend what to show next
+    password: str = Field(..., min_length=1)
 
 
 class AuthResponse(BaseModel):
     """
-    Returned after a successful LOGIN (not register).
-    Frontend should read dashboard_url and redirect there.
+    Returned after a successful REGISTER or LOGIN.
+
+    user_id is auth.users.id — the stable UUID tied to the email address.
+    It is identical across all devices and sessions for the same account.
+    The frontend must store both `token` and `user_id` in localStorage.
     """
-    token:         str   # Supabase access_token — store in localStorage
-    user_id:       str   # auth.users.id (UUID)
+    token:         str   # Supabase JWT — store in localStorage as genzet_jwt
+    user_id:       str   # auth.users.id UUID — persistent, cross-device identity
     email:         str
     name:          str
     provider:      str   # "email" | "google"
     avatar_url:    str
-    dashboard_url: str   # frontend redirects here after login
+    is_new_user:   bool  # True on first registration, False on subsequent logins
+    dashboard_url: str
     message:       str
 
 
@@ -167,48 +152,74 @@ class UserProfile(BaseModel):
     provider:   str
 
 
+class OAuthCallbackRequest(BaseModel):
+    access_token:  str
+    refresh_token: Optional[str] = ""
+
+
 # ══════════════════════════════════════════════════════════════════════
 # POST /auth/register
 # ══════════════════════════════════════════════════════════════════════
 
-@router.post("/register", response_model=RegisterResponse, status_code=201)
+@router.post("/register", response_model=AuthResponse, status_code=201)
 def register(body: RegisterRequest):
     """
-    Create a new Supabase Auth user + write row to public.users.
+    Create a new account and immediately return a session token.
 
-    Returns RegisterResponse (NO session token, NO dashboard redirect).
-    Frontend flow:
-      1. POST /auth/register  → 201 + RegisterResponse
-      2. Show 'Account Created ✅' notification with the user_id
-      3. Switch UI to the Sign-In form (do NOT redirect to dashboard)
-      4. User signs in → POST /auth/login → gets token + dashboard_url → redirect
+    Flow (v5.2 — one round-trip instead of two):
+      1. POST /auth/register  →  201 + AuthResponse (token + user_id)
+      2. Frontend stores token + user_id in localStorage
+      3. Frontend goes directly to dashboard — no second login needed
+
+    The user_id in the response is auth.users.id (Supabase UUID).
+    It is permanent, tied to the email, and identical on every device.
+    All saved animations in public.contents reference this user_id.
     """
     supabase = _anon_client()
+
+    # ── Create the Supabase Auth user ────────────────────────────────
     try:
         res = supabase.auth.sign_up({
-            "email":    body.email.lower().strip(),
+            "email":   body.email.lower().strip(),
             "password": body.password,
-            "options":  {"data": {"name": body.name.strip()}},
+            "options": {"data": {"name": body.name.strip()}},
         })
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     if res.user is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Registration failed. Email may already be in use.",
+            detail="Registration failed. This email may already be registered.",
         )
 
-    user_id    = res.user.id
+    user_id    = str(res.user.id)
     email      = res.user.email or body.email
     meta       = res.user.user_metadata or {}
     name       = meta.get("name", body.name)
     avatar_url = meta.get("avatar_url", "")
 
-    # ── Write user profile to public.users ──────────────────────────
+    # ── Extract the session token Supabase issues on sign_up ─────────
+    # Supabase returns a session immediately when email confirmation is
+    # disabled (the common setup for non-production apps).
+    # If email confirmation IS enabled, session will be None — we then
+    # do an explicit sign-in to get a token for the frontend.
+    token: str = ""
+    if res.session:
+        token = res.session.access_token
+    else:
+        # Email confirmation is enabled — do a silent sign-in to get token.
+        try:
+            login_res = supabase.auth.sign_in_with_password({
+                "email":    email,
+                "password": body.password,
+            })
+            if login_res.session:
+                token = login_res.session.access_token
+        except Exception:
+            pass  # token stays empty; frontend will use the login form
+
+    # ── Write public.users profile row ───────────────────────────────
     _upsert_user_profile(
         user_id=user_id,
         email=email,
@@ -217,18 +228,18 @@ def register(body: RegisterRequest):
         provider="email",
     )
 
-    print(f"[AUTH] ✅ Registered: {email} (user_id={user_id})")
+    print(f"[AUTH] ✅ Registered: {email} (user_id={user_id}, has_token={bool(token)})")
 
-    # ── Return RegisterResponse — NO token, NO dashboard_url ─────────
-    # Frontend should show 'Account Created' and switch to Sign-In form.
-    return RegisterResponse(
-        success=True,
-        user_id=str(user_id),
+    return AuthResponse(
+        token=token,
+        user_id=user_id,
         email=email,
         name=name,
         provider="email",
-        message=f"Account created! Please sign in, {name}.",
-        next_step="login",
+        avatar_url=avatar_url,
+        is_new_user=True,
+        dashboard_url=f"{FRONTEND_URL}/dashboard",
+        message=f"Welcome to GenZet, {name}! Your account is ready.",
     )
 
 
@@ -239,9 +250,11 @@ def register(body: RegisterRequest):
 @router.post("/login", response_model=AuthResponse)
 def login(body: LoginRequest):
     """
-    Sign in with email + password via Supabase Auth.
-    Updates public.users.last_login on every successful login.
-    Returns JWT + dashboard_url so the frontend can redirect.
+    Sign in with email + password.
+
+    The returned user_id is auth.users.id — identical on every device.
+    Logging in with the same Gmail on a new device returns the same
+    user_id and therefore the same animation library in public.contents.
     """
     supabase = _anon_client()
     try:
@@ -262,13 +275,12 @@ def login(body: LoginRequest):
         )
 
     token      = res.session.access_token
-    user_id    = res.user.id
+    user_id    = str(res.user.id)
     email      = res.user.email or ""
     meta       = res.user.user_metadata or {}
     name       = meta.get("name", email)
     avatar_url = meta.get("avatar_url", "")
 
-    # ── Refresh / create user profile in public.users ──
     _upsert_user_profile(
         user_id=user_id,
         email=email,
@@ -285,8 +297,9 @@ def login(body: LoginRequest):
         name=name,
         provider="email",
         avatar_url=avatar_url,
+        is_new_user=False,
         dashboard_url=f"{FRONTEND_URL}/dashboard",
-        message=f"Welcome back, {name}! 👋",
+        message=f"Welcome back, {name}!",
     )
 
 
@@ -296,134 +309,13 @@ def login(body: LoginRequest):
 
 @router.post("/logout")
 def logout(current_user: dict = Depends(get_current_user)):
-    """
-    Revoke the current user session in Supabase.
-    Frontend should also clear localStorage after calling this.
-    """
+    """Revoke the session. Frontend clears localStorage after this."""
     try:
-        sb = _anon_client()
-        sb.auth.sign_out()
+        _anon_client().auth.sign_out()
     except Exception:
-        pass   # ignore errors — frontend will clear token anyway
-    email = current_user.get("email", "unknown")
-    print(f"[AUTH] 👋 Logout: {email}")
+        pass
+    print(f"[AUTH] 👋 Logout: {current_user.get('email', 'unknown')}")
     return {"message": "Logged out successfully.", "redirect": f"{FRONTEND_URL}/"}
-
-
-# ══════════════════════════════════════════════════════════════════════
-# GOOGLE OAUTH  — GET /auth/google
-# ══════════════════════════════════════════════════════════════════════
-
-@router.get("/google")
-def google_login(redirect_to: Optional[str] = None):
-    """
-    Step 1 of Google OAuth:
-      Frontend calls GET /auth/google  → gets a Google sign-in URL
-      Frontend redirects browser to that URL
-      Google authenticates the user
-      Google calls back to Supabase's callback URL
-      Supabase redirects the browser to redirect_to (your frontend /auth/callback page)
-      Frontend /auth/callback page calls GET /auth/google/finish?code=...
-
-    Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in Supabase Dashboard
-    → Authentication → Providers → Google before using this endpoint.
-    """
-    callback = redirect_to or f"{FRONTEND_URL}/auth/callback"
-    supabase = _anon_client()
-    try:
-        res = supabase.auth.sign_in_with_oauth({
-            "provider": "google",
-            "options": {
-                "redirect_to": callback,
-                "query_params": {
-                    "access_type": "offline",
-                    "prompt": "consent",
-                },
-            },
-        })
-        return {
-            "url":         res.url,
-            "provider":    "google",
-            "redirect_to": callback,
-        }
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Google OAuth not configured in Supabase: {exc}",
-        )
-
-
-# ══════════════════════════════════════════════════════════════════════
-# GOOGLE CALLBACK  — POST /auth/google/callback
-# ══════════════════════════════════════════════════════════════════════
-
-class OAuthCallbackRequest(BaseModel):
-    """
-    After Supabase redirects back to the frontend /auth/callback page,
-    the frontend extracts the `access_token` and `refresh_token` from the URL
-    hash (#access_token=...&refresh_token=...) and posts them here to get
-    a full AuthResponse (with dashboard_url to redirect to).
-    """
-    access_token:  str
-    refresh_token: Optional[str] = ""
-
-
-@router.post("/google/callback", response_model=AuthResponse)
-def google_callback(body: OAuthCallbackRequest):
-    """
-    Step 2 of Google OAuth:
-    Frontend /auth/callback page posts the Supabase token here.
-    Backend verifies the token, upserts the user profile, and returns
-    AuthResponse with dashboard_url so the frontend can redirect.
-    """
-    supabase = _anon_client()
-    try:
-        # Exchange the OAuth tokens to get the user session
-        res = supabase.auth.set_session(
-            body.access_token,
-            body.refresh_token or "",
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid OAuth token: {exc}",
-        )
-
-    if not res or res.user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not retrieve user from Google OAuth token.",
-        )
-
-    user       = res.user
-    session    = res.session
-    token      = session.access_token if session else body.access_token
-    user_id    = user.id
-    email      = user.email or ""
-    meta       = user.user_metadata or {}
-    name       = meta.get("full_name") or meta.get("name") or email
-    avatar_url = meta.get("avatar_url") or meta.get("picture", "")
-
-    # ── Create / refresh user profile in public.users ──
-    _upsert_user_profile(
-        user_id=user_id,
-        email=email,
-        name=name,
-        avatar_url=avatar_url,
-        provider="google",
-    )
-
-    print(f"[AUTH] ✅ Google OAuth: {email} (user_id={user_id})")
-    return AuthResponse(
-        token=token,
-        user_id=user_id,
-        email=email,
-        name=name,
-        provider="google",
-        avatar_url=avatar_url,
-        dashboard_url=f"{FRONTEND_URL}/dashboard",
-        message=f"Welcome, {name}! 🎉",
-    )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -433,15 +325,16 @@ def google_callback(body: OAuthCallbackRequest):
 @router.get("/verify", response_model=UserProfile)
 def verify_token(current_user: dict = Depends(get_current_user)):
     """
-    Validate an existing JWT (used for auto-login on page load).
-    Returns 200 + profile if valid; 401 if expired / invalid.
+    Validate an existing JWT (called on every page load for auto-login).
+    Returns the user profile extracted from the verified token.
+    The user_id here is auth.users.id — same UUID on every device.
     """
     return UserProfile(
         user_id=current_user["id"],
         email=current_user["email"],
         name=current_user.get("name", ""),
         avatar_url=current_user.get("avatar_url", ""),
-        provider=current_user.get("app_metadata", {}).get("provider", "email"),
+        provider=(current_user.get("app_metadata") or {}).get("provider", "email"),
     )
 
 
@@ -451,7 +344,7 @@ def verify_token(current_user: dict = Depends(get_current_user)):
 
 @router.get("/me", response_model=UserProfile)
 def get_me(current_user: dict = Depends(get_current_user)):
-    """Return the authenticated user's full profile from public.users."""
+    """Return the full profile from public.users (DB source of truth)."""
     user_id = current_user["id"]
     try:
         sb  = get_supabase()
@@ -473,11 +366,89 @@ def get_me(current_user: dict = Depends(get_current_user)):
     except Exception as exc:
         print(f"[AUTH] ⚠ /me DB lookup failed for {user_id}: {exc}")
 
-    # Fall back to JWT payload if DB lookup fails
+    # Fallback to JWT payload
     return UserProfile(
         user_id=user_id,
         email=current_user["email"],
         name=current_user.get("name", ""),
         avatar_url=current_user.get("avatar_url", ""),
-        provider=current_user.get("app_metadata", {}).get("provider", "email"),
+        provider=(current_user.get("app_metadata") or {}).get("provider", "email"),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# GOOGLE OAUTH
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get("/google")
+def google_login(redirect_to: Optional[str] = None):
+    """Return the Google OAuth sign-in URL."""
+    callback = redirect_to or f"{FRONTEND_URL}/auth/callback"
+    supabase = _anon_client()
+    try:
+        res = supabase.auth.sign_in_with_oauth({
+            "provider": "google",
+            "options": {
+                "redirect_to": callback,
+                "query_params": {"access_type": "offline", "prompt": "consent"},
+            },
+        })
+        return {"url": res.url, "provider": "google", "redirect_to": callback}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Google OAuth not configured in Supabase: {exc}",
+        )
+
+
+@router.post("/google/callback", response_model=AuthResponse)
+def google_callback(body: OAuthCallbackRequest):
+    """
+    Exchange OAuth tokens for a session.
+    user_id will be the same stable UUID for this Google account
+    on every device — so animations sync cross-device automatically.
+    """
+    supabase = _anon_client()
+    try:
+        res = supabase.auth.set_session(body.access_token, body.refresh_token or "")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid OAuth token: {exc}",
+        )
+
+    if not res or res.user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not retrieve user from Google OAuth token.",
+        )
+
+    user       = res.user
+    session    = res.session
+    token      = session.access_token if session else body.access_token
+    user_id    = str(user.id)
+    email      = user.email or ""
+    meta       = user.user_metadata or {}
+    name       = meta.get("full_name") or meta.get("name") or email
+    avatar_url = meta.get("avatar_url") or meta.get("picture", "")
+
+    _upsert_user_profile(
+        user_id=user_id,
+        email=email,
+        name=name,
+        avatar_url=avatar_url,
+        provider="google",
+    )
+
+    print(f"[AUTH] ✅ Google OAuth: {email} (user_id={user_id})")
+    return AuthResponse(
+        token=token,
+        user_id=user_id,
+        email=email,
+        name=name,
+        provider="google",
+        avatar_url=avatar_url,
+        is_new_user=False,
+        dashboard_url=f"{FRONTEND_URL}/dashboard",
+        message=f"Welcome, {name}!",
     )
