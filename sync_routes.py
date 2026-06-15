@@ -378,3 +378,108 @@ def delete_animation(
     supabase.table("contents").delete().eq("id", existing.data["id"]).execute()
     print(f"[SYNC] 🗑 Deleted anim_id={anim_id!r} user={current_user['email']!r}")
     return SyncResponse(success=True, anim_id=anim_id, message="Item deleted from library.")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PUT /sync/courses   — save the full engineeringCourses structure
+# ══════════════════════════════════════════════════════════════════════
+# The frontend's File mode stores subjects → COs → topics in a local
+# array called `engineeringCourses`.  This endpoint persists the entire
+# structure as a single JSONB document in the `contents` table, using
+# a sentinel anim_id of "__eng_courses__" to distinguish it from
+# individual animation rows.
+#
+# Upsert semantics: if a row with __eng_courses__ already exists for
+# this user, it is replaced; otherwise a new row is inserted.
+
+_ENG_COURSES_SENTINEL = "__eng_courses__"
+
+
+class CoursesPayload(BaseModel):
+    """The full engineeringCourses array sent by the frontend."""
+    courses: list  # Array of subject objects — stored as-is in JSONB
+
+
+class CoursesResponse(BaseModel):
+    success: bool
+    message: str
+
+
+@router.put(
+    "/courses",
+    response_model=CoursesResponse,
+    summary="Save the full engineering-courses structure to cloud",
+)
+def save_courses(
+    body:         CoursesPayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Upsert the entire engineeringCourses tree for this user.
+
+    The structure is stored as JSONB in `body.courses` inside a single
+    `contents` row keyed by anim_id = "__eng_courses__".
+    """
+    supabase = get_supabase()
+    user_id  = current_user["id"]
+
+    row = {
+        "user_id":  user_id,
+        "title":    "__Engineering Courses__",
+        "prompt":   "",
+        "playlist": "__system__",
+        "body": {
+            "anim_id": _ENG_COURSES_SENTINEL,
+            "courses": body.courses,
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    existing = (
+        supabase.table("contents")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("body->>anim_id", _ENG_COURSES_SENTINEL)
+        .maybe_single()
+        .execute()
+    )
+
+    if existing.data:
+        row.pop("created_at", None)
+        supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
+        print(f"[SYNC] ↑ Courses updated for user={current_user['email']!r}")
+    else:
+        supabase.table("contents").insert(row).execute()
+        print(f"[SYNC] ✅ Courses saved for user={current_user['email']!r}")
+
+    return CoursesResponse(success=True, message="Engineering courses saved to cloud.")
+
+
+@router.get(
+    "/courses",
+    summary="Retrieve the engineering-courses structure from cloud",
+)
+def get_courses(current_user: dict = Depends(get_current_user)):
+    """
+    Return the stored engineeringCourses array for this user.
+    Returns { courses: [...] } or { courses: null } if none saved yet.
+    """
+    supabase = get_supabase()
+    user_id  = current_user["id"]
+
+    res = (
+        supabase.table("contents")
+        .select("body")
+        .eq("user_id", user_id)
+        .eq("body->>anim_id", _ENG_COURSES_SENTINEL)
+        .maybe_single()
+        .execute()
+    )
+
+    if res.data and res.data.get("body"):
+        courses = res.data["body"].get("courses")
+        print(f"[SYNC] ↓ Courses fetched for user={current_user['email']!r}")
+        return {"courses": courses}
+
+    print(f"[SYNC] ↓ No courses found for user={current_user['email']!r}")
+    return {"courses": None}
