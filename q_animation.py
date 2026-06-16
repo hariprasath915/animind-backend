@@ -1,9 +1,9 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v12.0
+q_animation.py  --  QAnim Question Animation Generator  v0.2
 =============================================================
-v12.0 -- REFACTORED TO MATCH SAMPLE OUTPUT STRUCTURE:
+v0.2 -- REFACTORED TO MATCH SAMPLE OUTPUT STRUCTURE:
 
-  OUTPUT FORMAT CHANGES (from v11.x):
+  OUTPUT FORMAT CHANGES (from v0.1):
   - Full standalone HTML page (NOT an iframe srcdoc).
   - Page layout: #page-wrapper with header-badge, qstrip, given-strip,
     anim-wrapper (inline SVG), nav (prev/dots/next), scene-desc-strip.
@@ -17,7 +17,7 @@ v12.0 -- REFACTORED TO MATCH SAMPLE OUTPUT STRUCTURE:
   - patchSceneDescriptions() script wired to qanim:sceneChange.
   - __nav_patch__ script for showS / togAcc / checkQ helpers.
 
-  PANELS PRESERVED (v11.2):
+  PANELS PRESERVED (v0.1):
   - Final Answer panel  (#fa-panel)
   - ToFind panel        (#tofind-panel)
   - Answer Box panel    (#answerbox-panel)
@@ -27,7 +27,7 @@ v12.0 -- REFACTORED TO MATCH SAMPLE OUTPUT STRUCTURE:
   - StepController      (qanim-step-controller)
   - Error boundary      (#qanim-error-fallback)
 
-  PIPELINE (v12.0) — unchanged from v11.2:
+  PIPELINE (v0.2) — unchanged from v0.1:
   Stage 0 -- ToFind Extraction    (sync, no AI)
   Stage 1 -- Concept Animation    (claude-sonnet-4-6)  [kept for concept_code]
   Stage 2 -- Solution Animation   (claude-sonnet-4-6)
@@ -63,7 +63,7 @@ MAX_TOK_HAIKU_SOLUTION = 8000
 #  MODULE 1 -- QAnimLogger
 # ===========================================================================
 class QAnimLogger:
-    PREFIX = "[QAnim v12.0]"
+    PREFIX = "[QAnim v0.2]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -253,7 +253,7 @@ class ToFindExtractor:
 
 # ===========================================================================
 #  MODULE 2.6 -- GivenValuesExtractor
-#  NEW in v12.0: extracts numeric given values for the #given-strip cards
+#  NEW in v0.2: extracts numeric given values for the #given-strip cards
 # ===========================================================================
 class GivenValuesExtractor:
     """
@@ -320,6 +320,8 @@ class HtmlSanitizer:
         html = cls._fix_const_let(html)
         html = cls._fix_arrow_functions(html)
         html = cls._fix_single_quote_apostrophes(html)
+        html = cls._fix_modern_js_syntax(html)
+        html = cls._remove_error_overlay_trigger(html)
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
         html = cls._fix_svg_subscripts(html)
@@ -462,6 +464,46 @@ class HtmlSanitizer:
             return f"{tag}{body}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
 
+    @classmethod
+    def _fix_modern_js_syntax(cls, html):
+        """
+        Replace modern JS syntax that may cause SyntaxError in strict/old parsers:
+          - Optional chaining:  obj?.prop  ->  obj && obj.prop  (simple cases)
+          - Nullish coalescing: a ?? b     ->  (a != null ? a : b)
+          - Logical assignment: a ||= b    ->  a = a || b
+          - Logical assignment: a &&= b    ->  a = a && b
+          - Spread in literals: {...a}     ->  Object.assign({}, a)  [approx]
+          - class field decls  (just strip leading static/# class fields that break)
+        """
+        def process_script(m):
+            tag, body, close = m.group(1), m.group(2), m.group(3)
+            if re.search(r'type\s*=\s*["\'\']application/', tag, re.IGNORECASE):
+                return m.group(0)
+            # Nullish coalescing (??) -> ternary
+            body = re.sub(r'(\b[\w$.\[\]]+)\s*\?\?\s*', r'(\1 != null ? \1 : ', body)
+            # Optional chaining (?.) — replace obj?.prop with obj && obj.prop
+            body = re.sub(r'(\b[\w$]+)\?\.([\w$]+)', r'(\1 && \1.\2)', body)
+            # Logical assignment ||=
+            body = re.sub(r'(\b[\w$.\[\]]+)\s*\|\|=\s*', r'\1 = \1 || ', body)
+            # Logical assignment &&=
+            body = re.sub(r'(\b[\w$.\[\]]+)\s*&&=\s*', r'\1 = \1 && ', body)
+            return f"{tag}{body}{close}"
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def _remove_error_overlay_trigger(cls, html):
+        """
+        Strip any inline code that calls qanim-error-fallback display=flex
+        from error event handlers — so JS errors never surface a modal to the user.
+        """
+        # Remove the pattern that makes the overlay visible from error handlers
+        html = re.sub(
+            r"var fb=document\.getElementById\('qanim-error-fallback'\)[^}]+\}'?\)?\s*;?",
+            "/* error overlay suppressed */",
+            html, flags=re.DOTALL
+        )
+        return html
+
 
 # ===========================================================================
 #  MODULE 4 -- RecoveryEngine
@@ -512,7 +554,7 @@ html,body{{width:100%;height:100%;background:#f0f5ff;
 
 
 # ===========================================================================
-#  MODULE 5 -- Page-level CSS (v12.0 — full standalone page)
+#  MODULE 5 -- Page-level CSS (v0.2 — full standalone page)
 # ===========================================================================
 
 BASE_PAGE_CSS = """<style>
@@ -786,51 +828,6 @@ svg {
 }
 
 /* ── Scene description strip ── */
-#scene-desc-strip {
-  width: 100%;
-  background: var(--card-bg);
-  border: 1.5px solid var(--slate-200);
-  border-left: 4px solid var(--blue-mid);
-  border-radius: var(--radius-lg);
-  padding: 12px 18px;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  box-shadow: 0 2px 8px rgba(59,91,219,0.07);
-  min-height: 50px;
-  transition: border-left-color 0.35s;
-}
-.sds-num {
-  flex-shrink: 0;
-  font-size: 0.68rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: var(--slate-400);
-  padding-top: 1px;
-  white-space: nowrap;
-}
-.sds-sep {
-  width: 1px;
-  height: 100%;
-  min-height: 20px;
-  background: var(--slate-200);
-  flex-shrink: 0;
-  align-self: stretch;
-}
-.sds-body { flex: 1; }
-.sds-title {
-  font-size: 0.88rem;
-  font-weight: 700;
-  color: var(--slate-800);
-  margin-bottom: 2px;
-}
-.sds-desc {
-  font-size: 0.8rem;
-  color: var(--slate-600);
-  line-height: 1.55;
-}
-
 /* ── Hidden utility ── */
 #sol-steps-container,
 #sol-answer-text,
@@ -862,8 +859,6 @@ svg {
   .gc-val { font-size: 1.2rem; }
   .gc-label, .gc-unit { font-size: 0.75rem; }
   #prevbtn, #nextbtn { padding: 13px 30px; font-size: 0.95rem; }
-  .sds-title { font-size: 1.0rem; }
-  .sds-desc  { font-size: 0.88rem; }
   .dot { width: 12px; height: 12px; }
   .dot.active { width: 32px; }
 }
@@ -899,18 +894,15 @@ window.QLog={
   warn:function(m){console.warn('[QAnim Inner] !  '+m);},
   error:function(m){console.error('[QAnim Inner] X  '+m);}
 };
+/* Log JS errors to console only — never show an error overlay to the user */
 window.addEventListener('error',function(e){
-  console.error('[QAnim GlobalError]',e.message,'at',e.filename+':'+e.lineno);
-  var fb=document.getElementById('qanim-error-fallback');
-  if(fb){fb.style.display='flex';var msg=fb.querySelector('.qanim-err-msg');
-    if(msg)msg.textContent=e.message+' (line '+e.lineno+')';}
+  console.error('[QAnim GlobalError]',e.message,'at line',e.lineno);
 });
 window.addEventListener('unhandledrejection',function(e){
   console.error('[QAnim UnhandledPromise]',e.reason);
 });
 </script>
 """
-
 
 # ===========================================================================
 #  MODULE 6 -- ToFind Panel
@@ -2411,8 +2403,8 @@ _NOTES_JS = r"""
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function _storage(){try{return window.localStorage;}catch(e){if(!window._qnotes)window._qnotes={};return{getItem:function(k){return window._qnotes[k]||null;},setItem:function(k,v){window._qnotes[k]=v;}};}}
-  function _saveNotes(){try{var canvasData=canvas?canvas.toDataURL():'';var textData=_el('qanim-notes-textarea')?_el('qanim-notes-textarea').value:'';_storage().setItem('qanim_notes_v11',JSON.stringify({canvas:canvasData,text:textData}));var stat=_el('notes-char-count');if(stat)stat.textContent='Saved';}catch(e){}}
-  function _loadNotes(){try{var raw=_storage().getItem('qanim_notes_v11');if(!raw)return;var p=JSON.parse(raw);var ta=_el('qanim-notes-textarea');if(ta&&p.text)ta.value=p.text;if(canvas&&p.canvas&&p.canvas.startsWith('data:')){var img=new Image();img.onload=function(){ctx.drawImage(img,0,0);};img.src=p.canvas;}}catch(e){}}
+  function _saveNotes(){try{var canvasData=canvas?canvas.toDataURL():'';var textData=_el('qanim-notes-textarea')?_el('qanim-notes-textarea').value:'';_storage().setItem('qanim_notes_v0.1',JSON.stringify({canvas:canvasData,text:textData}));var stat=_el('notes-char-count');if(stat)stat.textContent='Saved';}catch(e){}}
+  function _loadNotes(){try{var raw=_storage().getItem('qanim_notes_v0.1');if(!raw)return;var p=JSON.parse(raw);var ta=_el('qanim-notes-textarea');if(ta&&p.text)ta.value=p.text;if(canvas&&p.canvas&&p.canvas.startsWith('data:')){var img=new Image();img.onload=function(){ctx.drawImage(img,0,0);};img.src=p.canvas;}}catch(e){}}
   function _scheduleAutoSave(){if(autoSaveTimer)clearTimeout(autoSaveTimer);autoSaveTimer=setTimeout(_saveNotes,1500);}
   function _initCanvas(){canvas=_el('qanim-draw-canvas');if(!canvas)return;ctx=canvas.getContext('2d');_resizeCanvas();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=currentColor;ctx.lineWidth=currentSize;_loadNotes();}
   function _resizeCanvas(){if(!canvas)return;var wrap=_el('qanim-canvas-wrap');var w=wrap?wrap.clientWidth:320,h=wrap?wrap.clientHeight:200;var imgData=null;if(ctx&&canvas.width>0&&canvas.height>0){try{imgData=ctx.getImageData(0,0,canvas.width,canvas.height);}catch(e){}}canvas.width=w;canvas.height=h;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=currentColor;ctx.lineWidth=currentSize;if(imgData){try{ctx.putImageData(imgData,0,0);}catch(e){}}}
@@ -2730,7 +2722,7 @@ def inject_voice_assistant(html):
 
 
 # ===========================================================================
-#  MODULE 12 -- StepController  (v12.1 — 4 root-cause fixes)
+#  MODULE 12 -- StepController  (v0.2 — 4 root-cause fixes)
 #
 #  ROOT CAUSES FIXED:
 #
@@ -2770,7 +2762,7 @@ def inject_voice_assistant(html):
 
 _STEP_CONTROLLER_JS = r"""
 <script id="qanim-step-controller">
-/* QAnim StepController v12.2 — scene-navigation conflict fix */
+/* QAnim StepController v0.2 — scene-navigation conflict fix */
 (function patchStepController(){
   "use strict";
 
@@ -2812,7 +2804,7 @@ _STEP_CONTROLLER_JS = r"""
       var currentStep = 0;
 
       /* ── 3. showScene ─────────────────────────────────────────────────
-         CRITICAL FIX v12.2:
+         CRITICAL FIX v0.2:
          The AI-generated anim_script contains its own showScene() function
          that uses opacity on child elements, while we use setAttribute("display")
          on the scene <g> group.  Both mechanisms must cooperate:
@@ -2915,7 +2907,7 @@ _STEP_CONTROLLER_JS = r"""
       });
 
       /* ── 6. Initial state ─────────────────────────────────────────────
-         CRITICAL FIX v12.2:
+         CRITICAL FIX v0.2:
          Do NOT forcibly set display=none on all scenes here — the AI's
          DOMContentLoaded may have already run and set up correct state.
          Instead, detect which scene is currently visible (or default to 0)
@@ -2954,7 +2946,7 @@ _STEP_CONTROLLER_JS = r"""
         });
       });
 
-      console.log("[QAnim SC v12.2] " + scenes.length + " scenes ready, visible=" + visibleIdx);
+      console.log("[QAnim SC v0.2] " + scenes.length + " scenes ready, visible=" + visibleIdx);
 
     }catch(err){ console.error("[QAnim SC] Fatal:", err); }
   }
@@ -2977,14 +2969,14 @@ def inject_step_controller(html):
             html = html.replace("</body>", _STEP_CONTROLLER_JS + "\n</body>", 1)
         else:
             html += "\n" + _STEP_CONTROLLER_JS
-        QAnimLogger.ok("StepController", "Manual step controller v12.1 injected")
+        QAnimLogger.ok("StepController", "Manual step controller v0.2 injected")
     except Exception as e:
         QAnimLogger.warn("StepController", f"Injection failed: {e}")
     return html
 
 
 # ===========================================================================
-#  MODULE 13 -- Nav Patch + Scene Descriptions Updater (NEW in v12.0)
+#  MODULE 13 -- Nav Patch + Scene Descriptions Updater (NEW in v0.2)
 #  Mirrors exactly what the sample HTML has: patchSceneDescriptions() and
 #  the __nav_patch__ helper script.
 # ===========================================================================
@@ -3091,7 +3083,7 @@ def inject_nav_patch_and_scene_desc(html, scene_descriptions):
 
 
 # ===========================================================================
-#  MODULE 14 -- Page Layout Builder (v12.0 — the KEY new module)
+#  MODULE 14 -- Page Layout Builder (v0.2 — the KEY new module)
 #
 #  Builds the full standalone page HTML from:
 #    - SVG animation code (extracted from AI output)
@@ -3303,18 +3295,11 @@ def _infer_topic_badge(question, category):
 
 def build_page_html(question, result, given_cards, category):
     """
-    Assembles the full standalone page HTML in the v12.0 layout.
-    This is the core new function in v12.0.
+    Assembles the full standalone page HTML in the v0.2 layout.
+    This is the core new function in v0.2.
     """
     animation_html = result.get("animation_code", "")
     title_text     = result.get("title", f"Animation: {question[:50]}")
-    topic_badge    = _infer_topic_badge(question, category)
-
-    # Split topic_badge into category · subject
-    parts = topic_badge.split(" · ", 1)
-    badge_cat  = html_module.escape(parts[0])
-    badge_subj = html_module.escape(parts[1] if len(parts) > 1 else "")
-
     # Extract italic title from result title (everything before " — " or full title)
     title_parts = title_text.split(" — ", 1)
     em_part   = html_module.escape(title_parts[0].strip())
@@ -3332,10 +3317,7 @@ def build_page_html(question, result, given_cards, category):
     if not svg_block:
         svg_block = '<svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg"><rect width="1000" height="600" fill="#f8fafc"/><text x="500" y="300" text-anchor="middle" font-size="20" fill="#64748b">Animation unavailable</text></svg>'
 
-    # Scene descriptions for the bottom strip
-    scene_descs = _extract_scene_descriptions_from_parsed(result)
-    first_scene = scene_descs[0] if scene_descs else {"num": "1 / 5", "accentColor": "#3b5bdb",
-                                                        "title": "Scene 1", "desc": ""}
+    first_scene = {"num": "1 / 5", "accentColor": "#3b5bdb", "title": "Scene 1", "desc": ""}
 
     page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3359,10 +3341,6 @@ svg{{width:100%!important;height:100%!important;}}
 
   <!-- Header row -->
   <header id="page-header">
-    <div class="header-badge">
-      <span class="hbadge-dot"></span>
-      {badge_cat}{(' · ' + badge_subj) if badge_subj else ''}
-    </div>
     <div class="header-title-text">
       <em>{em_part}</em>{rest_part} — Interactive Animation
     </div>
@@ -3389,16 +3367,6 @@ svg{{width:100%!important;height:100%!important;}}
     <button id="nextbtn"><span class="btn-label">Next</span> &#8594;</button>
   </div>
 
-  <!-- Scene description -->
-  <div id="scene-desc-strip" style="border-left-color:{first_scene['accentColor']}">
-    <span class="sds-num">Scene {first_scene['num']}</span>
-    <div class="sds-sep"></div>
-    <div class="sds-body">
-      <div class="sds-title">{html_module.escape(first_scene['title'])}</div>
-      <div class="sds-desc">{html_module.escape(first_scene['desc'])}</div>
-    </div>
-  </div>
-
   <div id="sol-steps-container"></div>
   <div id="sol-answer-text"></div>
   <div id="sol-insight-text"></div>
@@ -3414,7 +3382,7 @@ svg{{width:100%!important;height:100%!important;}}
 </body>
 </html>
 """
-    return page, scene_descs
+    return page
 
 
 # ===========================================================================
@@ -3541,7 +3509,7 @@ def _unescape_json_string(s):
 
 
 # ===========================================================================
-#  SYSTEM PROMPTS + PROMPT BUILDERS  (v12.0)
+#  SYSTEM PROMPTS + PROMPT BUILDERS  (v0.2)
 #
 #  The AI still generates a self-contained HTML animation, but we now EXTRACT
 #  only the SVG + anim-script and wrap it in our own page layout.
@@ -3552,7 +3520,7 @@ def _unescape_json_string(s):
 #    - buildDots() + showScene() + animateScene0-4()
 # ===========================================================================
 
-SYSTEM = """You are QAnim v12.0 -- a cinematic SVG motion designer and educational animation engineer.
+SYSTEM = """You are QAnim v0.2 -- a cinematic SVG motion designer and educational animation engineer.
 
 YOUR MISSION: Turn any student question into a PREMIUM 5-scene SVG animation
 that teaches the concept progressively, following the EXACT structure of the
@@ -3694,9 +3662,9 @@ Do NOT include final_answer inside the animation scenes -- only in the JSON fiel
 - DO NOT use arrow functions (use function() {})"""
 
 
-SYSTEM_CONCEPT = """You are QAnim Concept Engine v12.0 -- cinematic SVG concept animator.
+SYSTEM_CONCEPT = """You are QAnim Concept Engine v0.2 -- cinematic SVG concept animator.
 
-YOUR MISSION: 5-scene concept animation matching the v12.0 sample output structure.
+YOUR MISSION: 5-scene concept animation matching the v0.2 sample output structure.
 LIGHT THEME. No dark backgrounds. No final answer shown in scenes.
 
 Scenes follow the same pattern as the main SYSTEM prompt, but are concept-only:
@@ -3716,8 +3684,8 @@ OUTPUT FORMAT (strict JSON):
   "concept_code": "COMPLETE <!DOCTYPE html>...</html> AS ESCAPED JSON STRING"
 }
 
-SAFETY: No dark bg, no backticks, no const/let, no arrow functions,
-balanced tags, 5 scenes, include #prevbtn/#nextbtn/#dots,
+SAFETY: No dark bg. CRITICAL JS: use only ES5 — no backticks/template literals, no const/let (use var), no arrow functions (use function(){}), no optional chaining (?.), no nullish coalescing (??), no spread (...), no class fields.
+Balanced tags, 5 scenes, include #prevbtn/#nextbtn/#dots,
 SVG subscripts with tspan (never underscores)."""
 
 
@@ -3810,11 +3778,11 @@ def _build_concept_prompt(question, category):
         }
     ]
     user_content = (
-        f"Build a CINEMATIC 5-SCENE CONCEPT ANIMATION for QAnim v12.0.\n\n"
+        f"Build a CINEMATIC 5-SCENE CONCEPT ANIMATION for QAnim v0.2.\n\n"
         f"QUESTION: {question}\n"
         f"CATEGORY: {category}\n"
         f"VISUAL STRATEGY: {strategy}\n\n"
-        "CONCEPT ANIMATION v12.0 REQUIREMENTS:\n"
+        "CONCEPT ANIMATION v0.2 REQUIREMENTS:\n"
         "- LIGHT THEME: white/light-gray background\n"
         "- Exactly 5 scenes (scene-0 to scene-4), each as <g id='scene-N' class='scene'>\n"
         "- Progressive concept revelation -- no final answer\n"
@@ -3849,11 +3817,11 @@ def _build_prompt(question, category):
         }
     ]
     user_content = (
-        f"Build a PREMIUM CINEMATIC 5-SCENE SVG ANIMATION for QAnim v12.0.\n\n"
+        f"Build a PREMIUM CINEMATIC 5-SCENE SVG ANIMATION for QAnim v0.2.\n\n"
         f"QUESTION: {question}\n"
         f"CATEGORY: {category}\n"
         f"STRATEGY: {strategy}\n\n"
-        "KEY REMINDERS v12.0:\n"
+        "KEY REMINDERS v0.2:\n"
         "- LIGHT THEME: white/light-gray backgrounds, dark text, vivid accents\n"
         "- Exactly 5 scenes in <g id='scene-N' class='scene'> groups inside ONE SVG\n"
         "- Bottom info card INSIDE each SVG scene group at y=490\n"
@@ -3862,7 +3830,7 @@ def _build_prompt(question, category):
         "- final_answer: REQUIRED -- fully solved answer with all computed values and units\n"
         "- key_insight: one memorable sentence\n"
         "- DO NOT include Find/Quiz/Solution/Answer Box buttons\n"
-        "- DO NOT use backtick template literals, const, let, arrow functions\n\n"
+        "- CRITICAL JS RULES: NO backtick template literals, NO const/let (use var), NO arrow functions (use function(){}), NO optional chaining (?.), NO nullish coalescing (??), NO spread operator (...), NO class fields. Use only ES5-compatible JavaScript.\n\n"
         "Return ONLY raw JSON. animation_code must be complete "
         "<!DOCTYPE html>...</html> as escaped JSON string."
     )
@@ -3870,7 +3838,7 @@ def _build_prompt(question, category):
 
 
 # ===========================================================================
-#  FULL GENERATION PIPELINE  (v12.0)
+#  FULL GENERATION PIPELINE  (v0.2)
 # ===========================================================================
 
 async def _generate_concept_animation(question, category):
@@ -3931,7 +3899,7 @@ async def _generate_concept_animation(question, category):
 
 async def generate_question_animation(question):
     """
-    PIPELINE v12.0:
+    PIPELINE v0.2:
 
     Stage 0 -- ToFind + GivenValues Extraction  (sync, no AI)
     Stage 1 -- Concept Animation   (claude-sonnet-4-6)
@@ -3939,14 +3907,14 @@ async def generate_question_animation(question):
     Stage 3 -- Haiku Solution      (claude-haiku-4-5)
                [Stages 1-3 concurrent via asyncio.gather]
 
-    Post-processing builds the full v12.0 page layout from the AI SVG.
+    Post-processing builds the full v0.2 page layout from the AI SVG.
     """
     question = (question or "").strip()
     if not question:
         raise ValueError("Question cannot be empty")
 
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v12.0 -- '{short_q}'")
+    QAnimLogger.info("Pipeline", f"START v0.2 -- '{short_q}'")
 
     # Stage 0: Sync extraction
     to_find_targets = ToFindExtractor.extract(question)
@@ -3993,7 +3961,7 @@ async def generate_question_animation(question):
     # Parse solution animation
     result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v12.0"
+    result["engine_version"]         = "v0.2"
     result["concept_animation_code"] = concept_html
     result["to_find"]                = to_find_targets
     result["given_cards"]            = given_cards
@@ -4031,7 +3999,7 @@ async def generate_question_animation(question):
     if haiku_sol.get("key_insight") and not result["key_insight"]:
         result["key_insight"] = haiku_sol["key_insight"]
 
-    # ── v12.0 PAGE LAYOUT BUILD ──
+    # ── v0.2 PAGE LAYOUT BUILD ──
     # Build the full standalone page HTML with proper layout
     raw_html = result.get("animation_code", "")
 
@@ -4040,11 +4008,10 @@ async def generate_question_animation(question):
 
     # Build full page layout
     try:
-        page_html, scene_descs = build_page_html(question, result, given_cards, category)
+        page_html = build_page_html(question, result, given_cards, category)
     except Exception as e:
         QAnimLogger.error("PageBuilder", f"build_page_html failed: {e}")
         page_html = RecoveryEngine.fallback_html(question, f"Page build error: {e}")
-        scene_descs = []
 
     # Validate the base page structure
     try:
@@ -4075,7 +4042,6 @@ async def generate_question_animation(question):
     html = inject_answer_box_panel(html, answer_targets)
     html = inject_controls_bar(html)
     html = inject_voice_assistant(html)
-    html = inject_nav_patch_and_scene_desc(html, scene_descs)  # NEW in v12.0
     html = inject_step_controller(html)   # MUST be absolute last
 
     # Final validation (warn only)
@@ -4088,7 +4054,7 @@ async def generate_question_animation(question):
     result["render_status"]  = "ok"
 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v12.0 -- '{result['title']}' "
+        f"DONE v0.2 -- '{result['title']}' "
         f"concept={len(concept_html):,} "
         f"solution={len(html):,} "
         f"haiku_steps={len(haiku_steps)} "
@@ -4116,7 +4082,7 @@ def _build_failure_result(question, reason):
         "answer_targets":         [],
         "haiku_solution":         {"steps": [], "final_answer": "", "key_insight": "", "raw": ""},
         "category":               "UNKNOWN",
-        "engine_version":         "v12.0",
+        "engine_version":         "v0.2",
         "render_status":          "error",
     }
 
@@ -4157,7 +4123,7 @@ if __name__ == "__main__":
 
     for cat, q in questions_to_test.items():
         print("=" * 72)
-        print(f"  QAnim v12.0 -- Page-Layout Animation | {cat}")
+        print(f"  QAnim v0.2 -- Page-Layout Animation | {cat}")
         print(f"  Q: {q[:65]}...")
         print("=" * 72)
 
@@ -4195,7 +4161,7 @@ if __name__ == "__main__":
         print(f"[Stage 1] Concept   : {len(concept_html):,} chars")
         print(f"[Stage 2] Solution  : {len(solution_html):,} chars")
         print(f"[Stage 3] Haiku Sol : {len(haiku_sol.get('steps',[]))} steps")
-        print(f"[v12.0] Ans Targets : {len(ans_targets)} target(s)")
+        print(f"[v0.2] Ans Targets : {len(ans_targets)} target(s)")
         for t in ans_targets:
             print(f"           label={t['label'][:40]}  value={t['value'][:30]}")
 
@@ -4203,8 +4169,8 @@ if __name__ == "__main__":
         print(f"Key Insight         : {result.get('key_insight','')[:100]}")
 
         slug = cat.lower()
-        concept_out  = f"q_anim_v120_{slug}_concept.html"
-        solution_out = f"q_anim_v120_{slug}_solution.html"
+        concept_out  = f"q_anim_v02_{slug}_concept.html"
+        solution_out = f"q_anim_v02_{slug}_solution.html"
 
         with open(concept_out,  "w", encoding="utf-8") as f: f.write(concept_html)
         with open(solution_out, "w", encoding="utf-8") as f: f.write(solution_html)
@@ -4212,7 +4178,7 @@ if __name__ == "__main__":
         print(f"\n[Stage 1] Concept saved  : {concept_out}")
         print(f"[Stage 2] Solution saved : {solution_out}")
         print()
-        print("v12.0 Layout Features:")
+        print("v0.2 Layout Features:")
         print("  OK  Full standalone page (#page-wrapper layout)")
         print("  OK  Header badge + title from topic inference")
         print("  OK  Question card (#qstrip) with question text")
