@@ -51,11 +51,12 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "https://genzet-app.vercel.app")
 def _anon_client():
     """Public/anon Supabase client — sign-up and sign-in only."""
     url = os.getenv("SUPABASE_URL", "")
-    key = os.getenv("SUPABASE_ANON_KEY", "")
+    # Accept SUPABASE_KEY (Render env var name) as fallback for SUPABASE_ANON_KEY
+    key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")
     if not url or not key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Auth service not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY.",
+            detail="Auth service not configured. Set SUPABASE_URL and SUPABASE_KEY in Render.",
         )
     return create_client(url, key)
 
