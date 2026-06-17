@@ -51,17 +51,9 @@ import asyncio
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-# ── Load .env (local dev) ─────────────────────────────────────────────────────
-try:
-    from dotenv import load_dotenv
-    from pathlib import Path as _Path
-
-    _cur = _Path(__file__).resolve().parent
-    load_dotenv(dotenv_path=_cur / ".env")
-    load_dotenv(dotenv_path=_cur.parent / ".env")
-    print(f"[STARTUP] ✅ .env loaded from {_cur}")
-except Exception as _env_err:
-    print(f"[STARTUP] ⚠ load_dotenv failed: {_env_err}")
+# ── Environment ────────────────────────────────────────────────────────
+# Environment variables are managed by Render in production.
+# Locally, ensure your variables are set in your shell before running.
 
 from contextlib import asynccontextmanager
 import httpx
