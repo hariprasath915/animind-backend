@@ -38,18 +38,31 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
 
 # ── Configuration — load from environment ─────────────────────────────
-# SUPABASE_URL         — e.g. https://xyzxyz.supabase.co
-# SUPABASE_ANON_KEY    — public anon key (used in auth_routes for sign-up/sign-in)
-# SUPABASE_SERVICE_KEY — service-role key (never expose to browser; used here for DB ops)
-# SUPABASE_JWT_SECRET  — found in Supabase Dashboard → Settings → API → JWT Secret
-#                        Used to VERIFY tokens the Supabase auth server issues.
+# Render Dashboard env var names (what the user set):
+#   SUPABASE_URL     — https://<project>.supabase.co
+#   SUPABASE_KEY     — the Supabase key (used as anon key AND service key)
+#   JWT_KEY          — Supabase JWT Secret (Settings → API → JWT Secret)
+#
+# Full canonical names also accepted:
+#   SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY, SUPABASE_JWT_SECRET
+
+_SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")   # user's Render var name
 
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
-SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY", "")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
-SUPABASE_JWT_SECRET  = os.getenv("SUPABASE_JWT_SECRET", "")
+SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY")    or _SUPABASE_KEY
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or _SUPABASE_KEY
+# JWT_KEY is the name the user added in Render; SUPABASE_JWT_SECRET is canonical
+SUPABASE_JWT_SECRET  = os.getenv("SUPABASE_JWT_SECRET")  or os.getenv("JWT_KEY", "")
 
 ALGORITHM = "HS256"   # Supabase signs JWTs with HS256 by default
+
+# Startup diagnostics
+if not SUPABASE_URL:         print("[AUTH] ⚠  SUPABASE_URL not set!")
+if not SUPABASE_ANON_KEY:    print("[AUTH] ⚠  SUPABASE_KEY / SUPABASE_ANON_KEY not set!")
+if not SUPABASE_SERVICE_KEY: print("[AUTH] ⚠  SUPABASE_KEY / SUPABASE_SERVICE_KEY not set!")
+if not SUPABASE_JWT_SECRET:  print("[AUTH] ⚠  JWT_KEY / SUPABASE_JWT_SECRET not set!")
+if SUPABASE_URL and SUPABASE_ANON_KEY:
+    print(f"[AUTH] ✅ Supabase configured → {SUPABASE_URL[:40]}...")
 
 # ── Bearer token extractor ─────────────────────────────────────────────
 bearer_scheme = HTTPBearer(auto_error=False)
