@@ -17,7 +17,6 @@ python-jose[cryptography]==3.3.0
 supabase==2.31.0
 
 # ── Environment ────────────────────────────────────────────────────────
-python-dotenv==1.0.1
 
 # ── Data Validation ────────────────────────────────────────────────────
 pydantic>=2.11.4
