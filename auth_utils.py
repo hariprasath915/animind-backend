@@ -115,35 +115,11 @@ def decode_supabase_token(token: str) -> Optional[dict]:
     Returns the payload dict on success, None if invalid or expired.
     Raises RuntimeError if SUPABASE_JWT_SECRET is not configured.
     """
-    if not SUPABASE_JWT_SECRET:
-        raise RuntimeError(
-            "SUPABASE_JWT_SECRET is not set. "
-            "Find it in: Supabase Dashboard → Settings → API → JWT Secret. "
-            "Then add it as an environment variable on Render."
-        )
-    try:
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=[ALGORITHM],
-            audience="authenticated",   # Supabase sets aud="authenticated" for user tokens
-            options={"verify_aud": True},
-        )
-        return payload
-    except JWTError:
-        return None
-
-
-def _extract_name(payload: dict) -> str:
-    """Pull display name from Supabase JWT payload."""
-    # Supabase puts custom sign-up data in user_metadata
-    meta = payload.get("user_metadata") or {}
-    return (
-        meta.get("name")
-        or meta.get("full_name")
-        or payload.get("name")
-        or payload.get("email", "")
-    )
+def decode_supabase_token(token: str) -> Optional[dict]:
+    """
+    DEPRECATED internally: We now use supabase.auth.get_user() directly.
+    """
+    raise NotImplementedError("Use supabase.auth.get_user() instead.")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -156,27 +132,6 @@ def get_current_user(
     """
     FastAPI dependency that verifies the Supabase JWT from the Authorization
     header and returns the authenticated user as a plain dict.
-
-    Return shape (mirrors old models.User fields used by routes):
-        {
-          "id":    "<auth.users.id UUID>",   ← primary key for all DB rows
-          "email": "user@example.com",
-          "name":  "Teacher Name",
-        }
-
-    Usage (unchanged from v4.x):
-        @router.get("/protected")
-        def protected(current_user: dict = Depends(get_current_user)):
-            user_id = current_user["id"]
-
-    Raises HTTP 401 if:
-      - No Authorization header present
-      - Token is invalid, expired, or has wrong audience
-      - SUPABASE_JWT_SECRET env var is not configured
-
-    Note: We do NOT query the database on every request. The JWT itself
-    is the source of truth — Supabase signs it and sets the expiry.
-    If you need to check `is_active` or similar, add a Supabase DB check here.
     """
     if not credentials:
         raise HTTPException(
@@ -188,31 +143,28 @@ def get_current_user(
     token = credentials.credentials
 
     try:
-        payload = decode_supabase_token(token)
-    except RuntimeError as e:
-        # Server misconfiguration — surface clearly
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
-
-    if payload is None:
+        supabase = get_supabase()
+        res = supabase.auth.get_user(token)
+        user = res.user
+        if not user:
+            raise Exception("No user returned")
+    except Exception as e:
+        print(f"[AUTH] Token verification failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token is invalid or has expired. Please log in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # sub = auth.users.id — the UUID that keys all content rows
-    user_id: str = payload.get("sub", "").strip()
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Malformed token: missing subject (user ID).",
-        )
-
-    email: str = payload.get("email", "")
-    name:  str = _extract_name(payload)
+    user_id = str(user.id)
+    email = user.email or ""
+    meta = user.user_metadata or {}
+    
+    name = (
+        meta.get("name")
+        or meta.get("full_name")
+        or email
+    )
 
     return {"id": user_id, "email": email, "name": name}
 
