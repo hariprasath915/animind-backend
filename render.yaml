@@ -13,14 +13,21 @@ services:
       # ANTHROPIC_API_KEY:  your sk-ant-... key
 
       # Supabase — Auth + Database
-      # SUPABASE_URL:          https://<project-id>.supabase.co
-      # SUPABASE_ANON_KEY:     anon/public key  (safe to use in auth_routes for sign-up/sign-in)
-      # SUPABASE_SERVICE_KEY:  service-role key (NEVER expose; backend-only for DB CRUD)
-      # SUPABASE_JWT_SECRET:   Supabase Dashboard → Settings → API → JWT Secret
-      #                        Backend uses this to VERIFY tokens Supabase Auth issues.
+      # The backend accepts BOTH the canonical names AND your Render names:
+      #
+      # SUPABASE_URL     — https://<project-id>.supabase.co
+      #
+      # SUPABASE_KEY     — Your key set in Render Dashboard
+      #                    Maps to: SUPABASE_ANON_KEY + SUPABASE_SERVICE_KEY
+      #                    Use the service_role key for full access
+      #
+      # JWT_KEY          — Your key set in Render Dashboard
+      #                    Maps to: SUPABASE_JWT_SECRET
+      #                    Get from: Supabase Dashboard -> Settings -> API -> JWT Secret
+      #                    This is REQUIRED for login verification to work
 
       # Admin endpoint protection
-      # ADMIN_SECRET_TOKEN:  any long random string  (e.g. openssl rand -hex 32)
+      # ADMIN_SECRET_TOKEN:  any long random string
 
       # ── OPTIONAL ────────────────────────────────────────────────────────
       - key: LOG_LEVEL
@@ -28,8 +35,4 @@ services:
       - key: SHOW_ERROR_DETAILS
         value: "true"
       - key: JWT_EXPIRE_DAYS
-        value: "900"    # Not used by Supabase; kept for compatibility only
-
-      # ── REMOVED — no longer needed after Supabase migration ─────────────
-      # JWT_SECRET_KEY:   replaced by SUPABASE_JWT_SECRET
-      # DATABASE_URL:     replaced by SUPABASE_URL + SUPABASE_SERVICE_KEY
+        value: "900"
