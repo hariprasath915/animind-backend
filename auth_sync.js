@@ -5,7 +5,7 @@
 
 const BACKEND_URL = 'https://animind-backend-2.onrender.com';
 const SUPABASE_URL      = 'https://fkincmzpteuibbegghti.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_9IRPmhzJbwX25VhmhY42zw_UB2i0h2b';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZraW5jbXpwdGV1aWJiZWdnaHRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMzAwNDYsImV4cCI6MjA5NTkwNjA0Nn0.MBQNWBhIht5MLBIadivdw8GXjO9hYj6RK-AfFCI-RT4';
 const sb = { auth: { signOut: () => Promise.resolve() } };
 
 const TOKEN_KEY = 'genzet_jwt';
