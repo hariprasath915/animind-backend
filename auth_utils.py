@@ -72,24 +72,20 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # SUPABASE SERVICE CLIENT  (service-role key — never sent to browser)
 # ══════════════════════════════════════════════════════════════════════
 
-def get_supabase() -> Client:
+def get_supabase(token: Optional[str] = None) -> Client:
     """
     Return a Supabase client authenticated with the service-role key.
-    This client bypasses Row-Level Security, so every query MUST include
-    an explicit .eq("user_id", user_id) filter to scope data correctly.
-
-    Used by:
-      - sync_routes.py  → all CRUD on `contents` table
-      - admin_router.py → admin.list_users()
-
-    Never pass this client to the frontend.
+    If a token is provided, it acts as the user, securely enforcing RLS.
     """
+    from supabase import ClientOptions
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment. "
-            "Add them in Render Dashboard → Environment."
+            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment."
         )
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    opts = ClientOptions()
+    if token:
+        opts.headers.update({"Authorization": f"Bearer {token}"})
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY, options=opts)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -166,7 +162,7 @@ def get_current_user(
         or email
     )
 
-    return {"id": user_id, "email": email, "name": name}
+    return {"id": user_id, "email": email, "name": name, "token": token}
 
 
 # ══════════════════════════════════════════════════════════════════════
