@@ -168,7 +168,7 @@ def save_html(
 
     Returns anim_id which the frontend uses for subsequent deletes.
     """
-    supabase = get_supabase()
+    supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
     filename = body.filename.strip()
     anim_id  = body.client_id or f"html_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
@@ -192,7 +192,7 @@ def save_html(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .eq("body->>anim_id", anim_id)
+        .contains("body", {"anim_id": anim_id})
         .maybe_single()
         .execute()
     )
@@ -226,7 +226,7 @@ def sync_animation(
     Upsert one animation for the authenticated user.
     Now also accepts `filename` — when provided it becomes the library card title.
     """
-    supabase = get_supabase()
+    supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
     anim_id  = payload.id.strip()
 
@@ -234,7 +234,7 @@ def sync_animation(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .eq("body->>anim_id", anim_id)
+        .contains("body", {"anim_id": anim_id})
         .maybe_single()
         .execute()
     )
@@ -262,7 +262,7 @@ def batch_sync_animations(
     current_user: dict = Depends(get_current_user),
 ):
     """Bulk upsert — used to push all local items to cloud on first login."""
-    supabase = get_supabase()
+    supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
     synced = failed = 0
 
@@ -277,7 +277,7 @@ def batch_sync_animations(
                 supabase.table("contents")
                 .select("id")
                 .eq("user_id", user_id)
-                .eq("body->>anim_id", anim_id)
+                .contains("body", {"anim_id": anim_id})
                 .maybe_single()
                 .execute()
             )
@@ -315,7 +315,7 @@ def get_animations(current_user: dict = Depends(get_current_user)):
     user_id comes from the JWT — only this user's rows are returned.
     Each item includes `filename` for the library card UI.
     """
-    supabase = get_supabase()
+    supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
 
     res = (
@@ -357,14 +357,14 @@ def delete_animation(
     current_user: dict = Depends(get_current_user),
 ):
     """Delete one saved item. Only the owner can delete their rows."""
-    supabase = get_supabase()
+    supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
 
     existing = (
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .eq("body->>anim_id", anim_id)
+        .contains("body", {"anim_id": anim_id})
         .maybe_single()
         .execute()
     )
@@ -420,7 +420,7 @@ def save_courses(
     The structure is stored as JSONB in `body.courses` inside a single
     `contents` row keyed by anim_id = "__eng_courses__".
     """
-    supabase = get_supabase()
+    supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
 
     row = {
@@ -440,7 +440,7 @@ def save_courses(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .eq("body->>anim_id", _ENG_COURSES_SENTINEL)
+        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
         .maybe_single()
         .execute()
     )
@@ -465,14 +465,14 @@ def get_courses(current_user: dict = Depends(get_current_user)):
     Return the stored engineeringCourses array for this user.
     Returns { courses: [...] } or { courses: null } if none saved yet.
     """
-    supabase = get_supabase()
+    supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
 
     res = (
         supabase.table("contents")
         .select("body")
         .eq("user_id", user_id)
-        .eq("body->>anim_id", _ENG_COURSES_SENTINEL)
+        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
         .maybe_single()
         .execute()
     )
