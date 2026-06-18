@@ -1,494 +1,378 @@
-# sync_routes.py  —  GenZet / Animind  v5.2
-# ============================================
-#
-# Changes in v5.2
-# ---------------
-# Feature 2 — Save HTML output to Supabase library
-#   * AnimationPayload gains a `filename` field (the name the user typed
-#     in the "Save in Library" modal).  When present it overrides `title`.
-#   * GET /sync/animations response now includes `filename` so the library
-#     UI can display it as the card heading.
-#   * The `animation_code` field in body JSONB already holds the full HTML;
-#     no schema change needed — it was always there.
-#   * Added POST /sync/animations/save-html  — dedicated "Save HTML" endpoint
-#     that the frontend calls directly from the dashboard Save button.
-#     It accepts { filename, html, prompt?, explanation?, playlist? }.
-#
-# Feature 1 — user_id persistence
-#   * No changes here.  user_id comes from get_current_user() (JWT) on
-#     every route — it is auth.users.id, stable and cross-device by design.
-#
-# Unchanged
-# ---------
-#   * POST /sync/animations        (single upsert, now with filename)
-#   * POST /sync/animations/batch  (bulk upsert)
-#   * GET  /sync/animations        (fetch all, now returns filename)
-#   * DELETE /sync/animations/{id} (unchanged)
-# ============================================
+// ═══════════════════════════════════════════════════════════════════════
+// AUTH + CLOUD SYNC MANAGER — GenZet v4.1 (FIXED)
+// OLD AUTH GATE REMOVED — Uses landing page dark modal ONLY
+// ═══════════════════════════════════════════════════════════════════════
 
-from typing import List, Optional
-from datetime import datetime, timezone
+const BACKEND_URL = 'https://animind-backend-production.up.railway.app';
+const SUPABASE_URL      = 'https://fkincmzpteuibbegghti.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZraW5jbXpwdGV1aWJiZWdnaHRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMzAwNDYsImV4cCI6MjA5NTkwNjA0Nn0.MBQNWBhIht5MLBIadivdw8GXjO9hYj6RK-AfFCI-RT4';
+const sb = { auth: { signOut: () => Promise.resolve() } };
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+const TOKEN_KEY = 'genzet_jwt';
+const USER_KEY  = 'genzet_user';
 
-from auth_utils import get_current_user, get_supabase
+window.authUser  = null;
+window.authToken = null;
 
-router = APIRouter(prefix="/sync", tags=["Cloud Sync"])
+// ══════════════════════════════════════════════════════════════════════
+// INIT — checks JWT, either enters dashboard or shows landing + modal
+// ══════════════════════════════════════════════════════════════════════
+async function authInit() {
+  // ── FIX: Legacy bridge (old sessions that set genzet_authenticated but no JWT) ──
+  const landingAuth = localStorage.getItem('genzet_authenticated');
+  const landingUser = (() => {
+    try { return JSON.parse(localStorage.getItem('genzet_user') || 'null'); } catch { return null; }
+  })();
+  const hasJwt = !!localStorage.getItem(TOKEN_KEY);
 
+  if (landingAuth === 'true' && landingUser && !hasJwt) {
+    // Very old sessions — show landing with modal so user logs in properly
+    localStorage.removeItem('genzet_authenticated');
+    authShowLanding();
+    return;
+  }
+  if (landingAuth === 'true' && hasJwt) {
+    localStorage.removeItem('genzet_authenticated');
+  }
 
-# ══════════════════════════════════════════════════════════════════════
-# SCHEMAS
-# ══════════════════════════════════════════════════════════════════════
+  const storedToken = localStorage.getItem(TOKEN_KEY);
+  if (!storedToken) {
+    // No token — show landing page with auth modal
+    authShowLanding();
+    return;
+  }
 
-class AnimationPayload(BaseModel):
-    """
-    Shape sent by the frontend when saving a generated animation.
+  // Verify token with backend
+  authSetSyncStatus('Verifying session…');
+  try {
+    const res = await fetch(`${BACKEND_URL}/auth/verify`, {
+      headers: { 'Authorization': `Bearer ${storedToken}` }
+    });
 
-    `id`       — client-generated timestamp ID (Date.now().toString())
-    `filename` — name the user typed in the "Save in Library" modal.
-                 Stored in body.filename and also used as the row title.
-    """
-    id:             str   = Field(..., description="Client-side animation ID")
-    # filename is the user-facing name ("My Photosynthesis Lesson").
-    # title is a fallback if filename is not provided.
-    filename:       Optional[str] = None
-    title:          str   = Field(default="Untitled", max_length=500)
-    prompt:         Optional[str] = ""
-    explanation:    Optional[str] = ""
-    animation_code: Optional[str] = ""   # full HTML string
-    playlist:       Optional[str] = "General"
-    created_at:     Optional[str] = None
+    if (res.ok) {
+      const profile = await res.json();
+      window.authToken = storedToken;
+      window.authUser  = { user_id: profile.user_id, email: profile.email, name: profile.name };
+      localStorage.setItem(USER_KEY, JSON.stringify(window.authUser));
 
+      // Valid token → go straight to dashboard
+      authEnterDashboard();
+      authSetSyncStatus('Syncing library…');
+      await syncPullFromCloud();
+      authSetSyncStatus('');
 
-class SaveHtmlRequest(BaseModel):
-    """
-    Dedicated payload for the dashboard "Save in Library" button.
-
-    The frontend sends this after the user types a filename and clicks Save.
-    `html` is the complete generated HTML output string.
-    """
-    filename:    str   = Field(..., min_length=1, max_length=200,
-                               description="Name the user typed in the Save modal")
-    html:        str   = Field(..., min_length=1,
-                               description="Complete HTML string to save")
-    prompt:      Optional[str] = ""
-    explanation: Optional[str] = ""
-    playlist:    Optional[str] = "General"
-    # client_id lets the frontend do optimistic UI — pass Date.now().toString()
-    client_id:   Optional[str] = None
-
-
-class SyncResponse(BaseModel):
-    success: bool
-    anim_id: str
-    message: str
-
-
-class SaveHtmlResponse(BaseModel):
-    success:  bool
-    anim_id:  str   # the ID you can use to delete / update later
-    filename: str
-    message:  str
-
-
-class BatchSyncRequest(BaseModel):
-    animations: List[AnimationPayload]
-
-
-class BatchSyncResponse(BaseModel):
-    success: bool
-    synced:  int
-    failed:  int
-    message: str
-
-
-# ══════════════════════════════════════════════════════════════════════
-# HELPERS
-# ══════════════════════════════════════════════════════════════════════
-
-def _parse_iso(s: Optional[str]) -> str:
-    """Return a UTC ISO string, defaulting to now()."""
-    if s:
-        try:
-            return datetime.fromisoformat(s.replace("Z", "+00:00")).isoformat()
-        except (ValueError, AttributeError):
-            pass
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _resolve_title(payload: AnimationPayload) -> str:
-    """filename wins over title; fall back to 'Untitled'."""
-    return (payload.filename or payload.title or "Untitled").strip()
-
-
-def _payload_to_row(payload: AnimationPayload, user_id: str) -> dict:
-    """
-    Convert AnimationPayload → Supabase contents row.
-    user_id always comes from the verified JWT — never from the client body.
-    """
-    resolved_title = _resolve_title(payload)
-    return {
-        "user_id":  user_id,
-        "title":    resolved_title,
-        "prompt":   payload.prompt or "",
-        "playlist": payload.playlist or "General",
-        "body": {
-            "anim_id":        payload.id,
-            "filename":       payload.filename or resolved_title,
-            "explanation":    payload.explanation or "",
-            "animation_code": payload.animation_code or "",
-        },
-        "created_at": _parse_iso(payload.created_at),
+    } else {
+      // Expired / invalid token
+      authClearSession();
+      authShowLanding();
     }
-
-
-# ══════════════════════════════════════════════════════════════════════
-# POST /sync/animations/save-html   ← NEW (Feature 2)
-# ══════════════════════════════════════════════════════════════════════
-
-@router.post(
-    "/animations/save-html",
-    response_model=SaveHtmlResponse,
-    status_code=200,
-    summary="Save generated HTML output to the user's library",
-)
-def save_html(
-    body:         SaveHtmlRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Called by the dashboard "Save in Library" button.
-
-    The user types a filename in the modal, clicks Save, and the frontend
-    sends this request.  The HTML is stored in body.animation_code (JSONB).
-
-    Upsert semantics: if the same filename already exists for this user,
-    the HTML is replaced (idempotent, safe to retry).
-
-    Returns anim_id which the frontend uses for subsequent deletes.
-    """
-    supabase = get_supabase(current_user.get("token"))
-    user_id  = current_user["id"]
-    filename = body.filename.strip()
-    anim_id  = body.client_id or f"html_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
-
-    row = {
-        "user_id":  user_id,
-        "title":    filename,
-        "prompt":   body.prompt or "",
-        "playlist": body.playlist or "General",
-        "body": {
-            "anim_id":        anim_id,
-            "filename":       filename,
-            "explanation":    body.explanation or "",
-            "animation_code": body.html,
-        },
-        "created_at": datetime.now(timezone.utc).isoformat(),
+  } catch (err) {
+    console.warn('[AUTH] Cannot reach backend:', err.message);
+    const storedUser = (() => {
+      try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch { return null; }
+    })();
+    if (storedUser) {
+      // Offline mode — use cached data
+      window.authToken = storedToken;
+      window.authUser  = storedUser;
+      authEnterDashboard();
+      authUpdateStatusBar();
+      authSetSyncStatus('Offline mode');
+    } else {
+      authShowLanding();
     }
+  }
+}
 
-    # Check if a row with the same anim_id already exists for this user
-    existing = (
-        supabase.table("contents")
-        .select("id")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": anim_id})
-        .maybe_single()
-        .execute()
-    )
+// ══════════════════════════════════════════════════════════════════════
+// ROUTING HELPERS
+// ══════════════════════════════════════════════════════════════════════
 
-    if existing.data:
-        row_without_created = {k: v for k, v in row.items() if k != "created_at"}
-        supabase.table("contents").update(row_without_created).eq("id", existing.data["id"]).execute()
-        print(f"[SYNC] ↑ HTML updated: filename={filename!r} user={current_user['email']!r}")
-    else:
-        supabase.table("contents").insert(row).execute()
-        print(f"[SYNC] ✅ HTML saved:  filename={filename!r} user={current_user['email']!r}")
+/** Show the landing page (and open the dark modal after a short delay) */
+function authShowLanding() {
+  // Hide dashboard completely
+  const dash = document.getElementById('gz-dashboard');
+  if (dash) { dash.style.display = 'none'; dash.style.opacity = '0'; dash.classList.remove('active'); }
 
-    return SaveHtmlResponse(
-        success=True,
-        anim_id=anim_id,
-        filename=filename,
-        message=f'"{filename}" saved to your library.',
-    )
+  // Show landing page
+  const landing = document.getElementById('gz-landing');
+  if (landing) { landing.style.display = 'block'; landing.style.opacity = '1'; }
 
+  // After landing renders, open the dark auth modal automatically
+  setTimeout(() => {
+    if (typeof openAuthModal === 'function') openAuthModal();
+  }, 300);
+}
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /sync/animations   (single upsert — existing endpoint, extended)
-# ══════════════════════════════════════════════════════════════════════
+/** Hide landing, show dashboard, update status bar */
+function authEnterDashboard() {
+  // The showDashboard() function on the landing page handles the transition
+  if (typeof showDashboard === 'function') {
+    showDashboard();
+  } else {
+    // Fallback: manual transition
+    const landing = document.getElementById('gz-landing');
+    if (landing) { landing.style.opacity = '0'; setTimeout(() => { landing.style.display = 'none'; }, 420); }
+    const dash = document.getElementById('gz-dashboard');
+    if (dash) { dash.style.display = 'block'; setTimeout(() => { dash.style.opacity = '1'; dash.classList.add('active'); }, 30); }
+  }
+  authUpdateStatusBar();
+}
 
-@router.post("/animations", response_model=SyncResponse, status_code=200)
-def sync_animation(
-    payload:      AnimationPayload,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Upsert one animation for the authenticated user.
-    Now also accepts `filename` — when provided it becomes the library card title.
-    """
-    supabase = get_supabase(current_user.get("token"))
-    user_id  = current_user["id"]
-    anim_id  = payload.id.strip()
+// Keep authShowGate as alias for backward compatibility
+// but redirect to landing instead of old auth gate
+function authShowGate() { authShowLanding(); }
+function authHideGate() { authEnterDashboard(); }
 
-    existing = (
-        supabase.table("contents")
-        .select("id")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": anim_id})
-        .maybe_single()
-        .execute()
-    )
+// ── These functions are REMOVED (old auth gate form IDs no longer exist) ──
+// authDoLogin, authDoRegister, authSwitchTab, agTogglePw, authShowMsg,
+// authClearMsg, authSetBtnLoading — all handled by the landing modal now.
 
-    row = _payload_to_row(payload, user_id)
+// ══════════════════════════════════════════════════════════════════════
+// LOGOUT
+// ══════════════════════════════════════════════════════════════════════
+function authLogout() {
+  if (!confirm('Sign out of GenZet? Your library is safely synced to the cloud.')) return;
+  authClearSession();
+  sb.auth.signOut().catch(e => console.warn('[AUTH] Supabase signOut error:', e.message));
+  // Reset in-memory state — cloud data is already persisted in Supabase
+  if (typeof animindLibrary !== 'undefined') animindLibrary = [];
+  if (typeof engineeringCourses !== 'undefined') engineeringCourses = [];
+  if (typeof showFolders === 'function') showFolders();
+  if (typeof renderSubjectsGrid === 'function') renderSubjectsGrid();
+  // Route back to landing page with modal
+  authShowLanding();
+}
 
-    if existing.data:
-        row.pop("created_at", None)
-        supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
-        print(f"[SYNC] ↑ Updated anim_id={anim_id!r} user={current_user['email']!r}")
-        return SyncResponse(success=True, anim_id=anim_id, message="Animation updated.")
-    else:
-        supabase.table("contents").insert(row).execute()
-        print(f"[SYNC] ✅ Saved anim_id={anim_id!r} user={current_user['email']!r}")
-        return SyncResponse(success=True, anim_id=anim_id, message="Animation saved to library.")
+// ══════════════════════════════════════════════════════════════════════
+// SESSION PERSISTENCE
+// ══════════════════════════════════════════════════════════════════════
+function authStoreSession(data) {
+  window.authToken = data.token;
+  window.authUser  = { user_id: data.user_id, email: data.email, name: data.name };
+  localStorage.setItem(TOKEN_KEY, window.authToken);
+  localStorage.setItem(USER_KEY, JSON.stringify(window.authUser));
+}
 
+function authClearSession() {
+  window.authToken = null;
+  window.authUser  = null;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+  localStorage.removeItem('genzet_authenticated');
+}
 
-# ══════════════════════════════════════════════════════════════════════
-# POST /sync/animations/batch   (bulk upsert — unchanged logic)
-# ══════════════════════════════════════════════════════════════════════
+function authUpdateStatusBar() {
+  if (!window.authUser) return;
+  const nameEl = document.getElementById('authUserName');
+  if (nameEl) nameEl.textContent = window.authUser.name;
 
-@router.post("/animations/batch", response_model=BatchSyncResponse)
-def batch_sync_animations(
-    body:         BatchSyncRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    """Bulk upsert — used to push all local items to cloud on first login."""
-    supabase = get_supabase(current_user.get("token"))
-    user_id  = current_user["id"]
-    synced = failed = 0
+  const bar = document.getElementById('authStatusBar');
+  if (bar) bar.style.display = 'flex';
 
-    for payload in body.animations:
-        try:
-            anim_id = (payload.id or "").strip()
-            if not anim_id:
-                failed += 1
-                continue
-
-            existing = (
-                supabase.table("contents")
-                .select("id")
-                .eq("user_id", user_id)
-                .contains("body", {"anim_id": anim_id})
-                .maybe_single()
-                .execute()
-            )
-
-            row = _payload_to_row(payload, user_id)
-
-            if existing.data:
-                row.pop("created_at", None)
-                supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
-            else:
-                supabase.table("contents").insert(row).execute()
-
-            synced += 1
-        except Exception as e:
-            failed += 1
-            print(f"[SYNC] ⚠ Batch item failed: {e}")
-
-    print(f"[SYNC] Batch done — {synced} ok, {failed} failed — user={current_user['email']!r}")
-    return BatchSyncResponse(
-        success=failed == 0,
-        synced=synced,
-        failed=failed,
-        message=f"Synced {synced}. {failed} failed.",
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════
-# GET /sync/animations   (fetch all — now returns filename)
-# ══════════════════════════════════════════════════════════════════════
-
-@router.get("/animations")
-def get_animations(current_user: dict = Depends(get_current_user)):
-    """
-    Return all saved animations/HTML files for the authenticated user.
-    user_id comes from the JWT — only this user's rows are returned.
-    Each item includes `filename` for the library card UI.
-    """
-    supabase = get_supabase(current_user.get("token"))
-    user_id  = current_user["id"]
-
-    res = (
-        supabase.table("contents")
-        .select("*")
-        .eq("user_id", user_id)          # ← scoped to this user only
-        .order("created_at", desc=True)
-        .execute()
-    )
-
-    rows = res.data or []
-    animations = [
-        {
-            # `id` is the client-side anim_id (used for deletes)
-            "id":             r["body"].get("anim_id", r["id"]),
-            # `filename` is the name the user gave it in the Save modal
-            "filename":       r["body"].get("filename") or r["title"],
-            "title":          r["title"],
-            "prompt":         r["prompt"],
-            "explanation":    r["body"].get("explanation", ""),
-            "animation_code": r["body"].get("animation_code", ""),
-            "playlist":       r["playlist"],
-            "created_at":     r["created_at"],
-        }
-        for r in rows
-    ]
-
-    print(f"[SYNC] ↓ Fetched {len(animations)} items for user={current_user['email']!r}")
-    return {"user_id": user_id, "count": len(animations), "animations": animations}
-
-
-# ══════════════════════════════════════════════════════════════════════
-# DELETE /sync/animations/{anim_id}
-# ══════════════════════════════════════════════════════════════════════
-
-@router.delete("/animations/{anim_id}", response_model=SyncResponse)
-def delete_animation(
-    anim_id:      str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Delete one saved item. Only the owner can delete their rows."""
-    supabase = get_supabase(current_user.get("token"))
-    user_id  = current_user["id"]
-
-    existing = (
-        supabase.table("contents")
-        .select("id")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": anim_id})
-        .maybe_single()
-        .execute()
-    )
-
-    if not existing.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Item '{anim_id}' not found in your library.",
-        )
-
-    supabase.table("contents").delete().eq("id", existing.data["id"]).execute()
-    print(f"[SYNC] 🗑 Deleted anim_id={anim_id!r} user={current_user['email']!r}")
-    return SyncResponse(success=True, anim_id=anim_id, message="Item deleted from library.")
-
-
-# ══════════════════════════════════════════════════════════════════════
-# PUT /sync/courses   — save the full engineeringCourses structure
-# ══════════════════════════════════════════════════════════════════════
-# The frontend's File mode stores subjects → COs → topics in a local
-# array called `engineeringCourses`.  This endpoint persists the entire
-# structure as a single JSONB document in the `contents` table, using
-# a sentinel anim_id of "__eng_courses__" to distinguish it from
-# individual animation rows.
-#
-# Upsert semantics: if a row with __eng_courses__ already exists for
-# this user, it is replaced; otherwise a new row is inserted.
-
-_ENG_COURSES_SENTINEL = "__eng_courses__"
-
-
-class CoursesPayload(BaseModel):
-    """The full engineeringCourses array sent by the frontend."""
-    courses: list  # Array of subject objects — stored as-is in JSONB
-
-
-class CoursesResponse(BaseModel):
-    success: bool
-    message: str
-
-
-@router.put(
-    "/courses",
-    response_model=CoursesResponse,
-    summary="Save the full engineering-courses structure to cloud",
-)
-def save_courses(
-    body:         CoursesPayload,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Upsert the entire engineeringCourses tree for this user.
-
-    The structure is stored as JSONB in `body.courses` inside a single
-    `contents` row keyed by anim_id = "__eng_courses__".
-    """
-    supabase = get_supabase(current_user.get("token"))
-    user_id  = current_user["id"]
-
-    row = {
-        "user_id":  user_id,
-        "title":    "__Engineering Courses__",
-        "prompt":   "",
-        "playlist": "__system__",
-        "body": {
-            "anim_id": _ENG_COURSES_SENTINEL,
-            "courses": body.courses,
-        },
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+  const chipEl = document.getElementById('authUserIdChip');
+  if (chipEl) {
+    const uid = window.authUser.user_id;
+    if (uid) {
+      chipEl.textContent = 'ID: ' + uid.slice(0, 8) + '…';
+      chipEl.style.display = 'inline-block';
+      chipEl.title = 'Your User ID: ' + uid + ' — click to copy';
+    } else {
+      chipEl.style.display = 'none';
     }
+  }
+}
 
-    existing = (
-        supabase.table("contents")
-        .select("id")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
-        .maybe_single()
-        .execute()
-    )
+function authSetSyncStatus(msg) {
+  const el = document.getElementById('authSyncStatus');
+  if (el) el.textContent = msg;
+}
 
-    if existing.data:
-        row.pop("created_at", None)
-        supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
-        print(f"[SYNC] ↑ Courses updated for user={current_user['email']!r}")
-    else:
-        supabase.table("contents").insert(row).execute()
-        print(f"[SYNC] ✅ Courses saved for user={current_user['email']!r}")
+// ══════════════════════════════════════════════════════════════════════
+// CLOUD SYNC — PULL
+// ══════════════════════════════════════════════════════════════════════
+async function syncPullFromCloud() {
+  const authToken = window.authToken;
+  if (!authToken) return;
+  try {
+    const res = await fetch(`${BACKEND_URL}/sync/animations`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+    if (!res.ok) { console.warn('[SYNC] Pull failed:', res.status); return; }
+    const data = await res.json();
+    const cloudAnims = data.animations || [];
+    if (cloudAnims.length === 0) { console.log('[SYNC] Cloud library empty.'); return; }
 
-    return CoursesResponse(success=True, message="Engineering courses saved to cloud.")
+    const localAnims = typeof animindLibrary !== 'undefined' ? [...animindLibrary] : [];
+    const localById  = Object.fromEntries(localAnims.map(a => [a.id, a]));
+    for (const ca of cloudAnims) localById[ca.id] = ca;
+    const merged = Object.values(localById).sort((a, b) =>
+      new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    );
+    // Update global in-memory state (Supabase is the persistent store)
+    if (typeof animindLibrary !== 'undefined') animindLibrary = merged;
+    if (typeof syncLibraryToFolders === 'function') syncLibraryToFolders();
+    if (typeof showFolders === 'function') showFolders();
+    if (typeof updateActiveCount === 'function') updateActiveCount();
+    console.log(`[SYNC] ✅ Pulled ${cloudAnims.length} animations.`);
+    if (typeof notify === 'function') notify(`✅ ${cloudAnims.length} animations restored from cloud.`);
+  } catch (err) {
+    console.warn('[SYNC] Pull error:', err.message);
+  }
+  await syncPullCoursesFromCloud();
+}
 
+// ══════════════════════════════════════════════════════════════════════
+// CLOUD SYNC — PUSH ONE
+// ══════════════════════════════════════════════════════════════════════
+async function syncPushToCloud(animation) {
+  const authToken = window.authToken;
+  if (!authToken || !animation) return;
+  if (!window.authUser || !window.authUser.user_id) return;
+  authSetSyncStatus('Syncing…');
+  try {
+    const res = await fetch(`${BACKEND_URL}/sync/animations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({
+        id: animation.id,
+        title: animation.title || 'Untitled',
+        prompt: animation.prompt || '',
+        explanation: animation.explanation || '',
+        animation_code: animation.animation_code || '',
+        playlist: animation.playlist || 'General',
+        created_at: animation.created_at || new Date().toISOString(),
+      }),
+    });
+    if (res.ok) {
+      authSetSyncStatus('☁ Synced');
+      setTimeout(() => authSetSyncStatus(''), 3000);
+    } else {
+      authSetSyncStatus('⚠ Sync failed');
+      setTimeout(() => authSetSyncStatus(''), 5000);
+    }
+  } catch (err) {
+    console.warn('[SYNC] Push error:', err.message);
+    authSetSyncStatus('⚠ Offline');
+    setTimeout(() => authSetSyncStatus(''), 5000);
+  }
+}
 
-@router.get(
-    "/courses",
-    summary="Retrieve the engineering-courses structure from cloud",
-)
-def get_courses(current_user: dict = Depends(get_current_user)):
-    """
-    Return the stored engineeringCourses array for this user.
-    Returns { courses: [...] } or { courses: null } if none saved yet.
-    """
-    supabase = get_supabase(current_user.get("token"))
-    user_id  = current_user["id"]
+// ══════════════════════════════════════════════════════════════════════
+// CLOUD SYNC — PUSH ALL
+// ══════════════════════════════════════════════════════════════════════
+async function syncPushAllToCloud() {
+  const authToken = window.authToken;
+  if (!authToken) return;
+  const anims = typeof animindLibrary !== 'undefined' ? animindLibrary : [];
+  if (anims.length === 0) return;
+  authSetSyncStatus(`Uploading ${anims.length} animations…`);
+  try {
+    const res = await fetch(`${BACKEND_URL}/sync/animations/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ animations: anims }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      authSetSyncStatus(`☁ ${d.synced} backed up`);
+      setTimeout(() => authSetSyncStatus(''), 4000);
+    } else {
+      authSetSyncStatus('⚠ Batch sync failed');
+      setTimeout(() => authSetSyncStatus(''), 5000);
+    }
+  } catch (err) {
+    authSetSyncStatus('⚠ Offline');
+    setTimeout(() => authSetSyncStatus(''), 5000);
+  }
+}
 
-    res = (
-        supabase.table("contents")
-        .select("body")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
-        .maybe_single()
-        .execute()
-    )
+// ══════════════════════════════════════════════════════════════════════
+// CLOUD SYNC — DELETE
+// ══════════════════════════════════════════════════════════════════════
+async function syncDeleteFromCloud(animId) {
+  const authToken = window.authToken;
+  if (!authToken || !animId) return;
+  try {
+    await fetch(`${BACKEND_URL}/sync/animations/${encodeURIComponent(animId)}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authToken}` },
+    });
+  } catch (err) { console.warn('[SYNC] Delete error:', err.message); }
+}
 
-    if res.data and res.data.get("body"):
-        courses = res.data["body"].get("courses") or []
+// ══════════════════════════════════════════════════════════════════════
+// COURSES SYNC
+// ══════════════════════════════════════════════════════════════════════
+let _coursesSyncTimer = null;
+async function syncCoursesToCloud() {
+  const authToken = window.authToken;
+  if (!authToken || !window.authUser?.user_id) return;
+  if (_coursesSyncTimer) clearTimeout(_coursesSyncTimer);
+  return new Promise(resolve => {
+    _coursesSyncTimer = setTimeout(async () => {
+      try {
+        const courses = (typeof engineeringCourses !== 'undefined' ? engineeringCourses : [])
+          .map(s => ({ ...s, cos: s.cos.map(co => ({ ...co, topics: co.topics.map(t => ({ ...t })) })), syllabus: s.syllabus ? { ...s.syllabus, raw: '' } : null }));
+        const res = await fetch(`${BACKEND_URL}/sync/courses`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+          body: JSON.stringify({ courses }),
+        });
+        if (res.ok) console.log('[SYNC] ✅ Courses synced.');
+      } catch (err) { console.warn('[SYNC] Courses push error:', err.message); }
+      resolve();
+    }, 1500);
+  });
+}
 
-        # Strip legacy pre-seeded course IDs that were auto-pushed before users
-        # created their own subjects. Filtering here ensures no client ever
-        # sees Engineering Physics / Chemistry / Mathematics / etc. again,
-        # regardless of what's stored in Supabase from old sessions.
-        LEGACY_DEFAULT_IDS = {"ep", "ec", "em", "ht", "mc"}
-        courses = [c for c in courses if c.get("id") not in LEGACY_DEFAULT_IDS]
+async function syncPullCoursesFromCloud() {
+  const authToken = window.authToken;
+  if (!authToken) return;
+  try {
+    const res = await fetch(`${BACKEND_URL}/sync/courses`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const cloudCourses = data.courses;
+    if (!cloudCourses || !Array.isArray(cloudCourses) || cloudCourses.length === 0) return;
 
-        print(f"[SYNC] ↓ Courses fetched for user={current_user['email']!r} ({len(courses)} subjects)")
-        return {"courses": courses if courses else None}
+    // Strip the old pre-seeded default course IDs that were auto-pushed
+    // before users created their own subjects. These are now permanently removed.
+    const LEGACY_DEFAULT_IDS = new Set(['ep', 'ec', 'em', 'ht', 'mc']);
+    const filteredCloud = cloudCourses.filter(s => !LEGACY_DEFAULT_IDS.has(s.id));
+    if (filteredCloud.length === 0) return;
 
-    print(f"[SYNC] ↓ No courses found for user={current_user['email']!r}")
-    return {"courses": None}
+    const localById = Object.fromEntries(
+      (typeof engineeringCourses !== 'undefined' ? engineeringCourses : [])
+        .filter(s => !LEGACY_DEFAULT_IDS.has(s.id))
+        .map(s => [s.id, s])
+    );
+    for (const s of filteredCloud) localById[s.id] = s;
+    // Update global in-memory state (Supabase is the persistent store)
+    if (typeof engineeringCourses !== 'undefined') engineeringCourses = Object.values(localById);
+    if (typeof renderSubjectsGrid === 'function') renderSubjectsGrid();
+    if (typeof syncLibraryToFolders === 'function') syncLibraryToFolders();
+    if (typeof showFolders === 'function') showFolders();
+    if (typeof updateActiveCount === 'function') updateActiveCount();
+  } catch (err) { console.warn('[SYNC] Courses pull error:', err.message); }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// EXPOSE ON WINDOW
+// ══════════════════════════════════════════════════════════════════════
+window.syncPushToCloud          = syncPushToCloud;
+window.syncPushAllToCloud       = syncPushAllToCloud;
+window.syncPullFromCloud        = syncPullFromCloud;
+window.syncDeleteFromCloud      = syncDeleteFromCloud;
+window.syncCoursesToCloud       = syncCoursesToCloud;
+window.syncPullCoursesFromCloud = syncPullCoursesFromCloud;
+
+// ══════════════════════════════════════════════════════════════════════
+// BOOTSTRAP
+// ══════════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  // Run after existing DOMContentLoaded handlers (IDB init, etc.)
+  setTimeout(authInit, 80);
+});
