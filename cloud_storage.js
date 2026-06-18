@@ -29,7 +29,7 @@
  * They silently handle network errors and set window._cloudOffline = true.
  */
 
-const BACKEND_URL = 'https://animind-backend-2.onrender.com';
+const BACKEND_URL = 'https://animind-backend-production.up.railway.app';
 
 // ── Tiny request helper ────────────────────────────────────────────────────
 async function _cloudRequest(method, path, body = null) {
