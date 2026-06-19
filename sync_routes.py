@@ -492,3 +492,106 @@ def get_courses(current_user: dict = Depends(get_current_user)):
 
     print(f"[SYNC] ↓ No courses found for user={current_user['email']!r}")
     return {"courses": None}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# VIDEO VAULT — PUT /sync/vault  |  GET /sync/vault  |  DELETE /sync/vault/{id}
+# ══════════════════════════════════════════════════════════════════════
+# The Video Vault stores lightweight metadata entries (no raw binary).
+# Each entry: { id, name, fileName, size, created_at }
+# All entries are packed into a single JSONB row keyed by __vault__.
+
+_VAULT_SENTINEL = "__vault__"
+
+
+class VaultPayload(BaseModel):
+    """Full list of vault entries (replaces the stored list on every PUT)."""
+    entries: list   # Array of { id, name, fileName, size, created_at }
+
+
+class VaultEntryPayload(BaseModel):
+    """A single new vault entry to upsert."""
+    id:         str
+    name:       str
+    fileName:   str
+    size:       int
+    created_at: Optional[str] = None
+
+
+class VaultResponse(BaseModel):
+    success: bool
+    message: str
+
+
+# ── PUT /sync/vault  — save full vault list ───────────────────────────
+@router.put(
+    "/vault",
+    response_model=VaultResponse,
+    summary="Save the full Video Vault entry list to cloud",
+)
+def save_vault(
+    body:         VaultPayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """Upsert the entire vault entries list for this user."""
+    supabase = get_supabase(current_user.get("token"))
+    user_id  = current_user["id"]
+
+    row = {
+        "user_id":  user_id,
+        "title":    "__Video Vault__",
+        "prompt":   "",
+        "playlist": "__system__",
+        "body": {
+            "anim_id": _VAULT_SENTINEL,
+            "entries": body.entries,
+        },
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    existing = (
+        supabase.table("contents")
+        .select("id")
+        .eq("user_id", user_id)
+        .contains("body", {"anim_id": _VAULT_SENTINEL})
+        .maybe_single()
+        .execute()
+    )
+
+    if existing.data:
+        supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
+        print(f"[SYNC] ↑ Vault updated for user={current_user['email']!r} ({len(body.entries)} entries)")
+    else:
+        row["created_at"] = datetime.now(timezone.utc).isoformat()
+        supabase.table("contents").insert(row).execute()
+        print(f"[SYNC] ✅ Vault saved for user={current_user['email']!r} ({len(body.entries)} entries)")
+
+    return VaultResponse(success=True, message="Video vault saved to cloud.")
+
+
+# ── GET /sync/vault  — retrieve vault list ────────────────────────────
+@router.get(
+    "/vault",
+    summary="Retrieve the Video Vault entry list from cloud",
+)
+def get_vault(current_user: dict = Depends(get_current_user)):
+    """Return stored vault entries for this user, or empty list if none."""
+    supabase = get_supabase(current_user.get("token"))
+    user_id  = current_user["id"]
+
+    res = (
+        supabase.table("contents")
+        .select("body")
+        .eq("user_id", user_id)
+        .contains("body", {"anim_id": _VAULT_SENTINEL})
+        .maybe_single()
+        .execute()
+    )
+
+    if res.data and res.data.get("body"):
+        entries = res.data["body"].get("entries") or []
+        print(f"[SYNC] ↓ Vault fetched for user={current_user['email']!r} ({len(entries)} entries)")
+        return {"entries": entries}
+
+    print(f"[SYNC] ↓ No vault found for user={current_user['email']!r}")
+    return {"entries": []}
