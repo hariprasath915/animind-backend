@@ -365,17 +365,17 @@ def delete_animation(
         .select("id")
         .eq("user_id", user_id)
         .contains("body", {"anim_id": anim_id})
-        .maybe_single()
+        .limit(1)
         .execute()
     )
 
-    if not existing.data:
+    if not existing.data or len(existing.data) == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Item '{anim_id}' not found in your library.",
         )
 
-    supabase.table("contents").delete().eq("id", existing.data["id"]).execute()
+    supabase.table("contents").delete().eq("id", existing.data[0]["id"]).execute()
     print(f"[SYNC] 🗑 Deleted anim_id={anim_id!r} user={current_user['email']!r}")
     return SyncResponse(success=True, anim_id=anim_id, message="Item deleted from library.")
 
@@ -441,13 +441,13 @@ def save_courses(
         .select("id")
         .eq("user_id", user_id)
         .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
-        .maybe_single()
+        .limit(1)
         .execute()
     )
 
-    if existing.data:
+    if existing.data and len(existing.data) > 0:
         row.pop("created_at", None)
-        supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
+        supabase.table("contents").update(row).eq("id", existing.data[0]["id"]).execute()
         print(f"[SYNC] ↑ Courses updated for user={current_user['email']!r}")
     else:
         supabase.table("contents").insert(row).execute()
@@ -473,12 +473,12 @@ def get_courses(current_user: dict = Depends(get_current_user)):
         .select("body")
         .eq("user_id", user_id)
         .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
-        .maybe_single()
+        .limit(1)
         .execute()
     )
 
-    if res.data and res.data.get("body"):
-        courses = res.data["body"].get("courses") or []
+    if res.data and len(res.data) > 0 and res.data[0].get("body"):
+        courses = res.data[0]["body"].get("courses") or []
 
         print(f"[SYNC] ↓ Courses fetched for user={current_user['email']!r} ({len(courses)} subjects)")
         return {"courses": courses if courses else None}
@@ -547,12 +547,12 @@ def save_vault(
         .select("id")
         .eq("user_id", user_id)
         .contains("body", {"anim_id": _VAULT_SENTINEL})
-        .maybe_single()
+        .limit(1)
         .execute()
     )
 
-    if existing.data:
-        supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
+    if existing.data and len(existing.data) > 0:
+        supabase.table("contents").update(row).eq("id", existing.data[0]["id"]).execute()
         print(f"[SYNC] ↑ Vault updated for user={current_user['email']!r} ({len(body.entries)} entries)")
     else:
         row["created_at"] = datetime.now(timezone.utc).isoformat()
@@ -577,12 +577,12 @@ def get_vault(current_user: dict = Depends(get_current_user)):
         .select("body")
         .eq("user_id", user_id)
         .contains("body", {"anim_id": _VAULT_SENTINEL})
-        .maybe_single()
+        .limit(1)
         .execute()
     )
 
-    if res.data and res.data.get("body"):
-        entries = res.data["body"].get("entries") or []
+    if res.data and len(res.data) > 0 and res.data[0].get("body"):
+        entries = res.data[0]["body"].get("entries") or []
         print(f"[SYNC] ↓ Vault fetched for user={current_user['email']!r} ({len(entries)} entries)")
         return {"entries": entries}
 
