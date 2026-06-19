@@ -32,7 +32,6 @@ This is the foreign key used in all `contents` table rows.
 import os
 from typing import Optional
 
-from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
@@ -91,31 +90,6 @@ def get_supabase(token: Optional[str] = None) -> Client:
 # ══════════════════════════════════════════════════════════════════════
 # JWT VERIFICATION  (Supabase-issued tokens)
 # ══════════════════════════════════════════════════════════════════════
-
-def decode_supabase_token(token: str) -> Optional[dict]:
-    """
-    Decode and verify a Supabase-issued JWT.
-
-    Supabase tokens are HS256-signed with the project's JWT secret.
-    The payload shape Supabase issues:
-      {
-        "sub":   "<auth.users.id>",          ← user UUID
-        "email": "user@example.com",
-        "role":  "authenticated",
-        "exp":   <unix timestamp>,
-        "aud":   "authenticated",
-        "user_metadata": { "name": "..." },  ← from sign_up options.data
-        ...
-      }
-
-    Returns the payload dict on success, None if invalid or expired.
-    Raises RuntimeError if SUPABASE_JWT_SECRET is not configured.
-    """
-def decode_supabase_token(token: str) -> Optional[dict]:
-    """
-    DEPRECATED internally: We now use supabase.auth.get_user() directly.
-    """
-    raise NotImplementedError("Use supabase.auth.get_user() instead.")
 
 
 # ══════════════════════════════════════════════════════════════════════
