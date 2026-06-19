@@ -327,6 +327,9 @@ def get_animations(current_user: dict = Depends(get_current_user)):
     )
 
     rows = res.data or []
+    # Filter out sentinels so they don't pollute the animation library
+    rows = [r for r in rows if r.get("body", {}).get("anim_id") not in ("__eng_courses__", "__vault__")]
+
     animations = [
         {
             # `id` is the client-side anim_id (used for deletes)
@@ -364,7 +367,7 @@ def delete_animation(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .contains("body", {"anim_id": anim_id})
+        .eq("anim_id", anim_id)
         .limit(1)
         .execute()
     )
@@ -440,7 +443,7 @@ def save_courses(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
+        .eq("anim_id", _ENG_COURSES_SENTINEL)
         .limit(1)
         .execute()
     )
@@ -472,7 +475,7 @@ def get_courses(current_user: dict = Depends(get_current_user)):
         supabase.table("contents")
         .select("body")
         .eq("user_id", user_id)
-        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
+        .eq("anim_id", _ENG_COURSES_SENTINEL)
         .limit(1)
         .execute()
     )
@@ -546,7 +549,7 @@ def save_vault(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .contains("body", {"anim_id": _VAULT_SENTINEL})
+        .eq("anim_id", _VAULT_SENTINEL)
         .limit(1)
         .execute()
     )
@@ -576,7 +579,7 @@ def get_vault(current_user: dict = Depends(get_current_user)):
         supabase.table("contents")
         .select("body")
         .eq("user_id", user_id)
-        .contains("body", {"anim_id": _VAULT_SENTINEL})
+        .eq("anim_id", _VAULT_SENTINEL)
         .limit(1)
         .execute()
     )
