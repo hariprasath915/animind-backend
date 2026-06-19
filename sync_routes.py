@@ -480,13 +480,6 @@ def get_courses(current_user: dict = Depends(get_current_user)):
     if res.data and res.data.get("body"):
         courses = res.data["body"].get("courses") or []
 
-        # Strip legacy pre-seeded course IDs that were auto-pushed before users
-        # created their own subjects. Filtering here ensures no client ever
-        # sees Engineering Physics / Chemistry / Mathematics / etc. again,
-        # regardless of what's stored in Supabase from old sessions.
-        LEGACY_DEFAULT_IDS = {"ep", "ec", "em", "ht", "mc"}
-        courses = [c for c in courses if c.get("id") not in LEGACY_DEFAULT_IDS]
-
         print(f"[SYNC] ↓ Courses fetched for user={current_user['email']!r} ({len(courses)} subjects)")
         return {"courses": courses if courses else None}
 
