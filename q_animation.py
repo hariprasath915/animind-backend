@@ -1051,6 +1051,18 @@ svg {
 
 
 # ===========================================================================
+#  MODULE 5.1 -- Scroll-fix CSS (extracted to a plain constant; see
+#  build_page_html() for the full explanation of why this MUST stay a
+#  plain triple-quoted string and never be inlined into an f-string).
+# ===========================================================================
+_PAGE_SCROLL_FIX_CSS = """<style id="qanim-scroll-fix">
+html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
+svg{width:100%!important;height:auto!important;max-width:100%!important;}
+#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
+</style>"""
+
+
+# ===========================================================================
 #  MODULE 5.5 -- Error Boundary & Inner Logger
 # ===========================================================================
 ERROR_BOUNDARY_HTML = """
@@ -3873,6 +3885,28 @@ def build_page_html(question, result, given_cards, category):
     """
     Assembles the full standalone page HTML in the v0.2 layout.
     This is the core new function in v0.2.
+
+    IMPORTANT -- WHY THE SCROLL-FIX CSS IS A SEPARATE CONSTANT
+    ------------------------------------------------------------
+    This function builds the page via an f-string. Inside an f-string,
+    a literal "{" or "}" that is meant to be LITERAL TEXT (e.g. CSS rule
+    braces) must be doubled ("{{" / "}}"), otherwise Python tries to
+    evaluate whatever is between the braces as a Python expression.
+
+    A single un-escaped "{" right before a CSS rule like
+    "overflow-x:hidden!important;..." makes Python parse
+    "overflow-x" as the expression "overflow - x" (the "-" is read as
+    subtraction) and everything after the first top-level ":" as a
+    format spec. Evaluating that expression raises:
+        NameError: name 'overflow' is not defined
+    This is *exactly* the "Page build error: name 'overflow' is not
+    defined" failure that was breaking every animation.
+
+    To eliminate this entire class of bug for good, the scroll-fix CSS
+    now lives in `_PAGE_SCROLL_FIX_CSS`, a plain (non f-string) constant
+    -- the same pattern already used for `BASE_PAGE_CSS`. It is inserted
+    below via simple variable substitution (`{_PAGE_SCROLL_FIX_CSS}`),
+    so its literal CSS braces are never re-parsed by the f-string at all.
     """
     animation_html = result.get("animation_code", "")
     title_text     = result.get("title", f"Animation: {question[:50]}")
@@ -3912,11 +3946,7 @@ def build_page_html(question, result, given_cards, category):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
-<style id="qanim-scroll-fix">
-html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
-svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
-#container,[id="container"]{{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}}
-</style>
+{_PAGE_SCROLL_FIX_CSS}
 </head>
 <body>
 
