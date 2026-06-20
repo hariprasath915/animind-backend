@@ -45,8 +45,18 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
+# NOTE: timeout + max_retries are set explicitly so that LONGER / TOUGHER
+# questions (e.g. multi-part JEE/NEET problems, big pasted question text)
+# have enough time to finish generating and survive transient API hiccups
+# (rate limits, momentary overload, dropped connections) instead of failing
+# outright. Without this, harder questions -- which naturally take longer
+# and produce bigger responses -- were the most likely to hit a timeout or
+# a one-off transient error and fail, which is exactly the kind of question
+# that was showing "failed to fetch".
 client = anthropic.Anthropic(
     default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+    timeout=600.0,    # generous timeout so big/tough generations have room to finish
+    max_retries=4,    # auto-retry transient errors (rate limit / overload / network) with backoff
 )
 
 CONCEPT_MODEL        = "claude-sonnet-4-6"
@@ -54,9 +64,17 @@ SOLUTION_MODEL       = "claude-sonnet-4-6"
 Q_MODEL              = SOLUTION_MODEL
 HAIKU_SOLUTION_MODEL = "claude-haiku-4-5"
 
-MAX_TOK                = 20000
-MAX_TOK_CONCEPT        = 12000
-MAX_TOK_HAIKU_SOLUTION = 8000
+# Token budgets raised well above the old limits. Claude Sonnet 4.6 and
+# Claude Haiku 4.5 both support up to 64,000 output tokens, so there is
+# plenty of headroom -- the OLD, tighter limits were the most likely cause
+# of "failed to fetch" on long/tough questions: a hard JEE/NEET-style
+# multi-part problem needs more solution_steps text and a bigger animation
+# JSON payload, so it was much more likely to hit the token ceiling mid
+# response. When that happens the JSON gets cut off mid-string, parsing
+# breaks, and (before this fix) that could escape as an unhandled error.
+MAX_TOK                = 32000
+MAX_TOK_CONCEPT        = 16000
+MAX_TOK_HAIKU_SOLUTION = 12000
 
 
 # ===========================================================================
@@ -317,6 +335,7 @@ class HtmlSanitizer:
             r'<script[^>]+src\s*=\s*["\'][^"\']*["\'][^>]*>\s*</script>',
             '', html, flags=re.IGNORECASE | re.DOTALL)
         html = cls._fix_template_literals(html)
+        html = cls._fix_unescaped_string_newlines(html)
         html = cls._fix_const_let(html)
         html = cls._fix_arrow_functions(html)
         html = cls._fix_single_quote_apostrophes(html)
@@ -420,6 +439,40 @@ class HtmlSanitizer:
             if body != original:
                 QAnimLogger.warn("Sanitizer", "Backtick template literals replaced")
             return f"{tag}{body}{close}"
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def _fix_unescaped_string_newlines(cls, html):
+        """
+        Fix a common AI-generation mistake: a single/double-quoted JS string
+        literal (e.g. inside a JSON array like `var scenes = [{"desc": "...`)
+        that contains a LITERAL raw newline / carriage-return / tab character
+        instead of an escaped \\n / \\r / \\t. A raw newline inside a quoted
+        JS string is invalid syntax and produces:
+            Uncaught SyntaxError: Invalid or unexpected token
+        This scans every <script> block, finds quoted string literals
+        (single or double quotes, respecting existing escapes), and replaces
+        any raw control characters found INSIDE them with their escaped
+        equivalents -- without touching anything outside string literals
+        (so normal multi-line code formatting is left alone).
+        """
+        STRING_RE = re.compile(r'(["\'])((?:\\.|(?!\1).)*)\1', re.DOTALL)
+
+        def fix_str(sm):
+            quote, inner = sm.group(1), sm.group(2)
+            fixed = (inner.replace('\r\n', '\\n')
+                           .replace('\n', '\\n')
+                           .replace('\r', '\\n')
+                           .replace('\t', '\\t'))
+            return quote + fixed + quote
+
+        def process_script(m):
+            tag, body, close = m.group(1), m.group(2), m.group(3)
+            fixed_body = STRING_RE.sub(fix_str, body)
+            if fixed_body != body:
+                QAnimLogger.warn("Sanitizer", "Raw newline/tab found inside a JS string literal -- escaped")
+            return f"{tag}{fixed_body}{close}"
+
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
 
     @classmethod
@@ -1852,13 +1905,20 @@ RULES (follow every one):
    - Sound warm and encouraging, like a teacher helping a beginner, not like
      a textbook.
    - Keep the math and science 100% correct -- only the LANGUAGE must be simple.
-5. After the last numbered step, add a "Final Answer:" line with the complete result and units.
+5. After the last numbered step, add a "Final Answer:" line.
+   - FIRST check whether the question actually asks for TWO OR MORE separate
+     quantities (look for "and", commas, or multiple question marks).
+   - If it asks for TWO OR MORE quantities, give EVERY one of them on the
+     Final Answer line, separated by a semicolon ";", in the SAME ORDER the
+     question asks for them, each with its own value and unit.
+   - If it asks for only ONE quantity, just give that single value and unit
+     as usual -- do NOT invent extra parts or add semicolons.
 6. Keep each step focused on ONE action only.
 7. Do NOT use LaTeX notation -- write math in plain text (e.g. "F = m x a" not "F=ma^{}").
 8. End with a one-sentence "Key Insight:" that captures the most important concept, written in
    the same very simple language style.
 
-FORMAT EXAMPLE:
+FORMAT EXAMPLE (question asks for ONE quantity):
 Step 1: **Identify the given information**
 We know the mass m = 5 kg. We know the acceleration a = 3 m/s^2. Write these down first.
 
@@ -1867,7 +1927,21 @@ This law tells us how force, mass, and acceleration are linked. The formula is F
 
 Final Answer: The force is 15 Newtons (15 N).
 
-Key Insight: If mass becomes bigger, the force needed also becomes bigger, as long as the acceleration stays the same."""
+Key Insight: If mass becomes bigger, the force needed also becomes bigger, as long as the acceleration stays the same.
+
+FORMAT EXAMPLE (question asks for TWO quantities, e.g. "Find the heat loss and the surface temperature"):
+Step 1: **Identify the given information**
+We know the pipe size, the steam temperature, and the air temperature. Write these down first.
+
+Step 2: **Find the heat loss**
+... working shown here ...
+
+Step 3: **Find the surface temperature**
+... working shown here ...
+
+Final Answer: Q = 142.6 W/m; T_s = 47.3 deg C
+
+Key Insight: Heat always moves from the hotter steam to the cooler air around the pipe."""
 
 _HAIKU_SOLUTION_USER_TEMPLATE = """Generate a detailed, numbered step-by-step solution for this question.
 Follow the system instructions exactly.
@@ -1964,6 +2038,54 @@ def _build_answer_targets_tag(answer_targets):
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
 
 
+def _split_multi_part_answer(final_answer, expected_count):
+    """
+    NEW: When a question asks for more than one quantity (expected_count > 1),
+    try to split `final_answer` into that many distinct, separately-readable
+    answer segments instead of repeating the whole string for every part.
+
+    Tries several common ways the AI/Haiku models separate multi-part answers,
+    in order of reliability. Returns a list of length == expected_count on
+    success, or None if no clean split was found -- in which case the caller
+    should fall back to treating the question as having a single answer
+    ("give the answer as usual").
+    """
+    if not final_answer or not final_answer.strip() or expected_count <= 1:
+        return None
+
+    text = final_answer.strip()
+
+    def _clean_parts(parts):
+        return [p.strip(" \t\n.;:-") for p in parts if p.strip(" \t\n.;:-")]
+
+    # Strategy 1: explicit part markers -- "(i)", "(ii)", "1)", "Part 1:", etc.
+    marker_re = re.compile(
+        r'(?:^|[;\n])\s*(?:\(?(?:x{0,3}(?:ix|iv|v?i{0,3}))\)|\(?\d+\)|part\s*\d+\s*[:.\-)])\s*',
+        re.IGNORECASE)
+    marker_parts = _clean_parts(marker_re.split(text))
+    if len(marker_parts) == expected_count:
+        return marker_parts
+
+    # Strategy 2: semicolon-separated values -- the format the AI is asked to
+    # use for multi-part answers, e.g. "Q = 142.6 W/m; T_s = 47.3 deg C"
+    semi_parts = _clean_parts(text.split(';'))
+    if len(semi_parts) == expected_count:
+        return semi_parts
+
+    # Strategy 3: newline-separated values
+    nl_parts = _clean_parts(text.split('\n'))
+    if len(nl_parts) == expected_count:
+        return nl_parts
+
+    # Strategy 4 (last resort, two-part questions only): split on " and "
+    if expected_count == 2:
+        and_parts = _clean_parts(re.split(r'\s+and\s+', text, flags=re.IGNORECASE))
+        if len(and_parts) == 2:
+            return and_parts
+
+    return None
+
+
 def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight):
     targets = []
     _num_re = re.compile(
@@ -1977,8 +2099,18 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
             unit = (m.group(3) or "").strip()
             found_pairs[sym.lower()] = {"sym": sym, "val": val, "unit": unit}
 
+    # NEW: if the question asks for MORE THAN ONE quantity, see whether the
+    # final_answer text actually contains that many separate answers, so we
+    # can give each "to find" target its own distinct answer instead of
+    # repeating the full text on every card.
+    split_parts = None
+    if to_find_targets and len(to_find_targets) > 1:
+        split_parts = _split_multi_part_answer(final_answer, len(to_find_targets))
+        if split_parts:
+            QAnimLogger.ok("AnswerTargets", f"Multi-part answer detected -- split into {len(split_parts)} part(s)")
+
     used_syms = set()
-    for tf in (to_find_targets or []):
+    for idx, tf in enumerate(to_find_targets or []):
         tf_lower = tf.lower()
         matched  = None
         for sym_key, info in found_pairs.items():
@@ -1994,7 +2126,17 @@ def _build_answer_targets(to_find_targets, haiku_sol, final_answer, key_insight)
                 "unit":    matched["unit"],
                 "insight": key_insight or "Apply the relevant formula step by step.",
             })
+        elif split_parts is not None:
+            # Two (or more) distinct answers are possible -- give each its own.
+            targets.append({
+                "label":   tf,
+                "value":   split_parts[idx],
+                "unit":    "",
+                "insight": key_insight or "Apply the relevant formula step by step.",
+            })
         else:
+            # Only one answer is possible (or no clean split found) -- give
+            # the answer as usual.
             targets.append({
                 "label":   tf,
                 "value":   final_answer,
@@ -3771,9 +3913,9 @@ def build_page_html(question, result, given_cards, category):
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
 <style id="qanim-scroll-fix">
-html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
-svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
-#container,[id="container"]{{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}}
+html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
+svg{width:100%!important;height:auto!important;max-width:100%!important;}
+#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
 </style>
 </head>
 <body>
@@ -3782,17 +3924,6 @@ svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
 
 <!-- ========= PAGE LAYOUT ========= -->
 <div id="page-wrapper">
-
-  <!-- Header row -->
-  <header id="page-header">
-    <div class="header-badge">
-      <span class="hbadge-dot"></span>
-      {badge_cat}{(' · ' + badge_subj) if badge_subj else ''}
-    </div>
-    <div class="header-title-text">
-      <em>{em_part}</em>{rest_part} — Interactive Animation
-    </div>
-  </header>
 
   <!-- Question card -->
   <div id="qstrip">
@@ -3813,16 +3944,6 @@ svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
     <button id="prevbtn">&#8592; <span class="btn-label">Prev</span></button>
     <div id="dots"></div>
     <button id="nextbtn"><span class="btn-label">Next</span> &#8594;</button>
-  </div>
-
-  <!-- Scene description -->
-  <div id="scene-desc-strip" style="border-left-color:{first_scene['accentColor']}">
-    <span class="sds-num">Scene {first_scene['num']}</span>
-    <div class="sds-sep"></div>
-    <div class="sds-body">
-      <div class="sds-title">{html_module.escape(first_scene['title'])}</div>
-      <div class="sds-desc">{html_module.escape(first_scene['desc'])}</div>
-    </div>
   </div>
 
   <div id="sol-steps-container"></div>
@@ -4125,10 +4246,24 @@ The animation JS MUST follow this exact pattern:
 - SVG tspan subscripts (NEVER underscores):
     f<tspan dy="5" font-size="0.72em">s</tspan>
     T<tspan dy="5" font-size="0.72em">out</tspan>
+- STRICT: ZERO text-on-text or text-on-arrow overlap in any scene (see the
+  ZERO TEXT OVERLAP rules above) -- this is a hard requirement, not a
+  suggestion. Recheck every label's position before finalizing each scene.
 
 ═══ FINAL ANSWER FIELD ═══
 Solve the question COMPLETELY. Put the FULL computed answer in "final_answer".
-NEVER leave it empty. Example: "Q = 142.6 W/m; T_s = 47.3 deg C"
+NEVER leave it empty.
+First CHECK whether the question is actually asking for more than one separate
+quantity (look for "and", commas, or multiple question marks -- e.g. "Find the
+rate of heat loss per meter AND the outer surface temperature" asks for TWO
+answers).
+- If the question asks for TWO OR MORE separate quantities, compute and report
+  EVERY one of them, separated by a semicolon ";", in the SAME ORDER the
+  question asks for them -- one quantity per segment, each with its own value
+  and unit. Example (two answers): "Q = 142.6 W/m; T_s = 47.3 deg C"
+- If the question asks for only ONE quantity, give just that single answer as
+  usual -- do NOT invent extra parts or add semicolons. Example (one answer):
+  "v = 24.5 m/s"
 Do NOT include final_answer inside the animation scenes -- only in the JSON field.
 
 ═══ WHAT TO OMIT ═══
@@ -4137,7 +4272,10 @@ Do NOT include final_answer inside the animation scenes -- only in the JSON fiel
 - DO NOT use dark backgrounds
 - DO NOT use backtick template literals (use + concatenation)
 - DO NOT use const/let (use var)
-- DO NOT use arrow functions (use function() {})"""
+- DO NOT use arrow functions (use function() {})
+- DO NOT allow any text element to overlap another text element, a title,
+  a formula, an info card, or an arrow/line path in ANY scene -- this is
+  a strict, non-negotiable requirement (see ZERO TEXT OVERLAP section)"""
 
 
 SYSTEM_CONCEPT = """You are QAnim Concept Engine v0.2 -- cinematic SVG concept animator.
@@ -4170,7 +4308,11 @@ OUTPUT FORMAT (strict JSON):
 
 SAFETY: No dark bg, no backticks, no const/let, no arrow functions,
 balanced tags, 5 scenes, include #prevbtn/#nextbtn/#dots,
-SVG subscripts with tspan (never underscores)."""
+SVG subscripts with tspan (never underscores).
+STRICT: ZERO overlap between any two text elements, or between text and
+any arrow/line/curve, in any scene (see ZERO TEXT OVERLAP rules above) --
+this is a hard requirement. Recheck every label's position before
+finalizing each scene."""
 
 
 DESIGN_SYSTEM = """
@@ -4195,6 +4337,35 @@ FORMULA SUBSCRIPTS (CRITICAL):
 - ALWAYS use SVG tspan:
     <text>f<tspan dy="5" font-size="0.72em">s</tspan></text>
 - Reset after: <tspan dy="-5" font-size="1em">
+
+═══ ZERO TEXT OVERLAP (STRICT -- NON-NEGOTIABLE) ═══
+This rule overrides every other layout preference. A layout with overlapping
+text is a FAILED layout, no exceptions.
+- Before placing ANY <text> element, mentally compute its bounding box
+  (approx width = 0.6 * font-size * character_count, height = font-size).
+  That box must not intersect the bounding box of any OTHER <text>,
+  <tspan>, label, title, formula, or info-card text anywhere in the scene.
+- Keep a minimum 24px clearance between the bounding boxes of any two
+  separate text elements (horizontally AND vertically). Increase this gap
+  for larger font sizes.
+- NEVER let an arrow, line, curve, or connector path cross THROUGH a text
+  element. Route the path around text, shorten it, or move the label
+  outward instead.
+- NEVER stack a label, formula, or title directly on top of a diagram
+  shape, curve, or another label. Labels for a circular/curved diagram go
+  OUTSIDE the curve with clear leader lines, not inside or across it.
+- If a formula or title text would visually sit where another element
+  (label, arrow, card text) already is, you MUST move one of them --
+  reposition coordinates, shrink font-size, shorten the wording, or
+  remove a competing element. Do not let them coexist in the same space.
+- When several short labels surround one diagram (e.g. variable
+  definitions around a graph), arrange them in clearly separated rows or
+  columns with consistent spacing -- never let two labels share a
+  horizontal band unless there is real horizontal gap between their text.
+- Before finalizing each scene, review every text element's (x, y) against
+  every other element's (x, y) + estimated size. If ANY two overlap or sit
+  closer than the minimum clearance above, FIX the coordinates before
+  returning your answer.
 """
 
 STRATEGY_TEMPLATES = {
@@ -4385,6 +4556,33 @@ async def _generate_concept_animation(question, category):
 
 async def generate_question_animation(question):
     """
+    Public entry point. This is now a thin SAFETY-NET wrapper around the
+    real pipeline (_run_generation_pipeline below).
+
+    WHY: long or tough questions (large pasted text, multi-part JEE/NEET
+    problems, etc.) are exactly the kind of input most likely to trip an
+    edge case somewhere deep in this 4000+ line pipeline (a regex on an
+    unusually large string, a malformed/truncated AI response, a missing
+    field, etc.). Previously, ANY such error would raise all the way out
+    of this function uncaught -- which crashes the request and is exactly
+    what shows up to the user as "failed to fetch" (the server has no
+    valid response to send back). Now, no matter what goes wrong inside
+    the pipeline, this wrapper guarantees a normal, renderable result is
+    always returned, so every kind of question -- short, long, easy, or
+    hard -- produces an output instead of a hard failure.
+    """
+    question = (question or "").strip()
+    if not question:
+        raise ValueError("Question cannot be empty")
+    try:
+        return await _run_generation_pipeline(question)
+    except Exception as e:
+        QAnimLogger.error("Pipeline", f"UNHANDLED error -- falling back gracefully: {e}")
+        return _build_failure_result(question, f"Unexpected error: {e}")
+
+
+async def _run_generation_pipeline(question):
+    """
     PIPELINE v0.2:
 
     Stage 0   -- ToFind + GivenValues Extraction  (sync, no AI)
@@ -4395,11 +4593,10 @@ async def generate_question_animation(question):
                [Stages 0.5, 1, 2, 3 concurrent via asyncio.gather]
 
     Post-processing builds the full v0.2 page layout from the AI SVG.
-    """
-    question = (question or "").strip()
-    if not question:
-        raise ValueError("Question cannot be empty")
 
+    NOTE: this function is free to raise -- generate_question_animation()
+    above catches everything and converts it into a graceful fallback.
+    """
     short_q = question[:80] + ("..." if len(question) > 80 else "")
     QAnimLogger.info("Pipeline", f"START v0.2 -- '{short_q}'")
 
