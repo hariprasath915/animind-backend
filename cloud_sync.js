@@ -56,45 +56,34 @@
     }
   }
 
-  // ── Old auth-gate cleanup (idempotent, safe if that markup is gone) ──────
-  function removeOldAuthGate() {
-    if (document.getElementById('gz-auth-override-css')) return;
-    const style = document.createElement('style');
-    style.id = 'gz-auth-override-css';
-    style.textContent = `
-      #authGate, .ag-wrap, .ag-left, .ag-right, .ag-card,
-      .ag-login-success-overlay, .ag-left-bg, .ag-anim-scene,
-      [id="agLoginSuccessOverlay"] {
-        display: none !important; visibility: hidden !important;
-        pointer-events: none !important; opacity: 0 !important;
-      }
-      #authStatusBar { display: none; }
-    `;
-    document.head.appendChild(style);
-    ['authGate', 'agLoginSuccessOverlay'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.remove();
-    });
-  }
+  // ── ADAPTED FOR THIS DEPLOYMENT ──────────────────────────────────────
+  // The original removeOldAuthGate() permanently deletes #authGate from
+  // the DOM, assuming it's leftover markup from an older design that's
+  // been replaced by a landing-page + modal (#gz-landing / #authModal).
+  // THIS deployment's index.html has no landing page — #authGate IS the
+  // real, currently-used login/register UI, sitting as a fixed overlay
+  // on top of the dashboard (.app-wrap). Deleting it would leave users
+  // with no way to sign in at all. Kept as a safe no-op so nothing else
+  // in this file that calls it breaks.
+  function removeOldAuthGate() { /* no-op for this deployment */ }
 
   // ── UI routing ────────────────────────────────────────────────────────────
+  // ── ADAPTED FOR THIS DEPLOYMENT ──────────────────────────────────────
+  // Original assumed a marketing landing page (#gz-landing) + modal
+  // (#authModal / openAuthModal()). This deployment's index.html has
+  // neither — #authGate is a fixed-position overlay that sits on top of
+  // the dashboard (.app-wrap) when the user isn't logged in. Show/hide
+  // that instead.
   function showLanding() {
-    const dash = document.getElementById('gz-dashboard');
-    if (dash) { dash.style.display = 'none'; dash.style.opacity = '0'; dash.classList.remove('active'); }
-    const landing = document.getElementById('gz-landing');
-    if (landing) { landing.style.display = 'block'; landing.style.opacity = '1'; }
-    setTimeout(() => { if (typeof openAuthModal === 'function') openAuthModal(); }, 250);
+    const gate = document.getElementById('authGate');
+    if (gate) { gate.style.display = 'flex'; gate.style.animation = 'fadeIn .3s ease'; }
+    const bar = document.getElementById('authStatusBar');
+    if (bar) bar.style.display = 'none';
   }
 
   function enterDashboard() {
-    if (typeof showDashboard === 'function') {
-      showDashboard();
-    } else {
-      const landing = document.getElementById('gz-landing');
-      if (landing) { landing.style.opacity = '0'; setTimeout(() => (landing.style.display = 'none'), 420); }
-      const dash = document.getElementById('gz-dashboard');
-      if (dash) { dash.style.display = 'block'; setTimeout(() => { dash.style.opacity = '1'; dash.classList.add('active'); }, 30); }
-    }
+    const gate = document.getElementById('authGate');
+    if (gate) gate.style.display = 'none';
     updateStatusBar();
   }
 
