@@ -320,8 +320,6 @@ class HtmlSanitizer:
         html = cls._fix_const_let(html)
         html = cls._fix_arrow_functions(html)
         html = cls._fix_single_quote_apostrophes(html)
-        html = cls._fix_modern_js_syntax(html)
-        html = cls._remove_error_overlay_trigger(html)
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
         html = cls._fix_svg_subscripts(html)
@@ -463,46 +461,6 @@ class HtmlSanitizer:
             body = re.sub(r"'((?:[^'\\\n]|\\.)*)'", fix_sq_string, body)
             return f"{tag}{body}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
-    @classmethod
-    def _fix_modern_js_syntax(cls, html):
-        """
-        Replace modern JS syntax that may cause SyntaxError in strict/old parsers:
-          - Optional chaining:  obj?.prop  ->  obj && obj.prop  (simple cases)
-          - Nullish coalescing: a ?? b     ->  (a != null ? a : b)
-          - Logical assignment: a ||= b    ->  a = a || b
-          - Logical assignment: a &&= b    ->  a = a && b
-          - Spread in literals: {...a}     ->  Object.assign({}, a)  [approx]
-          - class field decls  (just strip leading static/# class fields that break)
-        """
-        def process_script(m):
-            tag, body, close = m.group(1), m.group(2), m.group(3)
-            if re.search(r'type\s*=\s*["\'\']application/', tag, re.IGNORECASE):
-                return m.group(0)
-            # Nullish coalescing (??) -> ternary
-            body = re.sub(r'(\b[\w$.\[\]]+)\s*\?\?\s*', r'(\1 != null ? \1 : ', body)
-            # Optional chaining (?.) — replace obj?.prop with obj && obj.prop
-            body = re.sub(r'(\b[\w$]+)\?\.([\w$]+)', r'(\1 && \1.\2)', body)
-            # Logical assignment ||=
-            body = re.sub(r'(\b[\w$.\[\]]+)\s*\|\|=\s*', r'\1 = \1 || ', body)
-            # Logical assignment &&=
-            body = re.sub(r'(\b[\w$.\[\]]+)\s*&&=\s*', r'\1 = \1 && ', body)
-            return f"{tag}{body}{close}"
-        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
-    @classmethod
-    def _remove_error_overlay_trigger(cls, html):
-        """
-        Strip any inline code that calls qanim-error-fallback display=flex
-        from error event handlers — so JS errors never surface a modal to the user.
-        """
-        # Remove the pattern that makes the overlay visible from error handlers
-        html = re.sub(
-            r"var fb=document\.getElementById\('qanim-error-fallback'\)[^}]+\}'?\)?\s*;?",
-            "/* error overlay suppressed */",
-            html, flags=re.DOTALL
-        )
-        return html
 
 
 # ===========================================================================
@@ -828,28 +786,200 @@ svg {
 }
 
 /* ── Scene description strip ── */
+#scene-desc-strip {
+  width: 100%;
+  background: var(--card-bg);
+  border: 1.5px solid var(--slate-200);
+  border-left: 4px solid var(--blue-mid);
+  border-radius: var(--radius-lg);
+  padding: 12px 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(59,91,219,0.07);
+  min-height: 50px;
+  transition: border-left-color 0.35s;
+}
+.sds-num {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--slate-400);
+  padding-top: 1px;
+  white-space: nowrap;
+}
+.sds-sep {
+  width: 1px;
+  height: 100%;
+  min-height: 20px;
+  background: var(--slate-200);
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.sds-body { flex: 1; }
+.sds-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--slate-800);
+  margin-bottom: 2px;
+}
+.sds-desc {
+  font-size: 0.8rem;
+  color: var(--slate-600);
+  line-height: 1.55;
+}
+
 /* ── Hidden utility ── */
 #sol-steps-container,
 #sol-answer-text,
 #sol-insight-text { display: none; }
 
 /* ── Responsive breakpoints ── */
+
+/* Tablet */
 @media (max-width: 820px) {
   #page-wrapper { padding: 12px 10px 120px; gap: 12px; }
   #given-strip  { grid-template-columns: repeat(2, 1fr); gap: 8px; }
 }
-@media (max-width: 560px) {
-  #page-wrapper { padding: 10px 8px 110px; gap: 10px; }
-  #given-strip  { grid-template-columns: repeat(2, 1fr); gap: 7px; }
-  .header-title-text { font-size: 0.88rem; }
-  #prevbtn, #nextbtn { padding: 9px 14px; }
+
+/* Large phone / small tablet */
+@media (max-width: 600px) {
+  html, body { font-size: 15px; }
+
+  #page-wrapper {
+    padding: 10px 10px 130px;
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  /* Header: stack badge + title vertically on very narrow screens */
+  #page-header {
+    gap: 8px;
+  }
+  .header-badge {
+    font-size: 0.72rem;
+    padding: 6px 12px;
+  }
+  .header-title-text {
+    font-size: 0.92rem;
+    line-height: 1.3;
+  }
+
+  /* Question strip: reduce icon, increase text readability */
+  #qstrip {
+    padding: 12px 12px 12px 11px;
+    gap: 9px;
+  }
+  .q-icon-box {
+    width: 30px; height: 30px;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .qtext {
+    font-size: 0.88rem;
+    line-height: 1.65;
+  }
+
+  /* Given strip: 2-col on phone */
+  #given-strip {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .given-card {
+    padding: 10px 10px 9px;
+  }
+  .gc-label { font-size: 0.62rem; }
+  .gc-val   { font-size: 0.98rem; }
+  .gc-unit  { font-size: 0.62rem; }
+
+  /* Animation area: ensure SVG scales and doesn't overflow */
+  #anim-wrapper {
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-width: 100%;
+  }
+  svg {
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100% !important;
+  }
+  #scene-indicator {
+    top: 8px; left: 8px;
+    font-size: 0.65rem;
+    padding: 3px 9px;
+  }
+
+  /* Navigation: make buttons bigger for tap, shrink dot gap */
+  #nav {
+    gap: 8px;
+  }
+  #prevbtn, #nextbtn {
+    padding: 11px 16px;
+    font-size: 0.78rem;
+    gap: 4px;
+    min-width: 72px;
+    touch-action: manipulation;
+  }
   .btn-label { display: none; }
+  #dots { gap: 6px; }
+  .dot { width: 9px; height: 9px; }
+  .dot.active { width: 24px; border-radius: 5px; }
+
+  /* Scene description: tighter padding */
+  #scene-desc-strip {
+    padding: 10px 13px;
+    gap: 9px;
+    min-height: 44px;
+  }
+  .sds-num   { font-size: 0.62rem; }
+  .sds-title { font-size: 0.82rem; }
+  .sds-desc  { font-size: 0.75rem; line-height: 1.5; }
 }
-@media (max-width: 400px) {
-  .gc-val { font-size: 0.92rem; }
-  .given-card { padding: 10px 8px 8px; }
-  .qtext { font-size: 0.85rem; }
+
+/* Small phone (≤480px) */
+@media (max-width: 480px) {
+  #page-wrapper { padding: 8px 8px 128px; gap: 9px; }
+
+  .header-title-text { font-size: 0.86rem; }
+  .header-badge { font-size: 0.68rem; padding: 5px 10px; }
+
+  #qstrip { padding: 10px 10px 10px 10px; gap: 8px; }
+  .qtext  { font-size: 0.84rem; line-height: 1.6; }
+
+  #prevbtn, #nextbtn {
+    padding: 11px 13px;
+    font-size: 0.76rem;
+    min-width: 60px;
+  }
+
+  .sds-title { font-size: 0.8rem; }
+  .sds-desc  { font-size: 0.73rem; }
+
+  /* Given cards: allow overflow text to wrap */
+  .gc-val { font-size: 0.95rem; word-break: break-word; }
+  .given-card { padding: 9px 8px 8px; }
+  .gc-label { font-size: 0.6rem; }
 }
+
+/* Very small phone (≤380px) */
+@media (max-width: 380px) {
+  #page-wrapper { padding: 7px 7px 125px; gap: 8px; }
+  .gc-val  { font-size: 0.88rem; }
+  .gc-unit { font-size: 0.58rem; }
+  .given-card { padding: 8px 7px 7px; }
+  .qtext  { font-size: 0.82rem; }
+
+  #prevbtn, #nextbtn {
+    padding: 10px 11px;
+    min-width: 52px;
+  }
+  .dot { width: 8px; height: 8px; }
+  .dot.active { width: 20px; }
+}
+
+/* Large desktop */
 @media (min-width: 1400px) {
   #page-wrapper { padding: 24px 24px 140px; gap: 20px; max-width: 1280px; }
   .header-title-text { font-size: 1.25rem; }
@@ -859,6 +989,8 @@ svg {
   .gc-val { font-size: 1.2rem; }
   .gc-label, .gc-unit { font-size: 0.75rem; }
   #prevbtn, #nextbtn { padding: 13px 30px; font-size: 0.95rem; }
+  .sds-title { font-size: 1.0rem; }
+  .sds-desc  { font-size: 0.88rem; }
   .dot { width: 12px; height: 12px; }
   .dot.active { width: 32px; }
 }
@@ -894,15 +1026,18 @@ window.QLog={
   warn:function(m){console.warn('[QAnim Inner] !  '+m);},
   error:function(m){console.error('[QAnim Inner] X  '+m);}
 };
-/* Log JS errors to console only — never show an error overlay to the user */
 window.addEventListener('error',function(e){
-  console.error('[QAnim GlobalError]',e.message,'at line',e.lineno);
+  console.error('[QAnim GlobalError]',e.message,'at',e.filename+':'+e.lineno);
+  var fb=document.getElementById('qanim-error-fallback');
+  if(fb){fb.style.display='flex';var msg=fb.querySelector('.qanim-err-msg');
+    if(msg)msg.textContent=e.message+' (line '+e.lineno+')';}
 });
 window.addEventListener('unhandledrejection',function(e){
   console.error('[QAnim UnhandledPromise]',e.reason);
 });
 </script>
 """
+
 
 # ===========================================================================
 #  MODULE 6 -- ToFind Panel
@@ -971,6 +1106,25 @@ _TO_FIND_CSS = """
   opacity: 1;
   pointer-events: auto;
   transform: translate(-50%, -50%) scale(1);
+}
+
+/* Mobile: use nearly full width, larger close button for tap */
+@media (max-width: 600px) {
+  #tofind-panel {
+    width: min(460px, 96vw);
+    max-height: 85vh;
+    padding: 18px 16px;
+    border-radius: 14px;
+  }
+  .tf-close-btn {
+    width: 36px; height: 36px;
+    font-size: 14px;
+    border-radius: 9px;
+  }
+  .tf-title { font-size: 15px; }
+  .tofind-text { font-size: 13px; }
+  .tofind-item { padding: 12px 12px; gap: 10px; }
+  .tofind-check { width: 22px; height: 22px; font-size: 12px; }
 }
 .tf-header {
   display: flex;
@@ -1218,6 +1372,27 @@ _FINAL_ANSWER_PANEL_CSS = """
   opacity: 1;
   pointer-events: auto;
   transform: translate(-50%, -50%) scale(1);
+}
+
+/* Mobile: full-width, easier header, bigger tap targets */
+@media (max-width: 600px) {
+  #fa-panel {
+    width: min(520px, 96vw);
+    max-height: 88vh;
+    border-radius: 14px;
+  }
+  .fa-header { padding: 14px 16px 12px; }
+  .fa-icon-wrap { width: 36px; height: 36px; font-size: 17px; }
+  .fa-title { font-size: 15px; }
+  .fa-subtitle { font-size: 10px; }
+  .fa-close-btn { width: 38px; height: 38px; font-size: 14px; }
+  .fa-body { padding: 14px 14px 20px; gap: 10px; }
+  .fa-item { padding: 12px 14px; gap: 10px; }
+  .fa-item-label { font-size: 11px; }
+  .fa-item-value { font-size: 13px; padding: 5px 10px; }
+  .fa-item-roman { min-width: 28px; height: 28px; font-size: 11px; }
+  .fa-insight-card { padding: 12px 14px; }
+  .fa-insight-text { font-size: 12px; }
 }
 .fa-header {
   display: flex;
@@ -1498,44 +1673,217 @@ def inject_final_answer_panel(html, answer_targets, final_answer, key_insight):
 
 
 # ===========================================================================
+#  MODULE 7.4 -- SimpleMethodAnalyzer
+#  Runs BEFORE solution generation (Stage 0.5, concurrent with Stages 1-3).
+#  Uses a fast Haiku call to decide whether a shorter solving path exists.
+#  Returns a dict: {use_simple, method_name, method_hint, rationale}
+#  The result is threaded into the Haiku solution prompt and the solution
+#  AI user prompt.  All other pipeline logic is completely unchanged.
+# ===========================================================================
+
+_SIMPLE_METHOD_SYSTEM = """You are an experienced math and science teacher.
+Your job is to read a student's question and decide whether a SIMPLER or SHORTER
+solving method exists — one that is easier to follow than the standard full method.
+
+DEFINITION OF "SIMPLER METHOD":
+- Fewer steps to reach the correct answer.
+- Uses a more direct formula or principle.
+- Avoids unnecessary derivations or intermediate variables.
+- Is still 100% mathematically/scientifically correct.
+- A weak student can follow it more easily.
+
+EXAMPLES of when a simpler method EXISTS:
+- Direct formula application instead of deriving from first principles.
+- Using symmetry, ratios, or proportionality to skip algebra.
+- Recognising a standard result (e.g. area of a circle = pi r^2) instead of integrating.
+- Applying a specific shortcut rule (e.g. product rule instead of logarithmic differentiation).
+- Energy conservation instead of Newton's laws for kinematics.
+
+EXAMPLES of when NO simpler method exists:
+- The question already requires all the steps shown.
+- Skipping steps would make the answer unclear or incomplete.
+- The question specifically asks to show derivation or proof.
+- Multi-part problems where each part needs its own working.
+
+OUTPUT FORMAT — respond ONLY with valid JSON, nothing else:
+{
+  "use_simple": true or false,
+  "method_name": "short name of the simpler method, or empty string if none",
+  "method_hint": "1-3 sentence description of the simpler approach for the solver, or empty string if none",
+  "rationale": "one sentence explaining why this is simpler (or why no shortcut exists)"
+}
+
+RULES:
+- Only set use_simple=true if you are CONFIDENT a genuinely simpler method exists.
+- If in doubt, set use_simple=false.  Correctness always wins over brevity.
+- method_hint must be actionable — tell the solver exactly what shortcut to use.
+- Do NOT solve the problem yourself.  Just analyse and advise."""
+
+_SIMPLE_METHOD_USER_TEMPLATE = """Analyse this question and decide if a simpler solving method exists.
+
+QUESTION: {question}
+
+Reply ONLY with the JSON object described in your instructions."""
+
+
+class SimpleMethodAnalyzer:
+    """
+    Stage 0.5: lightweight pre-analysis to detect whether a simpler method
+    should be preferred.  Runs concurrently with Stages 1-3 (no added latency
+    on the critical path).
+
+    Returns a dict with keys:
+        use_simple   (bool)   -- True if a simpler method was found
+        method_name  (str)    -- short label, e.g. "Energy Conservation"
+        method_hint  (str)    -- 1-3 sentence actionable hint for the solver
+        rationale    (str)    -- one-sentence explanation
+    """
+
+    _FALLBACK = {
+        "use_simple":   False,
+        "method_name":  "",
+        "method_hint":  "",
+        "rationale":    "Analysis unavailable; using standard method.",
+    }
+
+    @classmethod
+    def analyze(cls, question: str) -> dict:
+        QAnimLogger.info("SimpleMethod", f"Analysing question ({len(question)} chars)...")
+        prompt = _SIMPLE_METHOD_USER_TEMPLATE.format(question=question[:600])
+        try:
+            msg = client.messages.create(
+                model=HAIKU_SOLUTION_MODEL,   # fast + cheap
+                max_tokens=400,
+                system=[{
+                    "type": "text",
+                    "text": _SIMPLE_METHOD_SYSTEM,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = msg.content[0].text.strip()
+            # Strip markdown fences if model wrapped the JSON
+            raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+            raw = re.sub(r'\s*```$', '', raw)
+            parsed = json.loads(raw)
+            result = {
+                "use_simple":  bool(parsed.get("use_simple", False)),
+                "method_name": str(parsed.get("method_name", "") or ""),
+                "method_hint": str(parsed.get("method_hint", "") or ""),
+                "rationale":   str(parsed.get("rationale",   "") or ""),
+            }
+            if result["use_simple"]:
+                QAnimLogger.ok(
+                    "SimpleMethod",
+                    f"Simple method found: '{result['method_name']}' -- {result['rationale']}"
+                )
+            else:
+                QAnimLogger.info(
+                    "SimpleMethod",
+                    f"No simpler method: {result['rationale']}"
+                )
+            return result
+        except Exception as e:
+            QAnimLogger.warn("SimpleMethod", f"Analysis failed ({e}); falling back to standard method")
+            return cls._FALLBACK
+
+    @classmethod
+    async def analyze_async(cls, question: str) -> dict:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, cls.analyze, question)
+
+    @classmethod
+    def build_haiku_hint(cls, result: dict) -> str:
+        """
+        Returns a paragraph to prepend to the Haiku solution user prompt
+        when a simple method was detected.  Empty string otherwise.
+        """
+        if not result.get("use_simple"):
+            return ""
+        name = result["method_name"]
+        hint = result["method_hint"]
+        lines = [
+            "IMPORTANT — USE THE SIMPLER METHOD:",
+            f"A shorter solving path has been identified: {name}.",
+            hint,
+            "Use this simpler method for your step-by-step solution.",
+            "Do NOT use a longer method if this shorter one gives the correct answer.",
+            "",
+        ]
+        return "\n".join(lines)
+
+    @classmethod
+    def build_solution_hint(cls, result: dict) -> str:
+        """
+        Returns a paragraph to append to the solution AI user prompt
+        when a simple method was detected.  Empty string otherwise.
+        """
+        if not result.get("use_simple"):
+            return ""
+        name = result["method_name"]
+        hint = result["method_hint"]
+        return (
+            f"\nSIMPLE METHOD PREFERENCE:\n"
+            f"A simpler solving path has been identified: '{name}'.\n"
+            f"{hint}\n"
+            f"Prefer this simpler approach in both the animation scenes and the "
+            f"solution_steps.  Keep all steps correct and complete.\n"
+        )
+
+
+# ===========================================================================
 #  MODULE 7.5 -- Haiku Step-by-Step Solution Generator
 # ===========================================================================
 
-_HAIKU_SOLUTION_SYSTEM = """You are a patient, expert tutor generating a detailed step-by-step solution for a student.
+_HAIKU_SOLUTION_SYSTEM = """You are a kind, patient tutor writing a step-by-step solution for a student.
+You must write for EVERY kind of student, including weak learners, so the
+language must be very easy to follow.
 
 RULES (follow every one):
 1. Number every step: "Step 1:", "Step 2:", etc. -- never skip numbering.
 2. At the START of each step, name the concept or formula being used in BOLD using **formula/concept name**.
 3. Show ALL working -- do not skip arithmetic or algebra.
-4. Use simple, plain English a high-school student can understand.
+4. LANGUAGE STYLE (very important):
+   - Use VERY SIMPLE English. Short sentences only (about 12-15 words max).
+   - Use common, everyday words. No hard or fancy vocabulary.
+   - One idea per sentence. Do not join many ideas into one long sentence.
+   - If you use a technical word (e.g. "momentum", "diffusion"), explain it
+     in a few plain words right after it.
+   - Sound warm and encouraging, like a teacher helping a beginner, not like
+     a textbook.
+   - Keep the math and science 100% correct -- only the LANGUAGE must be simple.
 5. After the last numbered step, add a "Final Answer:" line with the complete result and units.
 6. Keep each step focused on ONE action only.
 7. Do NOT use LaTeX notation -- write math in plain text (e.g. "F = m x a" not "F=ma^{}").
-8. End with a one-sentence "Key Insight:" that captures the most important concept.
+8. End with a one-sentence "Key Insight:" that captures the most important concept, written in
+   the same very simple language style.
 
 FORMAT EXAMPLE:
 Step 1: **Identify the given information**
-We know the mass m = 5 kg and acceleration a = 3 m/s^2. Write these down first.
+We know the mass m = 5 kg. We know the acceleration a = 3 m/s^2. Write these down first.
 
 Step 2: **Apply Newton's Second Law**
-The formula is F = m x a. Substitute the values: F = 5 x 3 = 15 N.
+This law tells us how force, mass, and acceleration are linked. The formula is F = m x a. Now put in the numbers: F = 5 x 3 = 15 N.
 
 Final Answer: The force is 15 Newtons (15 N).
 
-Key Insight: Newton's Second Law links force, mass, and acceleration -- if mass doubles, force doubles for the same acceleration."""
+Key Insight: If mass becomes bigger, the force needed also becomes bigger, as long as the acceleration stays the same."""
 
 _HAIKU_SOLUTION_USER_TEMPLATE = """Generate a detailed, numbered step-by-step solution for this question.
 Follow the system instructions exactly.
 
-QUESTION: {question}"""
+{simple_hint}QUESTION: {question}"""
 
 
 class HaikuSolutionGenerator:
 
     @classmethod
-    def generate(cls, question):
+    def generate(cls, question, simple_hint: str = ""):
         QAnimLogger.info("HaikuSolution", f"Generating via {HAIKU_SOLUTION_MODEL}")
-        prompt = _HAIKU_SOLUTION_USER_TEMPLATE.format(question=question[:600])
+        prompt = _HAIKU_SOLUTION_USER_TEMPLATE.format(
+            question=question[:600],
+            simple_hint=simple_hint,
+        )
         system_blocks = [
             {
                 "type": "text",
@@ -1563,9 +1911,9 @@ class HaikuSolutionGenerator:
             return cls._fallback(question)
 
     @classmethod
-    async def generate_async(cls, question):
+    async def generate_async(cls, question, simple_hint: str = ""):
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, cls.generate, question)
+        return await loop.run_in_executor(None, cls.generate, question, simple_hint)
 
     @classmethod
     def _parse(cls, raw):
@@ -1595,13 +1943,13 @@ class HaikuSolutionGenerator:
     def _fallback(cls, question):
         return {
             "steps": [
-                "Step 1: **Identify the given information** -- Read the question carefully and list all known values with their units.",
-                "Step 2: **Choose the right formula** -- Select the equation that connects the known and unknown quantities.",
-                "Step 3: **Substitute values** -- Plug the given numbers into the formula, keeping track of units.",
-                "Step 4: **Solve and check** -- Calculate the result and verify the units match what was asked.",
+                "Step 1: **Read the question** -- Read it slowly. Write down every number and word given to you.",
+                "Step 2: **Pick the right formula** -- Find the formula that links the things you know to the thing you must find.",
+                "Step 3: **Put in the numbers** -- Place each given number into the formula, in the correct spot.",
+                "Step 4: **Solve it and check** -- Work out the answer. Check that your units match the question.",
             ],
             "final_answer": "Please re-generate the solution for a detailed answer.",
-            "key_insight":  "Always identify knowns and unknowns before applying any formula.",
+            "key_insight":  "Always write down what you know and what you need to find, before you pick a formula.",
             "raw": "",
         }
 
@@ -1704,6 +2052,46 @@ _ANSWER_BOX_CSS = """
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0) scale(1);
+}
+
+/* Mobile: answer box — full width, bigger inputs and buttons */
+@media (max-width: 600px) {
+  #answerbox-backdrop.open { padding: 10px; align-items: flex-end; }
+  #answerbox-panel {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 16px 16px 10px 10px;
+  }
+  .ab-header { padding: 14px 16px; }
+  .ab-header-title { font-size: 14px; }
+  .ab-close-btn { width: 36px; height: 36px; font-size: 13px; border-radius: 9px; }
+  .ab-progress-row { padding: 8px 16px 0; }
+  .ab-body { padding: 12px 16px 18px; }
+  .ab-find-chip { padding: 9px 12px; gap: 7px; margin-bottom: 12px; }
+  .ab-find-text { font-size: 13px; }
+  .ab-instruction { font-size: 13px; margin-bottom: 9px; }
+  #ab-user-input {
+    font-size: 15px;
+    min-height: 72px;
+    padding: 11px 12px;
+  }
+  #ab-submit-btn {
+    padding: 14px;
+    font-size: 15px;
+    margin-top: 10px;
+    touch-action: manipulation;
+    min-height: 48px;
+  }
+  #ab-retry-btn, #ab-next-target-btn {
+    padding: 11px 14px;
+    font-size: 13px;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+  .ab-feedback-verdict { font-size: 14px; }
+  .ab-insight-text { font-size: 12px; }
+  .ab-alldone-emoji { font-size: 36px; }
+  .ab-alldone-title { font-size: 16px; }
 }
 .ab-header {
   display: flex;
@@ -2295,6 +2683,7 @@ _NOTES_CSS = """
   cursor: pointer;
   box-shadow: 0 3px 14px rgba(0, 0, 0, 0.11);
   transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+  touch-action: manipulation;
 }
 #qanim-notes-btn:hover { background: #fefce8; border-color: #ca8a04; color: #92400e; }
 #qanim-notes-panel {
@@ -2315,6 +2704,31 @@ _NOTES_CSS = """
   transition: opacity 0.22s ease, transform 0.22s ease;
 }
 #qanim-notes-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+
+/* Mobile: notes panel becomes a bottom-sheet style overlay */
+@media (max-width: 600px) {
+  #qanim-notes-btn {
+    top: 10px; right: 10px;
+    padding: 8px 12px 8px 10px;
+    font-size: 12px;
+    border-radius: 9px;
+    gap: 5px;
+  }
+  #qanim-notes-panel {
+    /* Span almost full width, anchored from top of button */
+    top: 56px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-width: calc(100vw - 16px);
+    max-height: 70vh;
+    border-radius: 12px;
+  }
+}
+@media (max-width: 380px) {
+  #qanim-notes-btn { top: 8px; right: 8px; padding: 7px 10px; font-size: 11px; }
+  #qanim-notes-panel { top: 52px; }
+}
 #qanim-notes-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 14px;
@@ -2533,10 +2947,30 @@ _CONTROLS_BAR_CSS = """
   background: linear-gradient(to bottom, transparent, #c4b5fd, transparent);
   flex-shrink: 0;
 }
-@media (max-width: 520px) {
-  #qanim-controls-bar { bottom: 10px; padding: 7px 9px; gap: 4px; }
-  .qanim-ctrl-btn { padding: 7px 11px; font-size: 11px; }
+@media (max-width: 600px) {
+  #qanim-controls-bar {
+    bottom: 10px;
+    padding: 8px 10px;
+    gap: 5px;
+    border-radius: 13px;
+    max-width: calc(100vw - 20px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: auto;
+  }
+  .qanim-ctrl-btn {
+    padding: 9px 11px;
+    font-size: 11px;
+    gap: 4px;
+    min-height: 40px;
+    touch-action: manipulation;
+  }
   .qanim-ctrl-btn .ctrl-label { display: none; }
+  .qanim-ctrl-sep { height: 18px; }
+}
+@media (max-width: 380px) {
+  #qanim-controls-bar { padding: 7px 8px; gap: 4px; bottom: 8px; }
+  .qanim-ctrl-btn { padding: 9px 10px; font-size: 13px; }
 }
 </style>
 """
@@ -2608,8 +3042,8 @@ _VOICE_ASSISTANT_CSS = """
 #qanim-voice-btn:active { transform: translateY(0); box-shadow: none; }
 #qanim-voice-btn.speaking { background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%); border-color: #7c3aed; color: #6d28d9; }
 #qanim-voice-btn.muted { color: #94a3b8; border-color: #e2e8f0; }
-@media (max-width: 520px) {
-  #qanim-voice-btn { padding: 7px 11px; font-size: 11px; }
+@media (max-width: 600px) {
+  #qanim-voice-btn { padding: 9px 11px; font-size: 11px; min-height: 40px; touch-action: manipulation; }
   #qanim-voice-btn .ctrl-label { display: none; }
 }
 </style>
@@ -3300,6 +3734,13 @@ def build_page_html(question, result, given_cards, category):
     """
     animation_html = result.get("animation_code", "")
     title_text     = result.get("title", f"Animation: {question[:50]}")
+    topic_badge    = _infer_topic_badge(question, category)
+
+    # Split topic_badge into category · subject
+    parts = topic_badge.split(" · ", 1)
+    badge_cat  = html_module.escape(parts[0])
+    badge_subj = html_module.escape(parts[1] if len(parts) > 1 else "")
+
     # Extract italic title from result title (everything before " — " or full title)
     title_parts = title_text.split(" — ", 1)
     em_part   = html_module.escape(title_parts[0].strip())
@@ -3317,7 +3758,10 @@ def build_page_html(question, result, given_cards, category):
     if not svg_block:
         svg_block = '<svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg"><rect width="1000" height="600" fill="#f8fafc"/><text x="500" y="300" text-anchor="middle" font-size="20" fill="#64748b">Animation unavailable</text></svg>'
 
-    first_scene = {"num": "1 / 5", "accentColor": "#3b5bdb", "title": "Scene 1", "desc": ""}
+    # Scene descriptions for the bottom strip
+    scene_descs = _extract_scene_descriptions_from_parsed(result)
+    first_scene = scene_descs[0] if scene_descs else {"num": "1 / 5", "accentColor": "#3b5bdb",
+                                                        "title": "Scene 1", "desc": ""}
 
     page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3327,9 +3771,9 @@ def build_page_html(question, result, given_cards, category):
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
 <style id="qanim-scroll-fix">
-html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
-svg{{width:100%!important;height:100%!important;}}
-#container,[id="container"]{{padding-bottom:80px;width:100%;}}
+html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
+svg{width:100%!important;height:auto!important;max-width:100%!important;}
+#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
 </style>
 </head>
 <body>
@@ -3341,6 +3785,10 @@ svg{{width:100%!important;height:100%!important;}}
 
   <!-- Header row -->
   <header id="page-header">
+    <div class="header-badge">
+      <span class="hbadge-dot"></span>
+      {badge_cat}{(' · ' + badge_subj) if badge_subj else ''}
+    </div>
     <div class="header-title-text">
       <em>{em_part}</em>{rest_part} — Interactive Animation
     </div>
@@ -3367,6 +3815,16 @@ svg{{width:100%!important;height:100%!important;}}
     <button id="nextbtn"><span class="btn-label">Next</span> &#8594;</button>
   </div>
 
+  <!-- Scene description -->
+  <div id="scene-desc-strip" style="border-left-color:{first_scene['accentColor']}">
+    <span class="sds-num">Scene {first_scene['num']}</span>
+    <div class="sds-sep"></div>
+    <div class="sds-body">
+      <div class="sds-title">{html_module.escape(first_scene['title'])}</div>
+      <div class="sds-desc">{html_module.escape(first_scene['desc'])}</div>
+    </div>
+  </div>
+
   <div id="sol-steps-container"></div>
   <div id="sol-answer-text"></div>
   <div id="sol-insight-text"></div>
@@ -3382,7 +3840,7 @@ svg{{width:100%!important;height:100%!important;}}
 </body>
 </html>
 """
-    return page
+    return page, scene_descs
 
 
 # ===========================================================================
@@ -3537,34 +3995,54 @@ Return ONLY raw JSON (no markdown, no fences):
   "animation_code": "COMPLETE SELF-CONTAINED HTML AS A SINGLE PROPERLY-ESCAPED JSON STRING"
 }
 
+═══ LANGUAGE STYLE FOR STUDENT-FACING TEXT (CRITICAL) ═══
+This applies to "solution_steps" AND every "description line" you write inside
+the SVG info cards. Students of ALL levels — including weak learners — will
+read this text, so write it like a kind, patient teacher explaining to a
+beginner:
+- Use VERY SIMPLE English. Short sentences only (about 12-15 words max).
+- Use common, everyday words. Avoid hard or fancy vocabulary.
+- If you must use a technical word (e.g. "diffusion", "momentum"), explain it
+  in a few plain words right after it.
+- Break ideas into small steps. One idea per sentence.
+- Sound warm and encouraging, like a teacher helping a student understand,
+  not like a textbook or a research paper.
+- NEVER use long, complex, or nested sentences. NEVER use jargon without
+  explaining it.
+- Keep the science/math meaning 100% correct — only the LANGUAGE must be
+  simple, not the facts.
+
 ═══ SCENE STRUCTURE (exactly 5 scenes) ═══
+(Remember: every "description line" below must follow the LANGUAGE STYLE
+rules above — short, simple sentences a young student can follow easily.)
+
 Scene 0 "What Are We Looking At?":
   - Draw the physical setup as a simple, friendly picture
   - Animate parts appearing one by one
   - Bottom info card INSIDE SVG: white rect at y=490, 5px left accent bar (#3b5bdb)
-  - Card text: "Scene 1 of 5 — What Are We Looking At?" + two description lines
+  - Card text: "Scene 1 of 5 — What Are We Looking At?" + two simple description lines
 
 Scene 1 "The Big Idea":
   - Show the ONE main formula structure (named, not solved)
   - Annotated arrows pointing to each variable
   - Bottom info card INSIDE SVG: accent color #0ea5e9
-  - Card text: "Scene 2 of 5 — The Big Idea" + description lines
+  - Card text: "Scene 2 of 5 — The Big Idea" + two simple description lines
 
 Scene 2 "Another Thing That Matters":
   - Show the second effect or mechanism
   - Bottom info card INSIDE SVG: accent color #16a34a
-  - Card text: "Scene 3 of 5 — Another Thing That Matters" + description lines
+  - Card text: "Scene 3 of 5 — Another Thing That Matters" + two simple description lines
 
 Scene 3 "Putting It Together":
   - Connection diagram (boxes with arrows) linking the concepts
   - Bottom info card INSIDE SVG: accent color #f59e0b
-  - Card text: "Scene 4 of 5 — Putting It Together" + description lines
+  - Card text: "Scene 4 of 5 — Putting It Together" + two simple description lines
 
 Scene 4 "How We Solve It — Step by Step":
   - Numbered checklist (steps 1-4) inside a white card
   - Blue reminder rect at bottom about the Final Answer button
   - Bottom info card INSIDE SVG: accent color #e64980
-  - Card text: "Scene 5 of 5 — How We Solve It" + description lines
+  - Card text: "Scene 5 of 5 — How We Solve It" + two simple description lines
 
 ═══ INFO CARD FORMAT (INSIDE SVG, y=490) ═══
 Each scene's bottom info card is drawn INSIDE the SVG like this:
@@ -3677,6 +4155,12 @@ Scenes follow the same pattern as the main SYSTEM prompt, but are concept-only:
 Use the SAME JS pattern (buildDots, fadeIn, dashIn, animateScene0-4).
 Use the SAME info-card format inside SVG at y=490.
 
+LANGUAGE STYLE (CRITICAL): Every word inside the info-card description lines
+must be VERY SIMPLE English for students of all levels, including weak
+learners. Short sentences (about 12-15 words max). Common, everyday words
+only. Explain any hard term in plain words right after it. One idea per
+sentence. Sound like a kind, friendly teacher — never like a textbook.
+
 OUTPUT FORMAT (strict JSON):
 {
   "animation_type": "label",
@@ -3684,8 +4168,8 @@ OUTPUT FORMAT (strict JSON):
   "concept_code": "COMPLETE <!DOCTYPE html>...</html> AS ESCAPED JSON STRING"
 }
 
-SAFETY: No dark bg. CRITICAL JS: use only ES5 — no backticks/template literals, no const/let (use var), no arrow functions (use function(){}), no optional chaining (?.), no nullish coalescing (??), no spread (...), no class fields.
-Balanced tags, 5 scenes, include #prevbtn/#nextbtn/#dots,
+SAFETY: No dark bg, no backticks, no const/let, no arrow functions,
+balanced tags, 5 scenes, include #prevbtn/#nextbtn/#dots,
 SVG subscripts with tspan (never underscores)."""
 
 
@@ -3826,11 +4310,13 @@ def _build_prompt(question, category):
         "- Exactly 5 scenes in <g id='scene-N' class='scene'> groups inside ONE SVG\n"
         "- Bottom info card INSIDE each SVG scene group at y=490\n"
         "- JS pattern: buildDots + showScene + fadeIn + dashIn + animateScene0-4 + DOMContentLoaded\n"
-        "- solution_steps: plain English descriptions of the 5 scenes (not numerical working)\n"
+        "- solution_steps: 5 SHORT, VERY SIMPLE English sentences (one per scene), not numerical "
+        "working. Use easy daily words, short sentences, and a friendly teacher tone, so a weak "
+        "student can understand instantly.\n"
         "- final_answer: REQUIRED -- fully solved answer with all computed values and units\n"
         "- key_insight: one memorable sentence\n"
         "- DO NOT include Find/Quiz/Solution/Answer Box buttons\n"
-        "- CRITICAL JS RULES: NO backtick template literals, NO const/let (use var), NO arrow functions (use function(){}), NO optional chaining (?.), NO nullish coalescing (??), NO spread operator (...), NO class fields. Use only ES5-compatible JavaScript.\n\n"
+        "- DO NOT use backtick template literals, const, let, arrow functions\n\n"
         "Return ONLY raw JSON. animation_code must be complete "
         "<!DOCTYPE html>...</html> as escaped JSON string."
     )
@@ -3901,11 +4387,12 @@ async def generate_question_animation(question):
     """
     PIPELINE v0.2:
 
-    Stage 0 -- ToFind + GivenValues Extraction  (sync, no AI)
-    Stage 1 -- Concept Animation   (claude-sonnet-4-6)
-    Stage 2 -- Solution Animation  (claude-sonnet-4-6)
-    Stage 3 -- Haiku Solution      (claude-haiku-4-5)
-               [Stages 1-3 concurrent via asyncio.gather]
+    Stage 0   -- ToFind + GivenValues Extraction  (sync, no AI)
+    Stage 0.5 -- SimpleMethodAnalyzer             (claude-haiku-4-5, concurrent)
+    Stage 1   -- Concept Animation   (claude-sonnet-4-6)
+    Stage 2   -- Solution Animation  (claude-sonnet-4-6)
+    Stage 3   -- Haiku Solution      (claude-haiku-4-5)
+               [Stages 0.5, 1, 2, 3 concurrent via asyncio.gather]
 
     Post-processing builds the full v0.2 page layout from the AI SVG.
     """
@@ -3925,35 +4412,73 @@ async def generate_question_animation(question):
     category = _classify_topic(question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
-    system_blocks, user_content = _build_prompt(question, category)
+    # ── Stage 0.5 + 1 + 2 + 3: all concurrent ──────────────────────────────
+    # SimpleMethodAnalyzer runs alongside the heavy AI stages at zero extra
+    # wall-clock cost.  Its result is used to steer Stages 2 and 3.
 
-    async def _run_solution_ai():
-        try:
-            msg = client.messages.create(
-                model=SOLUTION_MODEL, max_tokens=MAX_TOK,
-                system=system_blocks,
-                messages=[{"role": "user", "content": user_content}])
-            raw = msg.content[0].text.strip()
-            QAnimLogger.info(
-                "SolutionAI",
-                f"model={SOLUTION_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}"
-                f"  cache_read={getattr(msg.usage, 'cache_read_input_tokens', 0)}"
-                f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
-            )
-            if msg.stop_reason == "max_tokens":
-                QAnimLogger.warn("SolutionAI", "Hit max_tokens -- may be truncated!")
-            return raw
-        except Exception as e:
-            QAnimLogger.error("SolutionAI", f"API failed: {e}")
-            raise
+    async def _run_simple_analyzer():
+        return await SimpleMethodAnalyzer.analyze_async(question)
 
-    QAnimLogger.info("Pipeline", "Launching 3 concurrent AI stages...")
-    try:
-        concept_html, sol_raw, haiku_sol = await asyncio.gather(
-            _generate_concept_animation(question, category),
+    # We run the simple-method analysis together with concept + solution + haiku.
+    # Solution AI and Haiku must wait for the simple-method result, so we split
+    # into two gather calls:
+    #   gather_a: [concept_anim, simple_analysis]   (independent)
+    #   gather_b: [solution_ai, haiku]               (depend on simple hint)
+    # Both gather calls run concurrently relative to each other via a wrapper.
+
+    system_blocks_placeholder, user_content_placeholder = _build_prompt(question, category)
+
+    async def _run_all_stages():
+        # Sub-stage A: concept animation + simple-method analysis (truly independent)
+        concept_fut   = asyncio.ensure_future(_generate_concept_animation(question, category))
+        analyzer_fut  = asyncio.ensure_future(_run_simple_analyzer())
+
+        # Wait for the analyzer before we can build the enriched prompts
+        simple_result = await analyzer_fut
+        QAnimLogger.info("Pipeline", f"SimpleMethod done: use_simple={simple_result['use_simple']}")
+
+        # Build hints from analysis
+        haiku_hint    = SimpleMethodAnalyzer.build_haiku_hint(simple_result)
+        sol_hint      = SimpleMethodAnalyzer.build_solution_hint(simple_result)
+
+        # Build enriched solution prompt (add hint to user content only)
+        _sys_blocks, _user_content = _build_prompt(question, category)
+        enriched_user_content = _user_content + sol_hint if sol_hint else _user_content
+
+        async def _run_solution_ai():
+            try:
+                msg = client.messages.create(
+                    model=SOLUTION_MODEL, max_tokens=MAX_TOK,
+                    system=_sys_blocks,
+                    messages=[{"role": "user", "content": enriched_user_content}])
+                raw = msg.content[0].text.strip()
+                QAnimLogger.info(
+                    "SolutionAI",
+                    f"model={SOLUTION_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}"
+                    f"  cache_read={getattr(msg.usage, 'cache_read_input_tokens', 0)}"
+                    f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
+                )
+                if msg.stop_reason == "max_tokens":
+                    QAnimLogger.warn("SolutionAI", "Hit max_tokens -- may be truncated!")
+                return raw
+            except Exception as e:
+                QAnimLogger.error("SolutionAI", f"API failed: {e}")
+                raise
+
+        # Sub-stage B: solution AI + haiku (both enriched with simple hint)
+        sol_raw, haiku_sol = await asyncio.gather(
             _run_solution_ai(),
-            HaikuSolutionGenerator.generate_async(question),
+            HaikuSolutionGenerator.generate_async(question, haiku_hint),
         )
+
+        # Wait for concept (already started, may already be done)
+        concept_html = await concept_fut
+
+        return concept_html, sol_raw, haiku_sol, simple_result
+
+    QAnimLogger.info("Pipeline", "Launching concurrent AI stages (0.5 + 1 + 2 + 3)...")
+    try:
+        concept_html, sol_raw, haiku_sol, simple_result = await _run_all_stages()
     except Exception as e:
         QAnimLogger.error("Pipeline", f"Concurrent generation failed: {e}")
         return _build_failure_result(question, f"API error: {e}")
@@ -4008,10 +4533,11 @@ async def generate_question_animation(question):
 
     # Build full page layout
     try:
-        page_html = build_page_html(question, result, given_cards, category)
+        page_html, scene_descs = build_page_html(question, result, given_cards, category)
     except Exception as e:
         QAnimLogger.error("PageBuilder", f"build_page_html failed: {e}")
         page_html = RecoveryEngine.fallback_html(question, f"Page build error: {e}")
+        scene_descs = []
 
     # Validate the base page structure
     try:
@@ -4042,6 +4568,7 @@ async def generate_question_animation(question):
     html = inject_answer_box_panel(html, answer_targets)
     html = inject_controls_bar(html)
     html = inject_voice_assistant(html)
+    html = inject_nav_patch_and_scene_desc(html, scene_descs)  # NEW in v0.2
     html = inject_step_controller(html)   # MUST be absolute last
 
     # Final validation (warn only)
@@ -4060,7 +4587,8 @@ async def generate_question_animation(question):
         f"haiku_steps={len(haiku_steps)} "
         f"to_find={result['to_find']} "
         f"given_cards={len(given_cards)} "
-        f"answer_targets={len(answer_targets)}"
+        f"answer_targets={len(answer_targets)} "
+        f"simple_method={simple_result.get('method_name') or 'none'}"
     ))
     return result
 
