@@ -422,6 +422,7 @@ def save_courses(
 
     The structure is stored as JSONB in `body.courses` inside a single
     `contents` row keyed by anim_id = "__eng_courses__".
+    Duplicates (from the old INSERT-only bug) are cleaned up automatically.
     """
     supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
@@ -439,22 +440,41 @@ def save_courses(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    existing = (
-        supabase.table("contents")
-        .select("id")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
-        .limit(1)
-        .execute()
-    )
+    try:
+        # Fetch ALL sentinel rows for this user (old INSERT bug may have left duplicates)
+        all_existing = (
+            supabase.table("contents")
+            .select("id, created_at")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
+            .order("created_at", desc=True)   # newest first
+            .execute()
+        )
 
-    if existing.data and len(existing.data) > 0:
-        row.pop("created_at", None)
-        supabase.table("contents").update(row).eq("id", existing.data[0]["id"]).execute()
-        print(f"[SYNC] ↑ Courses updated for user={current_user['email']!r}")
-    else:
-        supabase.table("contents").insert(row).execute()
-        print(f"[SYNC] ✅ Courses saved for user={current_user['email']!r}")
+        rows = all_existing.data or []
+
+        if len(rows) > 1:
+            # Dedup: delete all stale duplicates (keep only the newest one we'll update)
+            stale_ids = [r["id"] for r in rows[1:]]
+            for stale_id in stale_ids:
+                supabase.table("contents").delete().eq("id", stale_id).execute()
+            print(f"[SYNC] 🧹 Removed {len(stale_ids)} duplicate course row(s) for user={current_user['email']!r}")
+
+        if rows:
+            # Update the single authoritative row
+            row.pop("created_at", None)
+            supabase.table("contents").update(row).eq("id", rows[0]["id"]).execute()
+            print(f"[SYNC] ↑ Courses updated for user={current_user['email']!r} ({len(body.courses)} subjects)")
+        else:
+            supabase.table("contents").insert(row).execute()
+            print(f"[SYNC] ✅ Courses saved for user={current_user['email']!r} ({len(body.courses)} subjects)")
+
+    except Exception as exc:
+        print(f"[SYNC] ❌ Courses save FAILED for user={current_user['email']!r}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save courses: {str(exc)}",
+        )
 
     return CoursesResponse(success=True, message="Engineering courses saved to cloud.")
 
@@ -466,28 +486,34 @@ def save_courses(
 def get_courses(current_user: dict = Depends(get_current_user)):
     """
     Return the stored engineeringCourses array for this user.
-    Returns { courses: [...] } or { courses: null } if none saved yet.
+    Returns { courses: [...] } or { courses: [] } if none saved yet.
+    ORDER BY created_at DESC guarantees we always get the LATEST row,
+    not a stale duplicate from the old INSERT-only bug.
     """
     supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
 
-    res = (
-        supabase.table("contents")
-        .select("body")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
-        .limit(1)
-        .execute()
-    )
+    try:
+        res = (
+            supabase.table("contents")
+            .select("body")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
+            .order("created_at", desc=True)   # ← always return the NEWEST row
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        print(f"[SYNC] ❌ Courses fetch FAILED for user={current_user['email']!r}: {exc}")
+        return {"courses": []}
 
     if res.data and len(res.data) > 0 and res.data[0].get("body"):
         courses = res.data[0]["body"].get("courses") or []
-
         print(f"[SYNC] ↓ Courses fetched for user={current_user['email']!r} ({len(courses)} subjects)")
-        return {"courses": courses if courses else None}
+        return {"courses": courses}   # always return list, never None
 
     print(f"[SYNC] ↓ No courses found for user={current_user['email']!r}")
-    return {"courses": None}
+    return {"courses": []}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -545,22 +571,38 @@ def save_vault(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    existing = (
-        supabase.table("contents")
-        .select("id")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _VAULT_SENTINEL})
-        .limit(1)
-        .execute()
-    )
+    try:
+        all_existing = (
+            supabase.table("contents")
+            .select("id, created_at")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": _VAULT_SENTINEL})
+            .order("created_at", desc=True)
+            .execute()
+        )
 
-    if existing.data and len(existing.data) > 0:
-        supabase.table("contents").update(row).eq("id", existing.data[0]["id"]).execute()
-        print(f"[SYNC] ↑ Vault updated for user={current_user['email']!r} ({len(body.entries)} entries)")
-    else:
-        row["created_at"] = datetime.now(timezone.utc).isoformat()
-        supabase.table("contents").insert(row).execute()
-        print(f"[SYNC] ✅ Vault saved for user={current_user['email']!r} ({len(body.entries)} entries)")
+        rows = all_existing.data or []
+
+        if len(rows) > 1:
+            stale_ids = [r["id"] for r in rows[1:]]
+            for stale_id in stale_ids:
+                supabase.table("contents").delete().eq("id", stale_id).execute()
+            print(f"[SYNC] 🧹 Removed {len(stale_ids)} duplicate vault row(s) for user={current_user['email']!r}")
+
+        if rows:
+            supabase.table("contents").update(row).eq("id", rows[0]["id"]).execute()
+            print(f"[SYNC] ↑ Vault updated for user={current_user['email']!r} ({len(body.entries)} entries)")
+        else:
+            row["created_at"] = datetime.now(timezone.utc).isoformat()
+            supabase.table("contents").insert(row).execute()
+            print(f"[SYNC] ✅ Vault saved for user={current_user['email']!r} ({len(body.entries)} entries)")
+
+    except Exception as exc:
+        print(f"[SYNC] ❌ Vault save FAILED for user={current_user['email']!r}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save vault: {str(exc)}",
+        )
 
     return VaultResponse(success=True, message="Video vault saved to cloud.")
 
@@ -575,14 +617,19 @@ def get_vault(current_user: dict = Depends(get_current_user)):
     supabase = get_supabase(current_user.get("token"))
     user_id  = current_user["id"]
 
-    res = (
-        supabase.table("contents")
-        .select("body")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _VAULT_SENTINEL})
-        .limit(1)
-        .execute()
-    )
+    try:
+        res = (
+            supabase.table("contents")
+            .select("body")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": _VAULT_SENTINEL})
+            .order("created_at", desc=True)   # ← always return the NEWEST row
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        print(f"[SYNC] ❌ Vault fetch FAILED for user={current_user['email']!r}: {exc}")
+        return {"entries": []}
 
     if res.data and len(res.data) > 0 and res.data[0].get("body"):
         entries = res.data[0]["body"].get("entries") or []
