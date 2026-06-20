@@ -29,7 +29,7 @@
 from typing import List, Optional
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
 
 from auth_utils import get_current_user, get_supabase
@@ -367,7 +367,7 @@ def delete_animation(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .eq("anim_id", anim_id)
+        .contains("body", {"anim_id": anim_id})
         .limit(1)
         .execute()
     )
@@ -443,7 +443,7 @@ def save_courses(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .eq("anim_id", _ENG_COURSES_SENTINEL)
+        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
         .limit(1)
         .execute()
     )
@@ -475,7 +475,7 @@ def get_courses(current_user: dict = Depends(get_current_user)):
         supabase.table("contents")
         .select("body")
         .eq("user_id", user_id)
-        .eq("anim_id", _ENG_COURSES_SENTINEL)
+        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
         .limit(1)
         .execute()
     )
@@ -549,7 +549,7 @@ def save_vault(
         supabase.table("contents")
         .select("id")
         .eq("user_id", user_id)
-        .eq("anim_id", _VAULT_SENTINEL)
+        .contains("body", {"anim_id": _VAULT_SENTINEL})
         .limit(1)
         .execute()
     )
@@ -579,7 +579,7 @@ def get_vault(current_user: dict = Depends(get_current_user)):
         supabase.table("contents")
         .select("body")
         .eq("user_id", user_id)
-        .eq("anim_id", _VAULT_SENTINEL)
+        .contains("body", {"anim_id": _VAULT_SENTINEL})
         .limit(1)
         .execute()
     )
@@ -591,3 +591,63 @@ def get_vault(current_user: dict = Depends(get_current_user)):
 
     print(f"[SYNC] ↓ No vault found for user={current_user['email']!r}")
     return {"entries": []}
+
+@router.post(
+    "/files/upload",
+    summary="Upload a heavy file (mp4, html) directly to Supabase Storage",
+)
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = get_supabase(current_user.get("token"))
+    user_id  = current_user["id"]
+    
+    # Prefix filename with timestamp to avoid collisions
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    safe_filename = file.filename.replace(" ", "_")
+    storage_path = f"{user_id}/{timestamp}_{safe_filename}"
+    
+    file_bytes = await file.read()
+    
+    try:
+        # Upload to 'vault' bucket
+        supabase.storage.from_("vault").upload(
+            path=storage_path,
+            file=file_bytes,
+            file_options={"content-type": file.content_type}
+        )
+        
+        # Get public URL
+        public_url = supabase.storage.from_("vault").get_public_url(storage_path)
+        
+        return {
+            "success": True,
+            "url": public_url,
+            "filename": safe_filename,
+            "path": storage_path,
+        }
+    except Exception as e:
+        print(f"[STORAGE ERROR] Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@router.delete(
+    "/files/delete",
+    summary="Delete a file from Supabase Storage",
+)
+def delete_file(
+    path: str,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = get_supabase(current_user.get("token"))
+    
+    # Ensure users can only delete from their own folder
+    user_id = current_user["id"]
+    if not path.startswith(f"{user_id}/"):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this file.")
+        
+    try:
+        supabase.storage.from_("vault").remove([path])
+        return {"success": True, "message": "File deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
