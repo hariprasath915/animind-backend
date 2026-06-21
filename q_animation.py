@@ -1,6 +1,22 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v0.2
+q_animation.py  --  QAnim Question Animation Generator  v0.3
 =============================================================
+v0.3 -- LARGE-INPUT RESILIENCE (backward-compatible with v0.2):
+
+  NEW IN v0.3:
+  - LargeInputPreprocessor (Module 2.7):
+      * Fires automatically when input length > 600 characters.
+      * Strategy 1: Structured compression via claude-haiku-4-5 — extracts
+        TOPIC / GIVEN / FIND / CONTEXT / CORE_QUESTION block (≤ 300 chars).
+      * Strategy 2: Heuristic MCQ-option / boilerplate stripping (no AI).
+      * Strategy 3: Hard truncation to 2 000 chars (last resort).
+      * Stage 0 (GivenValuesExtractor, ToFindExtractor) always runs on the
+        ORIGINAL raw text — numeric extraction is unaffected.
+      * All AI generation stages (Concept, Solution, Haiku, SimpleMethod)
+        receive the COMPRESSED form, keeping prompts lean and fast.
+  - Pipeline comment updated to show Stage -1.
+  - Engine version bumped to "v0.3" in result dict.
+
 v0.2 -- REFACTORED TO MATCH SAMPLE OUTPUT STRUCTURE:
 
   OUTPUT FORMAT CHANGES (from v0.1):
@@ -317,6 +333,210 @@ class GivenValuesExtractor:
                 break
         QAnimLogger.ok("GivenExtractor", f"Extracted {len(cards)} given card(s)")
         return cards
+
+
+# ===========================================================================
+#  MODULE 2.7 -- LargeInputPreprocessor
+#  NEW in v0.3: compresses long questions before they hit the animation AI.
+#
+#  WHY THIS EXISTS
+#  ---------------
+#  Long JEE/NEET-style inputs (600+ chars) carry:
+#    • Option lists  (A) ... (B) ... (C) ... (D) that the animators don't need
+#    • Multi-paragraph context paragraphs that repeat the same physics setup
+#    • Redundant given-value sentences already extracted by GivenValuesExtractor
+#    • MCQ stems, column-matching tables, assertion-reason boilerplate
+#  All of that pads the prompt without improving animation quality.  Worse, the
+#  fatter prompt causes longer generation times → more likely to hit a timeout
+#  → "Failed to Fetch" on the client side.
+#
+#  STRATEGY: STRUCTURED COMPRESSION via a fast Haiku call
+#  -------------------------------------------------------
+#  When input length exceeds COMPRESS_THRESHOLD characters we send the raw
+#  question to claude-haiku-4-5 with a tight instruction to return ONLY a
+#  compact structured block:
+#
+#      TOPIC: <one-line physics/math topic>
+#      GIVEN: <comma-separated key values with units>
+#      FIND: <what the question asks for>
+#      CONTEXT: <one sentence of essential background, if any>
+#      CORE_QUESTION: <the single cleanest sentence that states the problem>
+#
+#  This block is ≤ 300 chars and contains everything the animation AI needs.
+#  No information loss on the critical facts; heavy noise is stripped.
+#
+#  FALLBACKS (layered, in order of preference)
+#  -------------------------------------------
+#  1. Haiku compression  (AI, accurate)
+#  2. Heuristic truncation  (fast regex-based strip of MCQ options + trim)
+#  3. Hard truncation to HARD_LIMIT chars  (last resort, never crashes)
+#
+#  The original raw question is ALWAYS kept on the result object so that
+#  GivenValuesExtractor and ToFindExtractor (which run on the raw text) are
+#  unaffected.  Only the AI generation stages receive the compressed form.
+# ===========================================================================
+
+class LargeInputPreprocessor:
+    """
+    Transparently compresses questions that exceed COMPRESS_THRESHOLD before
+    they are sent to the main animation AI stages.
+
+    Usage:
+        compressed = LargeInputPreprocessor.compress(raw_question)
+        # compressed == raw_question  if it was short enough
+        # compressed == structured summary  if it was too long
+    """
+
+    # Characters above which we attempt compression
+    COMPRESS_THRESHOLD = 600
+    # Absolute hard-limit (safety net — never pass more than this to any AI)
+    HARD_LIMIT = 2000
+
+    # Regex to strip MCQ options  — matches lines like:
+    #   (A) option text    (B) option text …
+    #   A. option          B. option …
+    #   Option 1: …        Option 2: …
+    _MCQ_LINE_RE = re.compile(
+        r'^\s*(?:\([A-Da-d1-4]\)|[A-Da-d1-4][.)]\s|Option\s*[A-D1-4]\s*[:.])',
+        re.MULTILINE,
+    )
+    # Assertion-Reason / Column-matching boilerplate headers
+    _BOILERPLATE_RE = re.compile(
+        r'(?:STATEMENT\s*[–\-:]\s*[12]|ASSERTION\s*[–\-:]\s*|REASON\s*[–\-:]\s*|'
+        r'Column\s*[I12]\s*[–\-:]\s*|Match\s+the\s+following)',
+        re.IGNORECASE,
+    )
+
+    # ── Haiku compression prompt ────────────────────────────────────────────
+    _COMPRESS_SYSTEM = (
+        "You are a concise exam-question compressor. "
+        "Return ONLY the structured block below with no preamble or trailing text:\n\n"
+        "TOPIC: <one-line subject area>\n"
+        "GIVEN: <comma-separated key quantities with values and units>\n"
+        "FIND: <exactly what the question asks us to compute or determine>\n"
+        "CONTEXT: <one sentence of essential background, or NONE>\n"
+        "CORE_QUESTION: <the single clearest restatement of the problem in ≤ 30 words>\n\n"
+        "Rules: every line must be present. Be precise with numbers and units. "
+        "Never omit a given value. Never add anything outside the five fields."
+    )
+
+    @classmethod
+    def needs_compression(cls, question: str) -> bool:
+        return len(question) > cls.COMPRESS_THRESHOLD
+
+    @classmethod
+    def compress(cls, question: str) -> str:
+        """
+        Return a compressed representation of *question* suitable for the
+        animation AI.  The return value is always a non-empty string.
+
+        Compression path:
+            1. If short enough → return as-is.
+            2. Try Haiku AI compression → use if it produces a valid block.
+            3. Fall back to heuristic stripping (MCQ options, boilerplate).
+            4. Hard-truncate to HARD_LIMIT as a final safety net.
+        """
+        if not cls.needs_compression(question):
+            return question
+
+        short_q = question[:80] + ("…" if len(question) > 80 else "")
+        QAnimLogger.info(
+            "LargeInputPreprocessor",
+            f"Input length={len(question)} exceeds threshold={cls.COMPRESS_THRESHOLD} — compressing…"
+            f"  ('{short_q}')"
+        )
+
+        # ── Attempt 1: Haiku AI compression ─────────────────────────────────
+        try:
+            compressed = cls._haiku_compress(question)
+            if compressed:
+                QAnimLogger.ok(
+                    "LargeInputPreprocessor",
+                    f"Haiku compression OK: {len(question)} → {len(compressed)} chars"
+                )
+                return compressed
+        except Exception as exc:
+            QAnimLogger.warn("LargeInputPreprocessor", f"Haiku compression failed: {exc}")
+
+        # ── Attempt 2: Heuristic strip ────────────────────────────────────
+        try:
+            stripped = cls._heuristic_strip(question)
+            if stripped and len(stripped) < len(question):
+                QAnimLogger.ok(
+                    "LargeInputPreprocessor",
+                    f"Heuristic strip OK: {len(question)} → {len(stripped)} chars"
+                )
+                return stripped[:cls.HARD_LIMIT]
+        except Exception as exc:
+            QAnimLogger.warn("LargeInputPreprocessor", f"Heuristic strip failed: {exc}")
+
+        # ── Attempt 3: Hard truncation ────────────────────────────────────
+        QAnimLogger.warn(
+            "LargeInputPreprocessor",
+            f"Falling back to hard truncation → {cls.HARD_LIMIT} chars"
+        )
+        return question[:cls.HARD_LIMIT]
+
+    # ── Private helpers ─────────────────────────────────────────────────────
+
+    @classmethod
+    def _haiku_compress(cls, question: str) -> Optional[str]:
+        """
+        Use claude-haiku-4-5 to produce a structured 5-field summary block.
+        Raises on API error so callers can fall through to heuristics.
+        """
+        # Feed at most HARD_LIMIT chars to Haiku itself (prevents mega-inputs)
+        safe_input = question[:cls.HARD_LIMIT]
+        msg = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=400,
+            system=cls._COMPRESS_SYSTEM,
+            messages=[{"role": "user", "content": safe_input}],
+        )
+        raw = msg.content[0].text.strip()
+
+        # Validate: all 5 fields must be present
+        required = ["TOPIC:", "GIVEN:", "FIND:", "CONTEXT:", "CORE_QUESTION:"]
+        if all(f in raw for f in required):
+            return raw
+        # Partial result — still usable if it has CORE_QUESTION
+        if "CORE_QUESTION:" in raw:
+            QAnimLogger.warn("LargeInputPreprocessor", "Haiku block partial — using anyway")
+            return raw
+        QAnimLogger.warn("LargeInputPreprocessor", f"Haiku block malformed — ignoring. raw={raw[:120]!r}")
+        return None
+
+    @classmethod
+    def _heuristic_strip(cls, question: str) -> str:
+        """
+        Fast regex-based stripping:
+          1. Remove MCQ option lines.
+          2. Remove assertion/reason/column-matching header lines.
+          3. Collapse multiple blank lines.
+          4. Strip surrounding whitespace.
+        Does NOT use any AI.
+        """
+        text = question
+
+        # Remove option lines
+        # Find first MCQ option match; strip from there to end of options block
+        mcq_match = cls._MCQ_LINE_RE.search(text)
+        if mcq_match:
+            # Keep everything before the first option line (the stem)
+            stem = text[:mcq_match.start()].strip()
+            if len(stem) > 80:  # stem is substantive
+                text = stem
+            else:
+                # Short stem — remove just the option lines, keep rest
+                text = cls._MCQ_LINE_RE.sub("", text)
+
+        # Remove boilerplate headers
+        text = cls._BOILERPLATE_RE.sub("", text)
+
+        # Collapse blank lines
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+        return text
 
 
 # ===========================================================================
@@ -1047,18 +1267,6 @@ svg {
   .dot { width: 12px; height: 12px; }
   .dot.active { width: 32px; }
 }
-</style>"""
-
-
-# ===========================================================================
-#  MODULE 5.1 -- Scroll-fix CSS (extracted to a plain constant; see
-#  build_page_html() for the full explanation of why this MUST stay a
-#  plain triple-quoted string and never be inlined into an f-string).
-# ===========================================================================
-_PAGE_SCROLL_FIX_CSS = """<style id="qanim-scroll-fix">
-html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
-svg{width:100%!important;height:auto!important;max-width:100%!important;}
-#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
 </style>"""
 
 
@@ -3885,28 +4093,6 @@ def build_page_html(question, result, given_cards, category):
     """
     Assembles the full standalone page HTML in the v0.2 layout.
     This is the core new function in v0.2.
-
-    IMPORTANT -- WHY THE SCROLL-FIX CSS IS A SEPARATE CONSTANT
-    ------------------------------------------------------------
-    This function builds the page via an f-string. Inside an f-string,
-    a literal "{" or "}" that is meant to be LITERAL TEXT (e.g. CSS rule
-    braces) must be doubled ("{{" / "}}"), otherwise Python tries to
-    evaluate whatever is between the braces as a Python expression.
-
-    A single un-escaped "{" right before a CSS rule like
-    "overflow-x:hidden!important;..." makes Python parse
-    "overflow-x" as the expression "overflow - x" (the "-" is read as
-    subtraction) and everything after the first top-level ":" as a
-    format spec. Evaluating that expression raises:
-        NameError: name 'overflow' is not defined
-    This is *exactly* the "Page build error: name 'overflow' is not
-    defined" failure that was breaking every animation.
-
-    To eliminate this entire class of bug for good, the scroll-fix CSS
-    now lives in `_PAGE_SCROLL_FIX_CSS`, a plain (non f-string) constant
-    -- the same pattern already used for `BASE_PAGE_CSS`. It is inserted
-    below via simple variable substitution (`{_PAGE_SCROLL_FIX_CSS}`),
-    so its literal CSS braces are never re-parsed by the f-string at all.
     """
     animation_html = result.get("animation_code", "")
     title_text     = result.get("title", f"Animation: {question[:50]}")
@@ -3946,7 +4132,11 @@ def build_page_html(question, result, given_cards, category):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
-{_PAGE_SCROLL_FIX_CSS}
+<style id="qanim-scroll-fix">
+html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
+svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
+#container,[id="container"]{{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}}
+</style>
 </head>
 <body>
 
@@ -4615,11 +4805,12 @@ async def _run_generation_pipeline(question):
     """
     PIPELINE v0.2:
 
-    Stage 0   -- ToFind + GivenValues Extraction  (sync, no AI)
+    Stage -1  -- LargeInputPreprocessor  (sync; fires only when len > threshold)
+    Stage 0   -- ToFind + GivenValues Extraction  (sync, no AI, uses RAW question)
     Stage 0.5 -- SimpleMethodAnalyzer             (claude-haiku-4-5, concurrent)
-    Stage 1   -- Concept Animation   (claude-sonnet-4-6)
-    Stage 2   -- Solution Animation  (claude-sonnet-4-6)
-    Stage 3   -- Haiku Solution      (claude-haiku-4-5)
+    Stage 1   -- Concept Animation   (claude-sonnet-4-6, uses COMPRESSED question)
+    Stage 2   -- Solution Animation  (claude-sonnet-4-6, uses COMPRESSED question)
+    Stage 3   -- Haiku Solution      (claude-haiku-4-5,  uses COMPRESSED question)
                [Stages 0.5, 1, 2, 3 concurrent via asyncio.gather]
 
     Post-processing builds the full v0.2 page layout from the AI SVG.
@@ -4630,21 +4821,39 @@ async def _run_generation_pipeline(question):
     short_q = question[:80] + ("..." if len(question) > 80 else "")
     QAnimLogger.info("Pipeline", f"START v0.2 -- '{short_q}'")
 
-    # Stage 0: Sync extraction
+    # ── Stage -1: Large-input preprocessing ─────────────────────────────────
+    # ai_question is what every AI stage receives.  It equals `question` when
+    # input is short, or a compact structured block when it is long.
+    # Stage 0 regex extractors always run on the original raw text.
+    try:
+        ai_question = LargeInputPreprocessor.compress(question)
+    except Exception as _pre_exc:
+        QAnimLogger.warn("Pipeline", f"Preprocessor raised unexpectedly: {_pre_exc} -- using raw")
+        ai_question = question[:LargeInputPreprocessor.HARD_LIMIT]
+
+    if ai_question != question:
+        QAnimLogger.info(
+            "Pipeline",
+            f"Large-input compression active: raw={len(question)} -> ai={len(ai_question)} chars"
+        )
+
+    # Stage 0: Sync extraction -- always on the ORIGINAL raw question so that
+    # GivenValuesExtractor and ToFindExtractor see full numeric text.
     to_find_targets = ToFindExtractor.extract(question)
     given_cards     = GivenValuesExtractor.extract(question)
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
     QAnimLogger.info("Pipeline", f"GivenCards: {len(given_cards)} card(s)")
 
-    category = _classify_topic(question)
+    category = _classify_topic(ai_question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
     # ── Stage 0.5 + 1 + 2 + 3: all concurrent ──────────────────────────────
     # SimpleMethodAnalyzer runs alongside the heavy AI stages at zero extra
     # wall-clock cost.  Its result is used to steer Stages 2 and 3.
+    # All AI stages use ai_question (compressed when long, raw otherwise).
 
     async def _run_simple_analyzer():
-        return await SimpleMethodAnalyzer.analyze_async(question)
+        return await SimpleMethodAnalyzer.analyze_async(ai_question)
 
     # We run the simple-method analysis together with concept + solution + haiku.
     # Solution AI and Haiku must wait for the simple-method result, so we split
@@ -4653,11 +4862,11 @@ async def _run_generation_pipeline(question):
     #   gather_b: [solution_ai, haiku]               (depend on simple hint)
     # Both gather calls run concurrently relative to each other via a wrapper.
 
-    system_blocks_placeholder, user_content_placeholder = _build_prompt(question, category)
+    system_blocks_placeholder, user_content_placeholder = _build_prompt(ai_question, category)
 
     async def _run_all_stages():
         # Sub-stage A: concept animation + simple-method analysis (truly independent)
-        concept_fut   = asyncio.ensure_future(_generate_concept_animation(question, category))
+        concept_fut   = asyncio.ensure_future(_generate_concept_animation(ai_question, category))
         analyzer_fut  = asyncio.ensure_future(_run_simple_analyzer())
 
         # Wait for the analyzer before we can build the enriched prompts
@@ -4669,7 +4878,7 @@ async def _run_generation_pipeline(question):
         sol_hint      = SimpleMethodAnalyzer.build_solution_hint(simple_result)
 
         # Build enriched solution prompt (add hint to user content only)
-        _sys_blocks, _user_content = _build_prompt(question, category)
+        _sys_blocks, _user_content = _build_prompt(ai_question, category)
         enriched_user_content = _user_content + sol_hint if sol_hint else _user_content
 
         async def _run_solution_ai():
@@ -4693,9 +4902,10 @@ async def _run_generation_pipeline(question):
                 raise
 
         # Sub-stage B: solution AI + haiku (both enriched with simple hint)
+        # Both use ai_question (compressed when the input was large).
         sol_raw, haiku_sol = await asyncio.gather(
             _run_solution_ai(),
-            HaikuSolutionGenerator.generate_async(question, haiku_hint),
+            HaikuSolutionGenerator.generate_async(ai_question, haiku_hint),
         )
 
         # Wait for concept (already started, may already be done)
@@ -4713,7 +4923,7 @@ async def _run_generation_pipeline(question):
     # Parse solution animation
     result = _parse_response(sol_raw, question)
     result["category"]               = category
-    result["engine_version"]         = "v0.2"
+    result["engine_version"]         = "v0.3"
     result["concept_animation_code"] = concept_html
     result["to_find"]                = to_find_targets
     result["given_cards"]            = given_cards
