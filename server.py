@@ -1,168 +1,254 @@
 """
-server.py — Animind / GenZet Backend  v4.0  (Supabase edition)
-==============================================================
-Architecture:
-  - FastAPI application
-  - Auth:      Supabase Auth  (sign-up / sign-in via auth_routes.py)
-  - Database:  Supabase (supabase-py service-role client via auth_utils.py)
-  - JWT:       Supabase-issued HS256 tokens verified with SUPABASE_JWT_SECRET
-  - Storage:   `contents` table in Supabase (filtered by user_id on every query)
+server.py  —  GenZet / Animind Backend  v6.0  (Supabase + Normalized Schema)
+=============================================================================
+This file is an ALIAS entry point for the same app as main.py.
+Some deployment configs (older Railway / Render setups) reference server:app
+instead of main:app. Both files import from the same modules.
 
-Required environment variables (set in Render Dashboard → Environment):
-  ANTHROPIC_API_KEY    — sk-ant-... key for AI generation
-  SUPABASE_URL         — https://<project>.supabase.co
-  SUPABASE_ANON_KEY    — anon/public key (used in auth_routes for sign-up/sign-in)
-  SUPABASE_SERVICE_KEY — service-role key (backend-only; never expose to browser)
-  SUPABASE_JWT_SECRET  — JWT secret from Supabase Dashboard → Settings → API
-  ADMIN_SECRET_TOKEN   — any long random string for /admin/* endpoints
+If your Railway start command uses:   uvicorn main:app   → use main.py
+If your Railway start command uses:   uvicorn server:app → use this file
 
-Optional:
-  JWT_EXPIRE_DAYS      — not used (Supabase controls token expiry); kept for compat
-  LOG_LEVEL            — debug | info | warning | error (default: debug)
-  SHOW_ERROR_DETAILS   — true | false (default: true)
+What changed from v4.0 (server.py / Animind edition):
+  - Added all new /sync/* normalized endpoints to health listing
+  - Added /generate-from-book endpoint (was missing from some server.py builds)
+  - Kept ALL original endpoints, CORS config, lifespan, keep-alive pinger
 
-Environment variables (set in Render Dashboard → Environment):
-  ANTHROPIC_API_KEY    — Claude AI key
-  SUPABASE_URL         — https://<project>.supabase.co
-  SUPABASE_ANON_KEY    — anon/public key
-  SUPABASE_SERVICE_KEY — service-role key (backend-only)
-  SUPABASE_JWT_SECRET  — JWT secret from Supabase Dashboard → Settings → API
-  ADMIN_SECRET_TOKEN   — for /admin/* endpoints
-  FRONTEND_URL         — e.g. https://genzet-app.vercel.app (for OAuth redirect)
-  EXTRA_ORIGINS        — comma-separated extra frontend URLs
-
-Endpoints:
-  GET  /                              →  health + endpoint list
-  GET  /health                        →  version check
-  POST /auth/register                 →  register + create public.users row
-  POST /auth/login                    →  login  + update public.users.last_login
-  POST /auth/logout                   →  revoke session
-  GET  /auth/verify                   →  validate existing JWT
-  GET  /auth/me                       →  profile from public.users
-  GET  /auth/google                   →  start Google OAuth flow
-  POST /auth/google/callback          →  finish Google OAuth + create profile
-  POST /sync/animations               →  sync_routes (JWT required)
-  POST /sync/animations/batch         →  sync_routes (JWT required)
-  GET  /sync/animations               →  sync_routes (JWT required)
-  DELETE /sync/animations/{anim_id}   →  sync_routes (JWT required)
-  GET  /admin/errors                  →  admin_router (X-Admin-Token required)
-  GET  /admin/users                   →  admin_router (X-Admin-Token required)
-  POST /generate-animation            →  claude_client.generate_animation()
-  POST /generate-topic-content        →  claude_client.generate_topic_content()
-  POST /generate-question-animation   →  q_animation.generate_question_animation()
-
-Run locally:
-  uvicorn server:app --reload --port 8000
+Environment variables:
+    ANTHROPIC_API_KEY        — sk-ant-... key for AI generation
+    SUPABASE_URL             — https://<project-id>.supabase.co
+    SUPABASE_ANON_KEY        — anon/public key (auth_routes sign-up/sign-in)
+    SUPABASE_SERVICE_KEY     — service-role key (backend-only DB CRUD)
+    SUPABASE_JWT_SECRET      — Supabase Dashboard → Settings → API → JWT Secret
+    ADMIN_SECRET_TOKEN       — any long random string for /admin/* endpoints
+    DEBUG_CORS               — "true" | "false"  (allow ALL origins, dev only)
+    EXTRA_ORIGINS            — comma-separated extra Vercel preview URLs
+    KEEP_ALIVE_INTERVAL      — seconds between self-pings (default 600)
+    FRONTEND_URL             — e.g. https://genzet-app.vercel.app (for OAuth redirect)
 """
 
+import sys
+import io
 import os
-from fastapi import FastAPI
+import asyncio
+import json
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+from contextlib import asynccontextmanager
+import httpx
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-
-# ── Route modules ──────────────────────────────────────────────────────
-from auth_routes import router as auth_router
-from sync_routes import router as sync_router
-from admin_router import router as admin_router, install_error_handler
-
-# ── AI generation modules ──────────────────────────────────────────────
-from claude_client import generate_animation, generate_topic_content
-from q_animation import generate_question_animation
-
-from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
-# ── App ────────────────────────────────────────────────────────────────
+# ── Auth + Sync ───────────────────────────────────────────────────────────────
+from auth_routes import router as auth_router
+from sync_routes import router as sync_router          # v6 normalized + legacy
+
+# ── Admin ─────────────────────────────────────────────────────────────────────
+from admin_router import router as admin_router, install_error_handler
+
+# ── AI modules ────────────────────────────────────────────────────────────────
+from claude_client import (
+    generate_animation,
+    generate_genzet_book_content,
+    subtopics_json_to_genzet_args,
+    generate_ultimate_learning_content,
+)
+from pdf_handler import (
+    extract_pdf_text,
+    find_subtopics_in_pdf,
+    build_subtopics_json,
+)
+from q_animation import generate_question_animation
+
+try:
+    from sub_topics import process_subtopics_json
+    SUB_TOPICS_AVAILABLE = True
+    print("[INFO]  sub_topics.py loaded OK")
+except ImportError:
+    SUB_TOPICS_AVAILABLE = False
+    print("[WARNING] sub_topics.py not found — falling back to pdf_handler output")
+
+# ── Env flags ─────────────────────────────────────────────────────────────────
+DEBUG_CORS          = os.getenv("DEBUG_CORS", "false").lower() == "true"
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# KEEP-ALIVE PINGER
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _keep_alive_pinger():
+    self_url   = os.getenv(
+        "RENDER_EXTERNAL_URL",
+        "https://animind-backend-production.up.railway.app",
+    )
+    health_url = f"{self_url.rstrip('/')}/health"
+    print(f"[KEEP-ALIVE] ✅ Pinger started → {health_url} every {KEEP_ALIVE_INTERVAL}s")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+            try:
+                r = await client.get(health_url)
+                print(f"[KEEP-ALIVE] ✅ Ping OK ({r.status_code})")
+            except Exception as e:
+                print(f"[KEEP-ALIVE] ⚠ Ping failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# APP LIFESPAN
+# ══════════════════════════════════════════════════════════════════════════════
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("[STARTUP] ✅ GenZet / Animind v6.0 ready (Supabase normalized schema)")
+    pinger = asyncio.create_task(_keep_alive_pinger())
+    yield
+    pinger.cancel()
+    try:
+        await pinger
+    except asyncio.CancelledError:
+        pass
+    print("[SHUTDOWN] GenZet / Animind shutting down.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FASTAPI APP
+# ══════════════════════════════════════════════════════════════════════════════
+
 app = FastAPI(
-    title="Animind / GenZet API",
-    version="4.0.0",
-    description="AI-powered educational animation platform — Supabase edition",
+    title="GenZet / Animind API",
+    version="6.0.0",
+    description="AI-powered educational animation platform — Supabase normalized schema",
+    lifespan=lifespan,
 )
 
-# ── CORS ───────────────────────────────────────────────────────────────
-# CRITICAL: allow_origins=["*"] + allow_credentials=True is INVALID per
-# the CORS spec. Browsers reject the preflight response — this is the root
-# cause of "Failed to Fetch" on login. Use explicit origins instead.
-#
-# Add new Vercel preview URLs without redeploying via EXTRA_ORIGINS env var:
-#   EXTRA_ORIGINS=https://your-preview-abc.vercel.app
-_EXTRA_ORIGINS = [
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CORS
+# ══════════════════════════════════════════════════════════════════════════════
+
+EXTRA_ORIGINS = [
     o.strip()
     for o in os.getenv("EXTRA_ORIGINS", "").split(",")
     if o.strip()
 ]
 
-_ALLOWED_ORIGINS = [
+BASE_ORIGINS = [
     "https://genzet-app.vercel.app",
     "https://genzet-app-git-main-hari-prasath-genzet-web-project.vercel.app",
     "https://animind-gold.vercel.app",
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8000",
-] + _EXTRA_ORIGINS
+    "http://localhost:8080",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5500",
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:8080",
+    "null",   # file:// origin for local dev
+] + EXTRA_ORIGINS
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://(genzet|animind)[\w-]*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if DEBUG_CORS:
+    print("[CORS] ⚠ DEBUG_CORS=true — allowing ALL origins (dev only, no credentials)")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    print(f"[CORS] Active origins: {BASE_ORIGINS}")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=BASE_ORIGINS,
+        allow_origin_regex=r"https://(genzet|animind)[\w-]*\.vercel\.app",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# ── Routers ────────────────────────────────────────────────────────────
-app.include_router(auth_router)    # /auth/*
-app.include_router(sync_router)    # /sync/*
-app.include_router(admin_router)   # /admin/*
 
-# ── Global error handler (feeds /admin/errors endpoint) ───────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# ROUTERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+app.include_router(auth_router)   # /auth/*
+app.include_router(sync_router)   # /sync/*
+app.include_router(admin_router)  # /admin/*
+
 install_error_handler(app)
 
 
-# ── Request models ─────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# HEALTH + ROOT
+# ══════════════════════════════════════════════════════════════════════════════
 
-class AnimationRequest(BaseModel):
-    prompt: str
+@app.api_route("/", methods=["GET", "HEAD"])
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health(request: Request):
+    if request.method == "HEAD":
+        return JSONResponse(content=None, status_code=200)
 
-
-class TopicContentRequest(BaseModel):
-    prompt: str
-    subject: Optional[str] = "Engineering"
-    retry_failed: Optional[bool] = True
-
-
-class QuestionAnimRequest(BaseModel):
-    question: str
-
-
-# ── Health ─────────────────────────────────────────────────────────────
-
-@app.get("/")
-async def root():
     return {
-        "status": "ok",
-        "version": "4.1.0",
-        "message": "GenZet / Animind API — Supabase edition 🎓",
+        "status":              "ok",
+        "version":             "6.0.0",
+        "backend":             "Supabase",
+        "schema":              "normalized-v3",
+        "debug_cors":          DEBUG_CORS,
+        "keep_alive_interval": KEEP_ALIVE_INTERVAL,
+        "sub_topics_module":   SUB_TOPICS_AVAILABLE,
         "endpoints": {
             "auth": {
-                "register":       "POST /auth/register      → creates public.users row",
-                "login":          "POST /auth/login          → updates last_login",
-                "logout":         "POST /auth/logout",
-                "verify":         "GET  /auth/verify         → validate JWT",
-                "me":             "GET  /auth/me             → profile from DB",
-                "google":         "GET  /auth/google         → Google OAuth URL",
-                "google_finish":  "POST /auth/google/callback → finish Google OAuth",
+                "register":      "POST /auth/register",
+                "login":         "POST /auth/login",
+                "logout":        "POST /auth/logout",
+                "verify":        "GET  /auth/verify",
+                "me":            "GET  /auth/me",
+                "google":        "GET  /auth/google",
+                "google_finish": "POST /auth/google/callback",
             },
             "sync": {
-                "pull":   "GET    /sync/animations",
-                "push":   "POST   /sync/animations",
-                "batch":  "POST   /sync/animations/batch",
-                "delete": "DELETE /sync/animations/{anim_id}",
+                # v6 normalized (new)
+                "all_data":       "GET    /sync/all",
+                "items_save":     "POST   /sync/items",
+                "items_list":     "GET    /sync/items",
+                "item_update":    "PUT    /sync/items/{id}",
+                "item_delete":    "DELETE /sync/items/{id}",
+                "subjects_list":  "GET    /sync/subjects",
+                "subject_create": "POST   /sync/subjects",
+                "subject_update": "PUT    /sync/subjects/{id}",
+                "subject_delete": "DELETE /sync/subjects/{id}",
+                "co_create":      "POST   /sync/cos",
+                "co_update":      "PUT    /sync/cos/{id}",
+                "co_delete":      "DELETE /sync/cos/{id}",
+                "topic_create":   "POST   /sync/topics",
+                "topic_update":   "PUT    /sync/topics/{id}",
+                "topic_delete":   "DELETE /sync/topics/{id}",
+                "vault_list":     "GET    /sync/vault/entries",
+                "vault_add":      "POST   /sync/vault/entries",
+                "vault_delete":   "DELETE /sync/vault/entries/{id}",
+                "file_upload":    "POST   /sync/files/upload",
+                "file_delete":    "DELETE /sync/files/delete",
+                # legacy
+                "legacy_pull":    "GET    /sync/animations    [LEGACY]",
+                "legacy_push":    "POST   /sync/animations    [LEGACY]",
+                "legacy_batch":   "POST   /sync/animations/batch [LEGACY]",
+                "legacy_courses": "GET|PUT /sync/courses      [LEGACY]",
+                "legacy_vault":   "GET|PUT /sync/vault        [LEGACY]",
             },
             "ai": {
                 "animation":          "POST /generate-animation",
-                "topic_content":      "POST /generate-topic-content",
                 "question_animation": "POST /generate-question-animation",
+                "book_mode":          "POST /generate-from-book",
+                "topic_content":      "POST /generate-topic-content",
             },
             "admin": {
                 "errors": "GET /admin/errors  (X-Admin-Token header required)",
@@ -172,72 +258,48 @@ async def root():
     }
 
 
-@app.get("/health")
-async def health():
-    return {
-        "status":  "ok",
-        "version": "4.0",
-        "auth":    "supabase",
-        "db":      "supabase",
-    }
+# ══════════════════════════════════════════════════════════════════════════════
+# REQUEST MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AnimationRequest(BaseModel):
+    prompt: str
 
 
-# ── AI Generation endpoints ────────────────────────────────────────────
+class QuestionAnimRequest(BaseModel):
+    question: str
+
+
+class SkillContentRequest(BaseModel):
+    topic:        str
+    subject:      Optional[str]  = "Engineering"
+    retry_failed: Optional[bool] = True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AI GENERATION ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/generate-animation")
-async def animation_endpoint(req: AnimationRequest):
-    """
-    Generate full 8-section HTML animation page for the topic.
-    No auth required — generation is open.
-    Save the result via POST /sync/animations (JWT required).
-    """
-    if not req.prompt or not req.prompt.strip():
+async def create_animation(request: AnimationRequest):
+    """Generate a full 8-section HTML animation page for the topic."""
+    if not request.prompt or not request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
     try:
-        result = await generate_animation(req.prompt.strip())
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/generate-topic-content")
-async def topic_content_endpoint(req: TopicContentRequest):
-    """
-    Generate comprehensive 10-section educational content as JSON.
-    No auth required — generation is open.
-    """
-    if not req.prompt or not req.prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    try:
-        result = generate_topic_content(
-            topic=req.prompt.strip(),
-            subject=req.subject or "Engineering",
-            retry_failed=req.retry_failed if req.retry_failed is not None else True,
-        )
+        result = await generate_animation(request.prompt.strip())
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/generate-question-animation")
-async def question_animation_endpoint(req: QuestionAnimRequest):
-    """
-    Generate a rich, interactive Canvas + SVG + anime.js HTML5 animation
-    that visually answers any educational question.
-    No auth required — generation is open.
-    Save the result via POST /sync/animations (JWT required).
-    """
-    question = (req.question or "").strip()
+async def create_question_animation(request: QuestionAnimRequest):
+    """Generate a rich Canvas+SVG+anime.js animation that visually answers any educational question."""
+    question = (request.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="'question' field cannot be empty")
-
-    print(f"\n{'═'*64}")
-    print(f"[Q_ANIM]  Received: '{question[:80]}{'...' if len(question) > 80 else ''}'")
-    print(f"{'═'*64}")
-
     try:
         result = await generate_question_animation(question)
-        print(f"[Q_ANIM] ✅ title='{result['title']}' code={len(result.get('animation_code', ''))} chars")
         return result
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -245,62 +307,108 @@ async def question_animation_endpoint(req: QuestionAnimRequest):
         raise HTTPException(status_code=500, detail=f"Question animation generation failed: {e}")
 
 
-
-
-# ── Book Animation endpoint (PDF → Animation) ─────────────────────────
-
-class BookAnimRequest(BaseModel):
-    prompt: str
-    pdf_text: Optional[str] = ""   # extracted text from uploaded PDF
+@app.post("/generate-topic-content")
+async def create_topic_content(request: SkillContentRequest):
+    """Generate comprehensive 10-section educational content as JSON."""
+    topic = (request.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+    try:
+        result = await generate_ultimate_learning_content(topic=topic)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Topic content generation failed: {e}")
 
 
 @app.post("/generate-from-book")
-async def book_animation_endpoint(req: BookAnimRequest):
-    """
-    Generate an animation from a PDF/book excerpt.
-    Frontend calls this from the Book Creator tab (amCurrentMode = 'book').
+async def create_from_book(
+    topic:    str           = Form(...),
+    file:     UploadFile    = File(...),
+    subtopic: Optional[str] = Form(default=None),
+):
+    """Generate an animation from a PDF/book excerpt (Book Creator tab)."""
+    topic    = (topic    or "").strip()
+    subtopic = (subtopic or "").strip() or topic
 
-    Currently delegates to generate_animation() with the PDF text
-    prepended to the prompt. Replace with a dedicated claude_client
-    function when ready.
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
 
-    Request body:
-        { "prompt": "user question", "pdf_text": "extracted PDF content" }
-    """
-    prompt = (req.prompt or "").strip()
-    pdf_text = (req.pdf_text or "").strip()
-
-    if not prompt and not pdf_text:
-        raise HTTPException(status_code=400, detail="Either 'prompt' or 'pdf_text' must be provided.")
-
-    # Combine PDF context with user prompt for the animation generator
-    combined = prompt
-    if pdf_text:
-        # Truncate PDF text to avoid token overflow — adjust limit as needed
-        max_pdf_chars = 4000
-        truncated = pdf_text[:max_pdf_chars] + ("…" if len(pdf_text) > max_pdf_chars else "")
-        combined = f"{prompt}\n\nContext from document:\n{truncated}" if prompt else truncated
+    filename = (file.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail=f"Only PDF files accepted. Got: '{filename}'")
 
     try:
-        result = await generate_animation(combined)
+        pdf_bytes = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
+    if len(pdf_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty")
+
+    print(f"[BOOK]  topic='{topic}'  file='{filename}'  ({len(pdf_bytes):,} bytes)")
+
+    pdf_data = extract_pdf_text(pdf_bytes)
+    if not pdf_data["success"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read PDF: {pdf_data.get('error', 'Unknown')}",
+        )
+
+    full_text  = pdf_data["full_text"]
+    word_count = pdf_data["word_count"]
+
+    if word_count < 50:
+        raise HTTPException(status_code=400, detail="PDF has no readable text.")
+
+    topic_data       = find_subtopics_in_pdf(full_text, topic)
+    pdf_context_json = build_subtopics_json(topic, topic_data)
+
+    pdf_context = (
+        f"Main topic: {topic}\nSubtopic focus: {subtopic}\n"
+        f"Section headings: {'; '.join(topic_data.get('main_headings', []))}\n"
+        f"Subtopics found: {', '.join(topic_data.get('all_subtopics', [])[:10])}\n\n"
+        f"--- PDF Content (first 6000 chars) ---\n{full_text[:6000]}"
+    )
+
+    subtopics_list = None
+    if SUB_TOPICS_AVAILABLE:
+        try:
+            formatted      = process_subtopics_json(pdf_context_json)
+            gz_args        = subtopics_json_to_genzet_args(json.dumps(formatted), subtopic)
+            subtopics_list = gz_args.get("subtopics_list") or None
+        except Exception as e:
+            print(f"[BOOK] ⚠ sub_topics failed: {e}")
+
+    if not subtopics_list:
+        grouped = topic_data.get("subtopics_by_query", {})
+        for qk, sl in grouped.items():
+            if subtopic.lower() in qk.lower():
+                subtopics_list = sl or None
+                break
+
+    if not subtopics_list:
+        subtopics_list = topic_data.get("all_subtopics") or None
+
+    try:
+        result = await generate_genzet_book_content(
+            topic=topic,
+            subtopic=subtopic,
+            pdf_context=pdf_context,
+            subtopics_list=subtopics_list,
+        )
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
 
-# ── Direct run ─────────────────────────────────────────────────────────
 
+# ── Direct run ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Animind / GenZet API v4.0 starting on http://localhost:8000")
-    print()
-    print("   Auth:    Supabase Auth (SUPABASE_URL + SUPABASE_JWT_SECRET)")
-    print("   Storage: Supabase `contents` table (SUPABASE_SERVICE_KEY)")
-    print()
-    print("   POST /auth/register         → sign up via Supabase Auth")
-    print("   POST /auth/login            → sign in via Supabase Auth")
-    print("   GET  /sync/animations       → fetch user's cloud library (JWT)")
-    print("   POST /sync/animations       → save one animation to cloud (JWT)")
-    print("   POST /sync/animations/batch → bulk upload to cloud (JWT)")
-    print("   DELETE /sync/animations/:id → delete from cloud (JWT)")
-    print()
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+
+    _port = int(os.getenv("PORT", "8000"))
+    print("=" * 65)
+    print(f"  GenZet / Animind API v6.0 (server.py) — port {_port}")
+    print("=" * 65)
+    uvicorn.run("server:app", host="0.0.0.0", port=_port, reload=True)
