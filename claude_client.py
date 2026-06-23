@@ -53,7 +53,7 @@ VIDEO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 #  MODEL CONSTANTS
 # ════════════════════════════════════════════════════════════════════════
 
-MODEL_SONNET = "claude-sonnet-4-20250514"
+MODEL_SONNET = "claude-sonnet-4-6"
 MODEL_HAIKU  = "claude-haiku-4-5-20251001"
 
 # ════════════════════════════════════════════════════════════════════════
