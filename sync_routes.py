@@ -223,6 +223,10 @@ def save_item(
     if body.item_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"item_type must be one of {valid_types}")
 
+    # Ensure the user row exists in `users` table before writing to any
+    # child table that has a user_id FK constraint (fixes 23503 error).
+    _ensure_user_row(supabase, current_user)
+
     row = {
         "user_id":         user_id,
         "item_type":       body.item_type,
@@ -746,18 +750,46 @@ _ENG_COURSES_SENTINEL = "__eng_courses__"
 _VAULT_SENTINEL       = "__vault__"
 
 
+def _ensure_user_row(supabase, user: dict) -> None:
+    """
+    Upsert a minimal row into the `users` table so that FK constraints on
+    generated_items.user_id_fkey (and other tables) are satisfied.
+    Safe to call on every write request — the ON CONFLICT DO NOTHING ensures
+    no duplicate rows and no error when the row already exists.
+    """
+    try:
+        supabase.table("users").upsert(
+            {
+                "id":    user["id"],
+                "email": user.get("email", ""),
+            },
+            on_conflict="id",
+            ignore_duplicates=True,
+        ).execute()
+    except Exception as e:
+        # Log but do not raise — a stale row is better than a 500.
+        print(f"[SYNC] ⚠ _ensure_user_row failed (non-fatal): {e}")
+
+
 def _legacy_upsert_contents(supabase, user_id: str, anim_id: str, row: dict):
-    existing = (
-        supabase.table("contents")
-        .select("id")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": anim_id})
-        .maybe_single()
-        .execute()
-    )
-    if existing.data:
+    # Fix: .maybe_single() returns None (not an object with .data) when no row
+    # is found in some supabase-py versions.  Guard both cases.
+    try:
+        result = (
+            supabase.table("contents")
+            .select("id")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": anim_id})
+            .maybe_single()
+            .execute()
+        )
+        existing_data = result.data if result is not None else None
+    except Exception:
+        existing_data = None
+
+    if existing_data:
         row.pop("created_at", None)
-        supabase.table("contents").update(row).eq("id", existing.data["id"]).execute()
+        supabase.table("contents").update(row).eq("id", existing_data["id"]).execute()
         return "updated"
     else:
         supabase.table("contents").insert(row).execute()
