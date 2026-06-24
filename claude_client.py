@@ -1,13 +1,28 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║     claude_client.py  v18.1.0  —  EduAnimator GOLD STANDARD     ║
+║     claude_client.py  v19.1.0  —  EduAnimator GOLD STANDARD     ║
 ║     FULLY RE-ENGINEERED ANIMATION GENERATION ARCHITECTURE        ║
 ║     10-Stage Pipeline × Claude API × Anthropic                   ║
 ╠══════════════════════════════════════════════════════════════════╣
-║  v18.1 PATCH NOTES (on top of v18.0):                            ║
+║  v19.1 PATCH NOTES (on top of v19.0):                            ║
 ║                                                                  ║
-║  ✅ CHANGED:  Canvas/SVG light theme (white/soft-gray bg)        ║
-║  ✅ CHANGED:  "Why It Matters" → 1 concise high-value impact     ║
+║  ✅ REMOVED:  "How It Works" section entirely (static SVG flow   ║
+║               diagram + numbered steps) — and its prompt entry   ║
+║  ✅ ADDED:    "Working Process" section, placed right after      ║
+║               Definition. Generates a simple, creative,          ║
+║               INTERACTIVE HTML5 canvas animation (vanilla JS)    ║
+║               that walks students through the topic's working    ║
+║               process stage-by-stage, with Start/Pause, Next     ║
+║               Step, Speed, and Reset controls.                   ║
+║                                                                  ║
+║  v19.0 PATCH NOTES (on top of v18.1):                            ║
+║                                                                  ║
+║  ✅ REMOVED:  "Why It Matters" section entirely                  ║
+║  ✅ CHANGED:  Hook section now generates exactly 2 strong,       ║
+║               high-value hook points (was 3-4 bullets)           ║
+║  ✅ CHANGED:  Definition section simplified — plain English,     ║
+║               4-5 points, last point is a real-world example.    ║
+║               All interactive canvas/animation code removed.     ║
 ║  ✅ CHANGED:  Animation section: "From Library" → "Video Vault"  ║
 ║  ✅ ADDED:    Specific sub-topic detection + focused generation   ║
 ║               All sections context-aware of exact sub-topic      ║
@@ -63,10 +78,9 @@ MODEL_HAIKU  = "claude-haiku-4-5-20251001"
 BASE_SECTIONS: List[str] = [
     "hook",
     "definition",
-    "why_matters",
+    "working_process",
     "core_concepts",
     "types",
-    "how_it_works",
     "applications",
     "quiz",
     "animation",
@@ -77,29 +91,27 @@ CONDITIONAL_SECTIONS: List[str] = ["formulas", "derivation"]
 ORDERED_SECTION_TEMPLATE: List[str] = [
     "hook",
     "definition",
-    "why_matters",
+    "working_process",
     "core_concepts",
     "formulas",
     "derivation",
     "types",
-    "how_it_works",
     "applications",
     "quiz",
     "animation",
 ]
 
 SECTION_MODEL_MAP: Dict[str, str] = {
-    "hook":          MODEL_SONNET,
-    "definition":    MODEL_SONNET,
-    "why_matters":   MODEL_SONNET,
-    "core_concepts": MODEL_HAIKU,
-    "formulas":      MODEL_SONNET,
-    "derivation":    MODEL_SONNET,
-    "types":         MODEL_SONNET,
-    "how_it_works":  MODEL_HAIKU,
-    "applications":  MODEL_HAIKU,
-    "quiz":          MODEL_HAIKU,
-    "animation":     MODEL_HAIKU,
+    "hook":             MODEL_SONNET,
+    "definition":       MODEL_SONNET,
+    "working_process":  MODEL_SONNET,
+    "core_concepts":    MODEL_HAIKU,
+    "formulas":         MODEL_SONNET,
+    "derivation":       MODEL_SONNET,
+    "types":            MODEL_SONNET,
+    "applications":     MODEL_HAIKU,
+    "quiz":             MODEL_HAIKU,
+    "animation":        MODEL_HAIKU,
 }
 
 
@@ -187,7 +199,7 @@ ULTIMATE_LEARNING_SYSTEM_PROMPT = """You are a PRINCIPAL LEARNING ARCHITECT comb
 MASTER OBJECTIVE:
 Transform any topic into a complete, student-ready learning experience that is:
 - Understandable by a 15-year-old beginner with zero prior knowledge
-- Visually rich — the Definition section contains a live interactive simulation
+- Clear and simple — the Definition section uses plain, everyday English
 - Deeply engaging — critical thinking built in at every step
 - Retention-optimized — structured for comprehension, not just reading
 - Formula-complete — mathematical relationships properly explained (when applicable)
@@ -224,27 +236,24 @@ def _build_ultimate_section_prompt(
     if section_name == "core_concepts":
         return _build_hybrid_core_concepts_prompt(topic, context, subtopics_list)
 
-    tc = topic_classification or {}
-    viz_type = tc.get("visualization_type", "particle_flow")
-    phenomenon = tc.get("primary_phenomenon", topic)
-
     # ── v18.1: inject specific-focus note into every prompt ──
     specific_note = _build_specific_focus_note(topic)
 
     prompts = {
 
         # ══════════════════════════════════════════════════════════════════
-        # §1 HOOK
+        # §1 HOOK — v19.0: exactly 2 strong, high-value hook points
         # ══════════════════════════════════════════════════════════════════
         "hook": f"""Generate Section 1: HOOK for topic: "{topic}"
 {specific_note}
 DEPTH REQUIREMENT — MANDATORY:
-- Write 5-6 lines of genuine content depth (NOT a single headline).
-- Structure:
-  1. One bold opening fact sentence (≤12 words, real startling fact about "{topic}")
-  2. A 2-3 sentence paragraph expanding on why that fact is remarkable
-  3. 3-4 bullet points listing surprising implications or real-world stakes
-- Language: age-appropriate for a 15-year-old, active voice, no jargon
+- Write 1 bold opening fact sentence (≤12 words, real startling fact about "{topic}").
+- Then write exactly 2 strong hook points — not 3, not 4. Just 2.
+- Each hook point must be genuinely valuable: a specific, surprising, real-world
+  fact or stake about "{topic}" that makes the student want to keep reading.
+- Quality over quantity: each point should be 1-2 sentences of real substance,
+  not a vague teaser.
+- Language: age-appropriate for a 15-year-old, active voice, no jargon.
 
 NO ANIMATION. NO SVG. NO CANVAS. NO SCRIPT TAGS.
 This section is pure, well-written text that hooks the student's curiosity.
@@ -257,332 +266,230 @@ Return ONLY this HTML structure. Replace ALL placeholders with REAL content:
   <div class="hook-icon">🎯</div>
   <div class="hook-text">
     <p class="hook-lead">[Bold opening fact — max 12 words, real fact about "{topic}"]</p>
-    <p>[2-3 sentence expanding paragraph. Active voice. No jargon. Makes the student feel the weight of this topic.]</p>
     <ul class="hook-bullets">
-      <li>[Surprising implication 1 — concrete, student-relatable, 1 sentence]</li>
-      <li>[Surprising implication 2 — different domain, equally surprising]</li>
-      <li>[Surprising implication 3 — forward-looking, future relevance]</li>
-      <li>[Surprising implication 4 — optional, most dramatic one]</li>
+      <li>[Hook point 1 — specific, surprising, high-value fact or stake about "{topic}", 1-2 sentences]</li>
+      <li>[Hook point 2 — a different angle, equally surprising and valuable, 1-2 sentences]</li>
     </ul>
   </div>
   <button class="img-upload-btn" onclick="uploadSectionImage('hook')">📸 Add Image</button>
   <div class="section-images" id="images-hook"></div>
 </div>
 
-CRITICAL: Replace ALL [placeholder] text with real, accurate content about "{topic}".
+CRITICAL: Exactly 2 <li> hook points — no more, no fewer. Replace ALL [placeholder] text with real, accurate content about "{topic}".
 OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
-        # §2 DEFINITION — LIGHT-THEMED INTERACTIVE CANVAS SIMULATION
-        #   v18.1 CHANGE: canvas uses LIGHT background (#f0f4ff → #e8edf7)
-        #   All colors adapted to be vivid on a light/white canvas.
+        # §2 DEFINITION — v19.0: simple plain-English explanation
+        #   No interactive canvas/animation. 4-5 points, last point is a
+        #   real-world example application.
         # ══════════════════════════════════════════════════════════════════
-        "definition": f"""Generate Section 2: SIMPLE DEFINITION + INTERACTIVE CANVAS SIMULATION for topic: "{topic}"
+        "definition": f"""Generate Section 2: SIMPLE DEFINITION for topic: "{topic}"
 {specific_note}
-This section has TWO parts: text definition and a live interactive simulation.
-The simulation is THE MAIN VISUAL ENGINE of the entire lesson.
+GOAL: Explain "{topic}" so clearly that a complete beginner understands it
+in under a minute. Use very simple, everyday English. No jargon. No fancy
+words. Short sentences.
 
-════════════════════════════════════════════
-PART 1 — TEXT CONTENT
-════════════════════════════════════════════
+NO ANIMATION. NO SVG. NO CANVAS. NO SCRIPT TAGS. NO interactive simulation
+of any kind. This section is pure, simple, well-written text.
 
-Write 5-6 lines of genuine depth:
-1. Analogy sentence: "[Topic] works like [everyday object] because [reason]"
-2. 2-3 sentence formal definition paragraph using the analogy as scaffolding
-3. Bullet list of 3 key defining properties
+CONTENT STRUCTURE — MANDATORY:
+1. One short analogy sentence: "[Topic] is like [everyday object/idea] because [reason]."
+2. A 1-2 sentence plain-English definition (no jargon, simple words a 12-year-old knows).
+3. Write exactly 4-5 short points total (including the definition above counts
+   toward the flow, but the bullet list itself should have 4-5 bullets):
+   - Points 1 to 3 (or 4): simple, clear facts that explain how "{topic}" works
+     or what makes it what it is. One short sentence each.
+   - The LAST point MUST be a real-world example: name a real, specific
+     situation, object, or application where "{topic}" is actually used or
+     seen, explained in one or two simple sentences.
 
-════════════════════════════════════════════
-PART 2 — INTERACTIVE SIMULATION (LIGHT THEME)
-════════════════════════════════════════════
+Context: {context[:400]}
 
-Topic to simulate: "{topic}"
-Core phenomenon: "{phenomenon}"
-Visualization type hint: "{viz_type}"
-
-▶ LIGHT THEME RULES (v18.1 — MANDATORY):
-- Canvas background: radial gradient center=#f0f4ff (pale blue-white) → edge=#dde3f0
-- ALL particle / entity colors must be vivid, saturated, and highly visible on the light bg:
-    Hot/energy:   #dc2626 (red), #ea580c (orange), #ca8a04 (amber)
-    Cold/low:     #2563eb (blue), #0891b2 (cyan)
-    Signal:       #7c3aed (purple), #9333ea
-    Biology:      #16a34a (green), #15803d
-    Neutral:      #334155 (dark slate)
-- Canvas HUD text: dark — ctx.fillStyle = '#1e293b'
-- Shadow/glow: ctx.shadowBlur=10-18, ctx.shadowColor = saturated color (same as entity)
-- Legend box: rgba(255,255,255,0.85) fill, #334155 border, dark text
-- Grid lines (if used): rgba(100,116,139,0.15)
-- Do NOT use any near-white or pale color for particles — they must pop on the light bg.
-
-SIMULATION DESIGN — TOPIC ANALYSIS FIRST:
-Before writing code, mentally answer:
-  Q1: What is the PRIMARY PROCESS that defines "{topic}"?
-  Q2: What entities (particles, waves, nodes, objects) are involved?
-  Q3: How do they move, interact, or transform over time?
-  Q4: What parameter can the user control to see the concept change?
-  Q5: What educational labels belong on-canvas?
-
-VISUALIZATION CATEGORIES:
-A) PARTICLE FLOW — heat transfer, diffusion, fluid dynamics, electric current
-B) WAVE PROPAGATION — sound, light, water waves, seismic, EM radiation
-C) NETWORK / SIGNAL — neural networks, circuits, internet, bonds
-D) FORCE FIELD — gravity, magnetism, electrostatics, planetary motion
-E) BIOLOGICAL PROCESS — photosynthesis, cellular respiration, DNA, mitosis
-F) THERMODYNAMIC — entropy, gas laws, Carnot engine, phase transitions
-G) MECHANICAL — gears, pendulum, projectile, orbital mechanics, optics
-
-CANVAS SIMULATION REQUIREMENTS:
-1. Canvas: width=800, height=420, style="width:100%;height:auto;"
-2. Light background as specified above (radial gradient, pale blue-white)
-3. 60fps requestAnimationFrame loop
-4. Glow on particles: ctx.shadowBlur=12-18, ctx.shadowColor = vivid saturated color
-5. Educational HUD drawn on canvas:
-   - Top-left: simulation title + live metric (dark text: #1e293b)
-   - Bottom-right: legend box (white semi-transparent rect, dark text, color swatches)
-   - Labels on key entities (dark font, legible on light bg)
-6. Interactive controls BELOW the canvas:
-   - ▶/⏸ Play/Pause toggle button
-   - ↺ Reset button
-   - Speed slider (0.5× to 4×)
-   - Topic-specific parameter slider with meaningful label
-7. Canvas click: add energy/particle/perturbation at click point
-8. All entities defined as constructor functions with update() and draw()
-9. Live metric shown in HUD updating each frame
-
-JAVASCRIPT CODE STANDARDS:
-- Use var (not const/let) everywhere
-- Constructor function pattern (not class)
-- roundRect polyfill inside IIFE
-- Expose controls as window['fnName_'+ID]
-- All IDs use the SAME random 6-char string [ID] throughout
-
-Context: {context[:600]}
-
-Return ONLY this exact HTML structure:
+Return ONLY this HTML structure. Replace ALL placeholders with REAL content:
 
 <div class="definition-box">
   <div class="definition-label">📖 What Is It?</div>
   <div class="definition-text">
-    <p class="def-analogy">[Analogy sentence for "{topic}"]</p>
-    <p>[2-3 sentence formal definition paragraph]</p>
+    <p class="def-analogy">[Simple analogy sentence for "{topic}"]</p>
+    <p>[1-2 sentence plain-English definition. Very simple words.]</p>
     <ul class="def-properties">
-      <li>[Key property 1]</li>
-      <li>[Key property 2]</li>
-      <li>[Key property 3]</li>
+      <li>[Simple point 1 about "{topic}" — one short, clear sentence]</li>
+      <li>[Simple point 2 about "{topic}" — one short, clear sentence]</li>
+      <li>[Simple point 3 about "{topic}" — one short, clear sentence]</li>
+      <li class="def-example"><strong>Real-life example:</strong> [A specific, real-world situation or application where "{topic}" shows up — 1-2 simple sentences]</li>
     </ul>
   </div>
+</div>
 
-  <div class="def-sim-wrapper" id="defSim-[6CHAR_ID]">
-    <div class="def-sim-header">
-      <span class="def-sim-badge">⚡ Interactive Simulation</span>
-      <span class="def-sim-topic">{topic} — Live Model</span>
-    </div>
-    <div class="def-sim-canvas-wrap">
-      <canvas id="defCanvas-[ID]" width="800" height="420"
-        style="width:100%;height:auto;display:block;border-radius:0 0 8px 8px;"></canvas>
-    </div>
-    <div class="def-sim-controls">
-      <button class="def-sim-btn" id="defPlayBtn-[ID]" onclick="defToggle_[ID]()">⏸ Pause</button>
-      <button class="def-sim-btn secondary" onclick="defReset_[ID]()">↺ Reset</button>
-      <div class="def-sim-slider-group">
-        <label class="def-sim-label">Speed</label>
-        <input type="range" min="1" max="5" value="2" step="1"
-          id="defSpeed-[ID]" class="def-sim-slider"
-          oninput="defSetSpeed_[ID](this.value)">
-        <span class="def-sim-val" id="defSpeedVal-[ID]">2×</span>
-      </div>
-      <div class="def-sim-slider-group">
-        <label class="def-sim-label" id="defParamLabel-[ID]">[Parameter Label]</label>
-        <input type="range" min="0" max="100" value="50" step="1"
-          id="defParam-[ID]" class="def-sim-slider"
-          oninput="defSetParam_[ID](this.value)">
-        <span class="def-sim-val" id="defParamVal-[ID]">50</span>
-      </div>
-    </div>
-    <div class="def-sim-hint">💡 Click on the canvas to interact with the simulation</div>
+CRITICAL:
+1. Use very simple English throughout — short words, short sentences.
+2. 4-5 bullet points total, with the LAST one being the real-world example
+   (marked with class="def-example").
+3. Replace ALL [placeholder] text with real, accurate, simple content about "{topic}".
+4. OUTPUT NOTHING after the closing </div> tag.""",
+
+        # ══════════════════════════════════════════════════════════════════
+        # §3 WORKING PROCESS — v19.0: simple, creative, interactive
+        #   HTML5 animation generation for school students
+        # ══════════════════════════════════════════════════════════════════
+        "working_process": f"""You are an EXPERT CREATIVE CODER who specializes in building simple,
+playful, and genuinely interactive HTML5 animations that make school
+students instantly understand how something works.
+
+Generate Section: WORKING PROCESS for topic: "{topic}"
+{specific_note}
+GOAL:
+Build ONE self-contained, interactive HTML5 animation (HTML + CSS +
+vanilla JavaScript using <canvas> and/or DOM elements) that visually
+demonstrates the step-by-step working process of "{topic}" for a
+15-year-old student with zero prior knowledge.
+
+MANDATORY CREATIVE + TECHNICAL REQUIREMENTS:
+1. SIMPLE: Use plain vanilla JavaScript only. No external libraries,
+   no frameworks, no build tools, no external assets or fetch calls.
+2. CREATIVE: Use friendly shapes, color, motion, and emoji/labels to
+   make an abstract process feel concrete and fun — not a dry diagram.
+3. INTERACTIVE: The student MUST be able to influence the animation —
+   for example a "▶ Start / ⏸ Pause" button, a "Next Step" button that
+   advances the process stage-by-stage, or a slider that controls speed.
+   The animation should NOT just auto-play with zero control.
+4. STEP-AWARE: Break "{topic}"'s working process into 4-6 clear stages.
+   Each stage shown in the animation should correspond to a short,
+   plain-English caption/label that updates live as the animation
+   progresses (e.g. a "Step 2 of 5: ..." text that changes).
+5. SELF-CONTAINED: All CSS in a single <style> block, all JS in a single
+   <script> block, both inline within this section's <div>. Must run
+   correctly the moment it's inserted into a page — no setup needed.
+6. BROWSER-SAFE JS: Use `var` (never `const`/`let`), no ES6 arrow
+   functions in event handlers if avoidable, no external fetch/XHR calls,
+   wrap all canvas/animation logic in an IIFE with a unique [ID] so
+   multiple instances on one page never collide (use the [ID] suffix on
+   every id/class/global the same way the rest of this app does).
+7. PERFORMANT: Use requestAnimationFrame for any continuous motion (not
+   setInterval), and cancel the animation frame on pause.
+8. ACCESSIBLE LABELS: All on-canvas text must use
+   font-family="Verdana, Geneva, sans-serif" and good color contrast.
+
+Context: {context[:1200]}
+
+Return ONLY this HTML structure. Replace ALL placeholders with REAL,
+working, topic-specific content — the canvas/script content must
+actually depict the real working process of "{topic}", not a generic
+placeholder animation:
+
+<div class="working-process-section" data-section="working-process">
+  <div class="wp-title">🛠️ Working Process</div>
+  <div class="wp-intro">[1 sentence: what this animation shows about "{topic}"]</div>
+
+  <div class="wp-stage-label" id="wpStageLabel-[ID]">Step 1 of [N]: [first stage caption]</div>
+
+  <div class="wp-canvas-wrap">
+    <canvas id="wpCanvas-[ID]" class="wp-canvas" width="640" height="360"></canvas>
   </div>
+
+  <div class="wp-controls">
+    <button class="wp-btn" id="wpPlayPause-[ID]">▶ Start</button>
+    <button class="wp-btn wp-btn-secondary" id="wpNext-[ID]">Next Step ⏭</button>
+    <label class="wp-speed-label">Speed
+      <input type="range" id="wpSpeed-[ID]" class="wp-speed" min="1" max="5" value="3">
+    </label>
+    <button class="wp-btn wp-btn-reset" id="wpReset-[ID]">↺ Reset</button>
+  </div>
+
+  <div class="wp-hint">💡 Try it: press Next Step to move through each stage, or hit Start to watch it run on its own.</div>
 
   <script>
   (function() {{
     var ID = '[ID]';
-    var canvas = document.getElementById('defCanvas-' + ID);
-    if (!canvas) return;
+    var canvas = document.getElementById('wpCanvas-' + ID);
     var ctx = canvas.getContext('2d');
-    var W = canvas.width, H = canvas.height;
-    var running = true;
-    var speed = 2;
-    var param = 50;
-    var frameCount = 0;
-    var animId = null;
+    var stageLabel = document.getElementById('wpStageLabel-' + ID);
+    var playBtn = document.getElementById('wpPlayPause-' + ID);
+    var nextBtn = document.getElementById('wpNext-' + ID);
+    var resetBtn = document.getElementById('wpReset-' + ID);
+    var speedSlider = document.getElementById('wpSpeed-' + ID);
 
-    // ── roundRect polyfill ──
-    if (!ctx.roundRect) {{
-      ctx.roundRect = function(x,y,w,h,r) {{
-        ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
-        ctx.quadraticCurveTo(x+w,y,x+w,y+r); ctx.lineTo(x+w,y+h-r);
-        ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h);
-        ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r);
-        ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
-      }};
+    var TOTAL_STAGES = [N];
+    var currentStage = 0;
+    var playing = false;
+    var rafId = null;
+    var t = 0;
+
+    var stageCaptions = [
+      "Step 1 of [N]: [caption 1]",
+      "Step 2 of [N]: [caption 2]",
+      "[continue for all N stages]"
+    ];
+
+    function drawStage(stageIndex, progress) {{
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.font = '14px Verdana, Geneva, sans-serif';
+      [REAL drawing code for "{topic}" stage `stageIndex`, animated using
+       `progress` (0 to 1) for smooth in-stage motion — shapes, arrows,
+       particles, labels, colors that make this exact stage of "{topic}"'s
+       working process visually clear and fun]
     }}
 
-    // ══════════════════════════════════════════════════════
-    // COMPLETE LIGHT-THEME SIMULATION FOR "{topic}"
-    // ══════════════════════════════════════════════════════
-
-    // ── SIMULATION ENTITIES ──
-    // [DEFINE entity constructor(s), initialize arrays]
-
-    // ── BACKGROUND (LIGHT THEME) ──
-    function drawBg() {{
-      var bg = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.75);
-      bg.addColorStop(0, '#f0f4ff');
-      bg.addColorStop(1, '#dde3f0');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
-      // Optional subtle grid
-      ctx.strokeStyle = 'rgba(100,116,139,0.12)';
-      ctx.lineWidth = 0.5;
-      for (var gx = 0; gx < W; gx += 40) {{
-        ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke();
-      }}
-      for (var gy = 0; gy < H; gy += 40) {{
-        ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke();
-      }}
+    function updateLabel() {{
+      stageLabel.textContent = stageCaptions[currentStage] || '';
     }}
 
-    // ── LEGEND (light bg, dark text) ──
-    function drawLegend() {{
-      ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,0.88)';
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 1;
-      ctx.roundRect(W-200, H-90, 188, 78, 8);
-      ctx.fill(); ctx.stroke();
-      ctx.font = 'bold 11px Verdana';
-      ctx.fillStyle = '#334155';
-      ctx.fillText('LEGEND', W-186, H-71);
-      // [draw swatches + labels for this topic — dark text on white box]
-      ctx.restore();
-    }}
-
-    // ── HUD (dark text on light canvas) ──
-    function drawHUD() {{
-      ctx.save();
-      ctx.font = 'bold 13px Verdana';
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.fillRect(8, 8, 240, 28);
-      ctx.fillStyle = '#1e293b';
-      ctx.fillText('[Simulation name + live metric]', 15, 27);
-      ctx.restore();
-    }}
-
-    // ── UPDATE ──
-    function update() {{
-      frameCount++;
-      // [UPDATE ALL ENTITIES]
-    }}
-
-    // ── DRAW ENTITIES (vivid colors on light bg) ──
-    function drawScene() {{
-      // [DRAW entities with shadow glow — use saturated colors e.g. #dc2626, #2563eb]
-      // ctx.save(); ctx.shadowBlur=14; ctx.shadowColor='#dc2626'; ...draw... ctx.restore();
-    }}
-
-    // ── MAIN LOOP ──
     function loop() {{
-      drawBg();
-      drawScene();
-      drawHUD();
-      drawLegend();
-      if (running) {{
-        for (var s = 0; s < speed; s++) update();
-      }}
-      animId = requestAnimationFrame(loop);
+      t += 0.01 * parseFloat(speedSlider.value);
+      if (t > 1) {{ t = 0; if (playing) {{ currentStage = (currentStage + 1) % TOTAL_STAGES; updateLabel(); }} }}
+      drawStage(currentStage, t);
+      if (playing) {{ rafId = requestAnimationFrame(loop); }}
     }}
 
-    window['defToggle_'+ID] = function() {{
-      running = !running;
-      var btn = document.getElementById('defPlayBtn-'+ID);
-      if (btn) btn.textContent = running ? '⏸ Pause' : '▶ Play';
-    }};
-    window['defReset_'+ID] = function() {{
-      running = true; frameCount = 0;
-      var btn = document.getElementById('defPlayBtn-'+ID);
-      if (btn) btn.textContent = '⏸ Pause';
-    }};
-    window['defSetSpeed_'+ID] = function(v) {{
-      speed = Math.max(1, parseInt(v));
-      var el = document.getElementById('defSpeedVal-'+ID);
-      if (el) el.textContent = speed + '×';
-    }};
-    window['defSetParam_'+ID] = function(v) {{
-      param = parseInt(v);
-      var el = document.getElementById('defParamVal-'+ID);
-      if (el) el.textContent = v;
-    }};
+    function play() {{
+      if (playing) return;
+      playing = true;
+      playBtn.textContent = '⏸ Pause';
+      rafId = requestAnimationFrame(loop);
+    }}
 
-    canvas.addEventListener('click', function(e) {{
-      var rect = canvas.getBoundingClientRect();
-      var mx = (e.clientX - rect.left) * (W / rect.width);
-      var my = (e.clientY - rect.top) * (H / rect.height);
-      // [ADD ENERGY / PARTICLE / PERTURBATION at (mx, my)]
+    function pause() {{
+      playing = false;
+      playBtn.textContent = '▶ Start';
+      if (rafId) cancelAnimationFrame(rafId);
+    }}
+
+    playBtn.addEventListener('click', function() {{
+      if (playing) {{ pause(); }} else {{ play(); }}
     }});
 
-    function init() {{
-      loop();
-    }}
-    if (document.readyState === 'loading') {{
-      document.addEventListener('DOMContentLoaded', init);
-    }} else {{
-      setTimeout(init, 80);
-    }}
+    nextBtn.addEventListener('click', function() {{
+      pause();
+      currentStage = (currentStage + 1) % TOTAL_STAGES;
+      t = 0;
+      updateLabel();
+      drawStage(currentStage, 0);
+    }});
+
+    resetBtn.addEventListener('click', function() {{
+      pause();
+      currentStage = 0;
+      t = 0;
+      updateLabel();
+      drawStage(currentStage, 0);
+    }});
+
+    updateLabel();
+    drawStage(currentStage, 0);
   }})();
   </script>
 </div>
 
-CRITICAL IMPLEMENTATION RULES:
-1. Replace [ID] with ONE real random 6-char alphanumeric string (same everywhere)
-2. Replace EVERY comment with COMPLETE WORKING JavaScript for "{topic}"
-3. Simulation MUST animate the actual phenomenon, not a generic animation
-4. Light theme: background #f0f4ff→#dde3f0, entities vivid/saturated colors
-5. HUD text MUST be dark (#1e293b) — legible on light background
-6. Legend box: white semi-transparent, dark text
-7. Use var (not const/let)
-8. OUTPUT NOTHING after the closing </div> tag""",
-
-        # ══════════════════════════════════════════════════════════════════
-        # §3 WHY IT MATTERS — v18.1: ONE concise, high-value impact only
-        # ══════════════════════════════════════════════════════════════════
-        "why_matters": f"""Generate Section 3: WHY IT MATTERS for topic: "{topic}"
-{specific_note}
-CONTENT RULES (v18.1 — BREVITY MANDATE):
-- Write exactly 2 sentences connecting the topic to the real world.
-- Then show exactly ONE high-value, highly specific real-world impact card.
-- The impact card MUST name a concrete product, industry, or phenomenon.
-- Total section reading time: under 30 seconds.
-
-NO ANIMATION. NO SVG. NO CANVAS. NO SCRIPT TAGS.
-
-Context: {context[:300]}
-
-Return ONLY this HTML. Replace ALL placeholders with real content:
-
-<div class="why-matters-box">
-  <div class="why-label">🌟 Why Should You Care?</div>
-  <div class="why-text">[Exactly 2 sentences. Concrete. Active voice. Why "{topic}" matters right now — name a real technology or phenomenon it enables.]</div>
-  <div class="why-impacts">
-    <div class="why-impact-item">
-      <div class="why-impact-icon">[emoji]</div>
-      <div class="why-impact-content">
-        <div class="why-impact-domain">[Specific Domain — e.g. "Fibre-Optic Internet" not just "Technology"]</div>
-        <div class="why-impact-desc">[1-2 sentences: the single most impressive, specific use of "{topic}" — name real numbers, products, or effects if possible.]</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-CRITICAL: ONE impact card only. Replace ALL [placeholder] text with real content about "{topic}".
-OUTPUT NOTHING after the closing </div> tag.""",
+CRITICAL:
+1. Replace [ID] with ONE real random 6-char alphanumeric string, used
+   consistently everywhere [ID] appears.
+2. Replace [N] with the real number of stages (4-6) you chose.
+3. `drawStage` and `stageCaptions` MUST contain REAL, accurate,
+   topic-specific content for "{topic}" — not a placeholder shape.
+4. The animation must be genuinely interactive (Start/Pause, Next Step,
+   Speed, Reset all functional) and genuinely simple enough to run
+   smoothly in any modern browser with zero dependencies.
+5. OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
         # §5 FORMULAS
@@ -830,44 +737,6 @@ Return ONLY this HTML with REAL content:
 
 CRITICAL: Replace ALL [placeholder] text with real content about "{topic}".
 OUTPUT NOTHING after the closing </div> tag.""",
-
-        # ══════════════════════════════════════════════════════════════════
-        # §8 HOW IT WORKS
-        # ══════════════════════════════════════════════════════════════════
-        "how_it_works": f"""Generate Section: HOW IT WORKS for topic: "{topic}"
-{specific_note}
-Requirements:
-- 4-6 numbered steps. Each: 1-2 sentences max. Active voice. No jargon.
-- Static SVG flow diagram (viewBox="0 0 360 200"), 4-6 nodes, left-to-right
-- Each node: rounded-rect (rx=10) with linearGradient fill
-- Connecting arrows via <marker> arrowhead
-- Step labels: font-size 10, fill="#111827", font-weight 700, font-family="Verdana, Geneva, sans-serif"
-- Required <defs>: one gradient per node, arrowhead marker
-- NO @keyframes, NO animation, NO canvas, NO scripts
-
-Context: {context[:1500]}
-
-Return ONLY:
-
-<div class="how-works-section">
-  <div class="how-title">⚙️ How It Works</div>
-  <div class="how-steps">
-    <div class="step"><div class="step-number">1</div><div class="step-text">[Step 1]</div></div>
-    <div class="step"><div class="step-number">2</div><div class="step-text">[Step 2]</div></div>
-    [4-6 steps total]
-  </div>
-  <div class="eli10-visual-wrap">
-    <svg viewBox="0 0 360 200" xmlns="http://www.w3.org/2000/svg" class="eli10-svg">
-      <defs>
-        [gradient defs + arrowhead marker — NO @keyframes]
-      </defs>
-      [STATIC FLOW DIAGRAM for "{topic}" — ALL text font-family="Verdana, Geneva, sans-serif"]
-    </svg>
-    <div class="eli10-visual-caption">[Caption max 6 words]</div>
-  </div>
-</div>
-
-CRITICAL: Real content for "{topic}". NO animations. OUTPUT NOTHING after </div>.""",
 
         # ══════════════════════════════════════════════════════════════════
         # §9 APPLICATIONS
@@ -1365,7 +1234,7 @@ CARD FORMAT — MANDATORY FOR EVERY CARD:
 
 STRICTLY DO NOT include:
   - Any SVG elements, visual diagrams, or canvas elements
-  - Any eli10-visual-wrap or eli10-svg elements
+  - Any working-process-section, wp-canvas, or wp-stage-label elements
   - "Think of it like" / analogy boxes
   - "What If" / critical-thinking question boxes
   - "Active Recall" / recall-prompt boxes
@@ -1711,17 +1580,16 @@ Return ONLY valid JSON:
         css = self._get_ultimate_learning_css()
 
         section_labels = {
-            "hook":          "🎯 Hook",
-            "definition":    "📖 Definition",
-            "why_matters":   "🌟 Why It Matters",
-            "core_concepts": "🧠 Core Concepts",
-            "formulas":      "📐 Formulas",
-            "derivation":    "📊 Derivation",
-            "types":         "🌿 Types",
-            "how_it_works":  "⚙️ How It Works",
-            "applications":  "🌍 Applications",
-            "quiz":          "❓ Quiz",
-            "animation":     "🎬 Animation",
+            "hook":             "🎯 Hook",
+            "definition":       "📖 Definition",
+            "working_process":  "🛠️ Working Process",
+            "core_concepts":    "🧠 Core Concepts",
+            "formulas":         "📐 Formulas",
+            "derivation":       "📊 Derivation",
+            "types":            "🌿 Types",
+            "applications":     "🌍 Applications",
+            "quiz":             "❓ Quiz",
+            "animation":        "🎬 Animation",
         }
 
         nav_items = [
@@ -2028,13 +1896,14 @@ Return ONLY valid JSON:
 
         return f"""
 /* ══════════════════════════════════════════════════════════
-   ULTIMATE LEARNING CSS  v18.1
-   Changes from v18.0:
-   + def-sim-wrapper  → LIGHT THEME (white/soft-gray background)
-   + why-impacts      → single-card layout
-   + vault-*          → Video Vault panel styles
+   ULTIMATE LEARNING CSS  v19.0
+   Changes from v18.1:
+   - Removed the impact/rationale section's styles entirely
+   - Removed definition canvas/simulation styling rules
+   + def-example        → real-world example bullet styling
+   + vault-*            → Video Vault panel styles
    + cls-badge.specific → specific sub-topic badge
-   All v18.0 styles retained.
+   All other v18.x styles retained.
 ══════════════════════════════════════════════════════════ */
 
 :root {{
@@ -2236,129 +2105,12 @@ body {{
 .def-properties {{ margin: 12px 0 0 20px; display: flex; flex-direction: column; gap: 6px; list-style: disc; }}
 .def-properties li {{ font-family: Verdana,sans-serif; font-size: clamp(.9rem,2vw,1rem); color: var(--text-dark); line-height: 1.6; }}
 .def-properties li::marker {{ color: var(--blue-border); }}
-
-/* ══════════════════════════════════════════════════════
-   DEFINITION SIMULATION ENGINE  v18.1 — LIGHT THEME
-   Canvas is now white/pale-blue. Controls use soft grays.
-══════════════════════════════════════════════════════ */
-.def-sim-wrapper {{
-  margin-top: 20px;
-  background: #ffffff;
-  border: 2px solid #e2e8f0;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 4px 24px rgba(59,130,246,.12), 0 0 0 1px rgba(59,130,246,.1);
-  transition: box-shadow .3s;
+.def-properties li.def-example {{
+  list-style: none; margin-left: -20px; margin-top: 6px; padding: 10px 14px;
+  background: rgba(59,130,246,.08); border-radius: var(--radius-md);
+  border-left: 3px solid var(--blue-border);
 }}
-.def-sim-wrapper:hover {{
-  box-shadow: 0 8px 32px rgba(59,130,246,.2), 0 0 0 2px rgba(59,130,246,.2);
-}}
-.def-sim-header {{
-  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
-  padding: 12px 18px;
-  background: linear-gradient(135deg, #f8fafc, #eff6ff);
-  border-bottom: 1px solid #e2e8f0;
-  gap: 8px;
-}}
-.def-sim-badge {{
-  display: inline-block; padding: 4px 12px;
-  background: linear-gradient(135deg,#6366f1,#8b5cf6); color: white;
-  border-radius: 20px; font-family: Verdana,sans-serif; font-size: 11px; font-weight: 800;
-}}
-.def-sim-topic {{
-  font-family: Verdana,sans-serif; font-size: 12px; font-weight: 700; color: #64748b;
-}}
-.def-sim-canvas-wrap {{
-  background: #f0f4ff;
-  line-height: 0;
-  border-bottom: 1px solid #e2e8f0;
-}}
-.def-sim-canvas-wrap canvas {{
-  display: block; width: 100%; height: auto; cursor: crosshair;
-}}
-.def-sim-controls {{
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
-  padding: 12px 18px;
-  background: #f8fafc;
-  border-top: 1px solid #e2e8f0;
-}}
-.def-sim-btn {{
-  padding: 8px 18px; border: none; border-radius: 8px;
-  font-family: Verdana,sans-serif; font-size: 12px; font-weight: 800; cursor: pointer;
-  transition: all .25s; min-width: 90px;
-  background: linear-gradient(135deg,#6366f1,#4f46e5); color: white;
-  box-shadow: 0 2px 8px rgba(99,102,241,.25);
-}}
-.def-sim-btn:hover {{ transform: scale(1.05); box-shadow: 0 4px 14px rgba(99,102,241,.4); }}
-.def-sim-btn.secondary {{
-  background: white; color: #64748b;
-  border: 1.5px solid #cbd5e1; box-shadow: none;
-}}
-.def-sim-btn.secondary:hover {{ background: #f1f5f9; color: #334155; border-color: #94a3b8; }}
-.def-sim-slider-group {{
-  display: flex; align-items: center; gap: 8px;
-}}
-.def-sim-label {{
-  font-family: Verdana,sans-serif; font-size: 11px; font-weight: 700; color: #64748b; white-space: nowrap;
-}}
-.def-sim-slider {{
-  -webkit-appearance: none; appearance: none;
-  width: 100px; height: 4px; border-radius: 2px;
-  background: #cbd5e1; outline: none; cursor: pointer;
-}}
-.def-sim-slider::-webkit-slider-thumb {{
-  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
-  background: #6366f1; cursor: pointer; box-shadow: 0 0 6px rgba(99,102,241,.4);
-}}
-.def-sim-slider::-moz-range-thumb {{
-  width: 16px; height: 16px; border-radius: 50%; background: #6366f1;
-  cursor: pointer; border: none;
-}}
-.def-sim-val {{
-  font-family: var(--font-mono); font-size: 12px; color: #334155;
-  font-weight: 700; min-width: 32px;
-}}
-.def-sim-hint {{
-  padding: 8px 18px; font-family: Verdana,sans-serif; font-size: 11px;
-  color: #94a3b8; font-weight: 600; background: #f8fafc;
-  border-top: 1px solid #f1f5f9; text-align: center; font-style: italic;
-}}
-
-/* ── WHY MATTERS ── */
-.why-matters-box {{
-  margin: 16px 0; padding: 2rem;
-  background: var(--green-bg); border-left: 5px solid var(--green-border);
-  border-radius: 0 12px 12px 0; transition: all .3s; font-family: Verdana,sans-serif;
-}}
-.why-matters-box:hover {{ transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,.15); }}
-.why-label {{
-  font-family: Verdana,sans-serif; font-size: 11px; font-weight: 800;
-  text-transform: uppercase; letter-spacing:.5px; margin-bottom: 10px; color: var(--gray-700);
-}}
-.why-text {{
-  font-family: Verdana,sans-serif; font-size: clamp(.95rem,2.5vw,1.05rem);
-  line-height: 1.7; color: var(--text-dark); margin-bottom: 16px;
-}}
-
-/* ── WHY IMPACTS — v18.1: single card, full-width ── */
-.why-impacts {{
-  display: flex; flex-direction: column; gap: 12px; margin-top: 4px;
-}}
-.why-impact-item {{
-  display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px;
-  background: white; border-radius: var(--radius-md);
-  border: 1.5px solid var(--green-border); transition: all .25s;
-}}
-.why-impact-item:hover {{ transform: translateY(-2px); box-shadow: var(--shadow-md); }}
-.why-impact-icon {{ font-size: 28px; flex-shrink: 0; line-height: 1.2; }}
-.why-impact-domain {{
-  font-family: Verdana,sans-serif; font-size: 11px; font-weight: 800;
-  text-transform: uppercase; color: #059669; letter-spacing:.4px; margin-bottom: 4px;
-}}
-.why-impact-desc {{
-  font-family: Verdana,sans-serif; font-size: clamp(.9rem,2vw,1rem);
-  line-height: 1.6; color: var(--text-dark);
-}}
+.def-properties li.def-example strong {{ color: var(--primary-dark); }}
 
 /* ── CONCEPT CARDS ── */
 .concept-card {{
@@ -2503,17 +2255,21 @@ body {{
 .tc-table td:first-child {{ font-weight: 700; color: var(--gray-900); }}
 .types-recall {{ margin-top: 20px; padding: 14px 18px; background: var(--yellow-bg); border: 2px dashed var(--yellow-border); border-radius: var(--radius-md); font-family: Verdana,sans-serif; font-weight: 700; font-size: .9rem; text-align: center; color: var(--text-dark); }}
 
-/* ── HOW IT WORKS ── */
-.how-works-section {{ margin: 16px 0; font-family: Verdana,sans-serif; }}
-.how-title {{ font-family: Verdana,sans-serif; font-size: clamp(1.2rem,3vw,1.5rem); font-weight: 700; margin-bottom: 24px; color: var(--gray-900); }}
-.how-steps {{ display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px; }}
-.step {{ display: flex; align-items: flex-start; gap: 16px; padding: 16px; background: var(--bg-card); border-radius: var(--radius-md); }}
-.step-number {{ flex-shrink: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--primary-blue); color: white; border-radius: 50%; font-family: Verdana,sans-serif; font-weight: 800; font-size: 13px; }}
-.step-text {{ flex: 1; font-family: Verdana,sans-serif; font-size: clamp(.95rem,2.5vw,1rem); line-height: 1.6; color: var(--text-dark); }}
-.eli10-visual-wrap {{ margin-top: 18px; background: white; border: 2px solid var(--gray-200); border-radius: var(--radius-md); padding: 16px; text-align: center; box-shadow: var(--shadow-sm); transition: all .25s; }}
-.eli10-visual-wrap:hover {{ border-color: var(--primary-blue); box-shadow: var(--shadow-md); transform: translateY(-2px); }}
-.eli10-svg {{ width: 100%; max-width: 720px; height: auto; display: block; margin: 0 auto; border-radius: var(--radius-sm); }}
-.eli10-visual-caption {{ margin-top: 8px; font-family: Verdana,sans-serif; font-size: .85rem; font-weight: 700; color: var(--gray-700); text-transform: uppercase; letter-spacing:.4px; }}
+/* ── WORKING PROCESS ── */
+.working-process-section {{ margin: 16px 0; font-family: Verdana,sans-serif; }}
+.wp-title {{ font-family: Verdana,sans-serif; font-size: clamp(1.2rem,3vw,1.5rem); font-weight: 700; margin-bottom: 12px; color: var(--gray-900); }}
+.wp-intro {{ font-family: Verdana,sans-serif; font-size: clamp(.95rem,2.5vw,1rem); line-height: 1.6; color: var(--text-dark); margin-bottom: 16px; }}
+.wp-stage-label {{ font-family: Verdana,sans-serif; font-weight: 800; font-size: .9rem; color: white; background: var(--primary-blue); display: inline-block; padding: 8px 16px; border-radius: 20px; margin-bottom: 14px; }}
+.wp-canvas-wrap {{ background: white; border: 2px solid var(--gray-200); border-radius: var(--radius-md); padding: 12px; text-align: center; box-shadow: var(--shadow-sm); }}
+.wp-canvas {{ width: 100%; max-width: 640px; height: auto; display: block; margin: 0 auto; border-radius: var(--radius-sm); background: var(--gray-50); }}
+.wp-controls {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }}
+.wp-btn {{ font-family: Verdana,sans-serif; font-weight: 700; font-size: .85rem; padding: 10px 18px; border: none; border-radius: 999px; background: var(--primary-blue); color: white; cursor: pointer; transition: all .2s; }}
+.wp-btn:hover {{ transform: translateY(-2px); box-shadow: var(--shadow-md); }}
+.wp-btn-secondary {{ background: var(--gray-700); }}
+.wp-btn-reset {{ background: var(--gray-200); color: var(--gray-900); }}
+.wp-speed-label {{ display: flex; align-items: center; gap: 8px; font-family: Verdana,sans-serif; font-weight: 700; font-size: .8rem; color: var(--gray-700); }}
+.wp-speed {{ width: 100px; }}
+.wp-hint {{ margin-top: 14px; padding: 12px 16px; background: var(--yellow-bg); border: 2px dashed var(--yellow-border); border-radius: var(--radius-md); font-family: Verdana,sans-serif; font-weight: 700; font-size: .85rem; color: var(--text-dark); }}
 
 /* ── APPLICATIONS ── */
 .applications-section {{ margin: 16px 0; font-family: Verdana,sans-serif; }}
@@ -2706,24 +2462,17 @@ body {{
   .nav-btn {{ background: #1e293b; border-color: #334155; color: #cbd5e1; }}
   .nav-btn.active {{ background: var(--primary-blue); color: white; }}
   .classification-bar {{ background: #1e293b; }}
-  /* Keep sim wrapper light even in dark mode for readability */
-  .def-sim-wrapper {{ background: #f8fafc; border-color: #cbd5e1; }}
-  .def-sim-header {{ background: linear-gradient(135deg,#f1f5f9,#e8f0fe); }}
-  .def-sim-controls {{ background: #f1f5f9; }}
-  .def-sim-hint {{ background: #f8fafc; color: #64748b; }}
   .concept-card, .formula-card, .app-card {{ background: #1e293b; color: #f1f5f9; }}
   .concept-definition, .concept-body p, .concept-bullets li,
-  .app-text, .step-text, .q-text, .q-opt {{ color: #e2e8f0; }}
+  .app-text, .wp-intro, .q-text, .q-opt {{ color: #e2e8f0; }}
   .hook-lead, .hook-bullets li {{ color: #f1f5f9; }}
   .def-analogy {{ color: #93c5fd; }}
   .def-properties li {{ color: #e2e8f0; }}
-  .why-text {{ color: #e2e8f0; }}
-  .why-impact-item {{ background: #1e293b; }}
-  .why-impact-desc {{ color: #e2e8f0; }}
+  .def-properties li.def-example {{ background: rgba(59,130,246,.15); }}
   .quiz-question {{ background: #1e293b; border-color: #334155; }}
   .q-opt {{ background: #0f172a; border-color: #334155; color: #e2e8f0; }}
   .tc-table td {{ color: #e2e8f0; }}
-  .eli10-visual-caption {{ color: #cbd5e1; }}
+  .wp-hint {{ color: #1e293b; }}
   .uploaded-image-wrap {{ background: #1e293b; border-color: #334155; }}
   .formula-when {{ color: #e2e8f0; }}
   .symbol-desc {{ color: #e2e8f0; }}
@@ -2755,8 +2504,7 @@ body {{
   .anim-lib-grid {{ grid-template-columns: 1fr; }}
   .fc-branches-row {{ flex-direction: column; align-items: center; }}
   .fc-branch-col {{ max-width: 280px; width: 100%; }}
-  .eli10-svg {{ max-width: 100%; }}
-  .def-sim-controls {{ flex-direction: column; align-items: flex-start; gap: 8px; }}
+  .wp-canvas {{ max-width: 100%; }}
   .footer-cta {{ flex-direction: column; align-items: center; }}
   .uploaded-image {{ max-height: 420px; }}
   .uploaded-image-wrap {{ max-width: 100%; }}
@@ -3016,16 +2764,18 @@ if __name__ == "__main__":
     output_file = f"ultimate_learning_{topic.replace(' ', '_').lower()}.html"
 
     print(f"\n{'='*64}")
-    print(f"ULTIMATE LEARNING CONTENT GENERATOR  v18.1")
+    print(f"ULTIMATE LEARNING CONTENT GENERATOR  v19.1")
     print(f"{'='*64}")
     print(f"Topic            : {topic}")
     print(f"Specific sub-topic: {_is_specific_subtopic(topic)}")
     print(f"Subtopics        : {subtopics if subtopics else '(auto-detect)'}")
     print(f"Output           : {output_file}")
-    print(f"\nv18.1 CHANGES:")
-    print(f"  ✅ CHANGED: Canvas/SVG → LIGHT THEME (pale blue-white bg, vivid entities)")
-    print(f"  ✅ CHANGED: 'Why It Matters' → 1 concise, high-value impact only")
-    print(f"  ✅ CHANGED: Animation section: 'From Library' → 'Video Vault' container")
+    print(f"\nv19.1 CHANGES:")
+    print(f"  ✅ REMOVED: 'How It Works' section entirely")
+    print(f"  ✅ ADDED:   'Working Process' section after Definition — generates")
+    print(f"              a simple, creative, interactive HTML5 canvas animation")
+    print(f"  ✅ CHANGED: Definition → simple English, 4-5 points, last point is")
+    print(f"              a real-world example. No interactive canvas/animation.")
     print(f"  ✅ ADDED:   Specific sub-topic detection + all-section focus enforcement")
     print(f"              (e.g. 'conduction in heat transfer' stays focused on conduction)")
     print(f"{'='*64}\n")
