@@ -3372,12 +3372,38 @@ def inject_controls_bar(html):
 
 
 # ===========================================================================
-#  MODULE 11 -- Voice Assistant
+#  MODULE 11 -- Teacher Voice Recording System
+#
+#  REPLACES the old browser-TTS voice assistant.
+#
+#  HOW IT WORKS:
+#  ─────────────
+#  TEACHER MODE  (record & store)
+#  1. Teacher opens the animation and clicks "🎙 Teacher" in the controls bar.
+#  2. A panel slides up with a "Record Voice" button.
+#  3. Teacher records their explanation using the device microphone.
+#  4. The recording is saved as a base64 data URL in localStorage, keyed by
+#     a hash of the question text so it always loads for the same question.
+#  5. Teacher can preview, re-record, or delete the saved audio.
+#
+#  STUDENT MODE  (playback)
+#  1. Student opens the same animation (on any device that shares localStorage,
+#     e.g. the same browser / school computer).
+#  2. If a recording exists for this question, the "🎙 Teacher" button shows
+#     a green dot indicator and "Play" label.
+#  3. Student clicks the button to play the teacher's voice recording.
+#  4. Playback can be paused/stopped with a second click.
+#
+#  CROSS-DEVICE SHARING
+#  Teachers can export the recording as a downloadable .webm / .ogg file and
+#  share it; students can import it via the panel's "Import" button.
+#  This means the voice can be shared over WhatsApp, email, school LMS, etc.
 # ===========================================================================
 
-_VOICE_ASSISTANT_CSS = """
-<style id="qanim-voice-styles">
-#qanim-voice-btn {
+_TEACHER_VOICE_CSS = """
+<style id="qanim-teacher-voice-styles">
+/* ── Controls bar button ── */
+#qanim-teacher-voice-btn {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -3393,127 +3419,764 @@ _VOICE_ASSISTANT_CSS = """
   transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s, box-shadow 0.15s;
   user-select: none;
   letter-spacing: 0.2px;
+  position: relative;
 }
-#qanim-voice-btn:hover {
+#qanim-teacher-voice-btn:hover {
   background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%);
   border-color: #7c3aed;
   color: #6d28d9;
   transform: translateY(-2px);
   box-shadow: 0 4px 14px rgba(124, 58, 237, 0.22);
 }
-#qanim-voice-btn:active { transform: translateY(0); box-shadow: none; }
-#qanim-voice-btn.speaking { background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%); border-color: #7c3aed; color: #6d28d9; }
-#qanim-voice-btn.muted { color: #94a3b8; border-color: #e2e8f0; }
+#qanim-teacher-voice-btn:active { transform: translateY(0); box-shadow: none; }
+#qanim-teacher-voice-btn.has-recording {
+  border-color: #16a34a;
+  color: #15803d;
+}
+#qanim-teacher-voice-btn.has-recording:hover {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border-color: #16a34a;
+}
+#qanim-teacher-voice-btn.playing {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border-color: #16a34a;
+  color: #15803d;
+}
+#qanim-teacher-voice-btn.recording {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border-color: #dc2626;
+  color: #b91c1c;
+  animation: tv-btn-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tv-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(220,38,38,0); }
+}
+.tv-recording-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #16a34a;
+  position: absolute;
+  top: -2px; right: -2px;
+  border: 1.5px solid #fff;
+  animation: tv-dot-blink 2s ease-in-out infinite;
+}
+@keyframes tv-dot-blink {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+}
 @media (max-width: 600px) {
-  #qanim-voice-btn { padding: 9px 11px; font-size: 11px; min-height: 40px; touch-action: manipulation; }
-  #qanim-voice-btn .ctrl-label { display: none; }
+  #qanim-teacher-voice-btn { padding: 9px 11px; font-size: 11px; min-height: 40px; touch-action: manipulation; }
+  #qanim-teacher-voice-btn .tv-ctrl-label { display: none; }
+}
+
+/* ── Teacher Voice Panel ── */
+#tv-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 8700;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.24s ease;
+}
+#tv-backdrop.open { display: flex; align-items: flex-end; justify-content: center; padding: 0 0 80px; opacity: 1; }
+@media (max-width: 600px) { #tv-backdrop.open { padding: 0 0 68px; } }
+
+#tv-panel {
+  width: min(560px, 96vw);
+  border-radius: 18px 18px 14px 14px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 -4px 40px rgba(0,0,0,0.14);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
+  overflow: hidden;
+}
+#tv-panel.open { opacity: 1; transform: translateY(0); }
+
+/* Header */
+.tv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fff;
+}
+.tv-header-left { display: flex; align-items: center; gap: 11px; }
+.tv-icon-wrap {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #ede9fe, #fdf4ff);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+  border: 1px solid #ddd6fe;
+}
+.tv-header-title {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 16px; font-weight: 800; color: #1e293b;
+}
+.tv-header-sub {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11px; color: #64748b; margin-top: 2px;
+}
+.tv-close-btn {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 1.5px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tv-close-btn:hover { background: #fee2e2; color: #dc2626; }
+
+/* Body */
+.tv-body { padding: 18px 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+
+/* Status chip */
+.tv-status-chip {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12.5px; font-weight: 600;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.tv-status-chip.has-rec {
+  background: #f0fdf4; border-color: #bbf7d0; color: #15803d;
+}
+.tv-status-chip.no-rec {
+  background: #f8fafc; border-color: #e2e8f0; color: #64748b;
+}
+.tv-status-icon { font-size: 16px; flex-shrink: 0; }
+
+/* Waveform / timer bar */
+#tv-waveform-bar {
+  height: 48px;
+  border-radius: 10px;
+  border: 1.5px dashed #e2e8f0;
+  background: #f8fafc;
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px; color: #94a3b8;
+  overflow: hidden;
+  transition: border-color 0.2s, background 0.2s;
+}
+#tv-waveform-bar.active { border-color: #dc2626; background: #fef2f2; }
+#tv-waveform-bar.has-audio { border-color: #16a34a; background: #f0fdf4; }
+.tv-wave-canvas { width: 100%; height: 36px; display: block; }
+#tv-timer {
+  font-family: 'Courier New', monospace;
+  font-size: 14px; font-weight: 800; color: #64748b;
+  flex-shrink: 0; min-width: 46px; text-align: center;
+}
+
+/* Audio player */
+#tv-audio-player {
+  width: 100%;
+  border-radius: 8px;
+  display: none;
+  outline: none;
+}
+#tv-audio-player.show { display: block; }
+
+/* Action buttons row */
+.tv-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tv-btn {
+  flex: 1;
+  min-width: 100px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1.5px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s;
+  touch-action: manipulation;
+}
+.tv-btn:hover { transform: translateY(-1px); }
+.tv-btn.primary {
+  background: #7c3aed; border-color: #7c3aed; color: #fff;
+}
+.tv-btn.primary:hover { background: #6d28d9; }
+.tv-btn.danger {
+  background: #dc2626; border-color: #dc2626; color: #fff;
+}
+.tv-btn.danger:hover { background: #b91c1c; }
+.tv-btn.green {
+  background: #16a34a; border-color: #16a34a; color: #fff;
+}
+.tv-btn.green:hover { background: #15803d; }
+.tv-btn.stop {
+  background: #fef2f2; border-color: #fca5a5; color: #b91c1c;
+}
+.tv-btn.stop:hover { background: #fee2e2; }
+.tv-btn[disabled] { opacity: 0.45; cursor: not-allowed; transform: none !important; }
+
+/* Export/Import row */
+.tv-util-row {
+  display: flex; gap: 8px; align-items: center;
+  padding-top: 4px;
+  border-top: 1px solid #f1f5f9;
+}
+.tv-util-btn {
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
+  transition: background 0.12s, color 0.12s;
+  touch-action: manipulation;
+}
+.tv-util-btn:hover { background: #ede9fe; border-color: #7c3aed; color: #6d28d9; }
+.tv-hint {
+  flex: 1;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 10.5px; color: #94a3b8;
+  line-height: 1.5;
+  text-align: right;
+}
+
+@media (max-width: 500px) {
+  .tv-body { padding: 14px 14px 18px; gap: 11px; }
+  .tv-header { padding: 13px 15px 10px; }
+  .tv-header-title { font-size: 14px; }
+  .tv-btn { font-size: 12px; padding: 10px 10px; }
+  .tv-util-btn { font-size: 10px; padding: 7px 10px; }
 }
 </style>
 """
 
-_VOICE_ASSISTANT_JS = r"""
-<script id="qanim-voice-assistant">
-(function initVoiceAssistant(){
+_TEACHER_VOICE_DOM = """
+<div id="tv-backdrop" aria-hidden="true"></div>
+<div id="tv-panel" role="dialog" aria-label="Teacher Voice" aria-hidden="true">
+
+  <div class="tv-header">
+    <div class="tv-header-left">
+      <div class="tv-icon-wrap">&#x1F3A4;</div>
+      <div>
+        <div class="tv-header-title">Teacher Voice</div>
+        <div class="tv-header-sub" id="tv-header-sub">Record your explanation for students</div>
+      </div>
+    </div>
+    <button class="tv-close-btn" id="tv-close-btn" aria-label="Close">&#x2715;</button>
+  </div>
+
+  <div class="tv-body">
+
+    <div class="tv-status-chip no-rec" id="tv-status-chip">
+      <span class="tv-status-icon" id="tv-status-icon">&#x1F4AC;</span>
+      <span id="tv-status-text">No recording yet. Record your voice explanation below.</span>
+    </div>
+
+    <div id="tv-waveform-bar">
+      <canvas class="tv-wave-canvas" id="tv-wave-canvas"></canvas>
+      <span id="tv-timer">0:00</span>
+    </div>
+
+    <audio id="tv-audio-player" controls></audio>
+
+    <div class="tv-actions" id="tv-actions">
+      <button class="tv-btn primary" id="tv-record-btn">&#x1F3A4; Start Recording</button>
+      <button class="tv-btn stop" id="tv-stop-btn" disabled>&#x23F9; Stop</button>
+      <button class="tv-btn" id="tv-play-btn" disabled>&#x25B6;&#xFE0F; Play</button>
+      <button class="tv-btn danger" id="tv-delete-btn" disabled>&#x1F5D1; Delete</button>
+    </div>
+
+    <div class="tv-util-row">
+      <button class="tv-util-btn" id="tv-export-btn" disabled>&#x2B07;&#xFE0F; Export Audio</button>
+      <label class="tv-util-btn" style="cursor:pointer;">
+        &#x2B06;&#xFE0F; Import Audio
+        <input type="file" id="tv-import-input" accept="audio/*" style="display:none;">
+      </label>
+      <span class="tv-hint">Share exported audio with students via email, WhatsApp, or your LMS.</span>
+    </div>
+
+  </div>
+</div>
+"""
+
+_TEACHER_VOICE_JS = r"""
+<script id="qanim-teacher-voice">
+(function initTeacherVoice(){
   'use strict';
-  var _muted=false,_synth=window.speechSynthesis||null,_supported=!!_synth,_btn=null;
-  var _lastSpokenIdx=-1,_speakTimer=null;
-  function _setText(icon,label){if(!_btn)return;_btn.innerHTML='<span>'+icon+'</span><span class="ctrl-label">'+label+'</span>';}
-  function _getSceneText(sceneEl){
-    if(!sceneEl)return'';
-    var dv=sceneEl.getAttribute('data-voice');if(dv&&dv.trim())return dv.trim();
-    var nodes=sceneEl.querySelectorAll('text, foreignObject, p, h1, h2, h3, h4, li');
-    var seen=Object.create(null),parts=[],total=0;
-    for(var i=0;i<nodes.length;i++){
-      var raw=(nodes[i].textContent||'').replace(/\s+/g,' ').trim();
-      if(raw.length<5)continue;
-      if(/^[\d\s\+\-\=\.\,\(\)\[\]\{\}\/\*\^\%]+$/.test(raw))continue;
-      var key=raw.toLowerCase();if(seen[key])continue;seen[key]=true;
-      parts.push(raw);total+=raw.length;if(total>600)break;
+
+  /* ── Storage key is derived from the question text embedded in #qstrip ── */
+  function _storageKey(){
+    try {
+      var qEl = document.querySelector('#qstrip .qtext');
+      var txt  = qEl ? (qEl.textContent || '').trim().slice(0, 200) : 'default';
+      var hash = 0;
+      for(var i = 0; i < txt.length; i++){
+        hash = ((hash << 5) - hash) + txt.charCodeAt(i);
+        hash |= 0;
+      }
+      return 'qanim_teacher_voice_' + Math.abs(hash);
+    } catch(e){ return 'qanim_teacher_voice_default'; }
+  }
+
+  /* ── LocalStorage helpers ── */
+  function _save(dataUrl){
+    try { localStorage.setItem(_storageKey(), dataUrl); return true; }
+    catch(e){
+      console.warn('[TV] localStorage save failed (quota?):', e);
+      return false;
     }
-    return parts.join('. ').trim();
   }
-  function _speak(text){
-    if(!_supported||_muted||!text)return;
-    try{
-      _synth.cancel();
-      var u=new SpeechSynthesisUtterance(text);
-      u.rate=0.90;u.pitch=1.0;u.volume=1.0;
-      var voices=_synth.getVoices();
-      for(var i=0;i<voices.length;i++){var v=voices[i];if(/en[-_]/i.test(v.lang)&&!/novelty|zira|hazel|espeak/i.test(v.name)){u.voice=v;break;}}
-      u.onstart=function(){if(_btn){_btn.classList.add('speaking');_setText('&#x1F50A;','Speaking');}};
-      u.onend=function(){if(_btn){_btn.classList.remove('speaking');_setText('&#x1F50A;','Voice');}};
-      u.onerror=function(){if(_btn){_btn.classList.remove('speaking');_setText('&#x1F50A;','Voice');}};
-      _synth.speak(u);
-    }catch(e){console.warn('[QAnim VA] speak error:',e);}
+  function _load(){
+    try { return localStorage.getItem(_storageKey()); }
+    catch(e){ return null; }
   }
-  function _onSceneChange(idx){
-    if(!_supported||_muted)return;
-    if(idx===_lastSpokenIdx)return;
-    _lastSpokenIdx=idx;
-    clearTimeout(_speakTimer);_synth.cancel();
-    _speakTimer=setTimeout(function(){
-      var sceneEl=document.getElementById('scene-'+idx);
-      var text=_getSceneText(sceneEl);
-      if(!text)text='Scene '+(idx+1)+'.';
-      _speak(text);
-    },450);
+  function _delete(){
+    try { localStorage.removeItem(_storageKey()); return true; }
+    catch(e){ return false; }
   }
-  function _findVisibleSceneIdx(){
-    for(var i=0;i<20;i++){var s=document.getElementById('scene-'+i);if(!s)break;var op=parseFloat(s.style.opacity);if(op>0.5)return i;}return 0;
+
+  /* ── State ── */
+  var _open       = false;
+  var _recording  = false;
+  var _mediaRec   = null;
+  var _chunks     = [];
+  var _audioBlob  = null;
+  var _audioUrl   = null;
+  var _timerInt   = null;
+  var _timerSec   = 0;
+  var _animCtx    = null;
+  var _animSource = null;
+  var _animFrame  = null;
+
+  /* ── DOM helpers ── */
+  function _el(id){ return document.getElementById(id); }
+  function _onReady(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else setTimeout(fn,0); }
+
+  /* ── Waveform visualiser ── */
+  function _startWave(stream){
+    try {
+      var AudioContext = window.AudioContext || window.webkitAudioContext;
+      if(!AudioContext) return;
+      _animCtx    = new AudioContext();
+      _animSource = _animCtx.createMediaStreamSource(stream);
+      var analyser = _animCtx.createAnalyser();
+      analyser.fftSize = 128;
+      _animSource.connect(analyser);
+      var canvas = _el('tv-wave-canvas');
+      if(!canvas) return;
+      var ctx2d  = canvas.getContext('2d');
+      var bufLen = analyser.frequencyBinCount;
+      var buf    = new Uint8Array(bufLen);
+
+      function draw(){
+        _animFrame = requestAnimationFrame(draw);
+        analyser.getByteTimeDomainData(buf);
+        canvas.width  = canvas.clientWidth  || 300;
+        canvas.height = canvas.clientHeight || 36;
+        ctx2d.clearRect(0,0,canvas.width,canvas.height);
+        ctx2d.strokeStyle = '#dc2626';
+        ctx2d.lineWidth   = 2;
+        ctx2d.beginPath();
+        var sliceW = canvas.width / bufLen;
+        var x = 0;
+        for(var i=0;i<bufLen;i++){
+          var v = buf[i]/128.0;
+          var y = v * canvas.height/2;
+          if(i===0) ctx2d.moveTo(x,y); else ctx2d.lineTo(x,y);
+          x += sliceW;
+        }
+        ctx2d.stroke();
+      }
+      draw();
+    } catch(e){ console.warn('[TV] Waveform error:', e); }
   }
-  function _toggleMute(){
-    _muted=!_muted;
-    if(_muted){clearTimeout(_speakTimer);if(_synth)_synth.cancel();_btn.classList.add('muted');_btn.classList.remove('speaking');_setText('&#x1F507;','Muted');}
-    else{_btn.classList.remove('muted');_setText('&#x1F50A;','Voice');var vis=_findVisibleSceneIdx();_lastSpokenIdx=-1;_onSceneChange(vis);}
+
+  function _stopWave(){
+    if(_animFrame){ cancelAnimationFrame(_animFrame); _animFrame = null; }
+    try { if(_animCtx) _animCtx.close(); } catch(e){}
+    _animCtx = null; _animSource = null;
+    /* Clear canvas */
+    var canvas = _el('tv-wave-canvas');
+    if(canvas){ var ctx2d = canvas.getContext('2d'); ctx2d.clearRect(0,0,canvas.width||300,canvas.height||36); }
   }
-  function _attachListeners(){
-    document.addEventListener('qanim:sceneChange',function(e){if(e&&e.detail&&typeof e.detail.idx==='number')_onSceneChange(e.detail.idx);});
-    var _obDebounce=null,_obLastIdx=-1;
-    function _obCheck(){
-      for(var i=0;i<20;i++){var s=document.getElementById('scene-'+i);if(!s)break;var op=parseFloat(s.style.opacity);if(op>0.7&&i!==_obLastIdx){_obLastIdx=i;if(i!==_lastSpokenIdx)_onSceneChange(i);return;}}
+
+  /* ── Timer ── */
+  function _startTimer(){
+    _timerSec = 0;
+    _timerInt = setInterval(function(){
+      _timerSec++;
+      var m = Math.floor(_timerSec/60);
+      var s = _timerSec % 60;
+      var el = _el('tv-timer');
+      if(el) el.textContent = m + ':' + (s<10?'0':'')+s;
+    }, 1000);
+  }
+  function _stopTimer(){
+    clearInterval(_timerInt);
+    _timerInt = null;
+  }
+
+  /* ── UI state machine ── */
+  function _setUIIdle(hasAudio){
+    var waveBar = _el('tv-waveform-bar');
+    if(waveBar) waveBar.className = hasAudio ? 'has-audio' : '';
+    _el('tv-record-btn').disabled = false;
+    _el('tv-stop-btn').disabled   = true;
+    _el('tv-play-btn').disabled   = !hasAudio;
+    _el('tv-delete-btn').disabled = !hasAudio;
+    _el('tv-export-btn').disabled = !hasAudio;
+    var ap = _el('tv-audio-player');
+    if(ap) ap.className = hasAudio ? 'show' : '';
+    var chip = _el('tv-status-chip');
+    var icon = _el('tv-status-icon');
+    var text = _el('tv-status-text');
+    if(chip){ chip.className = 'tv-status-chip ' + (hasAudio ? 'has-rec' : 'no-rec'); }
+    if(icon){ icon.textContent = hasAudio ? '\u2705' : '\uD83D\uDCAC'; }
+    if(text){ text.textContent = hasAudio
+      ? 'Recording saved. Students can now play your explanation.'
+      : 'No recording yet. Record your voice explanation below.'; }
+    var sub = _el('tv-header-sub');
+    if(sub){ sub.textContent = hasAudio
+      ? 'Your explanation is saved for students'
+      : 'Record your explanation for students'; }
+    _recording = false;
+  }
+
+  function _setUIRecording(){
+    _recording = true;
+    var waveBar = _el('tv-waveform-bar');
+    if(waveBar) waveBar.className = 'active';
+    _el('tv-record-btn').disabled = true;
+    _el('tv-stop-btn').disabled   = false;
+    _el('tv-play-btn').disabled   = true;
+    _el('tv-delete-btn').disabled = true;
+    _el('tv-export-btn').disabled = true;
+    var ap = _el('tv-audio-player');
+    if(ap){ ap.className = ''; ap.src = ''; }
+    var chip = _el('tv-status-chip');
+    var icon = _el('tv-status-icon');
+    var text = _el('tv-status-text');
+    if(chip){ chip.className = 'tv-status-chip'; chip.style.borderColor='#fca5a5'; chip.style.background='#fef2f2'; chip.style.color='#b91c1c'; }
+    if(icon){ icon.textContent = '\uD83D\uDD34'; }
+    if(text){ text.textContent = 'Recording in progress...'; }
+    var el = _el('tv-timer'); if(el) el.textContent = '0:00';
+  }
+
+  /* ── Sync the controls-bar button ── */
+  function _syncCtrlBtn(hasAudio){
+    var btn = _el('qanim-teacher-voice-btn');
+    if(!btn) return;
+    if(hasAudio){
+      btn.classList.add('has-recording');
+      var dot = btn.querySelector('.tv-recording-dot');
+      if(!dot){ dot = document.createElement('span'); dot.className='tv-recording-dot'; btn.appendChild(dot); }
+    } else {
+      btn.classList.remove('has-recording','playing');
+      var dot2 = btn.querySelector('.tv-recording-dot');
+      if(dot2) dot2.remove();
     }
-    var root=document.querySelector('svg')||document.body;
-    var obs=new MutationObserver(function(){clearTimeout(_obDebounce);_obDebounce=setTimeout(_obCheck,60);});
-    obs.observe(root,{attributes:true,subtree:true,attributeFilter:['style','opacity','display']});
-    setTimeout(function(){if(_lastSpokenIdx===-1){_lastSpokenIdx=-1;_onSceneChange(0);}},950);
   }
-  function _init(){
-    if(!_supported){console.warn('[QAnim VA] Web Speech API not supported.');return;}
-    var bar=document.getElementById('qanim-controls-bar');
+
+  /* ── Recording flow ── */
+  function _startRecording(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      alert('Your browser does not support audio recording. Please use Chrome, Firefox, or Safari.');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({audio:true, video:false})
+      .then(function(stream){
+        _chunks = [];
+        var options = {};
+        if(MediaRecorder.isTypeSupported('audio/webm')) options.mimeType = 'audio/webm';
+        else if(MediaRecorder.isTypeSupported('audio/ogg')) options.mimeType = 'audio/ogg';
+        _mediaRec = new MediaRecorder(stream, options);
+        _mediaRec.ondataavailable = function(e){ if(e.data.size>0) _chunks.push(e.data); };
+        _mediaRec.onstop = function(){
+          /* Stop all tracks */
+          stream.getTracks().forEach(function(t){ t.stop(); });
+          _stopWave();
+          _stopTimer();
+          var mimeType = _mediaRec.mimeType || 'audio/webm';
+          _audioBlob = new Blob(_chunks, {type: mimeType});
+          if(_audioUrl) URL.revokeObjectURL(_audioUrl);
+          _audioUrl = URL.createObjectURL(_audioBlob);
+
+          /* Load into audio player */
+          var ap = _el('tv-audio-player');
+          if(ap){ ap.src = _audioUrl; }
+
+          /* Convert to base64 and save */
+          var reader = new FileReader();
+          reader.onloadend = function(){
+            var dataUrl = reader.result;
+            var ok = _save(dataUrl);
+            _setUIIdle(true);
+            _syncCtrlBtn(true);
+            if(!ok){
+              var text = _el('tv-status-text');
+              if(text) text.textContent = 'Recording complete! (Note: auto-save failed — please export to share.)';
+            }
+          };
+          reader.readAsDataURL(_audioBlob);
+        };
+        _mediaRec.start(100); /* collect every 100ms */
+        _setUIRecording();
+        _startTimer();
+        _startWave(stream);
+      })
+      .catch(function(err){
+        console.error('[TV] getUserMedia error:', err);
+        if(err.name === 'NotAllowedError'){
+          alert('Microphone permission denied. Please allow microphone access in your browser settings and try again.');
+        } else {
+          alert('Could not start recording: ' + (err.message || err));
+        }
+      });
+  }
+
+  function _stopRecording(){
+    if(_mediaRec && _mediaRec.state !== 'inactive'){
+      _mediaRec.stop();
+    }
+  }
+
+  /* ── Delete recording ── */
+  function _deleteRecording(){
+    if(!confirm('Delete the saved teacher voice recording for this question?')) return;
+    _delete();
+    if(_audioUrl){ URL.revokeObjectURL(_audioUrl); _audioUrl = null; }
+    _audioBlob = null;
+    var ap = _el('tv-audio-player');
+    if(ap){ ap.src = ''; ap.className = ''; }
+    _setUIIdle(false);
+    _syncCtrlBtn(false);
+  }
+
+  /* ── Export audio ── */
+  function _exportAudio(){
+    if(!_audioBlob && !_audioUrl){
+      /* Try loading from storage */
+      var saved = _load();
+      if(!saved){ alert('No recording to export.'); return; }
+      var a = document.createElement('a');
+      a.download = 'teacher_voice.webm';
+      a.href = saved;
+      a.click();
+      return;
+    }
+    var blob = _audioBlob;
+    if(!blob){ alert('No recording to export.'); return; }
+    var ext = (blob.type.indexOf('ogg') !== -1) ? 'ogg' : 'webm';
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.download = 'teacher_voice.' + ext;
+    a.href = url;
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
+  }
+
+  /* ── Import audio ── */
+  function _importAudio(file){
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onloadend = function(){
+      var dataUrl = reader.result;
+      _save(dataUrl);
+      if(_audioUrl) URL.revokeObjectURL(_audioUrl);
+      _audioUrl = dataUrl;
+      var ap = _el('tv-audio-player');
+      if(ap){ ap.src = dataUrl; }
+      _setUIIdle(true);
+      _syncCtrlBtn(true);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /* ── Play from controls bar (outside panel) ── */
+  function _playFromCtrlBtn(){
+    var saved = _audioUrl || _load();
+    if(!saved){ openTeacherVoicePanel(); return; }
+    var ap = _el('tv-audio-player');
+    if(!ap){
+      /* Create a hidden player */
+      ap = document.createElement('audio');
+      ap.id = 'tv-audio-player';
+      ap.style.display = 'none';
+      document.body.appendChild(ap);
+    }
+    if(!ap.src) ap.src = saved;
+    var btn = _el('qanim-teacher-voice-btn');
+    if(ap.paused){
+      ap.play().then(function(){
+        if(btn){ btn.classList.add('playing'); }
+      }).catch(function(e){ console.warn('[TV] play error:', e); });
+      ap.onended = function(){ if(btn) btn.classList.remove('playing'); };
+    } else {
+      ap.pause();
+      if(btn) btn.classList.remove('playing');
+    }
+  }
+
+  /* ── Panel open/close ── */
+  function openTeacherVoicePanel(){
+    var backdrop = _el('tv-backdrop');
+    var panel    = _el('tv-panel');
+    if(!backdrop || !panel) return;
+    backdrop.classList.add('open');
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden','false');
+    _open = true;
+    /* Restore saved audio */
+    var saved = _load();
+    if(saved && !_audioUrl){
+      _audioUrl = saved;
+      var ap = _el('tv-audio-player');
+      if(ap){ ap.src = saved; }
+      _setUIIdle(true);
+      _syncCtrlBtn(true);
+    } else {
+      _setUIIdle(!!saved || !!_audioUrl);
+      _syncCtrlBtn(!!saved || !!_audioUrl);
+    }
+  }
+
+  function closeTeacherVoicePanel(){
+    var backdrop = _el('tv-backdrop');
+    var panel    = _el('tv-panel');
+    if(backdrop){ backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden','true'); }
+    if(panel)   { panel.classList.remove('open');    panel.setAttribute('aria-hidden','true');    }
+    _open = false;
+  }
+
+  window.openTeacherVoicePanel  = openTeacherVoicePanel;
+  window.closeTeacherVoicePanel = closeTeacherVoicePanel;
+
+  /* ── Wire up on DOMContentLoaded ── */
+  _onReady(function(){
+
+    /* ── Inject controls-bar button ── */
+    var bar = _el('qanim-controls-bar');
     if(bar){
-      var sep=document.createElement('div');sep.className='qanim-ctrl-sep';bar.appendChild(sep);
-      _btn=document.createElement('button');_btn.id='qanim-voice-btn';_btn.title='Toggle voice narration';
-      _btn.innerHTML='<span>&#x1F50A;</span><span class="ctrl-label">Voice</span>';
-      _btn.addEventListener('click',_toggleMute);bar.appendChild(_btn);
-    }else{
-      _btn=document.createElement('button');_btn.id='qanim-voice-btn';
-      _btn.style.cssText='position:fixed;bottom:70px;right:70px;z-index:6800;';
-      _btn.innerHTML='<span>&#x1F50A;</span><span class="ctrl-label">Voice</span>';
-      _btn.addEventListener('click',_toggleMute);document.body.appendChild(_btn);
+      var sep = document.createElement('div');
+      sep.className = 'qanim-ctrl-sep';
+      bar.appendChild(sep);
+      var btn = document.createElement('button');
+      btn.id    = 'qanim-teacher-voice-btn';
+      btn.title = 'Teacher Voice — record or play explanation';
+      btn.innerHTML = '<span>&#x1F3A4;</span><span class="tv-ctrl-label ctrl-label">Teacher Voice</span>';
+      bar.appendChild(btn);
     }
-    if(_synth.getVoices().length===0)_synth.addEventListener('voiceschanged',function(){},{once:true});
-    _attachListeners();
-  }
-  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_init);}else{setTimeout(_init,0);}
+
+    /* ── Check for existing recording on page load ── */
+    var existing = _load();
+    if(existing){
+      _audioUrl = existing;
+      _syncCtrlBtn(true);
+    }
+
+    /* ── Controls-bar button click ── */
+    _onReady(function(){
+      var ctrlBtn = _el('qanim-teacher-voice-btn');
+      if(ctrlBtn){
+        ctrlBtn.addEventListener('click', function(e){
+          e.stopPropagation();
+          var hasSaved = !!(_load() || _audioUrl);
+          if(hasSaved && !_open){
+            /* Students: play immediately; teachers: hold Shift or use panel */
+            _playFromCtrlBtn();
+          } else {
+            _open ? closeTeacherVoicePanel() : openTeacherVoicePanel();
+          }
+        });
+      }
+    });
+
+    /* ── Panel close button ── */
+    var closeBtn = _el('tv-close-btn');
+    if(closeBtn) closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closeTeacherVoicePanel(); });
+
+    /* ── Backdrop click ── */
+    var backdrop = _el('tv-backdrop');
+    if(backdrop) backdrop.addEventListener('click', function(e){ if(e.target === backdrop) closeTeacherVoicePanel(); });
+
+    /* ── Escape key ── */
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && _open) closeTeacherVoicePanel(); });
+
+    /* ── Record button ── */
+    var recBtn = _el('tv-record-btn');
+    if(recBtn) recBtn.addEventListener('click', function(){ _startRecording(); });
+
+    /* ── Stop button ── */
+    var stopBtn = _el('tv-stop-btn');
+    if(stopBtn) stopBtn.addEventListener('click', function(){ _stopRecording(); });
+
+    /* ── Play button (inside panel) ── */
+    var playBtn = _el('tv-play-btn');
+    if(playBtn) playBtn.addEventListener('click', function(){
+      var ap = _el('tv-audio-player');
+      if(!ap) return;
+      if(ap.paused){ ap.play(); playBtn.textContent = '\u23F8\uFE0F Pause'; }
+      else { ap.pause(); playBtn.innerHTML = '\u25B6\uFE0F Play'; }
+      ap.onended = function(){ playBtn.innerHTML = '\u25B6\uFE0F Play'; };
+    });
+
+    /* ── Delete button ── */
+    var delBtn = _el('tv-delete-btn');
+    if(delBtn) delBtn.addEventListener('click', function(){ _deleteRecording(); });
+
+    /* ── Export button ── */
+    var expBtn = _el('tv-export-btn');
+    if(expBtn) expBtn.addEventListener('click', function(){ _exportAudio(); });
+
+    /* ── Import input ── */
+    var impInput = _el('tv-import-input');
+    if(impInput) impInput.addEventListener('change', function(e){
+      var file = e.target.files && e.target.files[0];
+      if(file) _importAudio(file);
+      e.target.value = '';
+    });
+
+  });
+
 })();
 </script>
 """
 
 
-def inject_voice_assistant(html):
+def inject_teacher_voice(html):
     try:
         if '</head>' in html:
-            html = html.replace('</head>', _VOICE_ASSISTANT_CSS + '\n</head>', 1)
+            html = html.replace('</head>', _TEACHER_VOICE_CSS + '\n</head>', 1)
     except Exception as e:
-        QAnimLogger.warn("VoiceAssistant", f"CSS injection failed: {e}")
+        QAnimLogger.warn("TeacherVoice", f"CSS injection failed: {e}")
+    try:
+        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
+        if body_match:
+            ins = body_match.end()
+            html = html[:ins] + '\n' + _TEACHER_VOICE_DOM + html[ins:]
+    except Exception as e:
+        QAnimLogger.warn("TeacherVoice", f"DOM injection failed: {e}")
     try:
         if '</body>' in html:
-            html = html.replace('</body>', _VOICE_ASSISTANT_JS + '\n</body>', 1)
+            html = html.replace('</body>', _TEACHER_VOICE_JS + '\n</body>', 1)
         else:
-            html += '\n' + _VOICE_ASSISTANT_JS
-        QAnimLogger.ok("VoiceAssistant", "Voice assistant injected")
+            html += '\n' + _TEACHER_VOICE_JS
+        QAnimLogger.ok("TeacherVoice", "Teacher Voice system injected")
     except Exception as e:
-        QAnimLogger.warn("VoiceAssistant", f"JS injection failed: {e}")
+        QAnimLogger.warn("TeacherVoice", f"JS injection failed: {e}")
     return html
 
 
@@ -4039,31 +4702,35 @@ def _wrap_anim_script_body(body):
     return wrapped
 
 
-def _extract_scene_descriptions_from_parsed(result):
+def _extract_scene_descriptions_from_parsed(result, n_scenes: int = 5):
     """
-    Build 5 scene description dicts from the parsed AI result.
-    Falls back to generic names if not enough info.
+    Build n_scenes scene description dicts from the parsed AI result.
+    The last scene is always the summary. Falls back to generic names if needed.
     """
-    SCENE_TITLES = [
+    ALL_TITLES = [
         "What Are We Looking At?",
         "The Big Idea",
         "Another Thing That Matters",
         "Putting It Together",
-        "How We Solve It — Step by Step",
+        "How We Solve It — Step by Step",   # always used as last scene title
     ]
+    SUMMARY_TITLE = "How We Solve It — Step by Step"
+    # Build title list: first (n_scenes-1) intermediate + summary
+    mid_titles = ALL_TITLES[:n_scenes - 1]
+    titles = mid_titles + [SUMMARY_TITLE]
+
     steps = result.get("solution_steps", [])
     descs = []
-    for i in range(5):
-        title = SCENE_TITLES[i]
+    for i in range(n_scenes):
+        title = titles[i]
         step_text = steps[i].strip() if i < len(steps) else ""
-        # Clean step label prefix
         step_text = re.sub(r'^Step\s*\d+\s*:', '', step_text).strip()
         step_text = re.sub(r'^\*\*[^*]+\*\*\s*', '', step_text).strip()
-        desc = step_text[:160] if step_text else f"Scene {i+1} of this animation."
-        num  = f"{i+1} / 5"
+        desc = step_text[:160] if step_text else f"Scene {i+1} of {n_scenes} of this animation."
+        num  = f"{i+1} / {n_scenes}"
         descs.append({
             "num":         num,
-            "accentColor": _SCENE_ACCENT_COLORS[i],
+            "accentColor": _SCENE_ACCENT_COLORS[i % len(_SCENE_ACCENT_COLORS)],
             "title":       title,
             "desc":        desc,
         })
@@ -4089,7 +4756,7 @@ def _infer_topic_badge(question, category):
     return f"{category.replace('_', ' ').title()} · Interactive"
 
 
-def build_page_html(question, result, given_cards, category):
+def build_page_html(question, result, given_cards, category, n_scenes: int = 5):
     """
     Assembles the full standalone page HTML in the v0.2 layout.
     This is the core new function in v0.2.
@@ -4121,8 +4788,8 @@ def build_page_html(question, result, given_cards, category):
         svg_block = '<svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg"><rect width="1000" height="600" fill="#f8fafc"/><text x="500" y="300" text-anchor="middle" font-size="20" fill="#64748b">Animation unavailable</text></svg>'
 
     # Scene descriptions for the bottom strip
-    scene_descs = _extract_scene_descriptions_from_parsed(result)
-    first_scene = scene_descs[0] if scene_descs else {"num": "1 / 5", "accentColor": "#3b5bdb",
+    scene_descs = _extract_scene_descriptions_from_parsed(result, n_scenes)
+    first_scene = scene_descs[0] if scene_descs else {"num": "1 / " + str(n_scenes), "accentColor": "#3b5bdb",
                                                         "title": "Scene 1", "desc": ""}
 
     page = f"""<!DOCTYPE html>
@@ -4133,9 +4800,9 @@ def build_page_html(question, result, given_cards, category):
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
 <style id="qanim-scroll-fix">
-html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
-svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
-#container,[id="container"]{{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}}
+html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
+svg{width:100%!important;height:auto!important;max-width:100%!important;}
+#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
 </style>
 </head>
 <body>
@@ -4319,28 +4986,83 @@ def _unescape_json_string(s):
 #    - buildDots() + showScene() + animateScene0-4()
 # ===========================================================================
 
-SYSTEM = """You are QAnim v0.2 -- a cinematic SVG motion designer and educational animation engineer.
+def _build_system_prompt(n_scenes: int) -> str:
+    """
+    Build the main SYSTEM prompt for the solution animation AI,
+    parameterised by the number of scenes (3, 4, or 5).
+    The last scene is always the summary / step-by-step scene.
+    """
+    # ── Per-scene definitions ────────────────────────────────────────────────
+    ALL_SCENES = [
+        # (title, accent_color, description)
+        ("What Are We Looking At?",     "#3b5bdb",
+         "Draw the physical setup as a simple, friendly picture. "
+         "Animate parts appearing one by one. "
+         "Card text: \"Scene 1 of N — What Are We Looking At?\" + two simple description lines."),
+        ("The Big Idea",                "#0ea5e9",
+         "Show the ONE main formula structure (named, not solved). "
+         "Annotated arrows pointing to each variable. "
+         "Card text: \"Scene 2 of N — The Big Idea\" + two simple description lines."),
+        ("Another Thing That Matters",  "#16a34a",
+         "Show the second effect or mechanism. "
+         "Card text: \"Scene 3 of N — Another Thing That Matters\" + two simple description lines."),
+        ("Putting It Together",         "#f59e0b",
+         "Connection diagram (boxes with arrows) linking all concepts so far. "
+         "Card text: \"Scene 4 of N — Putting It Together\" + two simple description lines."),
+    ]
+    SUMMARY_SCENE = (
+        "How We Solve It — Step by Step", "#e64980",
+        "Numbered checklist (steps 1-{k}) inside a white card. "
+        "Blue reminder rect at bottom about the Final Answer button. "
+        "Card text: \"Scene N of N — How We Solve It\" + two simple description lines."
+    )
 
-YOUR MISSION: Turn any student question into a PREMIUM 5-scene SVG animation
+    # Pick intermediate scenes + always append the summary scene
+    mid_scenes = ALL_SCENES[:n_scenes - 1]   # 2 for 3-scene, 3 for 4-scene, 4 for 5-scene
+    scenes = mid_scenes + [SUMMARY_SCENE]
+
+    # Build scene descriptions block
+    scene_lines = []
+    for idx, (title, color, desc) in enumerate(scenes):
+        is_last = (idx == n_scenes - 1)
+        label = f"Scene {idx} \"{title}\" (LAST — Summary):" if is_last else f"Scene {idx} \"{title}\":"
+        desc_filled = desc.replace("{k}", str(min(n_scenes, 4))).replace(" N ", f" {n_scenes} ")
+        scene_lines.append(f"{label}\n  - accent color {color}\n  - {desc_filled}")
+
+    scenes_block = "\n\n".join(scene_lines)
+
+    # Build animateScene calls list for JS pattern
+    animate_calls = "\n    ".join(
+        f"else if(n==={i}) animateScene{i}();" for i in range(1, n_scenes)
+    )
+    animate_fns = "\n  ".join(
+        f"function animateScene{i}() {{ /* etc */ }}" for i in range(n_scenes)
+    )
+    hidden_scenes = "\n    ".join(
+        f"<g id=\"scene-{i}\" class=\"scene\" display=\"none\">" for i in range(1, n_scenes)
+    )
+
+    return f"""You are QAnim v0.2 -- a cinematic SVG motion designer and educational animation engineer.
+
+YOUR MISSION: Turn any student question into a PREMIUM {n_scenes}-scene SVG animation
 that teaches the concept progressively, following the EXACT structure of the
 reference HTML output.
 
 ═══ REQUIRED OUTPUT FORMAT ═══
 Return ONLY raw JSON (no markdown, no fences):
-{
+{{
   "animation_type": "concise label",
   "design_strategy": "2-4 sentence description",
-  "solution_steps": ["Step 1 description", "Step 2 description", ...],
+  "solution_steps": ["Step 1 description", ...],
   "final_answer": "<fully computed answer with all numerical values and units>",
   "key_insight": "one memorable insight sentence",
   "animation_code": "COMPLETE SELF-CONTAINED HTML AS A SINGLE PROPERLY-ESCAPED JSON STRING"
-}
+}}
 
 ═══ LANGUAGE STYLE FOR STUDENT-FACING TEXT (CRITICAL) ═══
 This applies to "solution_steps" AND every "description line" you write inside
 the SVG info cards. Students of ALL levels — including weak learners — will
-read this text, so write it like a kind, patient teacher explaining to a
-beginner:
+read this text, so write it like a kind, patient teacher explaining to a beginner:
 - Use VERY SIMPLE English. Short sentences only (about 12-15 words max).
 - Use common, everyday words. Avoid hard or fancy vocabulary.
 - If you must use a technical word (e.g. "diffusion", "momentum"), explain it
@@ -4348,106 +5070,73 @@ beginner:
 - Break ideas into small steps. One idea per sentence.
 - Sound warm and encouraging, like a teacher helping a student understand,
   not like a textbook or a research paper.
-- NEVER use long, complex, or nested sentences. NEVER use jargon without
-  explaining it.
-- Keep the science/math meaning 100% correct — only the LANGUAGE must be
-  simple, not the facts.
+- NEVER use long, complex, or nested sentences. NEVER use jargon without explaining it.
+- Keep the science/math meaning 100% correct — only the LANGUAGE must be simple.
 
-═══ SCENE STRUCTURE (exactly 5 scenes) ═══
-(Remember: every "description line" below must follow the LANGUAGE STYLE
-rules above — short, simple sentences a young student can follow easily.)
+═══ SCENE STRUCTURE (exactly {n_scenes} scenes) ═══
+(Remember: every "description line" below must follow the LANGUAGE STYLE rules above.)
 
-Scene 0 "What Are We Looking At?":
-  - Draw the physical setup as a simple, friendly picture
-  - Animate parts appearing one by one
-  - Bottom info card INSIDE SVG: white rect at y=490, 5px left accent bar (#3b5bdb)
-  - Card text: "Scene 1 of 5 — What Are We Looking At?" + two simple description lines
-
-Scene 1 "The Big Idea":
-  - Show the ONE main formula structure (named, not solved)
-  - Annotated arrows pointing to each variable
-  - Bottom info card INSIDE SVG: accent color #0ea5e9
-  - Card text: "Scene 2 of 5 — The Big Idea" + two simple description lines
-
-Scene 2 "Another Thing That Matters":
-  - Show the second effect or mechanism
-  - Bottom info card INSIDE SVG: accent color #16a34a
-  - Card text: "Scene 3 of 5 — Another Thing That Matters" + two simple description lines
-
-Scene 3 "Putting It Together":
-  - Connection diagram (boxes with arrows) linking the concepts
-  - Bottom info card INSIDE SVG: accent color #f59e0b
-  - Card text: "Scene 4 of 5 — Putting It Together" + two simple description lines
-
-Scene 4 "How We Solve It — Step by Step":
-  - Numbered checklist (steps 1-4) inside a white card
-  - Blue reminder rect at bottom about the Final Answer button
-  - Bottom info card INSIDE SVG: accent color #e64980
-  - Card text: "Scene 5 of 5 — How We Solve It" + two simple description lines
+{scenes_block}
 
 ═══ INFO CARD FORMAT (INSIDE SVG, y=490) ═══
 Each scene's bottom info card is drawn INSIDE the SVG like this:
   <rect x="60" y="490" width="880" height="90" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
   <rect x="60" y="490" width="5" height="90" rx="3" fill="ACCENT_COLOR"/>
-  <text x="85" y="516" font-size="14" fill="#1e293b" font-weight="700">Scene N of 5 — Scene Title</text>
+  <text x="85" y="516" font-size="14" fill="#1e293b" font-weight="700">Scene N of {n_scenes} — Scene Title</text>
   <text x="85" y="540" font-size="13" fill="#475569">First description line...</text>
   <text x="85" y="560" font-size="13" fill="#475569">Second description line...</text>
 
 ═══ JS ANIMATION PATTERN ═══
 The animation JS MUST follow this exact pattern:
   window.currentStep=0;
-  window.totalSteps=5;
+  window.totalSteps={n_scenes};
 
-  function buildDots() { ... }   // builds span.dot elements in #dots
-  function updateDots() { ... }  // toggles .active class
+  function buildDots() {{ ... }}   // builds span.dot elements in #dots
+  function updateDots() {{ ... }}  // toggles .active class
 
-  function showScene(n) {
+  function showScene(n) {{
     currentStep=n;
     // hide all .scene elements, show #scene-n
     updateDots();
     if(n===0) animateScene0();
-    else if(n===1) animateScene1();
-    // etc.
-  }
+    {animate_calls}
+  }}
 
-  function nextStep() { if(currentStep<totalSteps-1) showScene(currentStep+1); }
-  function prevStep() { if(currentStep>0) showScene(currentStep-1); }
+  function nextStep() {{ if(currentStep<totalSteps-1) showScene(currentStep+1); }}
+  function prevStep() {{ if(currentStep>0) showScene(currentStep-1); }}
 
-  function fadeIn(id, delay) {
-    setTimeout(function() {
+  function fadeIn(id, delay) {{
+    setTimeout(function() {{
       var el = document.getElementById(id);
       if(el) el.setAttribute('opacity','1');
-    }, delay);
-  }
+    }}, delay);
+  }}
 
-  function dashIn(id, delay) {
-    setTimeout(function() {
+  function dashIn(id, delay) {{
+    setTimeout(function() {{
       var el = document.getElementById(id);
-      if(el) {
+      if(el) {{
         el.setAttribute('opacity','1');
         el.style.transition='stroke-dashoffset 0.7s ease';
         el.setAttribute('stroke-dashoffset','0');
-      }
-    }, delay);
-  }
+      }}
+    }}, delay);
+  }}
 
-  function animateScene0() { /* fade in elements with staggered delays */ }
-  function animateScene1() { /* etc */ }
-  // ... up to animateScene4()
+  function animateScene0() {{ /* fade in elements with staggered delays */ }}
+  {animate_fns}
 
-  document.addEventListener('DOMContentLoaded', function() {
+  document.addEventListener('DOMContentLoaded', function() {{
     buildDots();
     showScene(0);
-  });
+  }});
 
 ═══ SVG STRUCTURE ═══
 - viewBox="0 0 1000 600"
 - All scenes in <g id="scene-N" class="scene"> groups
 - Scene 0 (first scene): NO display attribute (visible by default)
-- Scenes 1-4: MUST have display="none" attribute directly on the <g> tag:
-    <g id="scene-1" class="scene" display="none">
-    <g id="scene-2" class="scene" display="none">
-    (etc.)
+- Scenes 1 to {n_scenes-1}: MUST have display="none" attribute directly on the <g> tag:
+    {hidden_scenes}
   This is CRITICAL — the StepController sets display="block" when switching scenes.
 - Child elements inside each scene start with opacity="0" for animation
 - Background: #f8fafc per scene
@@ -4465,25 +5154,15 @@ The animation JS MUST follow this exact pattern:
 - Accent colors per scene: #3b5bdb, #0ea5e9, #16a34a, #f59e0b, #e64980
 - SVG tspan subscripts (NEVER underscores):
     f<tspan dy="5" font-size="0.72em">s</tspan>
-    T<tspan dy="5" font-size="0.72em">out</tspan>
-- STRICT: ZERO text-on-text or text-on-arrow overlap in any scene (see the
-  ZERO TEXT OVERLAP rules above) -- this is a hard requirement, not a
-  suggestion. Recheck every label's position before finalizing each scene.
+- STRICT: ZERO text-on-text or text-on-arrow overlap in any scene.
 
 ═══ FINAL ANSWER FIELD ═══
 Solve the question COMPLETELY. Put the FULL computed answer in "final_answer".
 NEVER leave it empty.
-First CHECK whether the question is actually asking for more than one separate
-quantity (look for "and", commas, or multiple question marks -- e.g. "Find the
-rate of heat loss per meter AND the outer surface temperature" asks for TWO
-answers).
 - If the question asks for TWO OR MORE separate quantities, compute and report
   EVERY one of them, separated by a semicolon ";", in the SAME ORDER the
-  question asks for them -- one quantity per segment, each with its own value
-  and unit. Example (two answers): "Q = 142.6 W/m; T_s = 47.3 deg C"
-- If the question asks for only ONE quantity, give just that single answer as
-  usual -- do NOT invent extra parts or add semicolons. Example (one answer):
-  "v = 24.5 m/s"
+  question asks for them. Example: "Q = 142.6 W/m; T_s = 47.3 deg C"
+- If the question asks for only ONE quantity, give just that single answer.
 Do NOT include final_answer inside the animation scenes -- only in the JSON field.
 
 ═══ WHAT TO OMIT ═══
@@ -4492,26 +5171,35 @@ Do NOT include final_answer inside the animation scenes -- only in the JSON fiel
 - DO NOT use dark backgrounds
 - DO NOT use backtick template literals (use + concatenation)
 - DO NOT use const/let (use var)
-- DO NOT use arrow functions (use function() {})
+- DO NOT use arrow functions (use function() {{}})
 - DO NOT allow any text element to overlap another text element, a title,
-  a formula, an info card, or an arrow/line path in ANY scene -- this is
-  a strict, non-negotiable requirement (see ZERO TEXT OVERLAP section)"""
+  a formula, an info card, or an arrow/line path in ANY scene"""
 
 
-SYSTEM_CONCEPT = """You are QAnim Concept Engine v0.2 -- cinematic SVG concept animator.
+def _build_system_concept_prompt(n_scenes: int) -> str:
+    """Build the SYSTEM_CONCEPT prompt parameterised by scene count."""
+    scene_list = [
+        "Scene 0: Physical setup / visual system overview",
+        "Scene 1: Core formula structure (named, not solved)",
+        "Scene 2: Secondary mechanism",
+        "Scene 3: Key relationships / abstract model",
+    ]
+    summary = f"Scene {n_scenes-1}: Summary of what to calculate + approach"
+    # Use only n_scenes entries (always end with summary)
+    used = scene_list[:n_scenes - 1] + [summary]
+    scene_block = "\n  ".join(used)
+    animate_range = f"animateScene0-{n_scenes-1}"
+    return f"""You are QAnim Concept Engine v0.2 -- cinematic SVG concept animator.
 
-YOUR MISSION: 5-scene concept animation matching the v0.2 sample output structure.
+YOUR MISSION: {n_scenes}-scene concept animation matching the v0.2 sample output structure.
 LIGHT THEME. No dark backgrounds. No final answer shown in scenes.
 
 Scenes follow the same pattern as the main SYSTEM prompt, but are concept-only:
-  Scene 0: Physical setup / visual system overview
-  Scene 1: Core formula structure (named, not solved)
-  Scene 2: Secondary mechanism
-  Scene 3: Key relationships / abstract model
-  Scene 4: Summary of what to calculate + approach
+  {scene_block}
 
-Use the SAME JS pattern (buildDots, fadeIn, dashIn, animateScene0-4).
+Use the SAME JS pattern (buildDots, fadeIn, dashIn, {animate_range}).
 Use the SAME info-card format inside SVG at y=490.
+window.totalSteps={n_scenes};
 
 LANGUAGE STYLE (CRITICAL): Every word inside the info-card description lines
 must be VERY SIMPLE English for students of all levels, including weak
@@ -4520,19 +5208,17 @@ only. Explain any hard term in plain words right after it. One idea per
 sentence. Sound like a kind, friendly teacher — never like a textbook.
 
 OUTPUT FORMAT (strict JSON):
-{
+{{
   "animation_type": "label",
   "design_strategy": "2-4 sentences",
   "concept_code": "COMPLETE <!DOCTYPE html>...</html> AS ESCAPED JSON STRING"
-}
+}}
 
 SAFETY: No dark bg, no backticks, no const/let, no arrow functions,
-balanced tags, 5 scenes, include #prevbtn/#nextbtn/#dots,
+balanced tags, exactly {n_scenes} scenes (scene-0 to scene-{n_scenes-1}), include #prevbtn/#nextbtn/#dots,
 SVG subscripts with tspan (never underscores).
 STRICT: ZERO overlap between any two text elements, or between text and
-any arrow/line/curve, in any scene (see ZERO TEXT OVERLAP rules above) --
-this is a hard requirement. Recheck every label's position before
-finalizing each scene."""
+any arrow/line/curve, in any scene -- this is a hard requirement."""
 
 
 DESIGN_SYSTEM = """
@@ -4589,12 +5275,12 @@ text is a FAILED layout, no exceptions.
 """
 
 STRATEGY_TEMPLATES = {
-    "VISUAL_PHYSICS": "Dynamic force/motion/field diagram on light background. Scene 0: geometry/setup; Scene 1: core formula annotated; Scene 2: secondary mechanism; Scene 3: flow/circuit model; Scene 4: numbered solving steps.",
-    "PROCESS_BASED":  "Sequential process nodes on white. Scene 0: input/context; Scene 1: first step formula; Scene 2: second step; Scene 3: combined model; Scene 4: complete flow with steps.",
-    "MATHEMATICAL":   "Coordinate geometry on white. Scene 0: axes/setup; Scene 1: primary formula; Scene 2: secondary relationship; Scene 3: graphical model; Scene 4: equation walkthrough.",
-    "BIOLOGICAL":     "Organic shapes on light bg. Scene 0: cell/molecule setup; Scene 1: first mechanism; Scene 2: second mechanism; Scene 3: pathway model; Scene 4: complete system summary.",
-    "ABSTRACT":       "Clean metaphor on white. Scene 0: analogy setup; Scene 1: first principle; Scene 2: second principle; Scene 3: combined model; Scene 4: complete concept summary.",
-    "MIXED":          "Split canvas light bg. Scene 0: physical setup; Scene 1: primary formula; Scene 2: secondary formula; Scene 3: combined model; Scene 4: full parameter summary.",
+    "VISUAL_PHYSICS": "Dynamic force/motion/field diagram on light background. Scene 0: geometry/setup; Scene 1: core formula annotated; Scene 2: secondary mechanism; Scene 3: flow/circuit model; Last scene: numbered solving steps.",
+    "PROCESS_BASED":  "Sequential process nodes on white. Scene 0: input/context; Scene 1: first step formula; Scene 2: second step; Scene 3: combined model; Last scene: complete flow with steps.",
+    "MATHEMATICAL":   "Coordinate geometry on white. Scene 0: axes/setup; Scene 1: primary formula; Scene 2: secondary relationship; Scene 3: graphical model; Last scene: equation walkthrough.",
+    "BIOLOGICAL":     "Organic shapes on light bg. Scene 0: cell/molecule setup; Scene 1: first mechanism; Scene 2: second mechanism; Scene 3: pathway model; Last scene: complete system summary.",
+    "ABSTRACT":       "Clean metaphor on white. Scene 0: analogy setup; Scene 1: first principle; Scene 2: second principle; Scene 3: combined model; Last scene: complete concept summary.",
+    "MIXED":          "Split canvas light bg. Scene 0: physical setup; Scene 1: primary formula; Scene 2: secondary formula; Scene 3: combined model; Last scene: full parameter summary.",
 }
 
 CONCEPT_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES
@@ -4607,6 +5293,93 @@ IF STUCK: Use one of these premium fallback layouts (light theme):
 4. DATA-BARS: animated bar chart on white with gradient fills
 NEVER flat dark backgrounds.
 """
+
+
+# ===========================================================================
+#  COMPLEXITY DETECTOR -- decides how many scenes (3 / 4 / 5) to generate
+#
+#  RULES (purely heuristic, no extra AI call, O(n) on question length):
+#
+#  5 scenes  →  TOUGH / LONG questions
+#    • Raw length ≥ 400 chars  (long pasted question text)
+#    • ≥ 2 sub-questions       ("(i) ... (ii) ...", "part a / part b", etc.)
+#    • ≥ 3 distinct numeric given values in the stem
+#    • JEE / NEET / board-exam keywords
+#    • Multi-step derivation words ("derive", "prove", "hence show")
+#    • Two or more "Find ..." / "Calculate ..." clauses
+#
+#  4 scenes  →  MEDIUM questions
+#    • Length 200-399 chars
+#    • 1-2 numeric givens and a clear formula step
+#    • Single-part physics / chemistry with one formula chain
+#
+#  3 scenes  →  SIMPLE / SHORT questions
+#    • Length < 200 chars
+#    • Single concept, single unknown
+#    • Definition, basic formula application, trivial numeric plug-in
+#
+#  The last scene is ALWAYS the summary / solution overview (regardless of count).
+# ===========================================================================
+
+def _detect_scene_count(question: str) -> int:
+    """
+    Returns 3, 4, or 5 — the number of animation scenes to generate.
+    Decision is purely heuristic (regex + length), no AI call needed.
+    """
+    q   = question.strip()
+    ql  = q.lower()
+    length = len(q)
+
+    # ── Hard 5-scene triggers ────────────────────────────────────────────────
+    # JEE / NEET / board-exam markers
+    jee_neet_kw = [
+        "jee", "neet", "iit", "aieee", "cbse", "class 11", "class 12",
+        "assertion", "reason", "statement-1", "statement-2",
+        "column i", "column ii", "match the",
+        "passage", "paragraph based",
+    ]
+    if any(k in ql for k in jee_neet_kw):
+        return 5
+
+    # Multi-part sub-question markers: (i), (ii), (a), (b), Part A, Q1, Q2 …
+    subq_patterns = [
+        r'\(\s*i+\s*\)',          # (i), (ii), (iii)
+        r'\(\s*[a-d]\s*\)',       # (a), (b), (c), (d)
+        r'\bpart\s+[a-d1-4]\b',  # Part A, Part 1
+        r'\bq\s*[1-9]\b',        # Q1, Q2
+        r'\(\s*[1-4]\s*\)',       # (1), (2)
+    ]
+    subq_count = sum(len(re.findall(p, ql)) for p in subq_patterns)
+    if subq_count >= 2:
+        return 5
+
+    # Multi-step derivation / proof
+    derive_kw = ["derive", "prove", "hence show", "show that", "obtain an expression"]
+    if any(k in ql for k in derive_kw):
+        return 5
+
+    # Multiple "find / calculate / determine" clauses (≥ 2)
+    find_count = len(re.findall(
+        r'\b(?:find|calculate|determine|evaluate|compute|obtain)\b', ql))
+    if find_count >= 2:
+        return 5
+
+    # Count distinct numeric given values
+    num_count = len(re.findall(r'[-+]?\d+(?:\.\d+)?(?:\s*[×x]\s*10\^?[-+]?\d+)?', q))
+
+    # Long question text (pasted full problem)
+    if length >= 400:
+        return 5
+
+    if num_count >= 4:
+        return 5
+
+    # ── Medium 4-scene triggers ──────────────────────────────────────────────
+    if length >= 200 or num_count >= 2 or find_count == 1:
+        return 4
+
+    # ── Default: simple / short → 3 scenes ──────────────────────────────────
+    return 3
 
 
 def _classify_topic(question):
@@ -4637,10 +5410,10 @@ def _classify_topic(question):
     return "PROCESS_BASED"
 
 
-def _build_concept_prompt(question, category):
+def _build_concept_prompt(question, category, n_scenes: int = 5):
     strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
     static_text = (
-        SYSTEM_CONCEPT
+        _build_system_concept_prompt(n_scenes)
         + "\n\n" + DESIGN_SYSTEM
         + "\n\n" + SVG_TECHNIQUES
         + "\n\n" + FALLBACK_RULES
@@ -4652,34 +5425,43 @@ def _build_concept_prompt(question, category):
             "cache_control": {"type": "ephemeral"},
         }
     ]
+    last_scene = n_scenes - 1
+    animate_range = f"animateScene0-{last_scene}"
+    _scene_descs_list = [
+        "Physical setup/geometry",
+        "Core formula structure (named, not solved)",
+        "Secondary mechanism",
+        "Abstract model (circuit/flow/graph)",
+    ]
+    scene_list = "\n".join(
+        f"- Scene {i}: {'Summary overview + parameter card' if i == last_scene else _scene_descs_list[i]}"
+        for i in range(n_scenes)
+    )
     user_content = (
-        f"Build a CINEMATIC 5-SCENE CONCEPT ANIMATION for QAnim v0.2.\n\n"
+        f"Build a CINEMATIC {n_scenes}-SCENE CONCEPT ANIMATION for QAnim v0.2.\n\n"
         f"QUESTION: {question}\n"
         f"CATEGORY: {category}\n"
         f"VISUAL STRATEGY: {strategy}\n\n"
-        "CONCEPT ANIMATION v0.2 REQUIREMENTS:\n"
-        "- LIGHT THEME: white/light-gray background\n"
-        "- Exactly 5 scenes (scene-0 to scene-4), each as <g id='scene-N' class='scene'>\n"
-        "- Progressive concept revelation -- no final answer\n"
-        "- Scene 0: Physical setup/geometry\n"
-        "- Scene 1: Core formula structure (named, not solved)\n"
-        "- Scene 2: Secondary mechanism\n"
-        "- Scene 3: Abstract model (circuit/flow/graph)\n"
-        "- Scene 4: Summary overview + parameter card\n"
-        "- Info card INSIDE SVG at y=490 per scene\n"
-        "- JS: buildDots, showScene, fadeIn, dashIn, animateScene0-4, DOMContentLoaded init\n"
-        "- Include #prevbtn, #nextbtn, #dots in HTML\n"
-        "- DO NOT include Find/Quiz/Solution/Answer Box buttons\n\n"
-        "Return ONLY raw JSON. The concept_code field must be complete "
-        "<!DOCTYPE html>...</html> as escaped JSON string."
+        f"CONCEPT ANIMATION v0.2 REQUIREMENTS:\n"
+        f"- LIGHT THEME: white/light-gray background\n"
+        f"- Exactly {n_scenes} scenes (scene-0 to scene-{last_scene}), each as <g id='scene-N' class='scene'>\n"
+        f"- window.totalSteps={n_scenes};\n"
+        f"- Progressive concept revelation -- no final answer\n"
+        f"{scene_list}\n"
+        f"- Info card INSIDE SVG at y=490 per scene\n"
+        f"- JS: buildDots, showScene, fadeIn, dashIn, {animate_range}, DOMContentLoaded init\n"
+        f"- Include #prevbtn, #nextbtn, #dots in HTML\n"
+        f"- DO NOT include Find/Quiz/Solution/Answer Box buttons\n\n"
+        f"Return ONLY raw JSON. The concept_code field must be complete "
+        f"<!DOCTYPE html>...</html> as escaped JSON string."
     )
     return system_blocks, user_content
 
 
-def _build_prompt(question, category):
+def _build_prompt(question, category, n_scenes: int = 5):
     strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
     static_text = (
-        SYSTEM
+        _build_system_prompt(n_scenes)
         + "\n\n" + DESIGN_SYSTEM
         + "\n\n" + SVG_TECHNIQUES
         + "\n\n" + FALLBACK_RULES
@@ -4691,25 +5473,29 @@ def _build_prompt(question, category):
             "cache_control": {"type": "ephemeral"},
         }
     ]
+    last_scene = n_scenes - 1
+    animate_range = f"animateScene0-{last_scene}"
     user_content = (
-        f"Build a PREMIUM CINEMATIC 5-SCENE SVG ANIMATION for QAnim v0.2.\n\n"
+        f"Build a PREMIUM CINEMATIC {n_scenes}-SCENE SVG ANIMATION for QAnim v0.2.\n\n"
         f"QUESTION: {question}\n"
         f"CATEGORY: {category}\n"
         f"STRATEGY: {strategy}\n\n"
-        "KEY REMINDERS v0.2:\n"
-        "- LIGHT THEME: white/light-gray backgrounds, dark text, vivid accents\n"
-        "- Exactly 5 scenes in <g id='scene-N' class='scene'> groups inside ONE SVG\n"
-        "- Bottom info card INSIDE each SVG scene group at y=490\n"
-        "- JS pattern: buildDots + showScene + fadeIn + dashIn + animateScene0-4 + DOMContentLoaded\n"
-        "- solution_steps: 5 SHORT, VERY SIMPLE English sentences (one per scene), not numerical "
-        "working. Use easy daily words, short sentences, and a friendly teacher tone, so a weak "
-        "student can understand instantly.\n"
-        "- final_answer: REQUIRED -- fully solved answer with all computed values and units\n"
-        "- key_insight: one memorable sentence\n"
-        "- DO NOT include Find/Quiz/Solution/Answer Box buttons\n"
-        "- DO NOT use backtick template literals, const, let, arrow functions\n\n"
-        "Return ONLY raw JSON. animation_code must be complete "
-        "<!DOCTYPE html>...</html> as escaped JSON string."
+        f"KEY REMINDERS v0.2:\n"
+        f"- LIGHT THEME: white/light-gray backgrounds, dark text, vivid accents\n"
+        f"- Exactly {n_scenes} scenes in <g id='scene-N' class='scene'> groups inside ONE SVG\n"
+        f"- window.totalSteps={n_scenes};\n"
+        f"- Bottom info card INSIDE each SVG scene group at y=490\n"
+        f"- JS pattern: buildDots + showScene + fadeIn + dashIn + {animate_range} + DOMContentLoaded\n"
+        f"- solution_steps: {n_scenes} SHORT, VERY SIMPLE English sentences (one per scene), not numerical "
+        f"working. Use easy daily words, short sentences, and a friendly teacher tone, so a weak "
+        f"student can understand instantly.\n"
+        f"- The LAST scene (scene-{last_scene}) MUST always be the summary / step-by-step scene.\n"
+        f"- final_answer: REQUIRED -- fully solved answer with all computed values and units\n"
+        f"- key_insight: one memorable sentence\n"
+        f"- DO NOT include Find/Quiz/Solution/Answer Box buttons\n"
+        f"- DO NOT use backtick template literals, const, let, arrow functions\n\n"
+        f"Return ONLY raw JSON. animation_code must be complete "
+        f"<!DOCTYPE html>...</html> as escaped JSON string."
     )
     return system_blocks, user_content
 
@@ -4718,10 +5504,10 @@ def _build_prompt(question, category):
 #  FULL GENERATION PIPELINE  (v0.2)
 # ===========================================================================
 
-async def _generate_concept_animation(question, category):
-    """Stage 1 -- Concept animation (5 scenes, light theme, no answer)."""
-    QAnimLogger.info("ConceptPipeline", f"START  category={category}")
-    system_blocks, user_content = _build_concept_prompt(question, category)
+async def _generate_concept_animation(question, category, n_scenes: int = 5):
+    """Stage 1 -- Concept animation (n_scenes scenes, light theme, no answer)."""
+    QAnimLogger.info("ConceptPipeline", f"START  category={category}  n_scenes={n_scenes}")
+    system_blocks, user_content = _build_concept_prompt(question, category, n_scenes)
     try:
         msg = client.messages.create(
             model=CONCEPT_MODEL, max_tokens=MAX_TOK_CONCEPT,
@@ -4767,7 +5553,7 @@ async def _generate_concept_animation(question, category):
     # Concept animation: inject panels into the raw AI HTML (not page-wrapped)
     concept_html = HtmlSanitizer.sanitize(concept_html)
     concept_html = inject_notes_system(concept_html)
-    concept_html = inject_voice_assistant(concept_html)
+    concept_html = inject_teacher_voice(concept_html)
     concept_html = inject_step_controller(concept_html)  # LAST
 
     QAnimLogger.ok("ConceptPipeline", f"DONE -- len={len(concept_html):,}")
@@ -4847,6 +5633,10 @@ async def _run_generation_pipeline(question):
     category = _classify_topic(ai_question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
+    # ── Scene count: heuristic detector (no extra AI call) ──────────────────
+    n_scenes = _detect_scene_count(question)   # uses RAW question for best signal
+    QAnimLogger.info("SceneCount", f"n_scenes={n_scenes} (raw_len={len(question)} ai_len={len(ai_question)})")
+
     # ── Stage 0.5 + 1 + 2 + 3: all concurrent ──────────────────────────────
     # SimpleMethodAnalyzer runs alongside the heavy AI stages at zero extra
     # wall-clock cost.  Its result is used to steer Stages 2 and 3.
@@ -4862,11 +5652,11 @@ async def _run_generation_pipeline(question):
     #   gather_b: [solution_ai, haiku]               (depend on simple hint)
     # Both gather calls run concurrently relative to each other via a wrapper.
 
-    system_blocks_placeholder, user_content_placeholder = _build_prompt(ai_question, category)
+    system_blocks_placeholder, user_content_placeholder = _build_prompt(ai_question, category, n_scenes)
 
     async def _run_all_stages():
         # Sub-stage A: concept animation + simple-method analysis (truly independent)
-        concept_fut   = asyncio.ensure_future(_generate_concept_animation(ai_question, category))
+        concept_fut   = asyncio.ensure_future(_generate_concept_animation(ai_question, category, n_scenes))
         analyzer_fut  = asyncio.ensure_future(_run_simple_analyzer())
 
         # Wait for the analyzer before we can build the enriched prompts
@@ -4878,7 +5668,7 @@ async def _run_generation_pipeline(question):
         sol_hint      = SimpleMethodAnalyzer.build_solution_hint(simple_result)
 
         # Build enriched solution prompt (add hint to user content only)
-        _sys_blocks, _user_content = _build_prompt(ai_question, category)
+        _sys_blocks, _user_content = _build_prompt(ai_question, category, n_scenes)
         enriched_user_content = _user_content + sol_hint if sol_hint else _user_content
 
         async def _run_solution_ai():
@@ -4923,6 +5713,7 @@ async def _run_generation_pipeline(question):
     # Parse solution animation
     result = _parse_response(sol_raw, question)
     result["category"]               = category
+    result["n_scenes"]               = n_scenes
     result["engine_version"]         = "v0.3"
     result["concept_animation_code"] = concept_html
     result["to_find"]                = to_find_targets
@@ -4970,7 +5761,7 @@ async def _run_generation_pipeline(question):
 
     # Build full page layout
     try:
-        page_html, scene_descs = build_page_html(question, result, given_cards, category)
+        page_html, scene_descs = build_page_html(question, result, given_cards, category, n_scenes)
     except Exception as e:
         QAnimLogger.error("PageBuilder", f"build_page_html failed: {e}")
         page_html = RecoveryEngine.fallback_html(question, f"Page build error: {e}")
@@ -5004,7 +5795,7 @@ async def _run_generation_pipeline(question):
     html = inject_notes_system(html)
     html = inject_answer_box_panel(html, answer_targets)
     html = inject_controls_bar(html)
-    html = inject_voice_assistant(html)
+    html = inject_teacher_voice(html)
     html = inject_nav_patch_and_scene_desc(html, scene_descs)  # NEW in v0.2
     html = inject_step_controller(html)   # MUST be absolute last
 
