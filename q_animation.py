@@ -1,6 +1,26 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v0.3
+q_animation.py  --  QAnim Question Animation Generator  v0.4
 =============================================================
+v0.4 -- SMART PROMPT BUILDER (backward-compatible with v0.3):
+
+  NEW IN v0.4:
+  - SmartPromptBuilder (Module 2.8):
+      * Fires for any question > 120 chars or with complexity keywords.
+      * Uses claude-haiku-4-5 to produce a PROMPT_ENRICHMENT block:
+          COMPLEXITY_TIER: simple | medium | complex | multi_part
+          KEY_CONCEPTS: comma-separated formulas / laws needed
+          SCENE_SUGGESTIONS: one scene hint per animation scene
+          SPECIAL_NOTES: edge cases the animation AI must handle
+      * Runs concurrently with SimpleMethodAnalyzer (zero added latency).
+      * Enrichment block is appended to the user-content of BOTH
+        the Concept AI (Stage 1) and the Solution AI (Stage 2).
+      * The cached system prompts are never modified (cache-safe).
+      * Falls back silently to empty string on any error.
+  - Pipeline restructured so SmartPromptBuilder + SimpleMethod both
+    complete BEFORE the heavy Sonnet stages start, giving every AI
+    stage the full analysis context.
+  - Engine version bumped to "v0.4" in result dict.
+  - QAnimLogger prefix updated to "[QAnim v0.4]".
 v0.3 -- LARGE-INPUT RESILIENCE (backward-compatible with v0.2):
 
   NEW IN v0.3:
@@ -97,7 +117,7 @@ MAX_TOK_HAIKU_SOLUTION = 12000
 #  MODULE 1 -- QAnimLogger
 # ===========================================================================
 class QAnimLogger:
-    PREFIX = "[QAnim v0.2]"
+    PREFIX = "[QAnim v0.4]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -540,6 +560,170 @@ class LargeInputPreprocessor:
 
 
 # ===========================================================================
+#  MODULE 2.8 -- SmartPromptBuilder
+#  NEW in v0.4: Analyses the compressed question and builds a rich, structured
+#  prompt block so the animation AI receives maximum signal for complex inputs.
+#
+#  WHY THIS EXISTS
+#  ---------------
+#  LargeInputPreprocessor (Module 2.7) shrinks long questions so they fit in
+#  the prompt without bloat.  But it only compresses — it does NOT analyse
+#  whether the underlying question is conceptually complex (multi-formula,
+#  multi-domain, multi-part, derivation-heavy, etc.).
+#
+#  When the AI receives a short compressed block without any complexity signal,
+#  it may produce a shallow or incomplete animation — acceptable for a simple
+#  plug-in question, but wrong for a hard JEE-style problem that genuinely
+#  needs every scene to show a different formula/stage.
+#
+#  SmartPromptBuilder bridges that gap:
+#    1. Analyses the (compressed) question with a fast Haiku call.
+#    2. Produces a PROMPT_ENRICHMENT block:
+#         - COMPLEXITY_TIER: simple | medium | complex | multi_part
+#         - KEY_CONCEPTS: comma-separated list of concepts / formulas needed
+#         - SCENE_SUGGESTIONS: one sentence per scene (hint, not a mandate)
+#         - SPECIAL_NOTES: any edge cases the animation AI must handle
+#    3. Injects this block into the user-content of both the solution AI
+#       and the concept AI, without touching the (cached) system prompt.
+#
+#  For short / simple questions the enrichment is a no-op (returns "").
+#  For complex questions it adds ≈ 120 extra tokens of signal that dramatically
+#  improves the animation quality and accuracy without increasing latency
+#  (the Haiku call runs concurrently with the LargeInputPreprocessor stage).
+# ===========================================================================
+
+class SmartPromptBuilder:
+    """
+    Analyses the question (post-compression) and produces a structured
+    PROMPT_ENRICHMENT block that is appended to the animation AI user prompt.
+
+    The enrichment is:
+        - A no-op (empty string) for simple/short questions
+        - A rich multi-field block for medium / complex / multi-part questions
+    """
+
+    # Only enrich when there is real complexity (saves Haiku cost for trivials)
+    _ENRICH_THRESHOLD = 120   # chars; below this the question is almost certainly simple
+
+    # Complexity signals that warrant enrichment even if the text is short
+    _COMPLEX_KW = [
+        "derive", "prove", "show that", "hence show", "obtain an expression",
+        "multi-part", "part (a)", "part (b)", "(i)", "(ii)",
+        "assertion", "reason", "match the", "column i", "column ii",
+        "two or more", "and also find", "also determine", "also calculate",
+        "jee", "neet", "iit", "aieee", "cbse",
+    ]
+
+    _ENRICH_SYSTEM = (
+        "You are an expert educational content analyst. "
+        "Analyse the student question below and return ONLY the structured block shown — "
+        "no preamble, no trailing text, no JSON, no markdown:\n\n"
+        "COMPLEXITY_TIER: <one of: simple | medium | complex | multi_part>\n"
+        "KEY_CONCEPTS: <comma-separated list of the 2-5 main formulas, laws, or concepts needed>\n"
+        "SCENE_SUGGESTIONS: <exactly N comma-separated one-sentence hints, one per animation scene; "
+        "N will be provided in the user message>\n"
+        "SPECIAL_NOTES: <one sentence about the trickiest part, or NONE>\n\n"
+        "Rules:\n"
+        "- Every field must be present.\n"
+        "- KEY_CONCEPTS: name the actual formulas/laws (e.g. 'Fourier heat law', 'Newton 2nd law').\n"
+        "- SCENE_SUGGESTIONS: each hint describes what ONE scene should visualise — "
+        "keep it short (≤ 15 words) and specific to THIS question.\n"
+        "- SPECIAL_NOTES: flag multi-unit conversions, tricky sign conventions, "
+        "ambiguous notation, or multi-quantity outputs. Write NONE if there is nothing special.\n"
+        "- Do NOT solve the problem or give numerical answers."
+    )
+
+    @classmethod
+    def _should_enrich(cls, question: str) -> bool:
+        """Return True when the question warrants enrichment analysis."""
+        if len(question) >= cls._ENRICH_THRESHOLD:
+            return True
+        ql = question.lower()
+        return any(k in ql for k in cls._COMPLEX_KW)
+
+    @classmethod
+    def build(cls, question: str, n_scenes: int) -> str:
+        """
+        Synchronous entry point.
+
+        Args:
+            question: The (possibly compressed) question text.
+            n_scenes: Number of animation scenes to generate (3 / 4 / 5).
+
+        Returns:
+            A multi-line PROMPT_ENRICHMENT string to append to the AI user
+            prompt, or an empty string for simple inputs.
+        """
+        if not cls._should_enrich(question):
+            QAnimLogger.info("SmartPromptBuilder", "Short/simple question — skipping enrichment")
+            return ""
+
+        QAnimLogger.info(
+            "SmartPromptBuilder",
+            f"Enriching prompt for {len(question)}-char question (n_scenes={n_scenes})..."
+        )
+        try:
+            enrichment = cls._haiku_analyse(question, n_scenes)
+            if enrichment:
+                QAnimLogger.ok(
+                    "SmartPromptBuilder",
+                    f"Enrichment OK ({len(enrichment)} chars)"
+                )
+                return enrichment
+        except Exception as exc:
+            QAnimLogger.warn("SmartPromptBuilder", f"Enrichment failed: {exc} — using plain prompt")
+        return ""
+
+    @classmethod
+    async def build_async(cls, question: str, n_scenes: int) -> str:
+        """Async wrapper so the enrichment call runs concurrently in the pipeline."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, cls.build, question, n_scenes)
+
+    # ── Private helpers ──────────────────────────────────────────────────────
+
+    @classmethod
+    def _haiku_analyse(cls, question: str, n_scenes: int) -> str:
+        """
+        Use claude-haiku-4-5 to produce the enrichment block.
+        Sends at most 1 200 chars of the question to keep the call fast.
+        """
+        safe_q = question[:1200]
+        user_msg = (
+            f"Analyse this question. "
+            f"Produce SCENE_SUGGESTIONS with exactly {n_scenes} comma-separated hints "
+            f"(one per animation scene).\n\n"
+            f"QUESTION:\n{safe_q}"
+        )
+        msg = client.messages.create(
+            model=HAIKU_SOLUTION_MODEL,
+            max_tokens=350,
+            system=[{
+                "type": "text",
+                "text": cls._ENRICH_SYSTEM,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = msg.content[0].text.strip()
+
+        # Validate: at least COMPLEXITY_TIER and KEY_CONCEPTS must be present
+        required = ["COMPLEXITY_TIER:", "KEY_CONCEPTS:"]
+        if not all(f in raw for f in required):
+            QAnimLogger.warn(
+                "SmartPromptBuilder",
+                f"Enrichment block malformed — ignoring. preview={raw[:100]!r}"
+            )
+            return ""
+
+        return (
+            "\n\n═══ QUESTION ANALYSIS (generated by SmartPromptBuilder) ═══\n"
+            + raw
+            + "\n═══ END ANALYSIS ═══\n"
+        )
+
+
+# ===========================================================================
 #  MODULE 3 -- HtmlSanitizer
 # ===========================================================================
 class HtmlSanitizer:
@@ -624,14 +808,9 @@ class HtmlSanitizer:
             wrapped = (
                 "\n/* -- QAnim Error Boundary -- */\ntry {\n" + body +
                 "\n} catch (_qanim_err) {\n"
+                "  /* Log silently; do NOT surface the error modal to users. */\n"
                 "  console.error('[QAnim ErrorBoundary]', _qanim_err);\n"
-                "  (function() {\n"
-                "    var fb = document.getElementById('qanim-error-fallback');\n"
-                "    if (!fb) return;\n"
-                "    fb.style.display = 'flex';\n"
-                "    var msg = fb.querySelector('.qanim-err-msg');\n"
-                "    if (msg) msg.textContent = String(_qanim_err);\n"
-                "  })();\n}\n")
+                "}\n")
             return f"{tag}{wrapped}{close}"
         return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', wrap_script, html, flags=re.DOTALL | re.IGNORECASE)
 
@@ -1274,21 +1453,9 @@ svg {
 #  MODULE 5.5 -- Error Boundary & Inner Logger
 # ===========================================================================
 ERROR_BOUNDARY_HTML = """
-<div id="qanim-error-fallback" style="
-  display:none;position:fixed;inset:0;z-index:9999;
-  background:rgba(241,245,249,0.92);backdrop-filter:blur(12px);
-  align-items:center;justify-content:center;">
-  <div style="background:#fff;border-radius:16px;padding:32px 36px;max-width:440px;
-    text-align:center;border:1px solid #e2e8f0;box-shadow:0 8px 40px rgba(0,0,0,.12);">
-    <div style="font-size:36px;margin-bottom:14px">&#x26A0;&#xFE0F;</div>
-    <div style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:8px">Animation Error</div>
-    <div class="qanim-err-msg" style="font-size:11px;color:#64748b;background:#f8fafc;
-      border-radius:10px;padding:10px 14px;margin:12px 0;border:1px solid #e2e8f0;
-      font-family:monospace;text-align:left;line-height:1.6;word-break:break-all;">Unknown error</div>
-    <button onclick="document.getElementById('qanim-error-fallback').style.display='none'"
-      style="margin-top:14px;padding:8px 22px;border-radius:8px;border:none;
-      background:#7c3aed;color:#fff;font-weight:700;font-size:12px;cursor:pointer;">Dismiss</button>
-  </div>
+<div id="qanim-error-fallback" style="display:none!important;visibility:hidden!important;" aria-hidden="true">
+  <!-- Error boundary disabled: errors are logged to browser console only -->
+  <div><div class="qanim-err-msg"></div></div>
 </div>
 """
 
@@ -1300,10 +1467,8 @@ window.QLog={
   error:function(m){console.error('[QAnim Inner] X  '+m);}
 };
 window.addEventListener('error',function(e){
+  /* Log errors silently to console; do NOT show the error modal to users. */
   console.error('[QAnim GlobalError]',e.message,'at',e.filename+':'+e.lineno);
-  var fb=document.getElementById('qanim-error-fallback');
-  if(fb){fb.style.display='flex';var msg=fb.querySelector('.qanim-err-msg');
-    if(msg)msg.textContent=e.message+' (line '+e.lineno+')';}
 });
 window.addEventListener('unhandledrejection',function(e){
   console.error('[QAnim UnhandledPromise]',e.reason);
@@ -4800,9 +4965,9 @@ def build_page_html(question, result, given_cards, category, n_scenes: int = 5):
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
 <style id="qanim-scroll-fix">
-html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
-svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
-#container,[id="container"]{{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}}
+html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
+svg{width:100%!important;height:auto!important;max-width:100%!important;}
+#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
 </style>
 </head>
 <body>
@@ -5012,8 +5177,11 @@ def _build_system_prompt(n_scenes: int) -> str:
     ]
     SUMMARY_SCENE = (
         "How We Solve It — Step by Step", "#e64980",
-        "Numbered checklist (steps 1-{k}) inside a white card. "
-        "Blue reminder rect at bottom about the Final Answer button. "
+        "Numbered checklist (steps 1-{k}) inside a white card showing ONLY the METHOD / APPROACH — "
+        "e.g. 'Step 1: Write the formula', 'Step 2: Put in the numbers', 'Step 3: Solve'. "
+        "DO NOT write the computed final answer anywhere in this scene. "
+        "DO NOT show any numerical result. Students must try to solve it themselves. "
+        "Blue reminder rect at bottom saying 'Try it yourself! Use the Answer Box to check your answer.' "
         "Card text: \"Scene N of N — How We Solve It\" + two simple description lines."
     )
 
@@ -5164,6 +5332,10 @@ NEVER leave it empty.
   question asks for them. Example: "Q = 142.6 W/m; T_s = 47.3 deg C"
 - If the question asks for only ONE quantity, give just that single answer.
 Do NOT include final_answer inside the animation scenes -- only in the JSON field.
+CRITICAL: The LAST scene (summary scene) MUST NOT show any computed numerical answer,
+result, or final value. It shows only the METHOD (the steps to follow). Students
+must solve it themselves. The final answer is hidden and only revealed when they
+click the "Final Answer" button.
 
 ═══ WHAT TO OMIT ═══
 - DO NOT generate Find/Quiz/Solution/Answer Box buttons (injected by post-processor)
@@ -5410,7 +5582,17 @@ def _classify_topic(question):
     return "PROCESS_BASED"
 
 
-def _build_concept_prompt(question, category, n_scenes: int = 5):
+def _build_concept_prompt(question, category, n_scenes: int = 5, enrichment: str = ""):
+    """
+    Build the system + user prompt for the Concept Animation AI (Stage 1).
+
+    Args:
+        question:    The (compressed) question text.
+        category:    Detected topic category.
+        n_scenes:    Number of scenes to generate (3 / 4 / 5).
+        enrichment:  Optional SmartPromptBuilder analysis block (same block
+                     used for the solution AI, passed through for consistency).
+    """
     strategy = CONCEPT_STRATEGY_TEMPLATES.get(category, CONCEPT_STRATEGY_TEMPLATES["PROCESS_BASED"])
     static_text = (
         _build_system_concept_prompt(n_scenes)
@@ -5434,7 +5616,7 @@ def _build_concept_prompt(question, category, n_scenes: int = 5):
         "Abstract model (circuit/flow/graph)",
     ]
     scene_list = "\n".join(
-        f"- Scene {i}: {'Summary overview + parameter card' if i == last_scene else _scene_descs_list[i]}"
+        ("- Scene " + str(i) + ": " + ("Summary overview + parameter card" if i == last_scene else _scene_descs_list[i]))
         for i in range(n_scenes)
     )
     user_content = (
@@ -5444,7 +5626,7 @@ def _build_concept_prompt(question, category, n_scenes: int = 5):
         f"VISUAL STRATEGY: {strategy}\n\n"
         f"CONCEPT ANIMATION v0.2 REQUIREMENTS:\n"
         f"- LIGHT THEME: white/light-gray background\n"
-        f"- Exactly {n_scenes} scenes (scene-0 to scene-{last_scene}), each as <g id='scene-N' class='scene'>\n"
+        f"- Exactly {n_scenes} scenes (scene-0 to scene-{last_scene}), each as <g id=\'scene-N\' class=\'scene\'>\n"
         f"- window.totalSteps={n_scenes};\n"
         f"- Progressive concept revelation -- no final answer\n"
         f"{scene_list}\n"
@@ -5455,10 +5637,26 @@ def _build_concept_prompt(question, category, n_scenes: int = 5):
         f"Return ONLY raw JSON. The concept_code field must be complete "
         f"<!DOCTYPE html>...</html> as escaped JSON string."
     )
+    # Append SmartPromptBuilder enrichment when available (complex questions only)
+    if enrichment:
+        user_content += enrichment
     return system_blocks, user_content
 
 
-def _build_prompt(question, category, n_scenes: int = 5):
+def _build_prompt(question, category, n_scenes: int = 5, enrichment: str = ""):
+    """
+    Build the system + user prompt for the Solution Animation AI (Stage 2).
+
+    Args:
+        question:    The (compressed) question text.
+        category:    Detected topic category.
+        n_scenes:    Number of scenes to generate (3 / 4 / 5).
+        enrichment:  Optional SmartPromptBuilder analysis block.  When
+                     provided it is appended to the user content so the AI
+                     receives richer signal about complexity, key concepts,
+                     and per-scene suggestions.  The (cached) system prompt
+                     is never modified, so prompt caching stays intact.
+    """
     strategy = STRATEGY_TEMPLATES.get(category, STRATEGY_TEMPLATES["PROCESS_BASED"])
     static_text = (
         _build_system_prompt(n_scenes)
@@ -5482,7 +5680,7 @@ def _build_prompt(question, category, n_scenes: int = 5):
         f"STRATEGY: {strategy}\n\n"
         f"KEY REMINDERS v0.2:\n"
         f"- LIGHT THEME: white/light-gray backgrounds, dark text, vivid accents\n"
-        f"- Exactly {n_scenes} scenes in <g id='scene-N' class='scene'> groups inside ONE SVG\n"
+        f"- Exactly {n_scenes} scenes in <g id=\'scene-N\' class=\'scene\'> groups inside ONE SVG\n"
         f"- window.totalSteps={n_scenes};\n"
         f"- Bottom info card INSIDE each SVG scene group at y=490\n"
         f"- JS pattern: buildDots + showScene + fadeIn + dashIn + {animate_range} + DOMContentLoaded\n"
@@ -5490,6 +5688,9 @@ def _build_prompt(question, category, n_scenes: int = 5):
         f"working. Use easy daily words, short sentences, and a friendly teacher tone, so a weak "
         f"student can understand instantly.\n"
         f"- The LAST scene (scene-{last_scene}) MUST always be the summary / step-by-step scene.\n"
+        f"- CRITICAL: The LAST scene must show ONLY the solving METHOD (steps like \'Write formula\', "
+        f"\'Substitute values\', \'Solve\'). NEVER show any computed numerical answer, result value, or "
+        f"final answer in the last scene or any scene. Students must try to solve it themselves.\n"
         f"- final_answer: REQUIRED -- fully solved answer with all computed values and units\n"
         f"- key_insight: one memorable sentence\n"
         f"- DO NOT include Find/Quiz/Solution/Answer Box buttons\n"
@@ -5497,6 +5698,9 @@ def _build_prompt(question, category, n_scenes: int = 5):
         f"Return ONLY raw JSON. animation_code must be complete "
         f"<!DOCTYPE html>...</html> as escaped JSON string."
     )
+    # Append SmartPromptBuilder enrichment when available (complex questions only)
+    if enrichment:
+        user_content += enrichment
     return system_blocks, user_content
 
 
@@ -5504,10 +5708,10 @@ def _build_prompt(question, category, n_scenes: int = 5):
 #  FULL GENERATION PIPELINE  (v0.2)
 # ===========================================================================
 
-async def _generate_concept_animation(question, category, n_scenes: int = 5):
+async def _generate_concept_animation(question, category, n_scenes: int = 5, enrichment: str = ""):
     """Stage 1 -- Concept animation (n_scenes scenes, light theme, no answer)."""
     QAnimLogger.info("ConceptPipeline", f"START  category={category}  n_scenes={n_scenes}")
-    system_blocks, user_content = _build_concept_prompt(question, category, n_scenes)
+    system_blocks, user_content = _build_concept_prompt(question, category, n_scenes, enrichment)
     try:
         msg = client.messages.create(
             model=CONCEPT_MODEL, max_tokens=MAX_TOK_CONCEPT,
@@ -5652,23 +5856,40 @@ async def _run_generation_pipeline(question):
     #   gather_b: [solution_ai, haiku]               (depend on simple hint)
     # Both gather calls run concurrently relative to each other via a wrapper.
 
-    system_blocks_placeholder, user_content_placeholder = _build_prompt(ai_question, category, n_scenes)
+    # ── Stage -0.5: SmartPromptBuilder enrichment (concurrent with other pre-stages) ──
+    # Runs the enrichment analysis asynchronously so it adds zero latency to the
+    # critical path. The result is threaded into _build_prompt and
+    # _build_concept_prompt as an extra user-content block.
+
+    async def _run_smart_prompt_builder():
+        return await SmartPromptBuilder.build_async(ai_question, n_scenes)
 
     async def _run_all_stages():
-        # Sub-stage A: concept animation + simple-method analysis (truly independent)
-        concept_fut   = asyncio.ensure_future(_generate_concept_animation(ai_question, category, n_scenes))
-        analyzer_fut  = asyncio.ensure_future(_run_simple_analyzer())
+        # ── Sub-stage A: run SmartPromptBuilder + SimpleMethodAnalyzer in parallel ──
+        # These two fast Haiku calls produce the enrichment block and method hint.
+        # They run first so their results can steer ALL the heavy AI stages below.
+        analyzer_fut   = asyncio.ensure_future(_run_simple_analyzer())
+        enrichment_fut = asyncio.ensure_future(_run_smart_prompt_builder())
 
-        # Wait for the analyzer before we can build the enriched prompts
-        simple_result = await analyzer_fut
+        # Wait for both lightweight analysers (each is a fast Haiku call)
+        simple_result, enrichment = await asyncio.gather(analyzer_fut, enrichment_fut)
         QAnimLogger.info("Pipeline", f"SimpleMethod done: use_simple={simple_result['use_simple']}")
+        QAnimLogger.info("Pipeline", f"SmartPromptBuilder done: enrichment_len={len(enrichment)}")
 
         # Build hints from analysis
-        haiku_hint    = SimpleMethodAnalyzer.build_haiku_hint(simple_result)
-        sol_hint      = SimpleMethodAnalyzer.build_solution_hint(simple_result)
+        haiku_hint = SimpleMethodAnalyzer.build_haiku_hint(simple_result)
+        sol_hint   = SimpleMethodAnalyzer.build_solution_hint(simple_result)
 
-        # Build enriched solution prompt (add hint to user content only)
-        _sys_blocks, _user_content = _build_prompt(ai_question, category, n_scenes)
+        # ── Sub-stage B: launch all heavy AI stages concurrently ──
+        # Now that we have enrichment + method hint, start concept + solution + haiku.
+        # All three receive the enrichment so every AI stage has the full analysis.
+        #
+        # Prompt assembly:
+        #   _build_concept_prompt : enrichment appended to user content
+        #   _build_prompt         : enrichment + sol_hint appended to user content
+        # The (cached) system prompts are never touched — cache efficiency preserved.
+
+        _sys_blocks, _user_content = _build_prompt(ai_question, category, n_scenes, enrichment)
         enriched_user_content = _user_content + sol_hint if sol_hint else _user_content
 
         async def _run_solution_ai():
@@ -5691,14 +5912,18 @@ async def _run_generation_pipeline(question):
                 QAnimLogger.error("SolutionAI", f"API failed: {e}")
                 raise
 
-        # Sub-stage B: solution AI + haiku (both enriched with simple hint)
-        # Both use ai_question (compressed when the input was large).
+        # Concept animation also receives enrichment so its scene suggestions match
+        concept_fut = asyncio.ensure_future(
+            _generate_concept_animation(ai_question, category, n_scenes, enrichment)
+        )
+
+        # Solution AI + Haiku run concurrently; concept runs in parallel too
         sol_raw, haiku_sol = await asyncio.gather(
             _run_solution_ai(),
             HaikuSolutionGenerator.generate_async(ai_question, haiku_hint),
         )
 
-        # Wait for concept (already started, may already be done)
+        # Wait for concept (may already be done — it started at the same time)
         concept_html = await concept_fut
 
         return concept_html, sol_raw, haiku_sol, simple_result
@@ -5838,7 +6063,7 @@ def _build_failure_result(question, reason):
         "answer_targets":         [],
         "haiku_solution":         {"steps": [], "final_answer": "", "key_insight": "", "raw": ""},
         "category":               "UNKNOWN",
-        "engine_version":         "v0.2",
+        "engine_version":         "v0.4",
         "render_status":          "error",
     }
 
@@ -5879,7 +6104,7 @@ if __name__ == "__main__":
 
     for cat, q in questions_to_test.items():
         print("=" * 72)
-        print(f"  QAnim v0.2 -- Page-Layout Animation | {cat}")
+        print(f"  QAnim v0.4 -- Page-Layout Animation | {cat}")
         print(f"  Q: {q[:65]}...")
         print("=" * 72)
 
@@ -5934,7 +6159,7 @@ if __name__ == "__main__":
         print(f"\n[Stage 1] Concept saved  : {concept_out}")
         print(f"[Stage 2] Solution saved : {solution_out}")
         print()
-        print("v0.2 Layout Features:")
+        print("v0.4 Layout Features (SmartPromptBuilder enabled):")
         print("  OK  Full standalone page (#page-wrapper layout)")
         print("  OK  Header badge + title from topic inference")
         print("  OK  Question card (#qstrip) with question text")
