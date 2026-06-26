@@ -26,6 +26,7 @@ Environment variables:
 import sys
 import io
 import os
+import re
 import asyncio
 import json
 
@@ -193,6 +194,42 @@ app.include_router(admin_router_obj)  # /admin/*
 
 # Global error handler → feeds /admin/errors ring
 install_error_handler(app)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CORS-SAFE GLOBAL EXCEPTION HANDLER
+# When any unhandled exception causes a 500, FastAPI’s default error
+# response bypasses the CORSMiddleware and reaches the browser WITHOUT
+# the Access-Control-Allow-Origin header.  The browser then reports a
+# “CORS Missing Allow Origin” error instead of the real 500 message,
+# making debugging impossible.  This handler injects the correct CORS
+# header into every error response so the real error detail is visible.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.exception_handler(Exception)
+async def _cors_safe_500_handler(request: Request, exc: Exception):
+    """
+    Catch-all: return a JSON 500 that always carries the right
+    Access-Control-Allow-Origin header so browsers can read the error.
+    """
+    import traceback
+    print(f"[ERROR] Unhandled exception on {request.method} {request.url.path}:")
+    traceback.print_exc()
+
+    origin = request.headers.get("origin", "")
+    cors_headers: dict = {}
+    if origin:
+        # Check explicit list first, then regex
+        if origin in BASE_ORIGINS or re.match(_CORS_ORIGIN_REGEX, origin):
+            cors_headers["Access-Control-Allow-Origin"]      = origin
+            cors_headers["Access-Control-Allow-Credentials"] = "true"
+            cors_headers["Vary"]                             = "Origin"
+
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {exc}"},
+        headers=cors_headers,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
