@@ -42,25 +42,25 @@ from pydantic import BaseModel
 from typing import Optional
 
 # ── Auth + Sync ───────────────────────────────────────────────────────────────
-from auth_routes import router as auth_router
-from sync_routes import router as sync_router          # v6 — normalized endpoints
+from auth_routes import router as auth_router                          # pyrefly: ignore [missing-import]
+from sync_routes import router as sync_router                          # pyrefly: ignore [missing-import]
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
-from admin_router import router as admin_router_obj, install_error_handler
+from admin_router import router as admin_router_obj, install_error_handler  # pyrefly: ignore [missing-import]
 
 # ── AI modules ────────────────────────────────────────────────────────────────
-from claude_client import (
+from claude_client import (                                            # pyrefly: ignore [missing-import]
     generate_animation,
     generate_genzet_book_content,
     subtopics_json_to_genzet_args,
     generate_ultimate_learning_content,
 )
-from pdf_handler import (
+from pdf_handler import (                                              # pyrefly: ignore [missing-import]
     extract_pdf_text,
     find_subtopics_in_pdf,
     build_subtopics_json,
 )
-from q_animation import generate_question_animation
+from q_animation import generate_question_animation                    # pyrefly: ignore [missing-import]
 
 try:
     from sub_topics import process_subtopics_json
@@ -167,7 +167,7 @@ if DEBUG_CORS:
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=False,   # wildcard + credentials is NOT allowed by spec
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        allow_methods=["*"],
         allow_headers=["*"],
     )
 else:
@@ -178,9 +178,8 @@ else:
         allow_origin_regex=_CORS_ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-        allow_headers=["Authorization", "Content-Type", "X-Admin-Token", "Accept"],
-        expose_headers=["*"],
-        max_age=600,   # cache preflight for 10 min — reduces OPTIONS round-trips
+        allow_headers=["*"],   # Starlette echoes requested headers — safe with credentials
+        max_age=600,           # cache preflight for 10 min — reduces OPTIONS round-trips
     )
 
 
