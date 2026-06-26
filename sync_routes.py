@@ -127,12 +127,18 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
     # Build nested engineeringCourses-compatible structure
     topics_by_co = {}
     for t in topics:
+        html_cache = t.get("html_code_cache")
         topics_by_co.setdefault(t["co_id"], []).append({
             "id":               t["id"],
             "name":             t["name"],
             "description":      t.get("description", ""),
             "prompt":           t.get("prompt", ""),
-            "animCode":         t.get("html_code_cache"),
+            # animCode and html_code both carry the HTML — frontend uses animCode
+            # for AI-generated animations and html_code for uploaded HTML topics.
+            "animCode":         html_cache,
+            "html_code":        html_cache,
+            # type=html_upload lets the UI render the correct badge & preview btn
+            "type":             "html_upload" if html_cache and html_cache.strip().startswith("<!DOCTYPE") else "animation",
             "created_at":       t["created_at"],
             "generated_item_id": t.get("generated_item_id"),
         })
@@ -142,9 +148,11 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
         cos_by_subject.setdefault(co["subject_id"], []).append({
             "id":          co["id"],
             "coNum":       co["co_num"],
+            "name":        co.get("description", ""),   # ✅ frontend reads co.name
             "description": co.get("description", ""),
             "topics":      topics_by_co.get(co["id"], []),
         })
+
 
     subjects_tree = [
         {
@@ -573,7 +581,10 @@ def create_topic(
     body:         TopicCreate,
     current_user: dict = Depends(get_current_user),
 ):
+    # ✅ Ensure user row exists (prevents FK 23503 on course_topics.user_id_fkey)
+    _ensure_user_row(current_user)
     supabase = _sb(current_user)
+
     row = {
         "co_id":             body.co_id,
         "subject_id":        body.subject_id,
