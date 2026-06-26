@@ -225,7 +225,7 @@ def save_item(
 
     # Ensure the user row exists in `users` table before writing to any
     # child table that has a user_id FK constraint (fixes 23503 error).
-    _ensure_user_row(supabase, current_user)
+    _ensure_user_row(current_user)
 
     row = {
         "user_id":         user_id,
@@ -423,9 +423,9 @@ def create_subject(
     body:         SubjectCreate,
     current_user: dict = Depends(get_current_user),
 ):
+    # ✅ Use service-role client to insert user row (bypasses RLS on users table)
+    _ensure_user_row(current_user)
     supabase = _sb(current_user)
-    # Ensure the user row exists before any FK-constrained insert
-    _ensure_user_row(supabase, current_user)
     row = {
         "user_id":     current_user["id"],
         "name":        body.name.strip(),
@@ -494,9 +494,9 @@ def create_co(
     body:         COCreate,
     current_user: dict = Depends(get_current_user),
 ):
+    # ✅ Use service-role client to insert user row (bypasses RLS on users table)
+    _ensure_user_row(current_user)
     supabase = _sb(current_user)
-    # Ensure the user row exists before any FK-constrained insert
-    _ensure_user_row(supabase, current_user)
     row = {
         "subject_id":  body.subject_id,
         "user_id":     current_user["id"],
@@ -754,15 +754,22 @@ _ENG_COURSES_SENTINEL = "__eng_courses__"
 _VAULT_SENTINEL       = "__vault__"
 
 
-def _ensure_user_row(supabase, user: dict) -> None:
+def _ensure_user_row(user: dict) -> None:
     """
     Upsert a minimal row into the `users` table so that FK constraints on
-    generated_items.user_id_fkey (and other tables) are satisfied.
-    Safe to call on every write request — the ON CONFLICT DO NOTHING ensures
-    no duplicate rows and no error when the row already exists.
+    engineering_subjects.user_id_fkey (and other tables) are satisfied.
+
+    CRITICAL: This MUST use the SERVICE-ROLE client (no JWT token) because
+    the `users` table has RLS enabled — a user-authenticated client cannot
+    INSERT into it and will silently fail, causing FK 23503 on the next insert.
+
+    Safe to call on every write request — ON CONFLICT DO NOTHING is idempotent.
     """
     try:
-        supabase.table("users").upsert(
+        # Service-role client bypasses RLS — this is the only client that can
+        # write to the public.users table from the backend.
+        svc = get_supabase()   # no token → service-role singleton
+        svc.table("users").upsert(
             {
                 "id":    user["id"],
                 "email": user.get("email", ""),
@@ -770,9 +777,10 @@ def _ensure_user_row(supabase, user: dict) -> None:
             on_conflict="id",
             ignore_duplicates=True,
         ).execute()
+        print(f"[SYNC] ✅ User row ensured: {user.get('email', user['id'])}")
     except Exception as e:
-        # Log but do not raise — a stale row is better than a 500.
-        print(f"[SYNC] ⚠ _ensure_user_row failed (non-fatal): {e}")
+        # Log clearly — this failure WILL cause FK errors on the next insert.
+        print(f"[SYNC] ❌ _ensure_user_row FAILED (will cause FK 23503!): {e}")
 
 
 def _legacy_upsert_contents(supabase, user_id: str, anim_id: str, row: dict):
