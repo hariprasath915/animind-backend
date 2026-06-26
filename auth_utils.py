@@ -67,24 +67,43 @@ if SUPABASE_URL and SUPABASE_ANON_KEY:
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+
 # ══════════════════════════════════════════════════════════════════════
 # SUPABASE SERVICE CLIENT  (service-role key — never sent to browser)
+# Cached as a module-level singleton to avoid repeated create_client()
+# calls on every request (each call opens a new connection and is slow;
+# under Railway / Render free-tier this can cause 500 timeouts).
 # ══════════════════════════════════════════════════════════════════════
 
-def get_supabase(token: Optional[str] = None) -> Client:
+_supabase_service_client: Optional["Client"] = None   # module-level cache
+
+
+def get_supabase(token: Optional[str] = None) -> "Client":
     """
-    Return a Supabase client authenticated with the service-role key.
-    If a token is provided, it acts as the user, securely enforcing RLS.
+    Return a Supabase client.
+    - With a user token  → per-request client (RLS enforced as that user).
+    - Without a token    → module-level singleton with service-role key.
+      The singleton is created once and reused, avoiding the overhead of
+      create_client() on every route call.
     """
     from supabase import ClientOptions
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         raise RuntimeError(
             "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment."
         )
-    opts = ClientOptions()
+
     if token:
+        # Per-request client: acts as the authenticated user (RLS)
+        opts = ClientOptions()
         opts.headers.update({"Authorization": f"Bearer {token}"})
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY, options=opts)
+        return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY, options=opts)
+
+    # Service-role singleton (no user token needed)
+    global _supabase_service_client
+    if _supabase_service_client is None:
+        _supabase_service_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        print("[AUTH] ✅ Supabase service client initialised (singleton)")
+    return _supabase_service_client
 
 
 # ══════════════════════════════════════════════════════════════════════
