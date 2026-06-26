@@ -157,13 +157,17 @@ BASE_ORIGINS = [
     "null",   # file:// origin — lets index.html open directly from disk during dev
 ] + EXTRA_ORIGINS
 
+# Regex covers ALL *.vercel.app preview deployments (not just genzet/animind prefixes)
+# so that any Vercel preview URL can reach the backend without CORS rejection.
+_CORS_ORIGIN_REGEX = r"https://[\w-]+\.vercel\.app"
+
 if DEBUG_CORS:
     print("[CORS] ⚠ DEBUG_CORS=true — allowing ALL origins (dev only, no credentials)")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=False,   # wildcard + credentials is NOT allowed by spec
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
         allow_headers=["*"],
     )
 else:
@@ -171,10 +175,12 @@ else:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=BASE_ORIGINS,
-        allow_origin_regex=r"https://(genzet|animind)[\w-]*\.vercel\.app",
+        allow_origin_regex=_CORS_ORIGIN_REGEX,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        allow_headers=["Authorization", "Content-Type", "X-Admin-Token", "Accept"],
+        expose_headers=["*"],
+        max_age=600,   # cache preflight for 10 min — reduces OPTIONS round-trips
     )
 
 
