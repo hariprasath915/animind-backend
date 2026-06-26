@@ -1,19 +1,32 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║     claude_client.py  v19.1.0  —  EduAnimator GOLD STANDARD     ║
+║     claude_client.py  v19.2.0  —  EduAnimator GOLD STANDARD     ║
 ║     FULLY RE-ENGINEERED ANIMATION GENERATION ARCHITECTURE        ║
 ║     10-Stage Pipeline × Claude API × Anthropic                   ║
 ╠══════════════════════════════════════════════════════════════════╣
+║  v19.2 PATCH NOTES (on top of v19.1):                            ║
+║                                                                  ║
+║  ✅ REWORKED: "Working Process" section completely redesigned.    ║
+║              Now generates a high-quality SVG infographic-style  ║
+║              scene animation — matching the reference animation   ║
+║              style (hybrid-wind-solar-animation.html):           ║
+║              • Full illustrated scene (sky, ground, environment) ║
+║              • Rich linearGradient / radialGradient fills         ║
+║              • feDropShadow + feGaussianBlur filter effects       ║
+║              • Smooth looping <animate> / <animateTransform>      ║
+║              • Animated dashed flow lines (stroke-dashoffset)     ║
+║              • Pill-badge component labels with drop shadows      ║
+║              • CSS @keyframes step captions (zero JS)             ║
+║              • Topic-aware environment mapping                    ║
+║              • Nunito + Baloo 2 Google Fonts typography           ║
+║              • Legend row below SVG                               ║
+║              • NO canvas, NO JavaScript motion                    ║
+║                                                                  ║
 ║  v19.1 PATCH NOTES (on top of v19.0):                            ║
 ║                                                                  ║
 ║  ✅ REMOVED:  "How It Works" section entirely (static SVG flow   ║
 ║               diagram + numbered steps) — and its prompt entry   ║
-║  ✅ ADDED:    "Working Process" section, placed right after      ║
-║               Definition. Generates a simple, creative,          ║
-║               INTERACTIVE HTML5 canvas animation (vanilla JS)    ║
-║               that walks students through the topic's working    ║
-║               process stage-by-stage, with Start/Pause, Next     ║
-║               Step, Speed, and Reset controls.                   ║
+║  ✅ ADDED:    "Working Process" section (now upgraded to v19.2)   ║
 ║                                                                  ║
 ║  v19.0 PATCH NOTES (on top of v18.1):                            ║
 ║                                                                  ║
@@ -22,10 +35,8 @@
 ║               high-value hook points (was 3-4 bullets)           ║
 ║  ✅ CHANGED:  Definition section simplified — plain English,     ║
 ║               4-5 points, last point is a real-world example.    ║
-║               All interactive canvas/animation code removed.     ║
 ║  ✅ CHANGED:  Animation section: "From Library" → "Video Vault"  ║
 ║  ✅ ADDED:    Specific sub-topic detection + focused generation   ║
-║               All sections context-aware of exact sub-topic      ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -116,11 +127,7 @@ SECTION_MODEL_MAP: Dict[str, str] = {
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  ▶  v18.1 — SPECIFIC TOPIC DETECTION
-#  Detects when the user requests a precise sub-topic such as:
-#    "conduction in heat transfer"
-#    "total internal reflection in optical fiber"
-#    "Bernoulli's principle for fluid dynamics"
+#  ▶  SPECIFIC TOPIC DETECTION
 # ════════════════════════════════════════════════════════════════════════
 
 _SPECIFIC_TOPIC_KEYWORDS = (
@@ -129,19 +136,11 @@ _SPECIFIC_TOPIC_KEYWORDS = (
 )
 
 def _is_specific_subtopic(topic: str) -> bool:
-    """
-    Returns True when the topic string looks like a precise sub-topic
-    (e.g. "conduction in heat transfer") rather than a broad subject.
-    """
     lower = topic.lower()
     return any(kw in lower for kw in _SPECIFIC_TOPIC_KEYWORDS)
 
 
 def _build_specific_focus_note(topic: str) -> str:
-    """
-    Returns a strong instructional note injected into every prompt when
-    the user has requested a specific sub-topic.
-    """
     if not _is_specific_subtopic(topic):
         return ""
     return (
@@ -155,7 +154,7 @@ def _build_specific_focus_note(topic: str) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  SUBTOPIC PARSER (unchanged from v17.x)
+#  SUBTOPIC PARSER
 # ════════════════════════════════════════════════════════════════════════
 
 def _extract_subtopics_from_input(user_input: str) -> List[str]:
@@ -195,6 +194,7 @@ ULTIMATE_LEARNING_SYSTEM_PROMPT = """You are a PRINCIPAL LEARNING ARCHITECT comb
 - Visual Simulation Engineer (how to build interactive educational canvas simulations)
 - Mathematics Educator (how to explain formulas with clarity and context)
 - Motion Graphics Engineer (how to create educational animation systems)
+- SVG Scene Illustrator (how to build rich, professional infographic SVG animations)
 
 MASTER OBJECTIVE:
 Transform any topic into a complete, student-ready learning experience that is:
@@ -203,6 +203,8 @@ Transform any topic into a complete, student-ready learning experience that is:
 - Deeply engaging — critical thinking built in at every step
 - Retention-optimized — structured for comprehension, not just reading
 - Formula-complete — mathematical relationships properly explained (when applicable)
+- Visually stunning — the Working Process animation must look like a professional
+  motion-graphics explainer video
 
 OUTPUT FORMAT RULES:
 1. Return ONLY valid HTML content (no markdown, no code fences)
@@ -216,7 +218,7 @@ HARD CONSTRAINTS — NEVER VIOLATE:
 3. Must work for a 15-year-old with zero prior knowledge
 4. NEVER append verification tables or post-analysis commentary after any section
 5. Each section response MUST end exactly at its closing HTML tag
-6. ALL SVG text must use font-family="Verdana, Geneva, sans-serif" — no exceptions
+6. ALL SVG text must use font-family="Nunito, sans-serif" — no exceptions
 7. JavaScript in inline scripts: use var (not const/let) for maximum browser compat
 8. Never use external fetch calls or XHR in inline scripts"""
 
@@ -236,13 +238,12 @@ def _build_ultimate_section_prompt(
     if section_name == "core_concepts":
         return _build_hybrid_core_concepts_prompt(topic, context, subtopics_list)
 
-    # ── v18.1: inject specific-focus note into every prompt ──
     specific_note = _build_specific_focus_note(topic)
 
     prompts = {
 
         # ══════════════════════════════════════════════════════════════════
-        # §1 HOOK — v19.0: exactly 2 strong, high-value hook points
+        # §1 HOOK
         # ══════════════════════════════════════════════════════════════════
         "hook": f"""Generate Section 1: HOOK for topic: "{topic}"
 {specific_note}
@@ -279,9 +280,7 @@ CRITICAL: Exactly 2 <li> hook points — no more, no fewer. Replace ALL [placeho
 OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
-        # §2 DEFINITION — v19.0: simple plain-English explanation
-        #   No interactive canvas/animation. 4-5 points, last point is a
-        #   real-world example application.
+        # §2 DEFINITION
         # ══════════════════════════════════════════════════════════════════
         "definition": f"""Generate Section 2: SIMPLE DEFINITION for topic: "{topic}"
 {specific_note}
@@ -295,13 +294,9 @@ of any kind. This section is pure, simple, well-written text.
 CONTENT STRUCTURE — MANDATORY:
 1. One short analogy sentence: "[Topic] is like [everyday object/idea] because [reason]."
 2. A 1-2 sentence plain-English definition (no jargon, simple words a 12-year-old knows).
-3. Write exactly 4-5 short points total (including the definition above counts
-   toward the flow, but the bullet list itself should have 4-5 bullets):
-   - Points 1 to 3 (or 4): simple, clear facts that explain how "{topic}" works
-     or what makes it what it is. One short sentence each.
-   - The LAST point MUST be a real-world example: name a real, specific
-     situation, object, or application where "{topic}" is actually used or
-     seen, explained in one or two simple sentences.
+3. Write exactly 4-5 short points total:
+   - Points 1 to 3 (or 4): simple, clear facts. One short sentence each.
+   - The LAST point MUST be a real-world example.
 
 Context: {context[:400]}
 
@@ -323,173 +318,419 @@ Return ONLY this HTML structure. Replace ALL placeholders with REAL content:
 
 CRITICAL:
 1. Use very simple English throughout — short words, short sentences.
-2. 4-5 bullet points total, with the LAST one being the real-world example
-   (marked with class="def-example").
+2. 4-5 bullet points total, last one is the real-world example.
 3. Replace ALL [placeholder] text with real, accurate, simple content about "{topic}".
 4. OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
-        # §3 WORKING PROCESS — v19.0: simple, creative, interactive
-        #   HTML5 animation generation for school students
+        # §3 WORKING PROCESS — v19.2: Rich SVG Infographic Scene Animation
         # ══════════════════════════════════════════════════════════════════
-        "working_process": f"""You are an EXPERT CREATIVE CODER who specializes in building simple,
-playful, and genuinely interactive HTML5 animations that make school
-students instantly understand how something works.
-
-Generate Section: WORKING PROCESS for topic: "{topic}"
+        "working_process": f"""You are a WORLD-CLASS SVG motion-graphics engineer and science illustrator.
+Generate Section: WORKING PROCESS — SVG INFOGRAPHIC ANIMATION for topic: "{topic}"
 {specific_note}
-GOAL:
-Build ONE self-contained, interactive HTML5 animation (HTML + CSS +
-vanilla JavaScript using <canvas> and/or DOM elements) that visually
-demonstrates the step-by-step working process of "{topic}" for a
-15-year-old student with zero prior knowledge.
 
-MANDATORY CREATIVE + TECHNICAL REQUIREMENTS:
-1. SIMPLE: Use plain vanilla JavaScript only. No external libraries,
-   no frameworks, no build tools, no external assets or fetch calls.
-2. CREATIVE: Use friendly shapes, color, motion, and emoji/labels to
-   make an abstract process feel concrete and fun — not a dry diagram.
-3. INTERACTIVE: The student MUST be able to influence the animation —
-   for example a "▶ Start / ⏸ Pause" button, a "Next Step" button that
-   advances the process stage-by-stage, or a slider that controls speed.
-   The animation should NOT just auto-play with zero control.
-4. STEP-AWARE: Break "{topic}"'s working process into 4-6 clear stages.
-   Each stage shown in the animation should correspond to a short,
-   plain-English caption/label that updates live as the animation
-   progresses (e.g. a "Step 2 of 5: ..." text that changes).
-5. SELF-CONTAINED: All CSS in a single <style> block, all JS in a single
-   <script> block, both inline within this section's <div>. Must run
-   correctly the moment it's inserted into a page — no setup needed.
-6. BROWSER-SAFE JS: Use `var` (never `const`/`let`), no ES6 arrow
-   functions in event handlers if avoidable, no external fetch/XHR calls,
-   wrap all canvas/animation logic in an IIFE with a unique [ID] so
-   multiple instances on one page never collide (use the [ID] suffix on
-   every id/class/global the same way the rest of this app does).
-7. PERFORMANT: Use requestAnimationFrame for any continuous motion (not
-   setInterval), and cancel the animation frame on pause.
-8. ACCESSIBLE LABELS: All on-canvas text must use
-   font-family="Verdana, Geneva, sans-serif" and good color contrast.
+═══════════════════════════════════════════════════════════════════
+PRIME DIRECTIVE
+═══════════════════════════════════════════════════════════════════
+
+Build ONE self-contained, inline SVG infographic animation that looks
+like a high-quality educational explainer — rich illustrated scene,
+smooth continuous looping motion, professional labeled components.
+
+Style benchmark: match the visual quality of a hybrid wind-solar
+educational animation with:
+  • Full illustrated scene (sky, ground, environment, objects)
+  • Beautiful gradients (linearGradient, radialGradient in <defs>)
+  • Drop-shadow and glow SVG filters (feDropShadow, feGaussianBlur)
+  • Smooth looping SVG-native animations ONLY — <animate> and
+    <animateTransform> tags. NO JavaScript motion at all.
+  • Animated flowing energy/signal/data/material lines using
+    stroke-dasharray + <animate attributeName="stroke-dashoffset">
+  • Animated scene objects: rotating machinery, pulsing sources,
+    oscillating waves, rising/falling levels, moving particles
+  • Pill-shaped labeled badges per component (white rect + colored
+    border + emoji + bold text, with fShadow filter)
+  • CSS @keyframes step captions (4–6 steps) fading in sequence
+  • Nunito font (Google Fonts import), Baloo 2 for title
+  • Legend row below SVG (color swatch + label for each flow line)
+
+═══════════════════════════════════════════════════════════════════
+ENVIRONMENT MAPPING — pick the right scene for the topic
+═══════════════════════════════════════════════════════════════════
+
+Physics / Energy / Heat / Electricity / Magnetism / Light / Sound →
+  Outdoor / lab scene: sky gradient, ground strip, sun/source,
+  apparatus components, energy flow lines
+
+Biology / Cells / DNA / Photosynthesis / Heart / Neuron / Digestion →
+  Body/micro scene: dark navy-to-purple background, glowing
+  cell/organ shapes, fluorescent flow particles in bio colors
+
+Chemistry / Atom / Molecule / Reaction / Bonding / Periodic →
+  Molecular lab scene: deep dark background, glowing gradient
+  atom spheres, electron orbit paths, reaction arrows
+
+Electronics / Circuit / Transistor / Capacitor / Diode / Semiconductor →
+  PCB scene: dark green/navy board texture, copper trace lines,
+  component symbols, electron flow with animated sparks
+
+Computer Science / Algorithm / Network / Sorting / AI / Data →
+  Digital scene: dark bg, grid lines, glowing node circles,
+  animated data packets flowing along edges
+
+Earth Science / Water Cycle / Weather / Climate / Erosion →
+  Landscape: sky, ocean/river, mountains, clouds, sun, rain
+
+Economics / Supply/Demand / Market / Finance →
+  Clean infographic: light background, bar/flow chart style,
+  labeled arrows between boxes
+
+Astronomy / Planets / Solar System / Stars →
+  Space scene: deep black/navy bg, glowing star field, orbiting
+  bodies with gradient sphere fills
+
+Default fallback (any topic) →
+  Clean infographic on light background: labeled boxes connected
+  by animated flow arrows, each box a different gradient color
+
+═══════════════════════════════════════════════════════════════════
+TECHNICAL SPECIFICATION
+═══════════════════════════════════════════════════════════════════
+
+SVG:
+  • viewBox="0 0 1000 520"  width="100%"  height="auto"
+  • border-radius: 0 0 16px 16px (bottom only; title sits above)
+  • box-shadow: 0 8px 32px rgba(0,0,0,0.13)
+
+<defs> MUST contain:
+  • At minimum 6 named gradients (linearGradient or radialGradient)
+    All gradient ids end with the [ID] suffix.
+  • Filter id="fShadow-[ID]":
+      feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#00000022"
+  • Filter id="fGlow-[ID]":
+      feGaussianBlur stdDeviation="2.5" result="blur" +
+      feMerge (blur node + SourceGraphic node)
+
+Animated flow lines (2–5 flows):
+  • <path> with stroke-dasharray="14,7" (or similar)
+  • Child <animate attributeName="stroke-dashoffset"
+      values="[totalDash];0" dur="[X]s" repeatCount="indefinite"/>
+  • Arrowhead: <polygon> at the destination end of the path
+  • Pill badge label near midpoint of path:
+    <rect rx="5" fill="[LIGHT_BG]" stroke="[FLOW_COLOR]"/>
+    <text font-family="Nunito, sans-serif" font-weight="800">[FLOW_LABEL]</text>
+
+Scene objects (2–4 major components):
+  • Each: complex <g> with gradient fills, shading polygons,
+    highlight lines, and at least ONE looping animation
+  • Acceptable animations per object:
+    – <animateTransform type="rotate"> for machinery/wheels/rotors
+    – <animate attributeName="r"> pulsing circles (sources/signals)
+    – <animateTransform type="translate"> oscillating elements
+    – <animate attributeName="y"> or "height" rising/falling levels
+    – <animate attributeName="opacity"> blinking/pulsing indicators
+  • Pill badge label per component (see badge spec above)
+
+Step captions (CSS, no JS):
+  • N = 4 to 6 steps, each slot = S seconds, total = N*S seconds
+  • Each .wp-step div has:
+      animation-name: wpFadeStepK-[ID]
+      animation-duration: [N*S]s
+      animation-delay: [K*S]s
+      animation-iteration-count: infinite
+      animation-timing-function: ease-in-out
+  • Each @keyframes wpFadeStepK-[ID] (K = 0…N-1):
+      0%   {{ opacity: 0 }}
+      10%  {{ opacity: 1 }}
+      90%  {{ opacity: 1 }}
+      100% {{ opacity: 0 }}
+  • The .wp-steps container is position:relative; height:42px;
+    each step is position:absolute; left:0; right:0; text-align:center.
+
+Bottom strip:
+  • <rect x="0" y="503" width="1000" height="17" fill="[DARK_COLOR]" opacity="0.82"/>
+  • <text> tagline centered, Nunito, font-size 8.5, white, letter-spacing 1.5
 
 Context: {context[:1200]}
 
-Return ONLY this HTML structure. Replace ALL placeholders with REAL,
-working, topic-specific content — the canvas/script content must
-actually depict the real working process of "{topic}", not a generic
-placeholder animation:
+═══════════════════════════════════════════════════════════════════
+Return ONLY the HTML below. Replace ALL [PLACEHOLDER] values with
+real, topic-specific content. Generate COMPLETE code — no "...",
+no shorthand, full working SVG with every gradient, filter, path,
+component, and animation written out in full.
+═══════════════════════════════════════════════════════════════════
 
 <div class="working-process-section" data-section="working-process">
-  <div class="wp-title">🛠️ Working Process</div>
-  <div class="wp-intro">[1 sentence: what this animation shows about "{topic}"]</div>
 
-  <div class="wp-stage-label" id="wpStageLabel-[ID]">Step 1 of [N]: [first stage caption]</div>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Baloo+2:wght@400;600;700;800&display=swap');
 
-  <div class="wp-canvas-wrap">
-    <canvas id="wpCanvas-[ID]" class="wp-canvas" width="640" height="360"></canvas>
+.wp-outer-[ID] {{
+  max-width: 1000px;
+  margin: 0 auto;
+  font-family: 'Nunito', sans-serif;
+}}
+.wp-page-title-[ID] {{
+  text-align: center;
+  padding: 18px 12px 8px;
+  background: linear-gradient(135deg, [TITLE_BG_COLOR_1], [TITLE_BG_COLOR_2]);
+  border-bottom: 3px solid [TITLE_ACCENT_COLOR];
+  border-radius: 12px 12px 0 0;
+}}
+.wp-page-title-[ID] h2 {{
+  font-family: 'Baloo 2', cursive;
+  font-size: clamp(1rem, 3vw, 1.6rem);
+  font-weight: 800;
+  color: [TITLE_TEXT_COLOR];
+  letter-spacing: 0.5px;
+  margin: 0;
+}}
+.wp-page-title-[ID] p {{
+  font-size: 0.8rem;
+  color: [SUBTITLE_COLOR];
+  margin-top: 3px;
+  font-weight: 600;
+}}
+.wp-svg-wrap-[ID] {{
+  max-width: 1000px;
+  margin: 0 auto;
+}}
+.wp-legend-[ID] {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  padding: 10px 8px 6px;
+  max-width: 1000px;
+  margin: 0 auto;
+}}
+.wp-leg-item-[ID] {{
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #334455;
+  font-family: 'Nunito', sans-serif;
+}}
+.wp-leg-swatch-[ID] {{
+  width: 28px;
+  height: 4px;
+  border-radius: 2px;
+}}
+.wp-steps-wrap-[ID] {{
+  position: relative;
+  height: 42px;
+  margin: 10px auto 4px;
+  max-width: 780px;
+  overflow: hidden;
+}}
+.wp-step-[ID] {{
+  position: absolute;
+  left: 0; right: 0;
+  text-align: center;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-family: 'Nunito', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 800;
+  opacity: 0;
+  background: [STEP_BG_COLOR];
+  color: [STEP_TEXT_COLOR];
+  border: 2px solid [STEP_BORDER_COLOR];
+}}
+
+[STEP_KEYFRAMES_CSS]
+</style>
+
+<div class="wp-outer-[ID]">
+
+  <div class="wp-page-title-[ID]">
+    <h2>[EMOJI] [Full descriptive title, e.g. "Photosynthesis: How Plants Convert Sunlight to Sugar"]</h2>
+    <p>[One-sentence subtitle, e.g. "A step-by-step journey through chloroplasts, light reactions, and glucose production"]</p>
   </div>
 
-  <div class="wp-controls">
-    <button class="wp-btn" id="wpPlayPause-[ID]">▶ Start</button>
-    <button class="wp-btn wp-btn-secondary" id="wpNext-[ID]">Next Step ⏭</button>
-    <label class="wp-speed-label">Speed
-      <input type="range" id="wpSpeed-[ID]" class="wp-speed" min="1" max="5" value="3">
-    </label>
-    <button class="wp-btn wp-btn-reset" id="wpReset-[ID]">↺ Reset</button>
+  <div class="wp-svg-wrap-[ID]">
+  <svg viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg"
+       style="width:100%;height:auto;display:block;border-radius:0 0 16px 16px;box-shadow:0 8px 32px rgba(0,0,0,0.13);">
+  <defs>
+    <!-- GRADIENT 1 -->
+    <linearGradient id="gBg-[ID]" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="[BG_TOP_COLOR]"/>
+      <stop offset="60%" stop-color="[BG_MID_COLOR]"/>
+      <stop offset="100%" stop-color="[BG_BOT_COLOR]"/>
+    </linearGradient>
+    <!-- GRADIENT 2 — ground/base layer -->
+    <linearGradient id="gGround-[ID]" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="[GROUND_TOP]"/>
+      <stop offset="100%" stop-color="[GROUND_BOT]"/>
+    </linearGradient>
+    <!-- GRADIENTS 3-6+ — one per major component -->
+    [DEFINE AT LEAST 4 MORE GRADIENTS FOR SCENE COMPONENTS]
+
+    <!-- DROP SHADOW FILTER -->
+    <filter id="fShadow-[ID]">
+      <feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#00000022"/>
+    </filter>
+    <!-- GLOW FILTER -->
+    <filter id="fGlow-[ID]" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    [ANY ADDITIONAL DEFS: clipPath, pattern, radialGradient, etc.]
+  </defs>
+
+  <!-- ═════════════════════ BACKGROUND / SKY ═════════════════════ -->
+  <rect width="1000" height="520" fill="url(#gBg-[ID])"/>
+  [ATMOSPHERIC ELEMENTS: sun, clouds, particles, stars, grid — whatever fits topic]
+  [Each animated with <animate> or <animateTransform>]
+
+  <!-- ═════════════════════ GROUND / BASE LAYER ══════════════════ -->
+  <rect x="0" y="374" width="1000" height="146" fill="url(#gGround-[ID])"/>
+  [TERRAIN DETAIL: ellipses for hills, texture lines, etc.]
+  <line x1="0" y1="374" x2="1000" y2="374" stroke="[GROUND_LINE_COLOR]" stroke-width="2.5"/>
+
+  <!-- ═════════════════════ COMPONENT 1 ══════════════════════════ -->
+  <!-- [Component 1 name — e.g. INPUT SOURCE, REACTANT, GENERATOR] -->
+  <g transform="translate([CX1],[CY1])" filter="url(#fShadow-[ID])">
+    [DETAILED SVG COMPONENT: gradient fills, 3D shading polygon, highlight line, realistic details]
+    [LOOPING ANIMATION on appropriate child element]
+  </g>
+  <!-- Component 1 pill badge -->
+  <g filter="url(#fShadow-[ID])">
+    <rect x="[BX1]" y="[BY1]" width="[BW1]" height="24" rx="7"
+          fill="white" stroke="[BADGE_COLOR_1]" stroke-width="1.8"/>
+    <text x="[BTX1]" y="[BTY1]" text-anchor="middle"
+          font-family="Nunito, sans-serif" font-size="10" font-weight="800"
+          fill="[BADGE_COLOR_1]">[EMOJI] [COMPONENT 1 LABEL]</text>
+  </g>
+
+  <!-- ═════════════════════ FLOW LINE 1 ══════════════════════════ -->
+  <!-- [What flows: e.g. Solar Energy, Electrons, Heat, Signal, Glucose] -->
+  <g filter="url(#fGlow-[ID])">
+    <path d="[SVG PATH — use Q or C curves for nice arcs]"
+          fill="none" stroke="[FLOW_COLOR_1]" stroke-width="3.5"
+          stroke-linecap="round" stroke-dasharray="14,7">
+      <animate attributeName="stroke-dashoffset" values="63;0"
+               dur="[X1]s" repeatCount="indefinite"/>
+    </path>
+  </g>
+  <!-- Arrowhead at destination -->
+  <polygon points="[AX1a],[AY1a] [AX1b],[AY1b] [AX1c],[AY1c]"
+           fill="[FLOW_COLOR_1]"/>
+  <!-- Flow label badge -->
+  <rect x="[FLX1]" y="[FLY1]" width="[FLW1]" height="17" rx="5"
+        fill="[FLOW_LIGHT_BG_1]" stroke="[FLOW_COLOR_1]" stroke-width="1.2"/>
+  <text x="[FLTX1]" y="[FLTY1]" text-anchor="middle"
+        font-family="Nunito, sans-serif" font-size="8.5" font-weight="800"
+        fill="[FLOW_DARK_1]">[FLOW 1 LABEL, e.g. "Solar Energy"]</text>
+
+  <!-- ═════════════════════ COMPONENT 2 ══════════════════════════ -->
+  <g transform="translate([CX2],[CY2])" filter="url(#fShadow-[ID])">
+    [DETAILED SVG COMPONENT 2 with gradient, 3D detail, animation]
+  </g>
+  <g filter="url(#fShadow-[ID])">
+    <rect x="[BX2]" y="[BY2]" width="[BW2]" height="24" rx="7"
+          fill="white" stroke="[BADGE_COLOR_2]" stroke-width="1.8"/>
+    <text x="[BTX2]" y="[BTY2]" text-anchor="middle"
+          font-family="Nunito, sans-serif" font-size="10" font-weight="800"
+          fill="[BADGE_COLOR_2]">[EMOJI] [COMPONENT 2 LABEL]</text>
+  </g>
+
+  <!-- ═════════════════════ FLOW LINE 2 ══════════════════════════ -->
+  <g filter="url(#fGlow-[ID])">
+    <path d="[PATH 2]" fill="none" stroke="[FLOW_COLOR_2]" stroke-width="3.5"
+          stroke-linecap="round" stroke-dasharray="14,7">
+      <animate attributeName="stroke-dashoffset" values="63;0"
+               dur="[X2]s" repeatCount="indefinite"/>
+    </path>
+  </g>
+  <polygon points="[AX2a],[AY2a] [AX2b],[AY2b] [AX2c],[AY2c]"
+           fill="[FLOW_COLOR_2]"/>
+  <rect x="[FLX2]" y="[FLY2]" width="[FLW2]" height="17" rx="5"
+        fill="[FLOW_LIGHT_BG_2]" stroke="[FLOW_COLOR_2]" stroke-width="1.2"/>
+  <text x="[FLTX2]" y="[FLTY2]" text-anchor="middle"
+        font-family="Nunito, sans-serif" font-size="8.5" font-weight="800"
+        fill="[FLOW_DARK_2]">[FLOW 2 LABEL]</text>
+
+  <!-- [CONTINUE: COMPONENT 3, FLOW 3, COMPONENT 4, FLOW 4 as needed] -->
+  <!-- [Each topic typically needs 3-4 components and 2-4 flow lines] -->
+  <!-- [Add decorative scene elements: birds, bubbles, sparks, indicators] -->
+
+  <!-- ═════════════════════ BOTTOM STRIP ═════════════════════════ -->
+  <rect x="0" y="503" width="1000" height="17" fill="[TOPIC_DARK_COLOR]" opacity="0.82"/>
+  <text x="500" y="514.5" text-anchor="middle"
+        font-family="Nunito, sans-serif" font-size="8.5" fill="white"
+        font-weight="700" letter-spacing="1.5">
+    [EMOJI] [TOPIC SUMMARY TAGLINE — e.g. "⚡ PHOTOSYNTHESIS — Nature's Solar Power System 🌱"]
+  </text>
+  </svg>
   </div>
 
-  <div class="wp-hint">💡 Try it: press Next Step to move through each stage, or hit Start to watch it run on its own.</div>
+  <!-- LEGEND ROW -->
+  <div class="wp-legend-[ID]">
+    <div class="wp-leg-item-[ID]">
+      <div class="wp-leg-swatch-[ID]" style="background:[FLOW_COLOR_1];"></div>
+      [Flow 1 description, e.g. "Light Energy (Sunlight → Chloroplast)"]
+    </div>
+    <div class="wp-leg-item-[ID]">
+      <div class="wp-leg-swatch-[ID]" style="background:[FLOW_COLOR_2];"></div>
+      [Flow 2 description]
+    </div>
+    [1-3 more legend items as needed]
+  </div>
 
-  <script>
-  (function() {{
-    var ID = '[ID]';
-    var canvas = document.getElementById('wpCanvas-' + ID);
-    var ctx = canvas.getContext('2d');
-    var stageLabel = document.getElementById('wpStageLabel-' + ID);
-    var playBtn = document.getElementById('wpPlayPause-' + ID);
-    var nextBtn = document.getElementById('wpNext-' + ID);
-    var resetBtn = document.getElementById('wpReset-' + ID);
-    var speedSlider = document.getElementById('wpSpeed-' + ID);
+  <!-- CSS-ANIMATED STEP CAPTIONS -->
+  <div class="wp-steps-wrap-[ID]">
+    <div class="wp-step-[ID]" style="animation-name:wpStep0-[ID];animation-duration:[TOTAL_DUR]s;animation-delay:0s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;">
+      Step 1 of [N]: [Plain-English caption for stage 1 of "{topic}"]
+    </div>
+    <div class="wp-step-[ID]" style="animation-name:wpStep1-[ID];animation-duration:[TOTAL_DUR]s;animation-delay:[S]s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;">
+      Step 2 of [N]: [Caption for stage 2]
+    </div>
+    [Continue for all N steps with delay: K*S seconds for step K]
+  </div>
 
-    var TOTAL_STAGES = [N];
-    var currentStage = 0;
-    var playing = false;
-    var rafId = null;
-    var t = 0;
+  <div style="text-align:center;margin:8px auto 4px;padding:10px 16px;
+    background:#fffde7;border:2px dashed #f9a825;border-radius:12px;
+    font-family:'Nunito',sans-serif;font-weight:700;font-size:0.83rem;
+    max-width:620px;color:#555;">
+    💡 The animation loops continuously — watch each stage of the process unfold.
+  </div>
 
-    var stageCaptions = [
-      "Step 1 of [N]: [caption 1]",
-      "Step 2 of [N]: [caption 2]",
-      "[continue for all N stages]"
-    ];
-
-    function drawStage(stageIndex, progress) {{
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.font = '14px Verdana, Geneva, sans-serif';
-      [REAL drawing code for "{topic}" stage `stageIndex`, animated using
-       `progress` (0 to 1) for smooth in-stage motion — shapes, arrows,
-       particles, labels, colors that make this exact stage of "{topic}"'s
-       working process visually clear and fun]
-    }}
-
-    function updateLabel() {{
-      stageLabel.textContent = stageCaptions[currentStage] || '';
-    }}
-
-    function loop() {{
-      t += 0.01 * parseFloat(speedSlider.value);
-      if (t > 1) {{ t = 0; if (playing) {{ currentStage = (currentStage + 1) % TOTAL_STAGES; updateLabel(); }} }}
-      drawStage(currentStage, t);
-      if (playing) {{ rafId = requestAnimationFrame(loop); }}
-    }}
-
-    function play() {{
-      if (playing) return;
-      playing = true;
-      playBtn.textContent = '⏸ Pause';
-      rafId = requestAnimationFrame(loop);
-    }}
-
-    function pause() {{
-      playing = false;
-      playBtn.textContent = '▶ Start';
-      if (rafId) cancelAnimationFrame(rafId);
-    }}
-
-    playBtn.addEventListener('click', function() {{
-      if (playing) {{ pause(); }} else {{ play(); }}
-    }});
-
-    nextBtn.addEventListener('click', function() {{
-      pause();
-      currentStage = (currentStage + 1) % TOTAL_STAGES;
-      t = 0;
-      updateLabel();
-      drawStage(currentStage, 0);
-    }});
-
-    resetBtn.addEventListener('click', function() {{
-      pause();
-      currentStage = 0;
-      t = 0;
-      updateLabel();
-      drawStage(currentStage, 0);
-    }});
-
-    updateLabel();
-    drawStage(currentStage, 0);
-  }})();
-  </script>
 </div>
 
-CRITICAL:
-1. Replace [ID] with ONE real random 6-char alphanumeric string, used
-   consistently everywhere [ID] appears.
-2. Replace [N] with the real number of stages (4-6) you chose.
-3. `drawStage` and `stageCaptions` MUST contain REAL, accurate,
-   topic-specific content for "{topic}" — not a placeholder shape.
-4. The animation must be genuinely interactive (Start/Pause, Next Step,
-   Speed, Reset all functional) and genuinely simple enough to run
-   smoothly in any modern browser with zero dependencies.
-5. OUTPUT NOTHING after the closing </div> tag.""",
+═══════════════════════════════════════════════════════════════════
+MANDATORY COMPLETION RULES — VIOLATING ANY OF THESE INVALIDATES THE OUTPUT
+═══════════════════════════════════════════════════════════════════
+
+1. [ID] REPLACEMENT: Choose one real 6-char alphanumeric ID (e.g. "k7mx2p").
+   Replace EVERY [ID] occurrence — in class names, gradient ids, filter ids,
+   animation names. Consistency is critical or CSS/SVG will break.
+
+2. GRADIENT IDs must end with -[ID] (e.g. id="gBg-k7mx2p") and be referenced
+   as url(#gBg-k7mx2p). Same for filter ids.
+
+3. GENERATE ALL KEYFRAMES CSS fully. For N steps with slot S seconds each:
+   @keyframes wpStep0-[ID] {{ 0%{{opacity:0}} 10%{{opacity:1}} 90%{{opacity:1}} 100%{{opacity:0}} }}
+   @keyframes wpStep1-[ID] {{ 0%{{opacity:0}} 10%{{opacity:1}} 90%{{opacity:1}} 100%{{opacity:0}} }}
+   ... up to wpStep[N-1]-[ID]
+   Each step div gets animation-delay: K*S seconds (K = 0 to N-1).
+
+4. REAL CONTENT ONLY: Every SVG component must visually represent the actual
+   topic components — not a generic box. Use shapes, gradients, and labels
+   appropriate to "{topic}". A student looking at this must immediately
+   understand they're seeing "{topic}" without reading the title.
+
+5. COMPLETE SVG: Write out every gradient, every component, every flow line,
+   every badge in full. No "..." shortcuts. The output must be copy-paste ready.
+
+6. NO JAVASCRIPT: Zero JS in this section. All animation via SVG <animate>,
+   <animateTransform>, and CSS @keyframes only.
+
+7. NO CANVAS: This section uses SVG exclusively.
+
+8. OUTPUT NOTHING after the final closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
         # §5 FORMULAS
@@ -868,7 +1109,7 @@ Generate all 25 REAL questions. No placeholder text remaining.
 OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
-        # §11 ANIMATION PLAYER — v18.1: "From Library" replaced by "Video Vault"
+        # §11 ANIMATION PLAYER — Video Vault
         # ══════════════════════════════════════════════════════════════════
         "animation": f"""Generate Section: ANIMATION PLAYER for topic: "{topic}"
 
@@ -962,7 +1203,6 @@ Return ONLY this self-contained HTML. No markdown. No code fences.
   (function() {{
     var _mode='upload', _vaultItems=[], _currentType=null, _videoBlob=null, _currentVideoData=null;
 
-    /* ── TAB SWITCH ── */
     window.animSwitchTab = function(tab) {{
       _mode = tab;
       document.getElementById('animTabUpload').classList.toggle('active', tab==='upload');
@@ -972,11 +1212,6 @@ Return ONLY this self-contained HTML. No markdown. No code fences.
       if (tab === 'vault') vaultRefresh();
     }};
 
-    /* ══════════════════════════════════════
-       VIDEO VAULT LOGIC
-       Pulls videos from window.__videoVault
-       (populated by the Vault backend bridge)
-    ══════════════════════════════════════ */
     window.vaultRefresh = function() {{
       var loading = document.getElementById('vaultLoading');
       var empty   = document.getElementById('vaultEmpty');
@@ -1032,9 +1267,7 @@ Return ONLY this self-contained HTML. No markdown. No code fences.
     window.vaultSelectItem = function(idx) {{
       var item = _vaultItems[idx];
       if (!item) return;
-
       if (item.src || item.url) {{
-        /* Direct video URL from vault */
         _currentType = 'video';
         var vid = document.getElementById('animVideoEl');
         vid.pause(); vid.removeAttribute('src'); vid.load();
@@ -1045,9 +1278,7 @@ Return ONLY this self-contained HTML. No markdown. No code fences.
         document.getElementById('animPlayerWrap').style.display = 'block';
         document.getElementById('animSaveBtn').style.display = 'none';
         document.getElementById('animPlayerWrap').scrollIntoView({{behavior:'smooth',block:'center'}});
-
       }} else if (item.animation_code || item.html) {{
-        /* Embedded HTML animation from vault */
         _currentType = 'iframe';
         document.getElementById('animVideoContainer').style.display = 'none';
         var iframe = document.getElementById('animIframeEl');
@@ -1060,7 +1291,6 @@ Return ONLY this self-contained HTML. No markdown. No code fences.
       }}
     }};
 
-    /* ── UPLOAD LOGIC ── */
     window.animLoadFile = function(e) {{ var f = e.target.files&&e.target.files[0]; if(f) _setFile(f); }};
     window.animHandleDrop = function(e) {{
       e.preventDefault();
@@ -1153,7 +1383,6 @@ Return ONLY this self-contained HTML. No markdown. No code fences.
 
     function _esc(s){{return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}
 
-    /* ── Vault Bridge: accept vault items from parent window or message ── */
     window.__injectVideoVault = function(items) {{
       window.__videoVault = items;
       _vaultItems = items;
@@ -1165,7 +1394,6 @@ Return ONLY this self-contained HTML. No markdown. No code fences.
       }}
     }});
 
-    /* ── Restore previously uploaded video ── */
     (function _restore() {{
       try {{
         var saved = localStorage.getItem('uploaded_video_{topic}');
@@ -1316,11 +1544,6 @@ class UltimateLearningGenerator:
     # ──────────────────────────────────────────────────────────────────
 
     async def _classify_topic(self, topic: str) -> Dict:
-        """
-        Classify the topic — now also aware of specific sub-topics
-        so that visualization_type and primary_phenomenon reflect
-        the exact sub-topic (e.g. "conduction" not "heat transfer").
-        """
         is_specific = _is_specific_subtopic(topic)
         specific_note = (
             f'\nNOTE: This is a SPECIFIC SUB-TOPIC request ("{topic}"). '
@@ -1511,17 +1734,15 @@ Return ONLY valid JSON:
         subtopics_list: Optional[List[str]] = None,
     ) -> Dict:
         log.info(f"\n{'═'*64}")
-        log.info(f"[ULTIMATE v18.1] Starting pipeline for: {topic}")
-        log.info(f"[ULTIMATE v18.1] Specific sub-topic detected: {_is_specific_subtopic(topic)}")
+        log.info(f"[ULTIMATE v19.2] Starting pipeline for: {topic}")
+        log.info(f"[ULTIMATE v19.2] Specific sub-topic detected: {_is_specific_subtopic(topic)}")
         if subtopics_list:
-            log.info(f"[ULTIMATE v18.1] Core Concepts subtopics: {subtopics_list}")
+            log.info(f"[ULTIMATE v19.2] Core Concepts subtopics: {subtopics_list}")
         log.info(f"{'═'*64}")
 
-        # ── STAGE 0: Topic Classification ──────────────────────────────
         log.info("[STAGE 0] Classifying topic...")
         classification = await self._classify_topic(topic)
 
-        # ── STAGE 1: Content Audit ─────────────────────────────────────
         audit_result = None
         if include_audit:
             log.info("[STAGE 1] Content audit...")
@@ -1530,11 +1751,9 @@ Return ONLY valid JSON:
         else:
             context = f"Topic: {topic}"
 
-        # ── BUILD SECTION LIST ─────────────────────────────────────────
         lesson_sections = self._build_section_list(classification)
         log.info(f"[STAGE 0] Sections to generate: {lesson_sections}")
 
-        # ── STAGE 2-N: Generate All Sections in Parallel ───────────────
         log.info(f"[STAGES 2-{len(lesson_sections)+1}] Generating {len(lesson_sections)} sections in parallel...")
 
         async def _gen(s: str) -> str:
@@ -1634,7 +1853,6 @@ Return ONLY valid JSON:
                 badges += '<span class="cls-badge deriv">📊 Derivation Generated</span>'
             if not has_formula and not has_deriv:
                 badges += '<span class="cls-badge concept">📖 Conceptual Focus</span>'
-            # v18.1: show specific sub-topic badge
             if _is_specific_subtopic(topic):
                 badges += '<span class="cls-badge specific">🎯 Specific Sub-Topic Mode</span>'
             classification_badge = f"""
@@ -1677,7 +1895,7 @@ Return ONLY valid JSON:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{topic} — Ultimate Learning Experience v18.1</title>
+  <title>{topic} — Ultimate Learning Experience v19.2</title>
   {animejs_cdn}
   {mathjax_script}
   <style>
@@ -1688,7 +1906,7 @@ Return ONLY valid JSON:
   <div id="progressBar"></div>
   <div class="page-container">
     <header class="page-header">
-      <div class="header-badge">🎓 Ultimate Learning Experience v18.1</div>
+      <div class="header-badge">🎓 Ultimate Learning Experience v19.2</div>
       <h1 class="page-title">{topic}</h1>
       <p class="page-subtitle">A complete learning journey designed for maximum understanding and retention</p>
     </header>
@@ -1702,7 +1920,7 @@ Return ONLY valid JSON:
     </main>
     <footer class="page-footer">
       {footer_cta}
-      <p>🧠 Built with the Ultimate Learning Content Generator Pipeline v18.1</p>
+      <p>🧠 Built with the Ultimate Learning Content Generator Pipeline v19.2</p>
       <p>Optimized for comprehension, critical thinking, and retention</p>
     </footer>
   </div>
@@ -1828,14 +2046,14 @@ Return ONLY valid JSON:
   </script>"""
 
     # ──────────────────────────────────────────────────────────────────
-    #  VIDEO VAULT BRIDGE SCRIPT  (v18.1 — replaces library bridge)
+    #  VIDEO VAULT BRIDGE SCRIPT
     # ──────────────────────────────────────────────────────────────────
 
     def _get_vault_bridge_script(self) -> str:
         return """
   <script>
     /* ══════════════════════════════════════════════════════════
-       VIDEO VAULT BRIDGE  v18.1
+       VIDEO VAULT BRIDGE  v19.2
        Connects the Video Vault panel to the host application.
 
        The host/backend should populate window.__videoVault with
@@ -1843,11 +2061,11 @@ Return ONLY valid JSON:
          [
            {
              title:      "Conduction Animation",
-             src:        "https://vault.example.com/video.mp4",  // OR
-             animation_code: "<html>...</html>",                 // embedded HTML
-             thumbnail:  "https://...",   // optional
-             duration:   "2:34",          // optional
-             date:       "2025-01-15"     // optional ISO date
+             src:        "https://vault.example.com/video.mp4",
+             animation_code: "<html>...</html>",
+             thumbnail:  "https://...",
+             duration:   "2:34",
+             date:       "2025-01-15"
            },
            ...
          ]
@@ -1882,7 +2100,7 @@ Return ONLY valid JSON:
   </script>"""
 
     # ──────────────────────────────────────────────────────────────────
-    #  CSS — v18.1  (light-themed simulation engine)
+    #  CSS — v19.2
     # ──────────────────────────────────────────────────────────────────
 
     def _get_ultimate_learning_css(self) -> str:
@@ -1896,14 +2114,9 @@ Return ONLY valid JSON:
 
         return f"""
 /* ══════════════════════════════════════════════════════════
-   ULTIMATE LEARNING CSS  v19.0
-   Changes from v18.1:
-   - Removed the impact/rationale section's styles entirely
-   - Removed definition canvas/simulation styling rules
-   + def-example        → real-world example bullet styling
-   + vault-*            → Video Vault panel styles
-   + cls-badge.specific → specific sub-topic badge
-   All other v18.x styles retained.
+   ULTIMATE LEARNING CSS  v19.2
+   Working Process now uses SVG infographic scene animations.
+   All other section styles retained from v19.0/v18.x.
 ══════════════════════════════════════════════════════════ */
 
 :root {{
@@ -2018,7 +2231,6 @@ body {{
 .cls-badge.formula  {{ background: #faf5ff; color: #7c3aed; border: 1.5px solid #c084fc; }}
 .cls-badge.deriv    {{ background: #f0fdf4; color: #15803d; border: 1.5px solid #4ade80; }}
 .cls-badge.concept  {{ background: var(--blue-bg); color: var(--primary-dark); border: 1.5px solid var(--primary-light); }}
-/* v18.1: specific sub-topic badge */
 .cls-badge.specific {{ background: #fff7ed; color: #c2410c; border: 1.5px solid #fb923c; }}
 
 /* ── AUDIT SUMMARY ── */
@@ -2111,6 +2323,14 @@ body {{
   border-left: 3px solid var(--blue-border);
 }}
 .def-properties li.def-example strong {{ color: var(--primary-dark); }}
+
+/* ── WORKING PROCESS (SVG Infographic) ── */
+/* The generated SVG animation is self-contained with inline <style>.    */
+/* These rules provide fallback layout for the outer wrapper only.       */
+.working-process-section {{
+  margin: 16px 0;
+  font-family: 'Nunito', Verdana, sans-serif;
+}}
 
 /* ── CONCEPT CARDS ── */
 .concept-card {{
@@ -2255,22 +2475,6 @@ body {{
 .tc-table td:first-child {{ font-weight: 700; color: var(--gray-900); }}
 .types-recall {{ margin-top: 20px; padding: 14px 18px; background: var(--yellow-bg); border: 2px dashed var(--yellow-border); border-radius: var(--radius-md); font-family: Verdana,sans-serif; font-weight: 700; font-size: .9rem; text-align: center; color: var(--text-dark); }}
 
-/* ── WORKING PROCESS ── */
-.working-process-section {{ margin: 16px 0; font-family: Verdana,sans-serif; }}
-.wp-title {{ font-family: Verdana,sans-serif; font-size: clamp(1.2rem,3vw,1.5rem); font-weight: 700; margin-bottom: 12px; color: var(--gray-900); }}
-.wp-intro {{ font-family: Verdana,sans-serif; font-size: clamp(.95rem,2.5vw,1rem); line-height: 1.6; color: var(--text-dark); margin-bottom: 16px; }}
-.wp-stage-label {{ font-family: Verdana,sans-serif; font-weight: 800; font-size: .9rem; color: white; background: var(--primary-blue); display: inline-block; padding: 8px 16px; border-radius: 20px; margin-bottom: 14px; }}
-.wp-canvas-wrap {{ background: white; border: 2px solid var(--gray-200); border-radius: var(--radius-md); padding: 12px; text-align: center; box-shadow: var(--shadow-sm); }}
-.wp-canvas {{ width: 100%; max-width: 640px; height: auto; display: block; margin: 0 auto; border-radius: var(--radius-sm); background: var(--gray-50); }}
-.wp-controls {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }}
-.wp-btn {{ font-family: Verdana,sans-serif; font-weight: 700; font-size: .85rem; padding: 10px 18px; border: none; border-radius: 999px; background: var(--primary-blue); color: white; cursor: pointer; transition: all .2s; }}
-.wp-btn:hover {{ transform: translateY(-2px); box-shadow: var(--shadow-md); }}
-.wp-btn-secondary {{ background: var(--gray-700); }}
-.wp-btn-reset {{ background: var(--gray-200); color: var(--gray-900); }}
-.wp-speed-label {{ display: flex; align-items: center; gap: 8px; font-family: Verdana,sans-serif; font-weight: 700; font-size: .8rem; color: var(--gray-700); }}
-.wp-speed {{ width: 100px; }}
-.wp-hint {{ margin-top: 14px; padding: 12px 16px; background: var(--yellow-bg); border: 2px dashed var(--yellow-border); border-radius: var(--radius-md); font-family: Verdana,sans-serif; font-weight: 700; font-size: .85rem; color: var(--text-dark); }}
-
 /* ── APPLICATIONS ── */
 .applications-section {{ margin: 16px 0; font-family: Verdana,sans-serif; }}
 .app-title {{ font-family: Verdana,sans-serif; font-size: clamp(1.2rem,3vw,1.5rem); font-weight: 700; margin-bottom: 24px; color: var(--gray-900); }}
@@ -2329,7 +2533,7 @@ body {{
 .set-score-bar {{ text-align: right; margin-top: 16px; padding: 10px 16px; background: var(--bg-card); border-radius: var(--radius-sm); font-family: Verdana,sans-serif; font-size: 13px; color: var(--text-dark); }}
 
 /* ══════════════════════════════════════════════════════
-   ANIMATION SECTION  v18.1 — Video Vault styles
+   ANIMATION SECTION  — Video Vault styles
 ══════════════════════════════════════════════════════ */
 .animation-section {{ margin: 16px 0; font-family: Verdana,sans-serif; }}
 .anim-section-header {{ text-align: center; margin-bottom: 24px; padding: 28px; background: linear-gradient(135deg,#0f172a,#1e3a5f,#312e81); border-radius: var(--radius-lg); }}
@@ -2356,69 +2560,27 @@ body {{
 .anim-lib-card-icon {{ font-size: 28px; margin-bottom: 6px; }}
 .anim-lib-card-title {{ font-family: Verdana,sans-serif; font-size: 13px; font-weight: 700; color: var(--gray-900); margin-bottom: 4px; }}
 .anim-lib-card-date {{ font-family: Verdana,sans-serif; font-size: 10px; color: var(--gray-700); }}
-
-/* ── Video Vault panel specific styles ── */
 .vault-header {{ margin-bottom: 14px; }}
-.vault-title-row {{
-  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-}}
+.vault-title-row {{ display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }}
 .vault-icon {{ font-size: 22px; }}
-.vault-title {{
-  font-family: Verdana,sans-serif; font-size: 16px; font-weight: 800; color: var(--gray-900); flex: 1;
-}}
-.vault-refresh-btn {{
-  padding: 6px 14px; border: 1.5px solid #0d9488; background: #f0fdfa; color: #0d9488;
-  border-radius: 8px; font-family: Verdana,sans-serif; font-size: 11px; font-weight: 700;
-  cursor: pointer; transition: all .2s;
-}}
+.vault-title {{ font-family: Verdana,sans-serif; font-size: 16px; font-weight: 800; color: var(--gray-900); flex: 1; }}
+.vault-refresh-btn {{ padding: 6px 14px; border: 1.5px solid #0d9488; background: #f0fdfa; color: #0d9488; border-radius: 8px; font-family: Verdana,sans-serif; font-size: 11px; font-weight: 700; cursor: pointer; transition: all .2s; }}
 .vault-refresh-btn:hover {{ background: #0d9488; color: white; }}
 .vault-status {{ margin: 8px 0; }}
-.vault-loading {{
-  display: none; align-items: center; gap: 10px; padding: 16px;
-  font-family: Verdana,sans-serif; font-size: 13px; color: #64748b; font-weight: 600;
-}}
-.vault-spinner {{
-  width: 18px; height: 18px; border: 3px solid #e2e8f0; border-top-color: #0d9488;
-  border-radius: 50%; animation: vaultSpin .7s linear infinite;
-}}
+.vault-loading {{ display: none; align-items: center; gap: 10px; padding: 16px; font-family: Verdana,sans-serif; font-size: 13px; color: #64748b; font-weight: 600; }}
+.vault-spinner {{ width: 18px; height: 18px; border: 3px solid #e2e8f0; border-top-color: #0d9488; border-radius: 50%; animation: vaultSpin .7s linear infinite; }}
 @keyframes vaultSpin {{ to {{ transform: rotate(360deg); }} }}
-.vault-empty {{
-  display: none; text-align: center; padding: 40px 20px;
-  color: var(--gray-700); font-family: Verdana,sans-serif;
-}}
+.vault-empty {{ display: none; text-align: center; padding: 40px 20px; color: var(--gray-700); font-family: Verdana,sans-serif; }}
 .vault-grid {{ margin-top: 12px; }}
 .vault-card {{ padding: 0 0 10px; overflow: hidden; }}
-.vault-card-thumb {{
-  width: 100%; height: 90px; background: linear-gradient(135deg,#0f172a,#1e3a5f);
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  display: flex; align-items: center; justify-content: center;
-  position: relative; overflow: hidden; margin-bottom: 8px;
-}}
-.vault-card-play {{
-  font-size: 28px; color: rgba(255,255,255,.85);
-  text-shadow: 0 2px 8px rgba(0,0,0,.4);
-  transition: transform .2s;
-}}
+.vault-card-thumb {{ width: 100%; height: 90px; background: linear-gradient(135deg,#0f172a,#1e3a5f); border-radius: var(--radius-sm) var(--radius-sm) 0 0; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; margin-bottom: 8px; }}
+.vault-card-play {{ font-size: 28px; color: rgba(255,255,255,.85); text-shadow: 0 2px 8px rgba(0,0,0,.4); transition: transform .2s; }}
 .vault-card:hover .vault-card-play {{ transform: scale(1.2); }}
-.vault-card-dur {{
-  position: absolute; bottom: 5px; right: 6px;
-  background: rgba(0,0,0,.75); color: white;
-  font-family: var(--font-mono); font-size: 10px; font-weight: 700;
-  padding: 2px 6px; border-radius: 4px;
-}}
+.vault-card-dur {{ position: absolute; bottom: 5px; right: 6px; background: rgba(0,0,0,.75); color: white; font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }}
 .vault-card-meta {{ padding: 0 10px; }}
-.vault-footer {{
-  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
-  gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--gray-200);
-}}
-.vault-count {{
-  font-family: Verdana,sans-serif; font-size: 11px; font-weight: 700; color: #64748b;
-}}
-.vault-info {{
-  font-family: Verdana,sans-serif; font-size: 10px; color: #94a3b8; font-style: italic;
-}}
-
-/* ── Player ── */
+.vault-footer {{ display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--gray-200); }}
+.vault-count {{ font-family: Verdana,sans-serif; font-size: 11px; font-weight: 700; color: #64748b; }}
+.vault-info {{ font-family: Verdana,sans-serif; font-size: 10px; color: #94a3b8; font-style: italic; }}
 .anim-player-wrap {{ background: #0f172a; border-radius: var(--radius-lg); overflow: hidden; border: 2px solid #1e3a5f; box-shadow: 0 8px 32px rgba(0,0,0,.4); }}
 .anim-player-topbar {{ display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; background: #0f172a; border-bottom: 1px solid #1e293b; flex-wrap: wrap; gap: 10px; }}
 .anim-player-label {{ font-family: Verdana,sans-serif; font-size: 12px; font-weight: 700; color: #94a3b8; }}
@@ -2464,7 +2626,7 @@ body {{
   .classification-bar {{ background: #1e293b; }}
   .concept-card, .formula-card, .app-card {{ background: #1e293b; color: #f1f5f9; }}
   .concept-definition, .concept-body p, .concept-bullets li,
-  .app-text, .wp-intro, .q-text, .q-opt {{ color: #e2e8f0; }}
+  .app-text, .q-text, .q-opt {{ color: #e2e8f0; }}
   .hook-lead, .hook-bullets li {{ color: #f1f5f9; }}
   .def-analogy {{ color: #93c5fd; }}
   .def-properties li {{ color: #e2e8f0; }}
@@ -2472,7 +2634,6 @@ body {{
   .quiz-question {{ background: #1e293b; border-color: #334155; }}
   .q-opt {{ background: #0f172a; border-color: #334155; color: #e2e8f0; }}
   .tc-table td {{ color: #e2e8f0; }}
-  .wp-hint {{ color: #1e293b; }}
   .uploaded-image-wrap {{ background: #1e293b; border-color: #334155; }}
   .formula-when {{ color: #e2e8f0; }}
   .symbol-desc {{ color: #e2e8f0; }}
@@ -2504,7 +2665,6 @@ body {{
   .anim-lib-grid {{ grid-template-columns: 1fr; }}
   .fc-branches-row {{ flex-direction: column; align-items: center; }}
   .fc-branch-col {{ max-width: 280px; width: 100%; }}
-  .wp-canvas {{ max-width: 100%; }}
   .footer-cta {{ flex-direction: column; align-items: center; }}
   .uploaded-image {{ max-height: 420px; }}
   .uploaded-image-wrap {{ max-width: 100%; }}
@@ -2519,8 +2679,7 @@ body {{
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  generate_animation  — PRIMARY BACKEND ENTRY POINT  (v18.1)
-#  Now fully specific-sub-topic aware.
+#  generate_animation  — PRIMARY BACKEND ENTRY POINT  (v19.2)
 # ════════════════════════════════════════════════════════════════════════
 
 async def generate_animation(prompt: str) -> dict:
@@ -2529,12 +2688,11 @@ async def generate_animation(prompt: str) -> dict:
 
     prompt = prompt.strip()
     log.info(f"\n{'═'*64}")
-    log.info(f"[generate_animation v18.1] prompt='{prompt}'")
+    log.info(f"[generate_animation v19.2] prompt='{prompt}'")
     log.info(f"{'═'*64}")
 
     subtopics_list = _extract_subtopics_from_input(prompt)
 
-    # ── Topic extraction ──
     if " -- " in prompt:
         topic = prompt.split(" -- ", 1)[0].strip()
     elif prompt.count(" - ") > 1:
@@ -2546,11 +2704,10 @@ async def generate_animation(prompt: str) -> dict:
             subtopic = parts[1].strip() if len(parts) > 1 else ""
             topic = f"{topic} — {subtopic}" if subtopic else topic
     else:
-        # v18.1: treat the full prompt as the topic (handles "conduction in heat transfer")
         topic = prompt
 
     is_specific = _is_specific_subtopic(topic)
-    log.info(f"[generate_animation v18.1] topic='{topic}' | specific_subtopic={is_specific}")
+    log.info(f"[generate_animation v19.2] topic='{topic}' | specific_subtopic={is_specific}")
 
     generator = UltimateLearningGenerator()
     result = await generator.generate_complete_lesson(
@@ -2567,7 +2724,7 @@ async def generate_animation(prompt: str) -> dict:
     if not explanation:
         explanation = f"A complete interactive lesson on {topic}."
 
-    log.info(f"[generate_animation v18.1] ✅ HTML={len(html):,} chars | topic='{topic}'")
+    log.info(f"[generate_animation v19.2] ✅ HTML={len(html):,} chars | topic='{topic}'")
 
     return {
         "title":          topic,
@@ -2663,7 +2820,7 @@ def subtopics_json_to_genzet_args(subtopics_json_str: str, subtopic: str) -> dic
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  generate_genzet_book_content  (v18.1 — specific-sub-topic aware)
+#  generate_genzet_book_content  (v19.2)
 # ════════════════════════════════════════════════════════════════════════
 
 async def generate_genzet_book_content(
@@ -2684,17 +2841,12 @@ async def generate_genzet_book_content(
         else topic
     )
 
-    # v18.1: if the combined full_topic is itself a specific sub-topic phrase,
-    # or subtopic is a specific phrase, use the most specific form.
     if subtopic and _is_specific_subtopic(subtopic):
-        # e.g. topic="Heat Transfer", subtopic="conduction in solids"
-        # → full_topic stays as "Heat Transfer — conduction in solids"
-        # The specific_note inside each prompt will lock all content to the subtopic.
-        log.info(f"[generate_genzet_book_content v18.1] specific sub-topic detected: '{subtopic}'")
+        log.info(f"[generate_genzet_book_content v19.2] specific sub-topic detected: '{subtopic}'")
 
     log.info(f"\n{'═'*64}")
-    log.info(f"[generate_genzet_book_content v18.1] topic='{full_topic}'")
-    log.info(f"[generate_genzet_book_content v18.1] pdf_context={len(pdf_context):,} chars  "
+    log.info(f"[generate_genzet_book_content v19.2] topic='{full_topic}'")
+    log.info(f"[generate_genzet_book_content v19.2] pdf_context={len(pdf_context):,} chars  "
              f"subtopics={len(subtopics_list or [])}")
     log.info(f"{'═'*64}")
 
@@ -2728,7 +2880,7 @@ async def generate_genzet_book_content(
     if not explanation:
         explanation = f"A complete textbook-grounded lesson on {full_topic}."
 
-    log.info(f"[generate_genzet_book_content v18.1] ✅ HTML={len(html):,} chars")
+    log.info(f"[generate_genzet_book_content v19.2] ✅ HTML={len(html):,} chars")
 
     return {
         "title":          full_topic,
@@ -2764,20 +2916,24 @@ if __name__ == "__main__":
     output_file = f"ultimate_learning_{topic.replace(' ', '_').lower()}.html"
 
     print(f"\n{'='*64}")
-    print(f"ULTIMATE LEARNING CONTENT GENERATOR  v19.1")
+    print(f"ULTIMATE LEARNING CONTENT GENERATOR  v19.2")
     print(f"{'='*64}")
-    print(f"Topic            : {topic}")
+    print(f"Topic             : {topic}")
     print(f"Specific sub-topic: {_is_specific_subtopic(topic)}")
-    print(f"Subtopics        : {subtopics if subtopics else '(auto-detect)'}")
-    print(f"Output           : {output_file}")
-    print(f"\nv19.1 CHANGES:")
-    print(f"  ✅ REMOVED: 'How It Works' section entirely")
-    print(f"  ✅ ADDED:   'Working Process' section after Definition — generates")
-    print(f"              a simple, creative, interactive HTML5 canvas animation")
-    print(f"  ✅ CHANGED: Definition → simple English, 4-5 points, last point is")
-    print(f"              a real-world example. No interactive canvas/animation.")
-    print(f"  ✅ ADDED:   Specific sub-topic detection + all-section focus enforcement")
-    print(f"              (e.g. 'conduction in heat transfer' stays focused on conduction)")
+    print(f"Subtopics         : {subtopics if subtopics else '(auto-detect)'}")
+    print(f"Output            : {output_file}")
+    print(f"\nv19.2 CHANGES:")
+    print(f"  ✅ REWORKED: Working Process → SVG Infographic Scene Animation")
+    print(f"     • Full illustrated scene (sky/ground/environment per topic)")
+    print(f"     • Rich linearGradient/radialGradient fills in <defs>")
+    print(f"     • feDropShadow + feGaussianBlur filter effects")
+    print(f"     • Smooth looping <animate>/<animateTransform> (zero JS)")
+    print(f"     • Animated dashed flow lines with stroke-dashoffset")
+    print(f"     • Pill-badge component labels with drop shadows")
+    print(f"     • CSS @keyframes step captions (4-6 steps, zero JS)")
+    print(f"     • Topic-aware environment mapping")
+    print(f"     • Nunito + Baloo 2 Google Fonts typography")
+    print(f"     • Legend row below SVG")
     print(f"{'='*64}\n")
 
     result = generate_ultimate_learning_content_sync(
