@@ -424,6 +424,8 @@ def create_subject(
     current_user: dict = Depends(get_current_user),
 ):
     supabase = _sb(current_user)
+    # Ensure the user row exists before any FK-constrained insert
+    _ensure_user_row(supabase, current_user)
     row = {
         "user_id":     current_user["id"],
         "name":        body.name.strip(),
@@ -493,6 +495,8 @@ def create_co(
     current_user: dict = Depends(get_current_user),
 ):
     supabase = _sb(current_user)
+    # Ensure the user row exists before any FK-constrained insert
+    _ensure_user_row(supabase, current_user)
     row = {
         "subject_id":  body.subject_id,
         "user_id":     current_user["id"],
