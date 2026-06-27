@@ -1,9 +1,26 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║     claude_client.py  v19.2.0  —  EduAnimator GOLD STANDARD     ║
+║     claude_client.py  v19.3.0  —  EduAnimator GOLD STANDARD     ║
 ║     FULLY RE-ENGINEERED ANIMATION GENERATION ARCHITECTURE        ║
 ║     10-Stage Pipeline × Claude API × Anthropic                   ║
 ╠══════════════════════════════════════════════════════════════════╣
+║  v19.3 PATCH NOTES (on top of v19.2):                            ║
+║                                                                  ║
+║  ✅ REWORKED: "Working Process" animation now generates a        ║
+║              UNIQUE scenario, style, UI/UX layout, motion        ║
+║              pattern, colors, labels, and scene objects for      ║
+║              every topic. No two animations share the same       ║
+║              structure. Claude must:                             ║
+║              • Pick one LAYOUT ARCHETYPE from 10 options        ║
+║              • Derive a unique COLOR PALETTE from the topic     ║
+║              • Choose a MOTION PATTERN (orbital, cascade,       ║
+║                wave, radial, pipeline, network, microscopic,    ║
+║                cross-section, PCB, dashboard)                   ║
+║              • Build scene objects that ARE the topic           ║
+║                components — not generic boxes or arrows         ║
+║              • Vary viewBox composition per archetype           ║
+║              • Never reuse the same structure twice             ║
+║                                                                  ║
 ║  v19.2 PATCH NOTES (on top of v19.1):                            ║
 ║                                                                  ║
 ║  ✅ REWORKED: "Working Process" section completely redesigned.    ║
@@ -26,7 +43,7 @@
 ║                                                                  ║
 ║  ✅ REMOVED:  "How It Works" section entirely (static SVG flow   ║
 ║               diagram + numbered steps) — and its prompt entry   ║
-║  ✅ ADDED:    "Working Process" section (now upgraded to v19.2)   ║
+║  ✅ ADDED:    "Working Process" section (now upgraded to v19.3)   ║
 ║                                                                  ║
 ║  v19.0 PATCH NOTES (on top of v18.1):                            ║
 ║                                                                  ║
@@ -248,12 +265,7 @@ def _build_ultimate_section_prompt(
         "hook": f"""Generate Section 1: HOOK for topic: "{topic}"
 {specific_note}
 DEPTH REQUIREMENT — MANDATORY:
-- Write 1 bold opening fact sentence (≤12 words, real startling fact about "{topic}").
-- Then write exactly 2 strong hook points — not 3, not 4. Just 2.
-- Each hook point must be genuinely valuable: a specific, surprising, real-world
-  fact or stake about "{topic}" that makes the student want to keep reading.
-- Quality over quantity: each point should be 1-2 sentences of real substance,
-  not a vague teaser.
+- Write 1 bold opening fact sentence (under 30 words, real startling fact about "{topic}").
 - Language: age-appropriate for a 15-year-old, active voice, no jargon.
 
 NO ANIMATION. NO SVG. NO CANVAS. NO SCRIPT TAGS.
@@ -266,17 +278,13 @@ Return ONLY this HTML structure. Replace ALL placeholders with REAL content:
 <div class="hook-card" data-section="hook">
   <div class="hook-icon">🎯</div>
   <div class="hook-text">
-    <p class="hook-lead">[Bold opening fact — max 12 words, real fact about "{topic}"]</p>
-    <ul class="hook-bullets">
-      <li>[Hook point 1 — specific, surprising, high-value fact or stake about "{topic}", 1-2 sentences]</li>
-      <li>[Hook point 2 — a different angle, equally surprising and valuable, 1-2 sentences]</li>
-    </ul>
+    <p class="hook-lead">[Bold opening fact — under 30 words, real startling fact about "{topic}"]</p>
   </div>
   <button class="img-upload-btn" onclick="uploadSectionImage('hook')">📸 Add Image</button>
   <div class="section-images" id="images-hook"></div>
 </div>
 
-CRITICAL: Exactly 2 <li> hook points — no more, no fewer. Replace ALL [placeholder] text with real, accurate content about "{topic}".
+CRITICAL: One bold opening fact only — no bullet lists, no additional points. Replace ALL [placeholder] text with real, accurate content about "{topic}".
 OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
@@ -292,9 +300,8 @@ NO ANIMATION. NO SVG. NO CANVAS. NO SCRIPT TAGS. NO interactive simulation
 of any kind. This section is pure, simple, well-written text.
 
 CONTENT STRUCTURE — MANDATORY:
-1. One short analogy sentence: "[Topic] is like [everyday object/idea] because [reason]."
-2. A 1-2 sentence plain-English definition (no jargon, simple words a 12-year-old knows).
-3. Write exactly 4-5 short points total:
+1. A 1-2 sentence plain-English definition (no jargon, simple words a 12-year-old knows).
+2. Write exactly 4-5 short points total:
    - Points 1 to 3 (or 4): simple, clear facts. One short sentence each.
    - The LAST point MUST be a real-world example.
 
@@ -305,7 +312,6 @@ Return ONLY this HTML structure. Replace ALL placeholders with REAL content:
 <div class="definition-box">
   <div class="definition-label">📖 What Is It?</div>
   <div class="definition-text">
-    <p class="def-analogy">[Simple analogy sentence for "{topic}"]</p>
     <p>[1-2 sentence plain-English definition. Very simple words.]</p>
     <ul class="def-properties">
       <li>[Simple point 1 about "{topic}" — one short, clear sentence]</li>
@@ -323,182 +329,317 @@ CRITICAL:
 4. OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
-        # §3 WORKING PROCESS — v19.2: Rich SVG Infographic Scene Animation
+        # §3 WORKING PROCESS — v19.3: Unique Per-Topic SVG Animations
         # ══════════════════════════════════════════════════════════════════
-        "working_process": f"""You are a WORLD-CLASS SVG motion-graphics engineer and science illustrator.
-Generate Section: WORKING PROCESS — SVG INFOGRAPHIC ANIMATION for topic: "{topic}"
+        "working_process": f"""You are a WORLD-CLASS SVG motion-graphics engineer, creative director,
+and science illustrator. Generate Section: WORKING PROCESS — UNIQUE SVG ANIMATION
+for topic: "{topic}"
 {specific_note}
 
 ═══════════════════════════════════════════════════════════════════
-PRIME DIRECTIVE
+PRIME DIRECTIVE — READ THIS FIRST
 ═══════════════════════════════════════════════════════════════════
 
-Build ONE self-contained, inline SVG infographic animation that looks
-like a high-quality educational explainer — rich illustrated scene,
-smooth continuous looping motion, professional labeled components.
+You MUST create a visually UNIQUE animation for "{topic}" that could
+NEVER be mistaken for an animation of any other topic. Every design
+decision — layout, colors, shapes, motion, scene objects — must be
+DERIVED EXCLUSIVELY from the nature of "{topic}" itself.
 
-Style benchmark: match the visual quality of a hybrid wind-solar
-educational animation with:
-  • Full illustrated scene (sky, ground, environment, objects)
-  • Beautiful gradients (linearGradient, radialGradient in <defs>)
-  • Drop-shadow and glow SVG filters (feDropShadow, feGaussianBlur)
-  • Smooth looping SVG-native animations ONLY — <animate> and
-    <animateTransform> tags. NO JavaScript motion at all.
-  • Animated flowing energy/signal/data/material lines using
-    stroke-dasharray + <animate attributeName="stroke-dashoffset">
-  • Animated scene objects: rotating machinery, pulsing sources,
-    oscillating waves, rising/falling levels, moving particles
-  • Pill-shaped labeled badges per component (white rect + colored
-    border + emoji + bold text, with fShadow filter)
-  • CSS @keyframes step captions (4–6 steps) fading in sequence
-  • Nunito font (Google Fonts import), Baloo 2 for title
-  • Legend row below SVG (color swatch + label for each flow line)
+CRITICAL UNIQUENESS RULES:
+1. NEVER use a generic left-to-right flow of 3 labeled boxes with arrows.
+2. NEVER reuse colors from a standard palette. Pick colors that
+   emotionally and scientifically match "{topic}".
+3. NEVER draw "Box A → Box B → Box C". Draw ACTUAL representations
+   of what the topic's components look like in reality.
+4. The motion style must reflect how "{topic}" actually behaves
+   physically, chemically, biologically, or computationally.
+5. A student seeing this animation must IMMEDIATELY recognize "{topic}"
+   without reading any label.
 
 ═══════════════════════════════════════════════════════════════════
-ENVIRONMENT MAPPING — pick the right scene for the topic
+STEP 1 — TOPIC ANALYSIS (Do this mentally before drawing)
 ═══════════════════════════════════════════════════════════════════
 
-Physics / Energy / Heat / Electricity / Magnetism / Light / Sound →
-  Outdoor / lab scene: sky gradient, ground strip, sun/source,
-  apparatus components, energy flow lines
+Before writing a single SVG element, analyze "{topic}" and decide:
 
-Biology / Cells / DNA / Photosynthesis / Heart / Neuron / Digestion →
-  Body/micro scene: dark navy-to-purple background, glowing
-  cell/organ shapes, fluorescent flow particles in bio colors
+A) WHAT ARE THE REAL COMPONENTS?
+   List the 3-5 physical/conceptual entities that actually exist in
+   "{topic}". These become your scene objects. Draw them as they
+   really look, not as labeled rectangles.
 
-Chemistry / Atom / Molecule / Reaction / Bonding / Periodic →
-  Molecular lab scene: deep dark background, glowing gradient
-  atom spheres, electron orbit paths, reaction arrows
+B) WHAT IS THE DOMINANT MOTION CHARACTER?
+   Choose the ONE motion character that best represents "{topic}":
+   • ORBITAL     — things rotating/revolving around a center
+   • WAVE        — oscillating, frequency-based, sinusoidal
+   • CASCADE     — top-to-bottom, waterfall, gravity-driven
+   • RADIAL      — expanding/contracting from/to a point
+   • PIPELINE    — sequential stage-by-stage flow
+   • NETWORK     — distributed nodes with signal propagation
+   • MICROSCOPIC — tiny-scale, cellular, molecular, glowing
+   • CROSS-SEC   — cutaway view revealing internal mechanism
+   • PCB         — electronic/digital, circuit-board aesthetic
+   • DASHBOARD   — data-driven, meters, gauges, live counters
 
-Electronics / Circuit / Transistor / Capacitor / Diode / Semiconductor →
-  PCB scene: dark green/navy board texture, copper trace lines,
-  component symbols, electron flow with animated sparks
+C) WHAT IS THE SCENE ENVIRONMENT?
+   Pick the physical world your animation lives in:
+   • Deep space / astronomy
+   • Laboratory / scientific apparatus
+   • Living organism interior (cell, organ, tissue)
+   • Industrial facility / power plant / factory
+   • Digital computer / motherboard / server
+   • Natural outdoor environment (ocean, atmosphere, geology)
+   • Human body system (cardiovascular, neural, skeletal)
+   • Microscopic world (atomic, molecular, cellular)
+   • Abstract mathematical space (graph, field, coordinate)
+   • Urban/architectural environment
 
-Computer Science / Algorithm / Network / Sorting / AI / Data →
-  Digital scene: dark bg, grid lines, glowing node circles,
-  animated data packets flowing along edges
-
-Earth Science / Water Cycle / Weather / Climate / Erosion →
-  Landscape: sky, ocean/river, mountains, clouds, sun, rain
-
-Economics / Supply/Demand / Market / Finance →
-  Clean infographic: light background, bar/flow chart style,
-  labeled arrows between boxes
-
-Astronomy / Planets / Solar System / Stars →
-  Space scene: deep black/navy bg, glowing star field, orbiting
-  bodies with gradient sphere fills
-
-Default fallback (any topic) →
-  Clean infographic on light background: labeled boxes connected
-  by animated flow arrows, each box a different gradient color
+D) WHAT COLOR PALETTE FITS?
+   Derive 4-6 specific hex colors that emotionally and scientifically
+   match "{topic}". Think about:
+   • What color IS this topic in real life?
+   • What temperature/energy level does it suggest?
+   • What professional field uses it (medicine=blue/white,
+     chemistry=green/purple, electronics=dark green/copper,
+     astronomy=black/gold, biology=pink/teal)?
+   NEVER use a generic "educational blue + orange" palette unless
+   the topic itself is about blue and orange things.
 
 ═══════════════════════════════════════════════════════════════════
-TECHNICAL SPECIFICATION
+STEP 2 — LAYOUT ARCHETYPES
+═══════════════════════════════════════════════════════════════════
+
+Choose ONE layout that matches the motion character you selected:
+
+[A] RADIAL / HUB-AND-SPOKE
+    Central object at (500,260). 3-6 elements orbit or radiate outward.
+    Flow lines are curved arcs. Rotation/revolution animations on spokes.
+    Best for: atoms, solar system, neural networks, immune response,
+    supply chains, ecosystems.
+
+[B] PIPELINE / STAGED CONVEYOR
+    Elements spaced horizontally across the full 1000px width.
+    A physical "conveyor" or pipe connects them. Items move left→right.
+    Best for: manufacturing, digestion, CPU pipeline, assembly line,
+    water treatment, signal processing, protein synthesis.
+
+[C] VERTICAL CASCADE / WATERFALL
+    Elements stacked top-to-bottom. Substance/energy/data flows
+    downward. Gravity is implied. branching optional.
+    Best for: water cycle, osmosis, gravitational potential, cascade
+    reactions, food chains, recursive algorithms.
+
+[D] CROSS-SECTION / CUTAWAY
+    A large physical object cut open to reveal internal mechanism.
+    The "wall" is drawn as a thick bordered shape. Interior shows
+    the working parts. Zoom-in insets optional.
+    Best for: engines, heart, nuclear reactor, volcano, stem, leaf,
+    ear anatomy, battery, fuel cell.
+
+[E] WAVE / OSCILLATION FIELD
+    The full SVG is a field showing wave propagation.
+    Multiple animated sine/cosine paths. Interference patterns.
+    Amplitude and frequency visually encoded.
+    Best for: sound, light, seismic, EM spectrum, quantum wave
+    function, AC current, ocean waves.
+
+[F] NETWORK / GRAPH
+    Nodes (circles) at varied positions. Animated edges show signal.
+    Clusters optional. Pulsing at nodes = activity.
+    Best for: internet, neural net, epidemiology, social network,
+    power grid, blockchain, ecosystem webs.
+
+[G] MICROSCOPIC / CELLULAR
+    Dark (#0a0a1a or #0d1117) background.
+    Glowing, organic-shaped blobs. Fluorescent flow particles.
+    Everything has soft glow (feGaussianBlur feMerge).
+    Best for: cell biology, DNA, viruses, enzymes, ATP synthesis,
+    photosynthesis, immune response, cancer.
+
+[H] ORBITAL / PLANETARY
+    Multiple elliptical paths drawn. Objects travel along them.
+    animateMotion or animateTransform rotate. Stars/glow in bg.
+    Best for: electrons, planets, Bohr model, binary stars,
+    satellites, cyclotron, Rutherford scattering.
+
+[I] PCB / DIGITAL CIRCUIT
+    Dark green (#0d1f0d) or near-black board. Copper-colored (#b87333)
+    trace lines. SMD component outlines. Electron/signal flow dots.
+    Animated along traces.
+    Best for: transistors, logic gates, CPU, semiconductors,
+    capacitors, diodes, flip-flops, ADC/DAC.
+
+[J] DASHBOARD / DATA VISUALIZATION
+    Light or dark background with live-style meters, gauges,
+    animated bar charts, sparklines. Numeric counters.
+    Everything "updates" continuously via CSS animation.
+    Best for: statistics, economics, climate data, machine learning
+    training, stock market, population dynamics.
+
+═══════════════════════════════════════════════════════════════════
+STEP 3 — TOPIC-TO-LAYOUT MAPPING EXAMPLES
+═══════════════════════════════════════════════════════════════════
+
+Use these as inspiration — NOT as templates to copy:
+
+Photosynthesis     → [G] MICROSCOPIC: dark chloroplast interior,
+                       green glow, CO₂ molecules entering, glucose
+                       forming, O₂ bubbles rising, thylakoid stack.
+
+Newton's Laws      → [B] PIPELINE: three stadium-section stages,
+                       each showing a different law with real object
+                       (resting ball → pushed ball → colliding balls).
+
+DNA Replication    → [C] CASCADE + [G] MICRO: helix unzipping top,
+                       nucleotides floating in from sides, two new
+                       helices forming below.
+
+Ohm's Law          → [I] PCB: actual resistor symbol, current dots
+                       flowing, voltage meter needle swinging,
+                       ammeter display updating.
+
+Solar System       → [H] ORBITAL: sun at center, 8 planets on
+                       ellipses, asteroid belt ring, all to
+                       approximate scale.
+
+Osmosis            → [D] CROSS-SECTION: semi-permeable membrane
+                       as vertical wall, water molecules crossing,
+                       solute molecules blocked.
+
+Neural Network AI  → [F] NETWORK: input → hidden → output layers,
+                       activation pulses traveling edges, weights
+                       shown as line thickness.
+
+Sound Waves        → [E] WAVE: speaker on left, sine wave propagating
+                       right, compression/rarefaction labeled, ear
+                       receiving on right.
+
+Mitosis            → [A] RADIAL: cell circle in center, 4 phases
+                       arranged around it, chromosomes animated
+                       separating inside.
+
+Stock Market       → [J] DASHBOARD: candlestick chart animating,
+                       volume bars updating, price ticker scrolling,
+                       buy/sell signal indicators.
+
+═══════════════════════════════════════════════════════════════════
+STEP 4 — TECHNICAL SPECIFICATION
 ═══════════════════════════════════════════════════════════════════
 
 SVG:
   • viewBox="0 0 1000 520"  width="100%"  height="auto"
-  • border-radius: 0 0 16px 16px (bottom only; title sits above)
-  • box-shadow: 0 8px 32px rgba(0,0,0,0.13)
+  • border-radius: 0 0 16px 16px (bottom only)
+  • box-shadow: 0 8px 32px rgba(0,0,0,0.18)
 
 <defs> MUST contain:
-  • At minimum 6 named gradients (linearGradient or radialGradient)
-    All gradient ids end with the [ID] suffix.
+  • Minimum 6 named gradients using YOUR derived palette
+    (all gradient/filter ids MUST end with the unique [ID] suffix)
   • Filter id="fShadow-[ID]":
-      feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#00000022"
+      feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#00000033"
   • Filter id="fGlow-[ID]":
-      feGaussianBlur stdDeviation="2.5" result="blur" +
+      feGaussianBlur stdDeviation="3" result="blur" +
       feMerge (blur node + SourceGraphic node)
+  • For microscopic/PCB layouts, add filter id="fNeon-[ID]":
+      feGaussianBlur stdDeviation="4" result="b1" +
+      feGaussianBlur stdDeviation="8" result="b2" +
+      feMerge (b1 + b2 + SourceGraphic)
 
-Animated flow lines (2–5 flows):
-  • <path> with stroke-dasharray="14,7" (or similar)
-  • Child <animate attributeName="stroke-dashoffset"
-      values="[totalDash];0" dur="[X]s" repeatCount="indefinite"/>
-  • Arrowhead: <polygon> at the destination end of the path
-  • Pill badge label near midpoint of path:
-    <rect rx="5" fill="[LIGHT_BG]" stroke="[FLOW_COLOR]"/>
-    <text font-family="Nunito, sans-serif" font-weight="800">[FLOW_LABEL]</text>
+Animated scene objects — CHOOSE ANIMATIONS THAT MATCH YOUR TOPIC:
+  • <animateTransform type="rotate"> — spinning turbines, rotating
+    molecules, revolving planets, centrifuge, gear, electron orbit
+  • <animateTransform type="translate"> — moving pistons, sliding
+    valves, conveyor items, wave packets, flowing particles
+  • <animateTransform type="scale"> — pulsing hearts, expanding
+    explosions, breathing cells, resonance
+  • <animate attributeName="r"> — pulsing circles, ripples, sonar
+  • <animate attributeName="opacity"> — blinking signals, phase
+    transitions, intermittent firing, quantum superposition
+  • <animate attributeName="y" or "height"> — rising/falling levels,
+    bar charts, tidal waves, mercury in thermometer
+  • <animate attributeName="stroke-dashoffset"> — flowing lines,
+    tracing paths, signal propagation, current flow
+  • <animateMotion path="..."> — objects following curved paths,
+    orbital mechanics, conveyor items, blood cells in vessel
 
-Scene objects (2–4 major components):
-  • Each: complex <g> with gradient fills, shading polygons,
-    highlight lines, and at least ONE looping animation
-  • Acceptable animations per object:
-    – <animateTransform type="rotate"> for machinery/wheels/rotors
-    – <animate attributeName="r"> pulsing circles (sources/signals)
-    – <animateTransform type="translate"> oscillating elements
-    – <animate attributeName="y"> or "height" rising/falling levels
-    – <animate attributeName="opacity"> blinking/pulsing indicators
-  • Pill badge label per component (see badge spec above)
+Flow lines (2-5 based on topic):
+  • Use the flow style that matches your layout archetype
+  • Curved arcs (Q or C) for orbital/radial layouts
+  • Straight paths for pipeline/PCB layouts
+  • Sinusoidal paths for wave layouts
+  • All with stroke-dasharray + animated stroke-dashoffset
+  • Arrowheads at destinations using <polygon>
 
-Step captions (CSS, no JS):
-  • N = 4 to 6 steps, each slot = S seconds, total = N*S seconds
-  • Each .wp-step div has:
-      animation-name: wpFadeStepK-[ID]
-      animation-duration: [N*S]s
-      animation-delay: [K*S]s
-      animation-iteration-count: infinite
-      animation-timing-function: ease-in-out
-  • Each @keyframes wpFadeStepK-[ID] (K = 0…N-1):
-      0%   {{ opacity: 0 }}
-      10%  {{ opacity: 1 }}
-      90%  {{ opacity: 1 }}
-      100% {{ opacity: 0 }}
-  • The .wp-steps container is position:relative; height:42px;
-    each step is position:absolute; left:0; right:0; text-align:center.
+Pill-badge labels:
+  • One per major component
+  • White rect + colored border + emoji + bold Nunito text
+  • filter="url(#fShadow-[ID])"
+
+Step captions (CSS @keyframes, ZERO JS):
+  • N = 4 to 6 steps, slot S = 3-4 seconds each
+  • Total duration = N × S seconds
+  • @keyframes wpStepK-[ID]:
+      0%{{opacity:0}} 10%{{opacity:1}} 90%{{opacity:1}} 100%{{opacity:0}}
+  • Each step div: animation-delay = K × S seconds (K = 0 to N-1)
 
 Bottom strip:
-  • <rect x="0" y="503" width="1000" height="17" fill="[DARK_COLOR]" opacity="0.82"/>
+  • <rect x="0" y="503" width="1000" height="17" fill="[TOPIC_DARK]" opacity="0.85"/>
   • <text> tagline centered, Nunito, font-size 8.5, white, letter-spacing 1.5
 
 Context: {context[:1200]}
 
 ═══════════════════════════════════════════════════════════════════
-Return ONLY the HTML below. Replace ALL [PLACEHOLDER] values with
-real, topic-specific content. Generate COMPLETE code — no "...",
-no shorthand, full working SVG with every gradient, filter, path,
-component, and animation written out in full.
+STEP 5 — GENERATE THE COMPLETE HTML
 ═══════════════════════════════════════════════════════════════════
+
+Return ONLY the HTML below. Replace ALL [PLACEHOLDER] values.
+Choose a real 6-char alphanumeric [ID] (e.g. "t4x9mq") and use it
+consistently across ALL class names, gradient ids, and filter ids.
 
 <div class="working-process-section" data-section="working-process">
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Baloo+2:wght@400;600;700;800&display=swap');
 
+/* ── Outer wrapper ── */
 .wp-outer-[ID] {{
   max-width: 1000px;
   margin: 0 auto;
   font-family: 'Nunito', sans-serif;
 }}
+
+/* ── Title bar (unique gradient per topic) ── */
 .wp-page-title-[ID] {{
   text-align: center;
-  padding: 18px 12px 8px;
-  background: linear-gradient(135deg, [TITLE_BG_COLOR_1], [TITLE_BG_COLOR_2]);
-  border-bottom: 3px solid [TITLE_ACCENT_COLOR];
+  padding: 20px 16px 10px;
+  background: [YOUR_TOPIC_TITLE_GRADIENT];
+  border-bottom: 3px solid [YOUR_ACCENT_COLOR];
   border-radius: 12px 12px 0 0;
 }}
 .wp-page-title-[ID] h2 {{
   font-family: 'Baloo 2', cursive;
-  font-size: clamp(1rem, 3vw, 1.6rem);
+  font-size: clamp(1rem, 3vw, 1.65rem);
   font-weight: 800;
   color: [TITLE_TEXT_COLOR];
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
   margin: 0;
 }}
 .wp-page-title-[ID] p {{
   font-size: 0.8rem;
   color: [SUBTITLE_COLOR];
-  margin-top: 3px;
+  margin-top: 4px;
   font-weight: 600;
 }}
+
+/* ── SVG wrapper ── */
 .wp-svg-wrap-[ID] {{
   max-width: 1000px;
   margin: 0 auto;
 }}
+
+/* ── Legend ── */
 .wp-legend-[ID] {{
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   justify-content: center;
   padding: 10px 8px 6px;
   max-width: 1000px;
@@ -507,7 +648,7 @@ component, and animation written out in full.
 .wp-leg-item-[ID] {{
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-size: 0.72rem;
   font-weight: 700;
   color: #334455;
@@ -518,219 +659,238 @@ component, and animation written out in full.
   height: 4px;
   border-radius: 2px;
 }}
+
+/* ── Step captions ── */
 .wp-steps-wrap-[ID] {{
   position: relative;
-  height: 42px;
+  height: 44px;
   margin: 10px auto 4px;
-  max-width: 780px;
+  max-width: 800px;
   overflow: hidden;
 }}
 .wp-step-[ID] {{
   position: absolute;
   left: 0; right: 0;
   text-align: center;
-  padding: 8px 20px;
-  border-radius: 20px;
+  padding: 9px 24px;
+  border-radius: 22px;
   font-family: 'Nunito', sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.83rem;
   font-weight: 800;
   opacity: 0;
-  background: [STEP_BG_COLOR];
-  color: [STEP_TEXT_COLOR];
-  border: 2px solid [STEP_BORDER_COLOR];
+  background: [STEP_BG];
+  color: [STEP_TEXT];
+  border: 2px solid [STEP_BORDER];
 }}
 
-[STEP_KEYFRAMES_CSS]
+/* ── GENERATED STEP KEYFRAMES — write ALL N of them ── */
+[ALL_STEP_KEYFRAMES_CSS_HERE]
+
 </style>
 
 <div class="wp-outer-[ID]">
 
+  <!-- TITLE -->
   <div class="wp-page-title-[ID]">
-    <h2>[EMOJI] [Full descriptive title, e.g. "Photosynthesis: How Plants Convert Sunlight to Sugar"]</h2>
-    <p>[One-sentence subtitle, e.g. "A step-by-step journey through chloroplasts, light reactions, and glucose production"]</p>
+    <h2>[EMOJI_MATCHING_TOPIC] [Full descriptive title for "{topic}"]</h2>
+    <p>[One-sentence subtitle describing what this animation shows]</p>
   </div>
 
+  <!-- SVG SCENE — Your chosen archetype, fully drawn out -->
   <div class="wp-svg-wrap-[ID]">
   <svg viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg"
-       style="width:100%;height:auto;display:block;border-radius:0 0 16px 16px;box-shadow:0 8px 32px rgba(0,0,0,0.13);">
-  <defs>
-    <!-- GRADIENT 1 -->
-    <linearGradient id="gBg-[ID]" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="[BG_TOP_COLOR]"/>
-      <stop offset="60%" stop-color="[BG_MID_COLOR]"/>
-      <stop offset="100%" stop-color="[BG_BOT_COLOR]"/>
-    </linearGradient>
-    <!-- GRADIENT 2 — ground/base layer -->
-    <linearGradient id="gGround-[ID]" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="[GROUND_TOP]"/>
-      <stop offset="100%" stop-color="[GROUND_BOT]"/>
-    </linearGradient>
-    <!-- GRADIENTS 3-6+ — one per major component -->
-    [DEFINE AT LEAST 4 MORE GRADIENTS FOR SCENE COMPONENTS]
+       style="width:100%;height:auto;display:block;border-radius:0 0 16px 16px;box-shadow:0 8px 32px rgba(0,0,0,0.18);">
 
-    <!-- DROP SHADOW FILTER -->
-    <filter id="fShadow-[ID]">
-      <feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#00000022"/>
+  <defs>
+    <!-- BACKGROUND GRADIENT — matches your topic's environment -->
+    <linearGradient id="gBg-[ID]" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="[BG_TOP]"/>
+      <stop offset="55%" stop-color="[BG_MID]"/>
+      <stop offset="100%" stop-color="[BG_BOT]"/>
+    </linearGradient>
+
+    <!-- COMPONENT GRADIENTS (one per major scene element) -->
+    [DEFINE ALL COMPONENT GRADIENTS HERE — min 5 total]
+    <!-- Example: radialGradient for glowing spheres, linearGradient
+         for 3D cylinder, conical gradient simulation for discs, etc. -->
+
+    <!-- DROP SHADOW -->
+    <filter id="fShadow-[ID]" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#00000033"/>
     </filter>
-    <!-- GLOW FILTER -->
+
+    <!-- GLOW (intensity matches your topic's energy level) -->
     <filter id="fGlow-[ID]" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feGaussianBlur stdDeviation="3" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
-    [ANY ADDITIONAL DEFS: clipPath, pattern, radialGradient, etc.]
+
+    <!-- Add fNeon, clipPath, pattern, marker as needed for your archetype -->
+    [ADDITIONAL_DEFS_AS_NEEDED]
   </defs>
 
-  <!-- ═════════════════════ BACKGROUND / SKY ═════════════════════ -->
+  <!-- ═══════════════ BACKGROUND / ENVIRONMENT ══════════════════ -->
   <rect width="1000" height="520" fill="url(#gBg-[ID])"/>
-  [ATMOSPHERIC ELEMENTS: sun, clouds, particles, stars, grid — whatever fits topic]
-  [Each animated with <animate> or <animateTransform>]
+  <!-- Add atmospheric elements appropriate to YOUR chosen environment:
+       stars for space, grid lines for digital, tissue texture for bio,
+       board texture for PCB, mountain silhouette for outdoor, etc. -->
+  [ENVIRONMENT_ELEMENTS_WITH_ANIMATIONS]
 
-  <!-- ═════════════════════ GROUND / BASE LAYER ══════════════════ -->
-  <rect x="0" y="374" width="1000" height="146" fill="url(#gGround-[ID])"/>
-  [TERRAIN DETAIL: ellipses for hills, texture lines, etc.]
-  <line x1="0" y1="374" x2="1000" y2="374" stroke="[GROUND_LINE_COLOR]" stroke-width="2.5"/>
-
-  <!-- ═════════════════════ COMPONENT 1 ══════════════════════════ -->
-  <!-- [Component 1 name — e.g. INPUT SOURCE, REACTANT, GENERATOR] -->
-  <g transform="translate([CX1],[CY1])" filter="url(#fShadow-[ID])">
-    [DETAILED SVG COMPONENT: gradient fills, 3D shading polygon, highlight line, realistic details]
-    [LOOPING ANIMATION on appropriate child element]
+  <!-- ═══════════════ SCENE OBJECT 1 ══════════════════════════════ -->
+  <!-- [Name this component: what it actually IS in the topic] -->
+  <g transform="translate([X1],[Y1])" filter="url(#fShadow-[ID])">
+    <!-- Draw this as it REALLY looks: sphere for atom nucleus,
+         double helix for DNA, sinusoidal curve for wave,
+         gear for mechanical, hexagon for benzene, etc. -->
+    [DETAILED_SVG_COMPONENT_1_WITH_LOOPING_ANIMATION]
   </g>
-  <!-- Component 1 pill badge -->
+  <!-- Pill badge for component 1 -->
   <g filter="url(#fShadow-[ID])">
-    <rect x="[BX1]" y="[BY1]" width="[BW1]" height="24" rx="7"
-          fill="white" stroke="[BADGE_COLOR_1]" stroke-width="1.8"/>
+    <rect x="[BX1]" y="[BY1]" width="[BW1]" height="25" rx="8"
+          fill="white" stroke="[BADGE_COLOR_1]" stroke-width="2"/>
     <text x="[BTX1]" y="[BTY1]" text-anchor="middle"
-          font-family="Nunito, sans-serif" font-size="10" font-weight="800"
-          fill="[BADGE_COLOR_1]">[EMOJI] [COMPONENT 1 LABEL]</text>
+          font-family="Nunito, sans-serif" font-size="10.5" font-weight="800"
+          fill="[BADGE_COLOR_1]">[EMOJI] [COMPONENT_1_REAL_NAME]</text>
   </g>
 
-  <!-- ═════════════════════ FLOW LINE 1 ══════════════════════════ -->
-  <!-- [What flows: e.g. Solar Energy, Electrons, Heat, Signal, Glucose] -->
+  <!-- ═══════════════ FLOW / CONNECTION 1 ══════════════════════════ -->
+  <!-- [What actually transfers: energy, electrons, molecules, data,
+       force, heat, signal, nutrients, etc.] -->
   <g filter="url(#fGlow-[ID])">
-    <path d="[SVG PATH — use Q or C curves for nice arcs]"
+    <path d="[PATH_SHAPE_MATCHING_YOUR_ARCHETYPE]"
           fill="none" stroke="[FLOW_COLOR_1]" stroke-width="3.5"
-          stroke-linecap="round" stroke-dasharray="14,7">
-      <animate attributeName="stroke-dashoffset" values="63;0"
-               dur="[X1]s" repeatCount="indefinite"/>
+          stroke-linecap="round" stroke-dasharray="[DASH_PATTERN]">
+      <animate attributeName="stroke-dashoffset"
+               values="[TOTAL];0" dur="[Xs]" repeatCount="indefinite"/>
     </path>
   </g>
-  <!-- Arrowhead at destination -->
-  <polygon points="[AX1a],[AY1a] [AX1b],[AY1b] [AX1c],[AY1c]"
-           fill="[FLOW_COLOR_1]"/>
-  <!-- Flow label badge -->
-  <rect x="[FLX1]" y="[FLY1]" width="[FLW1]" height="17" rx="5"
-        fill="[FLOW_LIGHT_BG_1]" stroke="[FLOW_COLOR_1]" stroke-width="1.2"/>
+  <polygon points="[ARROW_POINTS]" fill="[FLOW_COLOR_1]"/>
+  <!-- Flow label -->
+  <rect x="[FLX1]" y="[FLY1]" width="[FLW1]" height="18" rx="5"
+        fill="[FLOW_LIGHT_BG_1]" stroke="[FLOW_COLOR_1]" stroke-width="1.3"/>
   <text x="[FLTX1]" y="[FLTY1]" text-anchor="middle"
-        font-family="Nunito, sans-serif" font-size="8.5" font-weight="800"
-        fill="[FLOW_DARK_1]">[FLOW 1 LABEL, e.g. "Solar Energy"]</text>
+        font-family="Nunito, sans-serif" font-size="9" font-weight="800"
+        fill="[FLOW_DARK_1]">[WHAT_IS_FLOWING_1]</text>
 
-  <!-- ═════════════════════ COMPONENT 2 ══════════════════════════ -->
-  <g transform="translate([CX2],[CY2])" filter="url(#fShadow-[ID])">
-    [DETAILED SVG COMPONENT 2 with gradient, 3D detail, animation]
+  <!-- ═══════════════ SCENE OBJECT 2 ══════════════════════════════ -->
+  <g transform="translate([X2],[Y2])" filter="url(#fShadow-[ID])">
+    [DETAILED_SVG_COMPONENT_2_WITH_LOOPING_ANIMATION]
   </g>
   <g filter="url(#fShadow-[ID])">
-    <rect x="[BX2]" y="[BY2]" width="[BW2]" height="24" rx="7"
-          fill="white" stroke="[BADGE_COLOR_2]" stroke-width="1.8"/>
+    <rect x="[BX2]" y="[BY2]" width="[BW2]" height="25" rx="8"
+          fill="white" stroke="[BADGE_COLOR_2]" stroke-width="2"/>
     <text x="[BTX2]" y="[BTY2]" text-anchor="middle"
-          font-family="Nunito, sans-serif" font-size="10" font-weight="800"
-          fill="[BADGE_COLOR_2]">[EMOJI] [COMPONENT 2 LABEL]</text>
+          font-family="Nunito, sans-serif" font-size="10.5" font-weight="800"
+          fill="[BADGE_COLOR_2]">[EMOJI] [COMPONENT_2_REAL_NAME]</text>
   </g>
 
-  <!-- ═════════════════════ FLOW LINE 2 ══════════════════════════ -->
+  <!-- ═══════════════ FLOW / CONNECTION 2 ══════════════════════════ -->
   <g filter="url(#fGlow-[ID])">
-    <path d="[PATH 2]" fill="none" stroke="[FLOW_COLOR_2]" stroke-width="3.5"
-          stroke-linecap="round" stroke-dasharray="14,7">
-      <animate attributeName="stroke-dashoffset" values="63;0"
-               dur="[X2]s" repeatCount="indefinite"/>
+    <path d="[PATH_2]"
+          fill="none" stroke="[FLOW_COLOR_2]" stroke-width="3.5"
+          stroke-linecap="round" stroke-dasharray="[DASH_PATTERN_2]">
+      <animate attributeName="stroke-dashoffset"
+               values="[TOTAL_2];0" dur="[X2s]" repeatCount="indefinite"/>
     </path>
   </g>
-  <polygon points="[AX2a],[AY2a] [AX2b],[AY2b] [AX2c],[AY2c]"
-           fill="[FLOW_COLOR_2]"/>
-  <rect x="[FLX2]" y="[FLY2]" width="[FLW2]" height="17" rx="5"
-        fill="[FLOW_LIGHT_BG_2]" stroke="[FLOW_COLOR_2]" stroke-width="1.2"/>
+  <polygon points="[ARROW_2]" fill="[FLOW_COLOR_2]"/>
+  <rect x="[FLX2]" y="[FLY2]" width="[FLW2]" height="18" rx="5"
+        fill="[FLOW_LIGHT_BG_2]" stroke="[FLOW_COLOR_2]" stroke-width="1.3"/>
   <text x="[FLTX2]" y="[FLTY2]" text-anchor="middle"
-        font-family="Nunito, sans-serif" font-size="8.5" font-weight="800"
-        fill="[FLOW_DARK_2]">[FLOW 2 LABEL]</text>
+        font-family="Nunito, sans-serif" font-size="9" font-weight="800"
+        fill="[FLOW_DARK_2]">[WHAT_IS_FLOWING_2]</text>
 
-  <!-- [CONTINUE: COMPONENT 3, FLOW 3, COMPONENT 4, FLOW 4 as needed] -->
-  <!-- [Each topic typically needs 3-4 components and 2-4 flow lines] -->
-  <!-- [Add decorative scene elements: birds, bubbles, sparks, indicators] -->
+  <!-- ═══════════════ COMPONENTS 3-4 + FLOWS 3-4 ══════════════════ -->
+  <!-- Continue building out your scene with ALL real topic components.
+       Each topic typically needs 3-5 components and 2-4 flow lines.
+       Add decorative scene elements unique to your topic:
+       — Astronomy: stars, nebula dust, scale distance indicators
+       — Biology: mitochondria, ribosomes, membrane phospholipids
+       — Electronics: oscilloscope waveform, LED glow, capacitor charge
+       — Chemistry: electron clouds, bond angle indicators, energy diagram
+       — Physics: field lines, force vectors, equipotential surfaces -->
+  [COMPONENTS_3_TO_N_AND_FLOWS_3_TO_N]
 
-  <!-- ═════════════════════ BOTTOM STRIP ═════════════════════════ -->
-  <rect x="0" y="503" width="1000" height="17" fill="[TOPIC_DARK_COLOR]" opacity="0.82"/>
+  <!-- ═══════════════ BOTTOM STRIP ══════════════════════════════════ -->
+  <rect x="0" y="503" width="1000" height="17" fill="[TOPIC_DARKEST_COLOR]" opacity="0.85"/>
   <text x="500" y="514.5" text-anchor="middle"
         font-family="Nunito, sans-serif" font-size="8.5" fill="white"
         font-weight="700" letter-spacing="1.5">
-    [EMOJI] [TOPIC SUMMARY TAGLINE — e.g. "⚡ PHOTOSYNTHESIS — Nature's Solar Power System 🌱"]
+    [EMOJI] [TOPIC SUMMARY TAGLINE — specific to "{topic}"]
   </text>
+
   </svg>
   </div>
 
-  <!-- LEGEND ROW -->
+  <!-- LEGEND -->
   <div class="wp-legend-[ID]">
     <div class="wp-leg-item-[ID]">
       <div class="wp-leg-swatch-[ID]" style="background:[FLOW_COLOR_1];"></div>
-      [Flow 1 description, e.g. "Light Energy (Sunlight → Chloroplast)"]
+      [Flow 1 real description]
     </div>
     <div class="wp-leg-item-[ID]">
       <div class="wp-leg-swatch-[ID]" style="background:[FLOW_COLOR_2];"></div>
-      [Flow 2 description]
+      [Flow 2 real description]
     </div>
-    [1-3 more legend items as needed]
+    [MORE LEGEND ITEMS AS NEEDED]
   </div>
 
-  <!-- CSS-ANIMATED STEP CAPTIONS -->
+  <!-- CSS-ANIMATED STEP CAPTIONS (zero JS) -->
   <div class="wp-steps-wrap-[ID]">
-    <div class="wp-step-[ID]" style="animation-name:wpStep0-[ID];animation-duration:[TOTAL_DUR]s;animation-delay:0s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;">
-      Step 1 of [N]: [Plain-English caption for stage 1 of "{topic}"]
+    <div class="wp-step-[ID]"
+         style="animation-name:wpStep0-[ID];animation-duration:[TOTAL_DUR]s;animation-delay:0s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;">
+      Step 1 of [N]: [Real caption about first stage of "{topic}"]
     </div>
-    <div class="wp-step-[ID]" style="animation-name:wpStep1-[ID];animation-duration:[TOTAL_DUR]s;animation-delay:[S]s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;">
-      Step 2 of [N]: [Caption for stage 2]
+    <div class="wp-step-[ID]"
+         style="animation-name:wpStep1-[ID];animation-duration:[TOTAL_DUR]s;animation-delay:[S]s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;">
+      Step 2 of [N]: [Real caption about second stage]
     </div>
-    [Continue for all N steps with delay: K*S seconds for step K]
+    [ALL REMAINING STEPS — delay = K × S seconds for step K]
   </div>
 
-  <div style="text-align:center;margin:8px auto 4px;padding:10px 16px;
+  <div style="text-align:center;margin:8px auto 4px;padding:10px 18px;
     background:#fffde7;border:2px dashed #f9a825;border-radius:12px;
     font-family:'Nunito',sans-serif;font-weight:700;font-size:0.83rem;
-    max-width:620px;color:#555;">
+    max-width:640px;color:#555;">
     💡 The animation loops continuously — watch each stage of the process unfold.
   </div>
 
 </div>
 
 ═══════════════════════════════════════════════════════════════════
-MANDATORY COMPLETION RULES — VIOLATING ANY OF THESE INVALIDATES THE OUTPUT
+MANDATORY COMPLETION RULES — ALL MUST BE FOLLOWED
 ═══════════════════════════════════════════════════════════════════
 
-1. [ID] REPLACEMENT: Choose one real 6-char alphanumeric ID (e.g. "k7mx2p").
-   Replace EVERY [ID] occurrence — in class names, gradient ids, filter ids,
-   animation names. Consistency is critical or CSS/SVG will break.
+1. [ID] REPLACEMENT: Choose one real 6-char alphanumeric [ID].
+   Replace EVERY [ID] occurrence consistently — CSS classes, gradient
+   ids, filter ids, animation names. Inconsistency breaks everything.
 
-2. GRADIENT IDs must end with -[ID] (e.g. id="gBg-k7mx2p") and be referenced
-   as url(#gBg-k7mx2p). Same for filter ids.
+2. GRADIENT IDs: All end with -[ID]. Referenced as url(#gradName-[ID]).
+   Same rule for all filter ids.
 
-3. GENERATE ALL KEYFRAMES CSS fully. For N steps with slot S seconds each:
+3. ALL STEP KEYFRAMES: Write every @keyframes wpStepK-[ID] block in full:
    @keyframes wpStep0-[ID] {{ 0%{{opacity:0}} 10%{{opacity:1}} 90%{{opacity:1}} 100%{{opacity:0}} }}
-   @keyframes wpStep1-[ID] {{ 0%{{opacity:0}} 10%{{opacity:1}} 90%{{opacity:1}} 100%{{opacity:0}} }}
-   ... up to wpStep[N-1]-[ID]
-   Each step div gets animation-delay: K*S seconds (K = 0 to N-1).
+   ... up to wpStep[N-1]-[ID]. Each step div gets delay = K × S seconds.
 
-4. REAL CONTENT ONLY: Every SVG component must visually represent the actual
-   topic components — not a generic box. Use shapes, gradients, and labels
-   appropriate to "{topic}". A student looking at this must immediately
-   understand they're seeing "{topic}" without reading the title.
+4. REAL COMPONENTS ONLY: Every scene object must visually represent
+   a real component of "{topic}". Use the right geometric shapes —
+   no plain rectangles unless the topic component IS a rectangle.
 
-5. COMPLETE SVG: Write out every gradient, every component, every flow line,
-   every badge in full. No "..." shortcuts. The output must be copy-paste ready.
+5. UNIQUE PALETTE: Your colors must be derived from "{topic}" itself.
+   They must differ from what you would generate for any other topic.
 
-6. NO JAVASCRIPT: Zero JS in this section. All animation via SVG <animate>,
-   <animateTransform>, and CSS @keyframes only.
+6. CHOSEN ARCHETYPE MUST BE VISIBLE: The layout archetype you chose
+   must be obvious from the visual structure — not just labeled.
 
-7. NO CANVAS: This section uses SVG exclusively.
+7. COMPLETE CODE: Write every gradient, component, flow line, badge,
+   and step in full. Zero "..." shortcuts. Copy-paste ready output.
 
-8. OUTPUT NOTHING after the final closing </div> tag.""",
+8. ZERO JAVASCRIPT: All motion via SVG <animate>, <animateTransform>,
+   <animateMotion>, and CSS @keyframes only. No JS whatsoever.
+
+9. NO CANVAS: This section uses pure SVG exclusively.
+
+10. OUTPUT NOTHING after the final closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
         # §5 FORMULAS
@@ -739,12 +899,13 @@ MANDATORY COMPLETION RULES — VIOLATING ANY OF THESE INVALIDATES THE OUTPUT
 {specific_note}
 Requirements:
 - Identify 2-5 key formulas central to "{topic}"
-- Each formula:
+- Each formula must include ONLY:
   * Proper LaTeX using $$...$$ delimiters
   * Clear title/name
   * Symbol breakdown table (variable, meaning, units)
-  * 1 worked numerical example
-  * When/why this formula is used
+- Do NOT include a "When to use" section
+- Do NOT include a worked example section
+- Cards must be stacked VERTICALLY (single column), one below the other
 
 Context: {context[:800]}
 
@@ -757,7 +918,7 @@ Return ONLY this HTML structure with REAL formulas:
     <div class="formulas-subtitle">Understanding the math behind the concept</div>
   </div>
 
-  <div class="formula-cards-grid">
+  <div class="formula-cards-stack">
 
   <div class="formula-card" data-section="formula-1">
     <div class="formula-name">[Formula 1 Name]</div>
@@ -769,11 +930,6 @@ Return ONLY this HTML structure with REAL formulas:
         <tr><td class="symbol-var">$$[var]$$</td><td class="symbol-desc">[Description with units]</td></tr>
       </table>
     </div>
-    <div class="formula-when"><strong>When to use:</strong> [Context for "{topic}"]</div>
-    <div class="formula-example">
-      <div class="example-title">💡 Worked Example:</div>
-      <div class="example-text">[Complete numerical worked example for "{topic}"]</div>
-    </div>
     <button class="img-upload-btn" onclick="uploadSectionImage('formula-1')">📸 Add Image</button>
     <div class="section-images" id="images-formula-1"></div>
   </div>
@@ -784,13 +940,9 @@ Return ONLY this HTML structure with REAL formulas:
     <div class="formula-symbols">
       <div class="formula-symbols-title">📋 Symbol Breakdown:</div>
       <table class="symbols-table">
-        <tr><td class="symbol-var">$$[var]$$</td><td class="symbol-desc">[Description]</td></tr>
+        <tr><td class="symbol-var">$$[var]$$</td><td class="symbol-desc">[Description with units]</td></tr>
+        <tr><td class="symbol-var">$$[var]$$</td><td class="symbol-desc">[Description with units]</td></tr>
       </table>
-    </div>
-    <div class="formula-when"><strong>When to use:</strong> [Context]</div>
-    <div class="formula-example">
-      <div class="example-title">💡 Worked Example:</div>
-      <div class="example-text">[Worked example]</div>
     </div>
     <button class="img-upload-btn" onclick="uploadSectionImage('formula-2')">📸 Add Image</button>
     <div class="section-images" id="images-formula-2"></div>
@@ -803,8 +955,11 @@ Return ONLY this HTML structure with REAL formulas:
   </div>
 </div>
 
-CRITICAL: Replace ALL [placeholder] text with real, accurate formulas for "{topic}".
-OUTPUT NOTHING after the closing </div> tag.""",
+CRITICAL:
+- Replace ALL [placeholder] text with real, accurate formulas for "{topic}".
+- Do NOT add formula-when or formula-example divs — these are removed.
+- Use class "formula-cards-stack" (not "formula-cards-grid") on the wrapper.
+- OUTPUT NOTHING after the closing </div> tag.""",
 
         # ══════════════════════════════════════════════════════════════════
         # §6 DERIVATION
@@ -1734,10 +1889,10 @@ Return ONLY valid JSON:
         subtopics_list: Optional[List[str]] = None,
     ) -> Dict:
         log.info(f"\n{'═'*64}")
-        log.info(f"[ULTIMATE v19.2] Starting pipeline for: {topic}")
-        log.info(f"[ULTIMATE v19.2] Specific sub-topic detected: {_is_specific_subtopic(topic)}")
+        log.info(f"[ULTIMATE v19.3] Starting pipeline for: {topic}")
+        log.info(f"[ULTIMATE v19.3] Specific sub-topic detected: {_is_specific_subtopic(topic)}")
         if subtopics_list:
-            log.info(f"[ULTIMATE v19.2] Core Concepts subtopics: {subtopics_list}")
+            log.info(f"[ULTIMATE v19.3] Core Concepts subtopics: {subtopics_list}")
         log.info(f"{'═'*64}")
 
         log.info("[STAGE 0] Classifying topic...")
@@ -1812,9 +1967,16 @@ Return ONLY valid JSON:
         }
 
         nav_items = [
-            f'<button class="nav-btn" data-section="section-{i}" '
-            f'onclick="scrollToSection(\'section-{i}\', this)">'
-            f'{section_labels.get(s, s.replace("_"," ").title())}</button>'
+            f'<div class="acc-item" id="acc-item-{i}">'
+            f'<button class="acc-header" onclick="toggleAccSection({i}, this)">'
+            f'<span class="acc-icon">{section_labels.get(s, s.replace("_"," ").title()).split(" ")[0]}</span>'
+            f'<span class="acc-label">{" ".join(section_labels.get(s, s.replace("_"," ").title()).split(" ")[1:])}</span>'
+            f'<span class="acc-arrow">▸</span>'
+            f'</button>'
+            f'<div class="acc-body" id="acc-body-{i}">'
+            f'<button class="acc-goto-btn" onclick="scrollToSectionAcc(\'section-{i}\')">📍 Go to section</button>'
+            f'</div>'
+            f'</div>'
             for i, s in enumerate(lesson_sections, 1)
         ]
 
@@ -1885,9 +2047,9 @@ Return ONLY valid JSON:
         footer_cta = f"""
     <div class="footer-cta">
       <button class="footer-cta-btn quiz-cta"
-        onclick="scrollToSection('section-{quiz_idx}', null)">❓ Jump to Quiz</button>
+        onclick="scrollToSectionAcc('section-{quiz_idx}')">❓ Jump to Quiz</button>
       <button class="footer-cta-btn anim-cta"
-        onclick="scrollToSection('section-{anim_idx}', null)">🎬 View Animation</button>
+        onclick="scrollToSectionAcc('section-{anim_idx}')">🎬 View Animation</button>
     </div>"""
 
         return f"""<!DOCTYPE html>
@@ -1895,7 +2057,7 @@ Return ONLY valid JSON:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{topic} — Ultimate Learning Experience v19.2</title>
+  <title>{topic} — Ultimate Learning Experience v19.3</title>
   {animejs_cdn}
   {mathjax_script}
   <style>
@@ -1906,53 +2068,103 @@ Return ONLY valid JSON:
   <div id="progressBar"></div>
   <div class="page-container">
     <header class="page-header">
-      <div class="header-badge">🎓 Ultimate Learning Experience v19.2</div>
+      <div class="header-badge">🎓 Ultimate Learning Experience v19.3</div>
       <h1 class="page-title">{topic}</h1>
       <p class="page-subtitle">A complete learning journey designed for maximum understanding and retention</p>
     </header>
     {classification_badge}
     {audit_html}
-    <nav class="section-nav" id="sectionNav">
-      {"".join(nav_items)}
-    </nav>
-    <main class="main-content">
-      {"".join(section_html_parts)}
-    </main>
+    <div class="content-layout">
+      <nav class="section-nav" id="sectionNav">
+        <div class="acc-panel-title">📚 Sections</div>
+        {"".join(nav_items)}
+      </nav>
+      <main class="main-content">
+        {"".join(section_html_parts)}
+      </main>
+    </div>
     <footer class="page-footer">
       {footer_cta}
-      <p>🧠 Built with the Ultimate Learning Content Generator Pipeline v19.2</p>
+      <p>🧠 Built with the Ultimate Learning Content Generator Pipeline v19.3</p>
       <p>Optimized for comprehension, critical thinking, and retention</p>
     </footer>
   </div>
   <script>
-    function scrollToSection(sectionId, btn) {{
+    /* ══════════════════════════════════════════════════════
+       ACCORDION NAV  — Expand/Collapse section list
+    ══════════════════════════════════════════════════════ */
+    var _openAccIdx = null;
+
+    function toggleAccSection(idx, btn) {{
+      var body = document.getElementById('acc-body-' + idx);
+      var item = document.getElementById('acc-item-' + idx);
+      var arrow = btn ? btn.querySelector('.acc-arrow') : null;
+
+      if (_openAccIdx === idx) {{
+        /* collapse current */
+        body.style.maxHeight = '0';
+        body.style.opacity   = '0';
+        item.classList.remove('acc-open');
+        if (arrow) arrow.textContent = '▸';
+        _openAccIdx = null;
+      }} else {{
+        /* close previously open */
+        if (_openAccIdx !== null) {{
+          var prevBody = document.getElementById('acc-body-' + _openAccIdx);
+          var prevItem = document.getElementById('acc-item-' + _openAccIdx);
+          var prevArrow = prevItem ? prevItem.querySelector('.acc-arrow') : null;
+          if (prevBody) {{ prevBody.style.maxHeight = '0'; prevBody.style.opacity = '0'; }}
+          if (prevItem) prevItem.classList.remove('acc-open');
+          if (prevArrow) prevArrow.textContent = '▸';
+        }}
+        /* open new */
+        body.style.maxHeight = body.scrollHeight + 'px';
+        body.style.opacity   = '1';
+        item.classList.add('acc-open');
+        if (arrow) arrow.textContent = '▾';
+        _openAccIdx = idx;
+      }}
+    }}
+
+    function scrollToSectionAcc(sectionId) {{
       var target = document.getElementById(sectionId);
       if (!target) return;
       var navH = document.getElementById('sectionNav') ? document.getElementById('sectionNav').offsetHeight : 0;
       var top = target.getBoundingClientRect().top + window.pageYOffset - navH - 16;
       window.scrollTo({{ top: top, behavior: 'smooth' }});
-      document.querySelectorAll('.nav-btn').forEach(function(b) {{ b.classList.remove('active'); }});
-      if (btn) btn.classList.add('active');
     }}
+
+    /* scroll-spy: highlight acc-header of visible section */
     var _observer = new IntersectionObserver(function(entries) {{
       entries.forEach(function(e) {{
         if (e.isIntersecting) {{
-          var id = e.target.id;
-          document.querySelectorAll('.nav-btn').forEach(function(b) {{
-            b.classList.toggle('active', b.dataset.section === id);
+          var sIdx = parseInt(e.target.id.replace('section-', ''), 10);
+          document.querySelectorAll('.acc-header').forEach(function(h) {{
+            h.classList.remove('acc-active');
           }});
+          var activeItem = document.getElementById('acc-item-' + sIdx);
+          if (activeItem) {{
+            var activeHdr = activeItem.querySelector('.acc-header');
+            if (activeHdr) activeHdr.classList.add('acc-active');
+          }}
         }}
       }});
     }}, {{ rootMargin: '-80px 0px -60% 0px', threshold: 0 }});
     document.querySelectorAll('.lesson-section').forEach(function(s) {{ _observer.observe(s); }});
+
+    /* progress bar */
     var _bar = document.getElementById('progressBar');
     window.addEventListener('scroll', function() {{
       var s = window.scrollY;
       var m = document.documentElement.scrollHeight - window.innerHeight;
       if (_bar) _bar.style.width = (m > 0 ? (s/m)*100 : 0) + '%';
     }});
-    var _firstBtn = document.querySelector('.nav-btn');
-    if (_firstBtn) _firstBtn.classList.add('active');
+
+    /* open first item on load */
+    setTimeout(function() {{
+      var firstHdr = document.querySelector('.acc-header');
+      if (firstHdr) toggleAccSection(1, firstHdr);
+    }}, 120);
   </script>
   {image_upload_script}
   {vault_bridge_script}
@@ -2053,7 +2265,7 @@ Return ONLY valid JSON:
         return """
   <script>
     /* ══════════════════════════════════════════════════════════
-       VIDEO VAULT BRIDGE  v19.2
+       VIDEO VAULT BRIDGE  v19.3
        Connects the Video Vault panel to the host application.
 
        The host/backend should populate window.__videoVault with
@@ -2100,7 +2312,7 @@ Return ONLY valid JSON:
   </script>"""
 
     # ──────────────────────────────────────────────────────────────────
-    #  CSS — v19.2
+    #  CSS — v19.3
     # ──────────────────────────────────────────────────────────────────
 
     def _get_ultimate_learning_css(self) -> str:
@@ -2114,8 +2326,10 @@ Return ONLY valid JSON:
 
         return f"""
 /* ══════════════════════════════════════════════════════════
-   ULTIMATE LEARNING CSS  v19.2
-   Working Process now uses SVG infographic scene animations.
+   ULTIMATE LEARNING CSS  v19.3
+   Working Process now generates UNIQUE per-topic SVG animations.
+   Layout archetype, color palette, and motion character are all
+   derived from each specific topic — no two animations alike.
    All other section styles retained from v19.0/v18.x.
 ══════════════════════════════════════════════════════════ */
 
@@ -2241,25 +2455,68 @@ body {{
 .audit-summary h3 {{ color: #1e40af; margin-bottom: 8px; font-family: Verdana,sans-serif; }}
 .audit-summary p  {{ color: var(--text-dark); font-family: Verdana,sans-serif; }}
 
-/* ── STICKY NAV ── */
+/* ── ACCORDION NAV ── */
 .section-nav {{
   position: sticky; top: 0; z-index: 100;
-  display: flex; flex-wrap: wrap; gap: 8px; padding: 16px;
-  background: rgba(255,255,255,.97); backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: var(--radius-lg); box-shadow: var(--shadow-md); margin-bottom: 32px; width: 100%;
+  width: 260px; min-width: 220px; max-width: 280px;
+  align-self: flex-start;
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 12px 0 16px;
+  margin-bottom: 32px;
+  display: flex; flex-direction: column;
+  border: 1.5px solid var(--gray-200);
+  overflow: hidden;
 }}
-.nav-btn {{
-  padding: 1rem 1.5rem; background: white; border: 2px solid var(--gray-200);
-  border-radius: 8px; font-family: Verdana,sans-serif; font-size: 12px;
-  font-weight: 700; color: var(--gray-700); cursor: pointer; transition: all .3s;
+.acc-panel-title {{
+  font-family: Verdana,sans-serif; font-size: 11px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .6px; color: var(--gray-700);
+  padding: 0 16px 10px; border-bottom: 2px solid var(--gray-200); margin-bottom: 4px;
 }}
-.nav-btn:hover  {{ border-color: var(--primary-blue); color: var(--primary-blue); transform: scale(1.05); }}
-.nav-btn:focus  {{ outline: 2px solid var(--primary-blue); outline-offset: 2px; }}
-.nav-btn.active {{ background: var(--primary-blue); border-color: var(--primary-blue); color: white; box-shadow: var(--shadow-md); }}
+.acc-item {{
+  border-bottom: 1px solid var(--gray-100);
+}}
+.acc-item:last-child {{ border-bottom: none; }}
+.acc-header {{
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; background: transparent; border: none;
+  font-family: Verdana,sans-serif; font-size: 12px; font-weight: 700;
+  color: var(--gray-700); cursor: pointer; text-align: left;
+  transition: background .2s, color .2s;
+}}
+.acc-header:hover {{ background: var(--gray-100); color: var(--primary-blue); }}
+.acc-header.acc-active {{ color: var(--primary-blue); background: var(--blue-bg); }}
+.acc-icon  {{ font-size: 15px; flex-shrink: 0; }}
+.acc-label {{ flex: 1; line-height: 1.3; }}
+.acc-arrow {{
+  font-size: 11px; color: var(--gray-700); flex-shrink: 0;
+  transition: transform .25s;
+}}
+.acc-item.acc-open .acc-arrow {{ color: var(--primary-blue); }}
+.acc-body {{
+  max-height: 0; overflow: hidden; opacity: 0;
+  transition: max-height .3s ease, opacity .25s ease;
+  background: var(--gray-50);
+  padding: 0 16px;
+}}
+.acc-item.acc-open .acc-body {{ /* JS sets max-height + opacity */ }}
+.acc-goto-btn {{
+  display: block; width: 100%; text-align: left;
+  padding: 8px 10px; margin: 8px 0;
+  background: white; border: 1.5px solid var(--primary-blue);
+  border-radius: 8px; font-family: Verdana,sans-serif; font-size: 11px;
+  font-weight: 700; color: var(--primary-blue); cursor: pointer;
+  transition: background .2s, color .2s;
+}}
+.acc-goto-btn:hover {{ background: var(--primary-blue); color: white; }}
 
+/* ── CONTENT LAYOUT (sidebar + main) ── */
+.content-layout {{
+  display: flex; gap: 28px; align-items: flex-start; width: 100%;
+}}
 /* ── MAIN CONTENT / SECTIONS ── */
-.main-content {{ display: flex; flex-direction: column; gap: 32px; width: 100%; }}
+.main-content {{ display: flex; flex-direction: column; gap: 32px; flex: 1; min-width: 0; }}
 .lesson-section {{
   width: 100%; margin: 2rem 0; border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0,0,0,.1); background: white; overflow: hidden;
@@ -2324,9 +2581,9 @@ body {{
 }}
 .def-properties li.def-example strong {{ color: var(--primary-dark); }}
 
-/* ── WORKING PROCESS (SVG Infographic) ── */
-/* The generated SVG animation is self-contained with inline <style>.    */
-/* These rules provide fallback layout for the outer wrapper only.       */
+/* ── WORKING PROCESS (Unique SVG per topic) ── */
+/* The generated SVG animation is fully self-contained with inline <style>.  */
+/* These rules provide only the minimal outer-wrapper fallback layout.        */
 .working-process-section {{
   margin: 16px 0;
   font-family: 'Nunito', Verdana, sans-serif;
@@ -2370,12 +2627,12 @@ body {{
 }}
 .formulas-title {{ font-family: Verdana,sans-serif; font-size: clamp(1.3rem,4vw,1.8rem); font-weight: 700; color: var(--gray-900); margin-bottom: 6px; }}
 .formulas-subtitle {{ font-family: Verdana,sans-serif; font-size: .9rem; color: var(--gray-700); font-weight: 500; }}
-.formula-cards-grid {{ display: grid; grid-template-columns: 1fr; gap: 20px; }}
-@media (min-width: 768px) {{ .formula-cards-grid {{ grid-template-columns: repeat(2,1fr); }} }}
+.formula-cards-stack {{ display: flex; flex-direction: column; gap: 24px; }}
 .formula-card {{
   background: white; border-left: 5px solid #7c3aed;
   border-radius: 0 12px 12px 0; padding: 2rem; line-height: 1.5;
   box-shadow: var(--shadow-md); transition: all .3s; font-family: Verdana,sans-serif;
+  width: 100%;
 }}
 .formula-card:hover {{ transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,.15); }}
 .formula-name {{ font-family: Verdana,sans-serif; font-size: clamp(1rem,2.5vw,1.15rem); font-weight: 700; color: #7c3aed; margin-bottom: 16px; text-align: center; }}
@@ -2391,17 +2648,6 @@ body {{
 .symbols-table td {{ padding: 8px 12px; vertical-align: top; font-family: Verdana,sans-serif; }}
 .symbol-var {{ font-family: var(--font-mono); font-weight: 700; color: #7c3aed; white-space: nowrap; width: 100px; }}
 .symbol-desc {{ color: var(--text-dark); font-size: .9rem; line-height: 1.5; }}
-.formula-when {{
-  background: var(--blue-bg); border-left: 4px solid var(--blue-border);
-  border-radius: var(--radius-sm); padding: 12px 16px; margin: 16px 0;
-  font-family: Verdana,sans-serif; font-size: .9rem; line-height: 1.6;
-}}
-.formula-example {{
-  background: var(--green-bg); border: 2px solid var(--green-border);
-  border-radius: var(--radius-md); padding: 16px; margin: 16px 0;
-}}
-.example-title {{ font-family: Verdana,sans-serif; font-size: .9rem; font-weight: 800; color: #15803d; margin-bottom: 10px; }}
-.example-text {{ font-family: var(--font-mono); font-size: .9rem; color: var(--text-dark); line-height: 1.7; }}
 .formulas-practice {{
   margin-top: 24px; padding: 14px 18px;
   background: var(--yellow-bg); border: 2px dashed var(--yellow-border);
@@ -2620,9 +2866,14 @@ body {{
   }}
   .page-header, .lesson-section, .page-footer {{ background: #1e293b; color: #f1f5f9; }}
   .section-header h2 {{ color: #f1f5f9; }}
-  .section-nav {{ background: rgba(30,41,59,.97); }}
-  .nav-btn {{ background: #1e293b; border-color: #334155; color: #cbd5e1; }}
-  .nav-btn.active {{ background: var(--primary-blue); color: white; }}
+  .section-nav {{ background: #1e293b; border-color: #334155; }}
+  .acc-header {{ color: #cbd5e1; }}
+  .acc-header:hover {{ background: #0f172a; color: #93c5fd; }}
+  .acc-header.acc-active {{ background: rgba(59,130,246,.12); color: #93c5fd; }}
+  .acc-body {{ background: #0f172a; }}
+  .acc-goto-btn {{ background: #1e293b; color: #93c5fd; border-color: #3b82f6; }}
+  .acc-goto-btn:hover {{ background: #3b82f6; color: white; }}
+  .acc-panel-title {{ color: #94a3b8; border-color: #334155; }}
   .classification-bar {{ background: #1e293b; }}
   .concept-card, .formula-card, .app-card {{ background: #1e293b; color: #f1f5f9; }}
   .concept-definition, .concept-body p, .concept-bullets li,
@@ -2635,9 +2886,7 @@ body {{
   .q-opt {{ background: #0f172a; border-color: #334155; color: #e2e8f0; }}
   .tc-table td {{ color: #e2e8f0; }}
   .uploaded-image-wrap {{ background: #1e293b; border-color: #334155; }}
-  .formula-when {{ color: #e2e8f0; }}
   .symbol-desc {{ color: #e2e8f0; }}
-  .example-text {{ color: #e2e8f0; }}
   .deriv-intro {{ background: #1e293b; }}
   .deriv-intro p, .deriv-step-explain, .deriv-meaning p {{ color: #e2e8f0; }}
   .deriv-step {{ background: #1e293b; border-color: #334155; }}
@@ -2655,10 +2904,19 @@ body {{
   .page-container {{ padding: 24px 16px; }}
   .page-header {{ padding: 24px; }}
   .page-title {{ font-size: 1.8rem; }}
-  .section-nav {{ gap: 6px; padding: 8px; top: 0; }}
-  .nav-btn {{ font-size: 10px; padding: 6px 10px; }}
+  .content-layout {{ flex-direction: column; }}
+  .section-nav {{
+    position: static; width: 100%; max-width: 100%; min-width: unset;
+    flex-direction: row; flex-wrap: wrap; padding: 8px;
+    border-radius: var(--radius-md);
+  }}
+  .acc-panel-title {{ display: none; }}
+  .acc-item {{ border-bottom: none; border-right: 1px solid var(--gray-100); flex: 1; min-width: 90px; }}
+  .acc-header {{ font-size: 10px; padding: 8px 8px; gap: 4px; }}
+  .acc-body {{ position: absolute; z-index: 200; background: white; min-width: 160px;
+               border: 1.5px solid var(--primary-blue); border-radius: 8px;
+               padding: 0 10px; box-shadow: var(--shadow-lg); }}
   .lesson-section {{ padding: 24px 16px; margin: 1rem 0; }}
-  .formula-cards-grid {{ grid-template-columns: 1fr; }}
   .app-grid {{ grid-template-columns: 1fr; }}
   .quiz-tabs {{ gap: 4px; }}
   .quiz-tab {{ font-size: 11px; padding: 8px 6px; }}
@@ -2679,7 +2937,7 @@ body {{
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  generate_animation  — PRIMARY BACKEND ENTRY POINT  (v19.2)
+#  generate_animation  — PRIMARY BACKEND ENTRY POINT  (v19.3)
 # ════════════════════════════════════════════════════════════════════════
 
 async def generate_animation(prompt: str) -> dict:
@@ -2688,7 +2946,7 @@ async def generate_animation(prompt: str) -> dict:
 
     prompt = prompt.strip()
     log.info(f"\n{'═'*64}")
-    log.info(f"[generate_animation v19.2] prompt='{prompt}'")
+    log.info(f"[generate_animation v19.3] prompt='{prompt}'")
     log.info(f"{'═'*64}")
 
     subtopics_list = _extract_subtopics_from_input(prompt)
@@ -2707,7 +2965,7 @@ async def generate_animation(prompt: str) -> dict:
         topic = prompt
 
     is_specific = _is_specific_subtopic(topic)
-    log.info(f"[generate_animation v19.2] topic='{topic}' | specific_subtopic={is_specific}")
+    log.info(f"[generate_animation v19.3] topic='{topic}' | specific_subtopic={is_specific}")
 
     generator = UltimateLearningGenerator()
     result = await generator.generate_complete_lesson(
@@ -2724,7 +2982,7 @@ async def generate_animation(prompt: str) -> dict:
     if not explanation:
         explanation = f"A complete interactive lesson on {topic}."
 
-    log.info(f"[generate_animation v19.2] ✅ HTML={len(html):,} chars | topic='{topic}'")
+    log.info(f"[generate_animation v19.3] ✅ HTML={len(html):,} chars | topic='{topic}'")
 
     return {
         "title":          topic,
@@ -2820,7 +3078,7 @@ def subtopics_json_to_genzet_args(subtopics_json_str: str, subtopic: str) -> dic
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  generate_genzet_book_content  (v19.2)
+#  generate_genzet_book_content  (v19.3)
 # ════════════════════════════════════════════════════════════════════════
 
 async def generate_genzet_book_content(
@@ -2842,11 +3100,11 @@ async def generate_genzet_book_content(
     )
 
     if subtopic and _is_specific_subtopic(subtopic):
-        log.info(f"[generate_genzet_book_content v19.2] specific sub-topic detected: '{subtopic}'")
+        log.info(f"[generate_genzet_book_content v19.3] specific sub-topic detected: '{subtopic}'")
 
     log.info(f"\n{'═'*64}")
-    log.info(f"[generate_genzet_book_content v19.2] topic='{full_topic}'")
-    log.info(f"[generate_genzet_book_content v19.2] pdf_context={len(pdf_context):,} chars  "
+    log.info(f"[generate_genzet_book_content v19.3] topic='{full_topic}'")
+    log.info(f"[generate_genzet_book_content v19.3] pdf_context={len(pdf_context):,} chars  "
              f"subtopics={len(subtopics_list or [])}")
     log.info(f"{'═'*64}")
 
@@ -2880,7 +3138,7 @@ async def generate_genzet_book_content(
     if not explanation:
         explanation = f"A complete textbook-grounded lesson on {full_topic}."
 
-    log.info(f"[generate_genzet_book_content v19.2] ✅ HTML={len(html):,} chars")
+    log.info(f"[generate_genzet_book_content v19.3] ✅ HTML={len(html):,} chars")
 
     return {
         "title":          full_topic,
@@ -2916,24 +3174,23 @@ if __name__ == "__main__":
     output_file = f"ultimate_learning_{topic.replace(' ', '_').lower()}.html"
 
     print(f"\n{'='*64}")
-    print(f"ULTIMATE LEARNING CONTENT GENERATOR  v19.2")
+    print(f"ULTIMATE LEARNING CONTENT GENERATOR  v19.3")
     print(f"{'='*64}")
     print(f"Topic             : {topic}")
     print(f"Specific sub-topic: {_is_specific_subtopic(topic)}")
     print(f"Subtopics         : {subtopics if subtopics else '(auto-detect)'}")
     print(f"Output            : {output_file}")
-    print(f"\nv19.2 CHANGES:")
-    print(f"  ✅ REWORKED: Working Process → SVG Infographic Scene Animation")
-    print(f"     • Full illustrated scene (sky/ground/environment per topic)")
-    print(f"     • Rich linearGradient/radialGradient fills in <defs>")
-    print(f"     • feDropShadow + feGaussianBlur filter effects")
-    print(f"     • Smooth looping <animate>/<animateTransform> (zero JS)")
-    print(f"     • Animated dashed flow lines with stroke-dashoffset")
-    print(f"     • Pill-badge component labels with drop shadows")
-    print(f"     • CSS @keyframes step captions (4-6 steps, zero JS)")
-    print(f"     • Topic-aware environment mapping")
-    print(f"     • Nunito + Baloo 2 Google Fonts typography")
-    print(f"     • Legend row below SVG")
+    print(f"\nv19.3 CHANGES:")
+    print(f"  ✅ REWORKED: Working Process → Unique Per-Topic SVG Animation")
+    print(f"     • 5-step topic analysis before any drawing begins")
+    print(f"     • 10 layout archetypes: RADIAL, PIPELINE, CASCADE,")
+    print(f"       CROSS-SECTION, WAVE, NETWORK, MICROSCOPIC, ORBITAL,")
+    print(f"       PCB/DIGITAL, DASHBOARD")
+    print(f"     • Topic-derived color palette (not generic blue/orange)")
+    print(f"     • Motion character matched to topic behavior")
+    print(f"     • Scene objects are REAL topic components, not boxes")
+    print(f"     • Layout structure visually encodes the topic")
+    print(f"     • Zero JS — all animation via SVG native + CSS @keyframes")
     print(f"{'='*64}\n")
 
     result = generate_ultimate_learning_content_sync(
