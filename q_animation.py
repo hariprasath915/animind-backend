@@ -78,6 +78,16 @@ import asyncio
 import html as html_module
 from typing import Optional
 
+# Gemini SDK (google-genai >= 0.8). Import is guarded so that the file
+# still loads even when the package is not installed; in that case Gemini
+# generation is skipped and Claude handles all scenes (safe fallback).
+try:
+    from google import genai as _google_genai
+    _GEMINI_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _google_genai = None
+    _GEMINI_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
@@ -99,6 +109,23 @@ CONCEPT_MODEL        = "claude-sonnet-4-6"
 SOLUTION_MODEL       = "claude-sonnet-4-6"
 Q_MODEL              = SOLUTION_MODEL
 HAIKU_SOLUTION_MODEL = "claude-haiku-4-5"
+
+# ---------------------------------------------------------------------------
+# Gemini client  (coexists with the Anthropic client above)
+# ---------------------------------------------------------------------------
+# Set GEMINI_API_KEY in your environment.  If the key is missing or the
+# google-genai package is not installed the Gemini stage is silently skipped
+# and Claude generates ALL scenes exactly as before.
+GEMINI_MODEL = "gemini-3.1-pro-preview"    # Gemini 3.1 Pro — Advanced maths and code (confirmed API string)
+_gemini_client = None
+if _GEMINI_AVAILABLE:
+    import os as _os
+    _gkey = _os.environ.get("GEMINI_API_KEY", "")
+    if _gkey:
+        try:
+            _gemini_client = _google_genai.Client(api_key=_gkey)
+        except Exception as _gem_init_err:
+            print(f"[QAnim Gemini] Client init failed: {_gem_init_err} -- Gemini disabled")
 
 # Token budgets raised well above the old limits. Claude Sonnet 4.6 and
 # Claude Haiku 4.5 both support up to 64,000 output tokens, so there is
@@ -5151,6 +5178,251 @@ def _unescape_json_string(s):
 #    - buildDots() + showScene() + animateScene0-4()
 # ===========================================================================
 
+# ===========================================================================
+#  MODULE 9 -- GeminiScene1Generator
+#
+#  Generates ONLY Scene 0 ("What Are We Looking At?") using Gemini.
+#  Returns a tuple:
+#      (scene0_svg_group: str, animate_scene0_js: str)
+#  where scene0_svg_group is the raw <g id="scene-0" ...>...</g> block and
+#  animate_scene0_js is a self-contained animateScene0() function body.
+#
+#  If Gemini is unavailable or fails the caller receives ("", "") and the
+#  pipeline falls back to using Claude's scene-0 without modification.
+# ===========================================================================
+
+class GeminiScene1Generator:
+    """Generates the Scene 0 SVG group + animateScene0 JS using Gemini."""
+
+    # Reference animation style (from the provided gemini-code HTML file) is
+    # embedded as style context so Gemini understands the visual quality bar.
+    _SCENE1_SYSTEM = """\
+You are QAnim Scene-1 Engine — a specialist SVG animator whose ONLY job is to
+generate Scene 0 ("What Are We Looking At?") of an educational SVG animation.
+
+You produce a SINGLE scene that visually hooks a student before the detailed
+explanation begins. The scene must:
+  • Introduce the question topic with a clear, beautiful diagram.
+  • Place objects elegantly with smooth fade-in appearance animations.
+  • Use clean, professional SVG on a LIGHT (#f8fafc) background.
+  • Follow the exact structural conventions below so it integrates seamlessly
+    into a multi-scene QAnim v0.2 animation page.
+
+═══ ANIMATION STYLE REFERENCE ═══
+The animation style is modern, dark-background-free, educational. Use:
+  - Smooth opacity fade-ins via setTimeout chains (no CSS keyframes).
+  - Linear/radial gradients for depth on physical objects.
+  - Accent colour for Scene 0: #3b5bdb (deep blue).
+  - Info card at the bottom of the SVG (y=490, inside the <g> group).
+  - feGaussianBlur glow filters on key visual elements.
+  - Clear labels with ample spacing (no text overlaps, ever).
+
+═══ OUTPUT FORMAT (strict) ═══
+Return ONLY a JSON object with exactly two keys — no markdown, no fences:
+{
+  "scene0_svg_group": "<g id=\\"scene-0\\" class=\\"scene\\">...</g>",
+  "animate_scene0_js": "function animateScene0() { ... }"
+}
+
+scene0_svg_group rules:
+  - Must start with <g id="scene-0" class="scene"> (NO display attribute).
+  - Must end with </g>.
+  - The group assumes it will be placed inside an SVG with viewBox="0 0 1000 600".
+  - All child elements start with opacity="0" (except the background rect).
+  - Include a bottom info card at y=490:
+      <rect x="60" y="490" width="880" height="90" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <rect x="60" y="490" width="5" height="90" rx="3" fill="#3b5bdb"/>
+      <text x="85" y="516" font-size="14" fill="#1e293b" font-weight="700">Scene 1 — What Are We Looking At?</text>
+      <text x="85" y="540" font-size="13" fill="#475569">First simple description line.</text>
+      <text x="85" y="560" font-size="13" fill="#475569">Second simple description line.</text>
+  - Use SIMPLE English in description lines (short sentences, friendly teacher tone).
+  - ZERO text overlaps anywhere in the group.
+  - NO dark backgrounds.
+
+animate_scene0_js rules:
+  - Must be a complete function declaration: function animateScene0() { ... }
+  - Uses only setTimeout + getElementById + setAttribute calls (NO CSS classes).
+  - Fades in elements by ID using opacity setAttribute to "1".
+  - Uses staggered delays (e.g. 100ms, 300ms, 600ms, 900ms …).
+  - MUST NOT define or call showScene, buildDots, nextStep, prevStep.
+  - MUST NOT define window.totalSteps or window.currentStep.
+  - MUST NOT use const, let, backtick template literals, or arrow functions.
+  - MUST NOT contain any DOMContentLoaded listener.
+  - Use only var for variable declarations.
+"""
+
+    @classmethod
+    async def generate_async(cls, question: str, category: str, n_scenes: int) -> tuple:
+        """
+        Async wrapper: runs Gemini API call in a thread-pool executor so it
+        doesn't block the asyncio event loop.
+        Returns (scene0_svg_group, animate_scene0_js) or ("", "") on failure.
+        """
+        if _gemini_client is None:
+            QAnimLogger.warn("Gemini", "Client not available -- skipping Scene 1 generation")
+            return "", ""
+
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(None, cls._call_gemini, question, category, n_scenes)
+            return result
+        except Exception as e:
+            QAnimLogger.error("Gemini", f"Scene 1 async generation failed: {e}")
+            return "", ""
+
+    @classmethod
+    def _call_gemini(cls, question: str, category: str, n_scenes: int) -> tuple:
+        """Blocking Gemini API call (runs in executor)."""
+        QAnimLogger.info("Gemini", f"Generating Scene 1 for category={category} n_scenes={n_scenes}...")
+        user_prompt = (
+            f"Generate ONLY Scene 0 (\"What Are We Looking At?\") for this educational animation.\n\n"
+            f"QUESTION: {question}\n"
+            f"CATEGORY: {category}\n"
+            f"TOTAL SCENES IN ANIMATION: {n_scenes}\n\n"
+            f"The scene should:\n"
+            f"- Visually introduce the problem setup with a clear, appealing diagram.\n"
+            f"- Animate key objects appearing one by one with staggered fade-ins.\n"
+            f"- Use accent colour #3b5bdb for highlights.\n"
+            f"- Include the bottom info card showing 'Scene 1 of {n_scenes} — What Are We Looking At?' "
+            f"with two simple, friendly description lines.\n"
+            f"- Hook the student visually before the detailed explanation begins.\n\n"
+            f"Return ONLY raw JSON with keys 'scene0_svg_group' and 'animate_scene0_js'."
+        )
+        try:
+            response = _gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=cls._SCENE1_SYSTEM + "\n\n" + user_prompt,
+            )
+            raw = response.text.strip()
+        except Exception as e:
+            QAnimLogger.error("Gemini", f"API call failed: {e}")
+            return "", ""
+
+        # Strip markdown fences if present
+        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()
+
+        try:
+            data = json.loads(raw)
+            svg_group  = data.get("scene0_svg_group", "").strip()
+            anim_fn    = data.get("animate_scene0_js", "").strip()
+
+            # Basic sanity checks
+            if not svg_group or '<g' not in svg_group:
+                QAnimLogger.warn("Gemini", "scene0_svg_group missing or invalid -- skipping")
+                return "", ""
+            if not anim_fn or 'animateScene0' not in anim_fn:
+                QAnimLogger.warn("Gemini", "animate_scene0_js missing or invalid -- skipping")
+                return "", ""
+
+            QAnimLogger.ok("Gemini", f"Scene 1 generated: svg_len={len(svg_group)} js_len={len(anim_fn)}")
+            return svg_group, anim_fn
+        except (json.JSONDecodeError, KeyError, AttributeError) as e:
+            QAnimLogger.warn("Gemini", f"JSON parse failed: {e} -- skipping Scene 1")
+            return "", ""
+
+
+def _splice_gemini_scene0_into_svg(svg_block: str, anim_script: str,
+                                   gemini_svg_group: str, gemini_anim_fn: str) -> tuple:
+    """
+    Replaces the Claude-generated <g id="scene-0" ...>...</g> block in `svg_block`
+    with the Gemini-generated one, and replaces the animateScene0() function in
+    `anim_script` with the Gemini-generated one.
+
+    Returns (patched_svg_block, patched_anim_script).
+    Falls back to originals silently on any error.
+    """
+    if not gemini_svg_group or not gemini_anim_fn:
+        return svg_block, anim_script
+
+    try:
+        # ── Validate Gemini group starts with a real <g id="scene-0"> tag ────
+        if not re.match(r'\s*<g[\s>]', gemini_svg_group):
+            QAnimLogger.warn("GeminiSplice", "gemini_svg_group does not start with <g> -- skipping splice")
+            return svg_block, anim_script
+
+        # ── Replace scene-0 <g> group ──────────────────────────────────────────
+        # Match <g id="scene-0" ...> ... </g> (balanced depth counting).
+        scene0_start = -1
+        for pat in [r'<g\s[^>]*id=["\']scene-0["\']', r"<g\s[^>]*id='scene-0'", r'<g id="scene-0"']:
+            m = re.search(pat, svg_block, re.IGNORECASE)
+            if m:
+                scene0_start = m.start()
+                break
+
+        if scene0_start == -1:
+            QAnimLogger.warn("GeminiSplice", "Could not find scene-0 <g> in Claude SVG -- skipping splice")
+            return svg_block, anim_script
+
+        # Walk forward with depth counting to find the matching </g>
+        depth = 0
+        i = scene0_start
+        scene0_end = -1
+        svg_lower = svg_block.lower()
+        while i < len(svg_lower):
+            if svg_lower[i:i+2] == '<g':
+                nc = svg_lower[i+2] if i+2 < len(svg_lower) else ''
+                if nc in (' ', '\t', '\n', '\r', '>'):
+                    depth += 1
+                    i += 2
+                    continue
+            if svg_lower[i:i+4] == '</g>':
+                depth -= 1
+                if depth == 0:
+                    scene0_end = i + 4
+                    break
+                i += 4
+                continue
+            i += 1
+
+        if scene0_end == -1:
+            QAnimLogger.warn("GeminiSplice", "Could not find end of scene-0 </g> -- skipping splice")
+            return svg_block, anim_script
+
+        patched_svg = svg_block[:scene0_start] + gemini_svg_group + svg_block[scene0_end:]
+        QAnimLogger.ok("GeminiSplice", f"Replaced scene-0 SVG group (orig={scene0_end-scene0_start} new={len(gemini_svg_group)} chars)")
+
+        # ── Replace animateScene0 function in anim_script ─────────────────────
+        # Match: function animateScene0() { ... }  (balanced brace counting)
+        fn_match = re.search(r'function\s+animateScene0\s*\(\s*\)', anim_script)
+        if fn_match:
+            fn_start = fn_match.start()
+            brace_start = anim_script.find('{', fn_start)
+            if brace_start != -1:
+                depth = 0
+                j = brace_start
+                fn_end = -1
+                while j < len(anim_script):
+                    if anim_script[j] == '{':
+                        depth += 1
+                    elif anim_script[j] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            fn_end = j + 1
+                            break
+                    j += 1
+                if fn_end != -1:
+                    patched_script = (
+                        anim_script[:fn_start]
+                        + gemini_anim_fn
+                        + anim_script[fn_end:]
+                    )
+                    QAnimLogger.ok("GeminiSplice", "Replaced animateScene0() in anim_script")
+                    return patched_svg, patched_script
+                else:
+                    QAnimLogger.warn("GeminiSplice", "Could not find end of animateScene0 body -- using original JS")
+            else:
+                QAnimLogger.warn("GeminiSplice", "Could not find opening brace of animateScene0 -- using original JS")
+        else:
+            QAnimLogger.warn("GeminiSplice", "animateScene0 not found in anim_script -- using original JS")
+
+        # JS replacement failed but SVG was patched -- return patched SVG with original JS
+        return patched_svg, anim_script
+
+    except Exception as e:
+        QAnimLogger.error("GeminiSplice", f"Splice raised unexpectedly: {e} -- using originals")
+        return svg_block, anim_script
+
+
 def _build_system_prompt(n_scenes: int) -> str:
     """
     Build the main SYSTEM prompt for the solution animation AI,
@@ -5917,20 +6189,27 @@ async def _run_generation_pipeline(question):
             _generate_concept_animation(ai_question, category, n_scenes, enrichment)
         )
 
-        # Solution AI + Haiku run concurrently; concept runs in parallel too
+        # ── [Gemini] Scene 1 starts concurrently with the heavy Claude stages ──
+        QAnimLogger.info("Gemini", "Generating Scene 1 concurrently with Claude stages...")
+        gemini_fut = asyncio.ensure_future(
+            GeminiScene1Generator.generate_async(ai_question, category, n_scenes)
+        )
+
+        # Solution AI + Haiku run concurrently; concept + Gemini run in parallel too
         sol_raw, haiku_sol = await asyncio.gather(
             _run_solution_ai(),
             HaikuSolutionGenerator.generate_async(ai_question, haiku_hint),
         )
 
-        # Wait for concept (may already be done — it started at the same time)
+        # Wait for concept + Gemini (may already be done -- started at same time)
         concept_html = await concept_fut
+        gemini_scene0_group, gemini_animate0_fn = await gemini_fut
 
-        return concept_html, sol_raw, haiku_sol, simple_result
+        return concept_html, sol_raw, haiku_sol, simple_result, gemini_scene0_group, gemini_animate0_fn
 
     QAnimLogger.info("Pipeline", "Launching concurrent AI stages (0.5 + 1 + 2 + 3)...")
     try:
-        concept_html, sol_raw, haiku_sol, simple_result = await _run_all_stages()
+        concept_html, sol_raw, haiku_sol, simple_result, gemini_scene0_group, gemini_animate0_fn = await _run_all_stages()
     except Exception as e:
         QAnimLogger.error("Pipeline", f"Concurrent generation failed: {e}")
         return _build_failure_result(question, f"API error: {e}")
@@ -5991,6 +6270,34 @@ async def _run_generation_pipeline(question):
         QAnimLogger.error("PageBuilder", f"build_page_html failed: {e}")
         page_html = RecoveryEngine.fallback_html(question, f"Page build error: {e}")
         scene_descs = []
+
+    # ── [Gemini] Splice Scene 1 into the built page ─────────────────────────
+    # build_page_html already extracted the SVG block + anim_script from Claude's
+    # output.  We now replace scene-0 content with Gemini's version by patching
+    # the raw page_html in-place using the splice helper.
+    if gemini_scene0_group and gemini_animate0_fn:
+        QAnimLogger.info("Merging", "Splicing Gemini Scene 1 into page HTML...")
+        try:
+            # Extract current SVG + script from page_html, splice, then put back.
+            _cur_svg, _cur_script = _extract_svg_from_html(page_html)
+            _new_svg, _new_script = _splice_gemini_scene0_into_svg(
+                _cur_svg, _cur_script, gemini_scene0_group, gemini_animate0_fn
+            )
+            if _new_svg != _cur_svg or _new_script != _cur_script:
+                # Replace old SVG block in page_html
+                if _cur_svg:
+                    page_html = page_html.replace(_cur_svg, _new_svg, 1)
+                # Replace old anim_script in page_html (strip wrapper tags for matching)
+                if _cur_script and _new_script != _cur_script:
+                    page_html = page_html.replace(_cur_script, _new_script, 1)
+                QAnimLogger.ok("Merging", "Gemini Scene 1 spliced successfully.")
+            else:
+                QAnimLogger.warn("Merging", "Splice produced no changes -- Gemini Scene 1 not applied")
+        except Exception as _splice_err:
+            QAnimLogger.error("Merging", f"Splice failed: {_splice_err} -- using Claude's scene-0")
+    else:
+        QAnimLogger.info("Merging", "No Gemini scene-0 content -- using Claude's scene-0 (fallback)")
+    QAnimLogger.info("Pipeline", "Completed successfully.")
 
     # Validate the base page structure
     try:
