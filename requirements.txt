@@ -7,6 +7,7 @@ starlette==0.38.6
 anthropic==0.109.1
 httpx==0.28.1
 # ── Google Generative AI ───────────────────────────────────────────────
+google-generativeai==0.8.5
 google-genai==1.16.1
 # ── Authentication ─────────────────────────────────────────────────────
 # python-jose: verifies Supabase-issued HS256 JWTs on every protected request
