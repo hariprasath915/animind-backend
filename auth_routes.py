@@ -32,8 +32,11 @@
 # ============================================================
 
 import os
+import base64
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, EmailStr, Field
@@ -393,34 +396,46 @@ def get_me(current_user: dict = Depends(get_current_user)):
 @router.get("/google")
 def google_login(redirect_to: Optional[str] = None):
     """
-    Return the Supabase-generated Google OAuth sign-in URL.
+    Return the Google OAuth sign-in URL with manual PKCE flow.
 
-    The frontend opens this URL in a popup.  After the user approves,
-    Google redirects to Supabase, which then redirects to `redirect_to`
-    with the access_token in the URL fragment (#access_token=...).
-    The callback page posts the token back to the opener via postMessage.
-
-    IMPORTANT: We force flow_type='implicit' because the PKCE code verifier is
-    generated server-side and cannot be shared with the browser for the exchange
-    step.  Implicit flow sends the token directly in the URL hash — no exchange needed.
+    Since the Supabase client hides the generated code_verifier in its own memory
+    (which is lost between requests in a stateless API), we generate the PKCE 
+    challenge and verifier manually here.
+    
+    We return the `verifier` to the frontend. The frontend stores it in localStorage,
+    redirects the browser to the `url`, and later sends the `verifier` back to us 
+    during the code exchange step.
     """
     callback = redirect_to or GOOGLE_OAUTH_CALLBACK_URL
-    supabase = _anon_client()
-    try:
-        res = supabase.auth.sign_in_with_oauth({
-            "provider": "google",
-            "options": {
-                "redirect_to": callback,
-                "flow_type":   "implicit",   # ← forces #access_token in redirect (no PKCE)
-                "query_params": {"access_type": "offline", "prompt": "consent"},
-            },
-        })
-        return {"url": res.url, "provider": "google", "redirect_to": callback}
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Google OAuth not configured in Supabase: {exc}",
-        )
+    supabase_url = os.getenv("SUPABASE_URL")
+    
+    if not supabase_url:
+        raise HTTPException(status_code=500, detail="SUPABASE_URL not configured")
+
+    # 1. Generate PKCE verifier and challenge
+    verifier = base64.urlsafe_b64encode(os.urandom(32)).decode('utf-8').rstrip('=')
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode('utf-8')).digest()
+    ).decode('utf-8').rstrip('=')
+
+    # 2. Build the authorize URL
+    query_params = {
+        "provider": "google",
+        "redirect_to": callback,
+        "code_challenge": challenge,
+        "code_challenge_method": "s256",
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    
+    auth_url = f"{supabase_url}/auth/v1/authorize?{urlencode(query_params)}"
+
+    return {
+        "url": auth_url, 
+        "provider": "google", 
+        "redirect_to": callback,
+        "verifier": verifier  # Frontend must save this!
+    }
 
 
 
@@ -479,21 +494,20 @@ def google_callback(body: OAuthCallbackRequest):
 
 class ExchangeCodeRequest(BaseModel):
     code: str
+    verifier: str
 
 
 @router.post("/google/exchange-code", response_model=AuthResponse)
 def google_exchange_code(body: ExchangeCodeRequest):
     """
     Exchange a Supabase PKCE auth code for a session.
-
-    Supabase uses PKCE by default — after the user authenticates with Google,
-    Supabase redirects to oauth_callback.html?code=...  This endpoint exchanges
-    that code for access_token + refresh_token using the Supabase admin client,
-    then upserts the user profile and returns an AuthResponse.
     """
     supabase = _anon_client()
     try:
-        res = supabase.auth.exchange_code_for_session({"auth_code": body.code})
+        res = supabase.auth.exchange_code_for_session({
+            "auth_code": body.code,
+            "code_verifier": body.verifier
+        })
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
