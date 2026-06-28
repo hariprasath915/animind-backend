@@ -470,3 +470,63 @@ def google_callback(body: OAuthCallbackRequest):
         dashboard_url=f"{FRONTEND_URL}/dashboard",
         message=f"Welcome, {name}!",
     )
+
+
+class ExchangeCodeRequest(BaseModel):
+    code: str
+
+
+@router.post("/google/exchange-code", response_model=AuthResponse)
+def google_exchange_code(body: ExchangeCodeRequest):
+    """
+    Exchange a Supabase PKCE auth code for a session.
+
+    Supabase uses PKCE by default — after the user authenticates with Google,
+    Supabase redirects to oauth_callback.html?code=...  This endpoint exchanges
+    that code for access_token + refresh_token using the Supabase admin client,
+    then upserts the user profile and returns an AuthResponse.
+    """
+    supabase = _anon_client()
+    try:
+        res = supabase.auth.exchange_code_for_session({"auth_code": body.code})
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"PKCE code exchange failed: {exc}",
+        )
+
+    if not res or res.user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not exchange auth code for session.",
+        )
+
+    user       = res.user
+    session    = res.session
+    token      = session.access_token if session else ""
+    user_id    = str(user.id)
+    email      = user.email or ""
+    meta       = user.user_metadata or {}
+    name       = meta.get("full_name") or meta.get("name") or email
+    avatar_url = meta.get("avatar_url") or meta.get("picture", "")
+
+    _upsert_user_profile(
+        user_id=user_id,
+        email=email,
+        name=name,
+        avatar_url=avatar_url,
+        provider="google",
+    )
+
+    print(f"[AUTH] ✅ Google PKCE exchange: {email} (user_id={user_id})")
+    return AuthResponse(
+        token=token,
+        user_id=user_id,
+        email=email,
+        name=name,
+        provider="google",
+        avatar_url=avatar_url,
+        is_new_user=False,
+        dashboard_url=f"{FRONTEND_URL}/dashboard",
+        message=f"Welcome, {name}!",
+    )
