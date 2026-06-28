@@ -3,30 +3,25 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 starlette==0.38.6
-
 # ── AI / Claude ────────────────────────────────────────────────────────
 anthropic==0.109.1
 httpx==0.28.1
-
+# ── Google Generative AI ───────────────────────────────────────────────
+google-genai==1.16.1
 # ── Authentication ─────────────────────────────────────────────────────
 # python-jose: verifies Supabase-issued HS256 JWTs on every protected request
 python-jose[cryptography]==3.3.0
-
 # ── Supabase — Cloud Database + Auth ───────────────────────────────────
 # supabase 2.31.0 is the latest stable; gotrue 2.12.4 is its compatible peer
 supabase==2.31.0
-
 # ── Environment ────────────────────────────────────────────────────────
-
 # ── Data Validation ────────────────────────────────────────────────────
 pydantic>=2.11.4
 pydantic_core>=2.33.2
 email-validator==2.3.0
-
 # ── PDF Processing ─────────────────────────────────────────────────────
 pdfplumber==0.11.0
 PyPDF2==3.0.1
-
 # ── REMOVED (no longer needed after Supabase migration) ────────────────
 # sqlalchemy       — DB ORM replaced by supabase-py client
 # psycopg2-binary  — PostgreSQL driver replaced by Supabase REST API
