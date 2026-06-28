@@ -397,9 +397,12 @@ def google_login(redirect_to: Optional[str] = None):
 
     The frontend opens this URL in a popup.  After the user approves,
     Google redirects to Supabase, which then redirects to `redirect_to`
-    (defaults to GOOGLE_OAUTH_CALLBACK_URL = {FRONTEND_URL}/oauth_callback.html)
-    with the access_token in the URL fragment.  The callback page then
-    posts the token back to the opener via postMessage.
+    with the access_token in the URL fragment (#access_token=...).
+    The callback page posts the token back to the opener via postMessage.
+
+    IMPORTANT: We force flow_type='implicit' because the PKCE code verifier is
+    generated server-side and cannot be shared with the browser for the exchange
+    step.  Implicit flow sends the token directly in the URL hash — no exchange needed.
     """
     callback = redirect_to or GOOGLE_OAUTH_CALLBACK_URL
     supabase = _anon_client()
@@ -408,6 +411,7 @@ def google_login(redirect_to: Optional[str] = None):
             "provider": "google",
             "options": {
                 "redirect_to": callback,
+                "flow_type":   "implicit",   # ← forces #access_token in redirect (no PKCE)
                 "query_params": {"access_type": "offline", "prompt": "consent"},
             },
         })
@@ -417,6 +421,7 @@ def google_login(redirect_to: Optional[str] = None):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Google OAuth not configured in Supabase: {exc}",
         )
+
 
 
 @router.post("/google/callback", response_model=AuthResponse)
