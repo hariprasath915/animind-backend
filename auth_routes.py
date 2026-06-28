@@ -46,6 +46,15 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Frontend URL — used for OAuth redirect and dashboard_url in responses
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://genzet-app.vercel.app")
 
+# Google OAuth callback page — where Supabase redirects after Google sign-in.
+# Must be listed as an "Authorized redirect URI" in Google Cloud Console AND
+# configured as a "Redirect URL" in Supabase Dashboard → Authentication →
+# URL Configuration.  Override via env var for custom deployments.
+GOOGLE_OAUTH_CALLBACK_URL = os.getenv(
+    "GOOGLE_OAUTH_CALLBACK_URL",
+    f"{FRONTEND_URL}/oauth_callback.html",
+)
+
 
 # ── Lazy Supabase anon client (reads env vars at call time, not import) ──────
 def _anon_client():
@@ -383,8 +392,16 @@ def get_me(current_user: dict = Depends(get_current_user)):
 
 @router.get("/google")
 def google_login(redirect_to: Optional[str] = None):
-    """Return the Google OAuth sign-in URL."""
-    callback = redirect_to or f"{FRONTEND_URL}/auth/callback"
+    """
+    Return the Supabase-generated Google OAuth sign-in URL.
+
+    The frontend opens this URL in a popup.  After the user approves,
+    Google redirects to Supabase, which then redirects to `redirect_to`
+    (defaults to GOOGLE_OAUTH_CALLBACK_URL = {FRONTEND_URL}/oauth_callback.html)
+    with the access_token in the URL fragment.  The callback page then
+    posts the token back to the opener via postMessage.
+    """
+    callback = redirect_to or GOOGLE_OAUTH_CALLBACK_URL
     supabase = _anon_client()
     try:
         res = supabase.auth.sign_in_with_oauth({
