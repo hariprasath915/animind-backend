@@ -1,0 +1,842 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans, sans-serif); }
+
+  .sim-wrapper {
+    background: #0a0e1a;
+    border-radius: 16px;
+    padding: 20px;
+    color: #e0e6f0;
+    min-height: 560px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sim-title {
+    text-align: center;
+    font-size: 15px;
+    font-weight: 500;
+    color: #7eb8f7;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  .sim-grid {
+    display: grid;
+    grid-template-columns: 220px 1fr 220px;
+    gap: 16px;
+    align-items: start;
+  }
+
+  /* --- Controls Panel --- */
+  .controls-panel {
+    background: #111827;
+    border: 0.5px solid #2a3550;
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  .panel-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #4a6080;
+    margin-bottom: 10px;
+    font-weight: 500;
+  }
+
+  .control-row {
+    margin-bottom: 14px;
+  }
+
+  .control-row label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #a0b4cc;
+    margin-bottom: 5px;
+  }
+
+  .control-row label span {
+    color: #7eb8f7;
+    font-weight: 500;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    appearance: none;
+    outline: none;
+    cursor: pointer;
+  }
+
+  #freq-slider { background: linear-gradient(to right, #7b42f6, #e844f0); }
+  #intensity-slider { background: linear-gradient(to right, #1a4060, #f0c040); }
+  #voltage-slider { background: linear-gradient(to right, #b03030, #30b060); }
+
+  input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid #7eb8f7;
+    cursor: pointer;
+  }
+
+  .material-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .mat-btn {
+    background: #1a2540;
+    border: 0.5px solid #2a3550;
+    border-radius: 8px;
+    color: #a0b4cc;
+    font-size: 12px;
+    padding: 7px 10px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s;
+    font-family: var(--font-sans, sans-serif);
+  }
+
+  .mat-btn:hover { background: #1e3060; border-color: #3a5090; }
+  .mat-btn.active { background: #1a3a6e; border-color: #7eb8f7; color: #7eb8f7; }
+
+  /* --- Tube Canvas --- */
+  .tube-container {
+    position: relative;
+    height: 340px;
+  }
+
+  #tube-canvas {
+    width: 100%;
+    height: 100%;
+    border-radius: 10px;
+  }
+
+  /* --- Meters Panel --- */
+  .meters-panel {
+    background: #111827;
+    border: 0.5px solid #2a3550;
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .meter-card {
+    background: #0d1520;
+    border: 0.5px solid #2a3550;
+    border-radius: 10px;
+    padding: 12px;
+  }
+
+  .meter-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #4a6080;
+    margin-bottom: 6px;
+  }
+
+  .meter-display {
+    background: #050e1a;
+    border: 1px solid #1e3050;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: 'Courier New', monospace;
+    font-size: 20px;
+    color: #40e090;
+    text-align: right;
+    letter-spacing: 0.05em;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .meter-display.voltage { color: #f0a830; }
+  .meter-display.current { color: #40e090; }
+
+  .meter-unit {
+    font-size: 11px;
+    color: #4a8060;
+    margin-left: 4px;
+  }
+
+  .meter-unit.voltage { color: #806020; }
+
+  .status-card {
+    background: #0d1520;
+    border: 0.5px solid #2a3550;
+    border-radius: 10px;
+    padding: 12px;
+    flex: 1;
+  }
+
+  .status-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    padding: 4px 0;
+    border-bottom: 0.5px solid #1a2a40;
+  }
+  .status-row:last-child { border-bottom: none; }
+  .status-key { color: #4a6080; }
+  .status-val { color: #a0c8f0; font-weight: 500; }
+  .status-val.good { color: #40e090; }
+  .status-val.warn { color: #f0a830; }
+  .status-val.bad { color: #f05040; }
+
+  /* --- IV Curve --- */
+  .curve-section {
+    margin-top: 14px;
+    background: #111827;
+    border: 0.5px solid #2a3550;
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  .curve-title {
+    font-size: 11px;
+    color: #4a6080;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+
+  #iv-canvas {
+    width: 100%;
+    height: 100px;
+    border-radius: 6px;
+  }
+
+  .info-bar {
+    margin-top: 14px;
+    background: #111827;
+    border: 0.5px solid #2a3550;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #6a8aaa;
+    line-height: 1.6;
+    min-height: 48px;
+  }
+
+  .photon-dot {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    pointer-events: none;
+  }
+</style>
+
+<div class="sim-wrapper">
+  <div class="sim-title">⚛ Photoelectric Effect — Interactive Simulation</div>
+
+  <div class="sim-grid">
+    <!-- Controls -->
+    <div class="controls-panel">
+      <div class="panel-label">Light Source</div>
+
+      <div class="control-row">
+        <label>Frequency <span id="freq-label">6.0 × 10¹⁴ Hz</span></label>
+        <input type="range" id="freq-slider" min="3" max="12" step="0.1" value="6">
+      </div>
+
+      <div class="control-row">
+        <label>Intensity <span id="int-label">50%</span></label>
+        <input type="range" id="intensity-slider" min="10" max="100" step="5" value="50">
+      </div>
+
+      <div class="panel-label" style="margin-top:6px">Voltage (V)</div>
+      <div class="control-row">
+        <label>Applied Voltage <span id="volt-label">0.0 V</span></label>
+        <input type="range" id="voltage-slider" min="-3" max="3" step="0.1" value="0">
+      </div>
+
+      <div class="panel-label" style="margin-top:6px">Cathode Material</div>
+      <div class="material-btns">
+        <button class="mat-btn active" data-mat="cesium">Cesium   φ = 2.1 eV</button>
+        <button class="mat-btn" data-mat="sodium">Sodium   φ = 2.3 eV</button>
+        <button class="mat-btn" data-mat="zinc">Zinc       φ = 4.3 eV</button>
+        <button class="mat-btn" data-mat="gold">Gold      φ = 5.1 eV</button>
+      </div>
+    </div>
+
+    <!-- Tube + IV Curve -->
+    <div>
+      <div class="tube-container">
+        <canvas id="tube-canvas"></canvas>
+      </div>
+      <div class="curve-section">
+        <div class="curve-title">I–V Characteristic Curve</div>
+        <canvas id="iv-canvas"></canvas>
+      </div>
+      <div class="info-bar" id="info-bar">Adjust the frequency above the threshold to eject electrons from the cathode.</div>
+    </div>
+
+    <!-- Meters -->
+    <div class="meters-panel">
+      <div class="panel-label">Instruments</div>
+
+      <div class="meter-card">
+        <div class="meter-title">Ammeter (Current)</div>
+        <div class="meter-display current">
+          <span id="current-val">0.00</span><span class="meter-unit">μA</span>
+        </div>
+      </div>
+
+      <div class="meter-card">
+        <div class="meter-title">Voltmeter</div>
+        <div class="meter-display voltage">
+          <span id="voltage-val">0.0</span><span class="meter-unit voltage">V</span>
+        </div>
+      </div>
+
+      <div class="status-card">
+        <div class="panel-label">Physics Status</div>
+        <div class="status-row">
+          <span class="status-key">Photon Energy</span>
+          <span class="status-val" id="photon-e-val">2.48 eV</span>
+        </div>
+        <div class="status-row">
+          <span class="status-key">Work Function</span>
+          <span class="status-val" id="work-fn-val">2.1 eV</span>
+        </div>
+        <div class="status-row">
+          <span class="status-key">Max KE</span>
+          <span class="status-val" id="max-ke-val">— eV</span>
+        </div>
+        <div class="status-row">
+          <span class="status-key">Stop Voltage</span>
+          <span class="status-val" id="stop-v-val">— V</span>
+        </div>
+        <div class="status-row">
+          <span class="status-key">Emission</span>
+          <span class="status-val good" id="emission-status">Active</span>
+        </div>
+        <div class="status-row">
+          <span class="status-key">Wavelength</span>
+          <span class="status-val" id="wavelength-val">500 nm</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const h = 6.626e-34;
+const e = 1.6e-19;
+const c = 3e8;
+
+const materials = {
+  cesium: { phi: 2.1, color: '#c0a060' },
+  sodium: { phi: 2.3, color: '#e0e0b0' },
+  zinc:   { phi: 4.3, color: '#909090' },
+  gold:   { phi: 5.1, color: '#d0a020' }
+};
+
+let state = {
+  freq: 6.0,
+  intensity: 50,
+  voltage: 0,
+  material: 'cesium',
+  photons: [],
+  electrons: [],
+  t: 0
+};
+
+const tubeCanvas = document.getElementById('tube-canvas');
+const tubeCtx = tubeCanvas.getContext('2d');
+const ivCanvas = document.getElementById('iv-canvas');
+const ivCtx = ivCanvas.getContext('2d');
+
+function resize() {
+  const tc = tubeCanvas.parentElement;
+  tubeCanvas.width = tc.clientWidth;
+  tubeCanvas.height = tc.clientHeight;
+  ivCanvas.width = ivCanvas.parentElement.clientWidth;
+  ivCanvas.height = ivCanvas.clientHeight;
+}
+resize();
+window.addEventListener('resize', () => { resize(); });
+
+function getFreqColor(f) {
+  if (f < 4.3) return '#ff2200';
+  if (f < 5.0) return '#ff6600';
+  if (f < 5.5) return '#ffcc00';
+  if (f < 6.2) return '#44ff44';
+  if (f < 7.0) return '#00aaff';
+  if (f < 8.0) return '#4444ff';
+  return '#9900ff';
+}
+
+function getFreqName(f) {
+  if (f < 4.3) return 'Infrared';
+  if (f < 4.8) return 'Red';
+  if (f < 5.1) return 'Orange';
+  if (f < 5.5) return 'Yellow';
+  if (f < 6.3) return 'Green';
+  if (f < 7.0) return 'Blue';
+  if (f < 7.9) return 'Violet';
+  return 'Ultraviolet';
+}
+
+function calcPhysics() {
+  const f = state.freq * 1e14;
+  const phi = materials[state.material].phi;
+  const photonEnergyJ = h * f;
+  const photonEnergyEV = photonEnergyJ / e;
+  const maxKE = photonEnergyEV - phi;
+  const emitting = maxKE > 0;
+  const stopVoltage = emitting ? maxKE : 0;
+  const wavelength = Math.round((c / f) * 1e9);
+
+  let current = 0;
+  if (emitting) {
+    const intensityFactor = state.intensity / 100;
+    const satCurrent = intensityFactor * 10;
+    if (state.voltage >= stopVoltage) {
+      current = satCurrent;
+    } else if (state.voltage < -stopVoltage) {
+      current = 0;
+    } else {
+      current = satCurrent * (state.voltage + stopVoltage) / (2 * stopVoltage);
+      current = Math.max(0, current);
+    }
+  }
+
+  return { photonEnergyEV, phi, maxKE: emitting ? maxKE : null, stopVoltage, emitting, wavelength, current };
+}
+
+function updateUI() {
+  const p = calcPhysics();
+  const freq = state.freq;
+
+  document.getElementById('freq-label').textContent = freq.toFixed(1) + ' × 10¹⁴ Hz';
+  document.getElementById('int-label').textContent = state.intensity + '%';
+  document.getElementById('volt-label').textContent = state.voltage.toFixed(1) + ' V';
+
+  document.getElementById('photon-e-val').textContent = p.photonEnergyEV.toFixed(2) + ' eV';
+  document.getElementById('work-fn-val').textContent = p.phi.toFixed(1) + ' eV';
+  document.getElementById('max-ke-val').textContent = p.maxKE !== null ? p.maxKE.toFixed(2) + ' eV' : '— eV';
+  document.getElementById('stop-v-val').textContent = p.stopVoltage > 0 ? p.stopVoltage.toFixed(2) + ' V' : '— V';
+  document.getElementById('wavelength-val').textContent = p.wavelength + ' nm';
+
+  const statusEl = document.getElementById('emission-status');
+  if (!p.emitting) {
+    statusEl.textContent = 'None (below threshold)';
+    statusEl.className = 'status-val bad';
+  } else if (p.current < 0.01) {
+    statusEl.textContent = 'Blocked by voltage';
+    statusEl.className = 'status-val warn';
+  } else {
+    statusEl.textContent = 'Active';
+    statusEl.className = 'status-val good';
+  }
+
+  document.getElementById('current-val').textContent = p.current.toFixed(2);
+  document.getElementById('voltage-val').textContent = state.voltage.toFixed(1);
+
+  let info = '';
+  if (!p.emitting) {
+    info = `<b style="color:#f07060">Below threshold:</b> Photon energy (${p.photonEnergyEV.toFixed(2)} eV) is less than the work function (${p.phi.toFixed(1)} eV). No electrons emitted. Try increasing frequency or switching to a lower work function material.`;
+  } else if (p.current < 0.01) {
+    info = `<b style="color:#f0a030">Electrons stopped:</b> Applied voltage is sufficient to oppose electron flow. Stopping potential = ${p.stopVoltage.toFixed(2)} V. Increase voltage (toward +) to restore current.`;
+  } else {
+    info = `<b style="color:#40e090">Emission active:</b> Photon energy ${p.photonEnergyEV.toFixed(2)} eV exceeds work function ${p.phi.toFixed(1)} eV. Max KE = ${p.maxKE.toFixed(2)} eV. Current = ${p.current.toFixed(2)} μA.`;
+  }
+  document.getElementById('info-bar').innerHTML = info;
+}
+
+// Particle system
+function spawnPhoton(tw, th) {
+  const srcX = 20;
+  const srcY = 20 + Math.random() * th * 0.5;
+  const cathodeX = tw * 0.38;
+  const cathodeY = th * 0.5;
+  state.photons.push({
+    x: srcX, y: srcY,
+    tx: cathodeX + (Math.random() - 0.5) * 20,
+    ty: cathodeY + (Math.random() - 0.5) * 80,
+    progress: 0,
+    speed: 0.012 + Math.random() * 0.01,
+    color: getFreqColor(state.freq),
+    size: 3 + Math.random() * 2,
+    alive: true
+  });
+}
+
+function spawnElectron(tw, th, p) {
+  if (!p.emitting || p.current < 0.01) return;
+  const cathodeX = tw * 0.38;
+  const cathodeY = th * 0.5;
+  const anodeX = tw * 0.78;
+  state.electrons.push({
+    x: cathodeX,
+    y: cathodeY + (Math.random() - 0.5) * 80,
+    tx: anodeX,
+    ty: th * 0.5 + (Math.random() - 0.5) * 80,
+    progress: 0,
+    speed: 0.008 + Math.random() * 0.006,
+    alive: true
+  });
+}
+
+function drawTube(ts) {
+  const cw = tubeCanvas.width;
+  const ch = tubeCanvas.height;
+  const ctx = tubeCtx;
+  ctx.clearRect(0, 0, cw, ch);
+
+  const p = calcPhysics();
+  const matColor = materials[state.material].color;
+  const catX = cw * 0.38;
+  const anoX = cw * 0.78;
+  const ctrY = ch * 0.5;
+  const tubeW = anoX - catX + 60;
+  const tubeH = ch * 0.72;
+  const tubeX = catX - 30;
+  const tubeY = ctrY - tubeH / 2;
+
+  // Glass tube body
+  ctx.save();
+  ctx.shadowColor = '#204060';
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.roundRect(tubeX, tubeY, tubeW, tubeH, 18);
+  ctx.fillStyle = 'rgba(100, 160, 220, 0.06)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(130, 190, 255, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  // Glass sheen
+  ctx.beginPath();
+  ctx.roundRect(tubeX + 4, tubeY + 4, tubeW - 8, 12, 8);
+  ctx.fillStyle = 'rgba(180, 220, 255, 0.08)';
+  ctx.fill();
+
+  // "Evacuated" label
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = 'rgba(100, 150, 200, 0.4)';
+  ctx.textAlign = 'center';
+  ctx.fillText('vacuum', tubeX + tubeW / 2, tubeY + tubeH / 2 - ch * 0.25);
+
+  // Light source bulb
+  const bulbX = 18, bulbY = 20;
+  const fColor = getFreqColor(state.freq);
+  ctx.save();
+  ctx.shadowColor = fColor;
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.arc(bulbX, bulbY, 10, 0, Math.PI * 2);
+  ctx.fillStyle = fColor;
+  ctx.globalAlpha = 0.9;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  ctx.font = 'bold 9px sans-serif';
+  ctx.fillStyle = '#a0b8cc';
+  ctx.textAlign = 'left';
+  ctx.fillText(getFreqName(state.freq), bulbX + 14, bulbY + 4);
+
+  // Photons
+  const spawnInterval = Math.max(4, Math.round(18 - state.intensity / 8));
+  if (ts % spawnInterval === 0) spawnPhoton(cw, ch);
+
+  state.photons.forEach(ph => {
+    ph.progress += ph.speed;
+    const cx = ph.x + (ph.tx - ph.x) * ph.progress;
+    const cy = ph.y + (ph.ty - ph.y) * ph.progress;
+    const alpha = Math.min(1, (1 - ph.progress) * 2);
+    ctx.save();
+    ctx.shadowColor = ph.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ph.size, 0, Math.PI * 2);
+    ctx.fillStyle = ph.color;
+    ctx.globalAlpha = alpha;
+    ctx.fill();
+    ctx.restore();
+    if (ph.progress >= 0.95) ph.alive = false;
+  });
+  state.photons = state.photons.filter(ph => ph.alive);
+
+  // Cathode plate
+  const catHeight = tubeH * 0.72;
+  const catY = ctrY - catHeight / 2;
+  ctx.save();
+  ctx.shadowColor = matColor;
+  ctx.shadowBlur = 12;
+  const cg = ctx.createLinearGradient(catX - 14, 0, catX, 0);
+  cg.addColorStop(0, 'rgba(40,50,70,0.9)');
+  cg.addColorStop(1, matColor);
+  ctx.beginPath();
+  ctx.roundRect(catX - 14, catY, 14, catHeight, [4, 0, 0, 4]);
+  ctx.fillStyle = cg;
+  ctx.fill();
+  ctx.strokeStyle = matColor;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  // Cathode label
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = '#7090a0';
+  ctx.textAlign = 'center';
+  ctx.fillText('Cathode', catX - 7, tubeY - 8);
+  ctx.fillText('(−)', catX - 7, tubeY + tubeH + 16);
+
+  // Anode plate
+  const anoHeight = tubeH * 0.65;
+  const anoY = ctrY - anoHeight / 2;
+  ctx.save();
+  const ag = ctx.createLinearGradient(anoX, 0, anoX + 14, 0);
+  ag.addColorStop(0, '#5080a0');
+  ag.addColorStop(1, 'rgba(30,50,80,0.9)');
+  ctx.beginPath();
+  ctx.roundRect(anoX, anoY, 14, anoHeight, [0, 4, 4, 0]);
+  ctx.fillStyle = ag;
+  ctx.fill();
+  ctx.strokeStyle = '#5080a0';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = '#7090a0';
+  ctx.textAlign = 'center';
+  ctx.fillText('Anode', anoX + 7, tubeY - 8);
+  ctx.fillText('(+)', anoX + 7, tubeY + tubeH + 16);
+
+  // Electrons
+  if (ts % 6 === 0) spawnElectron(cw, ch, p);
+
+  state.electrons.forEach(el => {
+    el.progress += el.speed;
+    const ex = el.x + (el.tx - el.x) * el.progress;
+    const ey = el.y + (el.ty - el.y) * el.progress;
+    const alpha = el.progress > 0.8 ? (1 - el.progress) * 5 : 1;
+    ctx.save();
+    ctx.shadowColor = '#40f0b0';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#40f0b0';
+    ctx.globalAlpha = alpha;
+    ctx.fill();
+    // e- label
+    ctx.font = 'bold 8px monospace';
+    ctx.fillStyle = '#20c080';
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = alpha;
+    ctx.fillText('e⁻', ex, ey - 7);
+    ctx.restore();
+    if (el.progress >= 1) el.alive = false;
+  });
+  state.electrons = state.electrons.filter(el => el.alive);
+
+  // Circuit wires
+  const wireY1 = tubeY + tubeH + 36;
+  const wireY2 = wireY1 + 30;
+  ctx.strokeStyle = '#1e4080';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(catX, tubeY + tubeH);
+  ctx.lineTo(catX, wireY1);
+  ctx.lineTo(anoX, wireY1);
+  ctx.lineTo(anoX, tubeY + tubeH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Current flow arrow on wire
+  if (p.current > 0.01) {
+    const arrowX = (catX + anoX) / 2;
+    ctx.save();
+    ctx.fillStyle = '#40e090';
+    ctx.beginPath();
+    ctx.moveTo(arrowX + 6, wireY1);
+    ctx.lineTo(arrowX - 4, wireY1 - 5);
+    ctx.lineTo(arrowX - 4, wireY1 + 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Battery symbol on wire
+  const batX = (catX + anoX) / 2;
+  const batY = wireY1;
+  ctx.strokeStyle = '#506080';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(batX - 30, batY);
+  ctx.lineTo(batX - 8, batY);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(batX - 8, batY - 8);
+  ctx.lineTo(batX - 8, batY + 8);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(batX, batY - 4);
+  ctx.lineTo(batX, batY + 4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(batX, batY);
+  ctx.lineTo(batX + 30, batY);
+  ctx.stroke();
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = '#506080';
+  ctx.textAlign = 'center';
+  ctx.fillText('V', batX, batY + 20);
+
+  // Emission glow on cathode when active
+  if (p.emitting) {
+    ctx.save();
+    const grad = ctx.createRadialGradient(catX, ctrY, 0, catX, ctrY, 40);
+    grad.addColorStop(0, 'rgba(100, 220, 160, 0.22)');
+    grad.addColorStop(1, 'rgba(100, 220, 160, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(catX, ctrY, 40, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawIV() {
+  const cw = ivCanvas.width;
+  const ch = ivCanvas.height;
+  const ctx = ivCtx;
+  ctx.clearRect(0, 0, cw, ch);
+
+  const p = calcPhysics();
+  const pad = { l: 36, r: 14, t: 10, b: 22 };
+  const gw = cw - pad.l - pad.r;
+  const gh = ch - pad.t - pad.b;
+
+  // Grid
+  ctx.strokeStyle = '#1a2a40';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const x = pad.l + (i / 4) * gw;
+    ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + gh); ctx.stroke();
+  }
+  for (let i = 0; i <= 3; i++) {
+    const y = pad.t + (i / 3) * gh;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + gw, y); ctx.stroke();
+  }
+
+  // Axes
+  ctx.strokeStyle = '#2a4060';
+  ctx.lineWidth = 1;
+  const zeroX = pad.l + (3 / 6) * gw;
+  ctx.beginPath(); ctx.moveTo(zeroX, pad.t); ctx.lineTo(zeroX, pad.t + gh); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t + gh); ctx.lineTo(pad.l + gw, pad.t + gh); ctx.stroke();
+
+  // Axis labels
+  ctx.font = '9px sans-serif';
+  ctx.fillStyle = '#405060';
+  ctx.textAlign = 'center';
+  ctx.fillText('-3V', pad.l, pad.t + gh + 14);
+  ctx.fillText('0', zeroX, pad.t + gh + 14);
+  ctx.fillText('+3V', pad.l + gw, pad.t + gh + 14);
+  ctx.textAlign = 'right';
+  ctx.fillText('I', pad.l - 2, pad.t + 12);
+
+  // I-V Curve
+  if (p.emitting) {
+    ctx.beginPath();
+    ctx.strokeStyle = '#40e090';
+    ctx.lineWidth = 2;
+    let first = true;
+    for (let vi = 0; vi <= 120; vi++) {
+      const V = -3 + (vi / 120) * 6;
+      const satI = (state.intensity / 100) * 10;
+      let I = 0;
+      if (V >= p.stopVoltage) I = satI;
+      else if (V < -p.stopVoltage) I = 0;
+      else I = Math.max(0, satI * (V + p.stopVoltage) / (2 * p.stopVoltage));
+
+      const px = pad.l + ((V + 3) / 6) * gw;
+      const py = pad.t + gh - (I / 10) * gh;
+      if (first) { ctx.moveTo(px, py); first = false; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Stop voltage marker
+    const svX = pad.l + ((p.stopVoltage + 3) / 6) * gw;
+    ctx.strokeStyle = '#f0a030';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(svX, pad.t);
+    ctx.lineTo(svX, pad.t + gh);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '9px sans-serif';
+    ctx.fillStyle = '#f0a030';
+    ctx.textAlign = 'center';
+    ctx.fillText('Vs', svX, pad.t + 9);
+  }
+
+  // Current operating point
+  const opX = pad.l + ((state.voltage + 3) / 6) * gw;
+  const opI = p.current;
+  const opY = pad.t + gh - (opI / 10) * gh;
+  ctx.save();
+  ctx.shadowColor = '#7eb8f7';
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.arc(opX, opY, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#7eb8f7';
+  ctx.fill();
+  ctx.restore();
+}
+
+let ts = 0;
+function loop() {
+  ts++;
+  drawTube(ts);
+  drawIV();
+  requestAnimationFrame(loop);
+}
+
+// Event listeners
+document.getElementById('freq-slider').addEventListener('input', function() {
+  state.freq = parseFloat(this.value);
+  updateUI();
+});
+document.getElementById('intensity-slider').addEventListener('input', function() {
+  state.intensity = parseInt(this.value);
+  updateUI();
+});
+document.getElementById('voltage-slider').addEventListener('input', function() {
+  state.voltage = parseFloat(this.value);
+  updateUI();
+});
+document.querySelectorAll('.mat-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.mat-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    state.material = this.dataset.mat;
+    updateUI();
+  });
+});
+
+updateUI();
+loop();
+</script>

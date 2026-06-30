@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtual Optics Lab</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0c10;--surface:#12151c;--surface2:#1a1f2b;--surface3:#222837;
+  --border:#2a3040;--border2:#3a4560;
+  --text:#e8eaf0;--text2:#8892a4;--text3:#556070;
+  --amber:#f5a623;--amber2:#ffc96b;--amber-dim:#3d2800;
+  --blue:#4a9eff;--blue2:#7bbeff;--blue-dim:#001a3d;
+  --green:#3ddc84;--green2:#7fedb0;--green-dim:#003320;
+  --red:#ff5f57;--red2:#ff9e9a;--red-dim:#3d0000;
+  --violet:#b57aff;--violet2:#d4b0ff;--violet-dim:#1e0040;
+  --cyan:#00d4d8;--cyan-dim:#003d3e;
+  --panel-w:260px;
+}
+html,body{height:100%;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+
+/* ── Layout ── */
+#app{display:flex;height:100vh}
+#sidebar{width:var(--panel-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#canvas-area{flex:1;position:relative;overflow:hidden}
+#info-panel{height:110px;background:var(--surface);border-top:1px solid var(--border);display:flex;align-items:stretch}
+
+/* ── Sidebar ── */
+#lab-title{padding:16px;border-bottom:1px solid var(--border)}
+#lab-title .eyebrow{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px}
+#lab-title h1{font-size:17px;font-weight:600;color:var(--text);letter-spacing:-.01em}
+#lab-title h1 span{color:var(--amber)}
+
+#exp-list{padding:8px;border-bottom:1px solid var(--border)}
+.exp-btn{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-radius:8px;border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;text-align:left;transition:all .15s}
+.exp-btn:hover{background:var(--surface2);color:var(--text)}
+.exp-btn.active{background:var(--amber-dim);color:var(--amber);border:1px solid rgba(245,166,35,.25)}
+.exp-icon{font-size:18px;width:28px;text-align:center;flex-shrink:0}
+.exp-name{flex:1}
+.exp-badge{font-size:9px;padding:2px 5px;border-radius:3px;background:var(--surface3);color:var(--text3)}
+
+#controls-panel{flex:1;overflow-y:auto;padding:12px}
+#controls-panel::-webkit-scrollbar{width:4px}
+#controls-panel::-webkit-scrollbar-track{background:transparent}
+#controls-panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+.ctrl-section{margin-bottom:14px}
+.ctrl-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+.ctrl-row{margin-bottom:10px}
+.ctrl-name{font-size:12px;color:var(--text2);margin-bottom:4px;display:flex;justify-content:space-between}
+.ctrl-name span{color:var(--amber);font-weight:600;font-family:monospace}
+input[type=range]{-webkit-appearance:none;width:100%;height:3px;border-radius:2px;background:var(--border2);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--amber);cursor:pointer;box-shadow:0 0 6px rgba(245,166,35,.5)}
+input[type=range]::-webkit-slider-runnable-track{background:linear-gradient(to right,var(--amber) 0%,var(--amber) var(--pct,50%),var(--border2) var(--pct,50%))}
+select{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);font-size:12px;padding:6px 8px;border-radius:6px;outline:none;cursor:pointer}
+select option{background:var(--surface2)}
+
+.toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.toggle-row label{font-size:12px;color:var(--text2)}
+.toggle{position:relative;width:36px;height:20px}
+.toggle input{opacity:0;width:0;height:0;position:absolute}
+.toggle-track{position:absolute;inset:0;background:var(--border2);border-radius:10px;cursor:pointer;transition:background .2s}
+.toggle input:checked+.toggle-track{background:var(--amber)}
+.toggle-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s;pointer-events:none}
+.toggle input:checked~.toggle-thumb{transform:translateX(16px)}
+
+/* ── Canvas ── */
+#canvas-area canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+
+/* ── Info panel ── */
+#info-panel{gap:0}
+.metric{flex:1;display:flex;flex-direction:column;justify-content:center;padding:12px 16px;border-right:1px solid var(--border);min-width:0}
+.metric:last-child{border-right:none}
+.metric-label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:4px;white-space:nowrap}
+.metric-value{font-size:20px;font-weight:600;font-family:monospace;color:var(--text);white-space:nowrap}
+.metric-sub{font-size:10px;color:var(--text2);margin-top:2px}
+.metric-badge{display:inline-block;font-size:10px;font-weight:600;padding:3px 8px;border-radius:4px;margin-top:4px}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-red{background:var(--red-dim);color:var(--red)}
+.badge-amber{background:var(--amber-dim);color:var(--amber)}
+.badge-violet{background:var(--violet-dim);color:var(--violet)}
+
+/* ── Ruler / grid overlay ── */
+#overlay-bar{position:absolute;top:10px;right:12px;display:flex;gap:6px;z-index:10}
+.ov-btn{background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-size:11px;padding:5px 10px;border-radius:6px;cursor:pointer;transition:all .15s}
+.ov-btn:hover,.ov-btn.on{background:var(--surface3);color:var(--amber);border-color:var(--amber-dim)}
+
+/* ── Instruction tooltip ── */
+#tip{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-size:11px;padding:6px 14px;border-radius:20px;pointer-events:none;white-space:nowrap}
+
+/* ── Scrollbar global ── */
+*::-webkit-scrollbar{width:4px;height:4px}
+*::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ── SIDEBAR ── -->
+<div id="sidebar">
+  <div id="lab-title">
+    <div class="eyebrow">Interactive Simulation</div>
+    <h1>Optics <span>Lab</span></h1>
+  </div>
+
+  <div id="exp-list">
+    <button class="exp-btn active" onclick="setExp(0)">
+      <span class="exp-icon">🌊</span><span class="exp-name">Snell's Law</span>
+    </button>
+    <button class="exp-btn" onclick="setExp(1)">
+      <span class="exp-icon">🔬</span><span class="exp-name">Convex Lens</span>
+    </button>
+    <button class="exp-btn" onclick="setExp(2)">
+      <span class="exp-icon">📡</span><span class="exp-name">Concave Lens</span>
+    </button>
+    <button class="exp-btn" onclick="setExp(3)">
+      <span class="exp-icon">🪞</span><span class="exp-name">Concave Mirror</span>
+    </button>
+    <button class="exp-btn" onclick="setExp(4)">
+      <span class="exp-icon">🔵</span><span class="exp-name">Convex Mirror</span>
+    </button>
+    <button class="exp-btn" onclick="setExp(5)">
+      <span class="exp-icon">🌈</span><span class="exp-name">Prism Dispersion</span>
+    </button>
+    <button class="exp-btn" onclick="setExp(6)">
+      <span class="exp-icon">💡</span><span class="exp-name">Fibre Optic TIR</span>
+    </button>
+  </div>
+
+  <div id="controls-panel"></div>
+</div>
+
+<!-- ── MAIN ── -->
+<div id="main">
+  <div id="canvas-area">
+    <canvas id="cvs"></canvas>
+    <div id="overlay-bar">
+      <button class="ov-btn" id="btn-grid" onclick="toggleGrid()">Grid</button>
+      <button class="ov-btn" id="btn-rays" onclick="toggleRayCount()">Rays: 1</button>
+      <button class="ov-btn" id="btn-anim" onclick="toggleAnim()">Animate</button>
+    </div>
+    <div id="tip">Drag sliders to explore the experiment</div>
+  </div>
+  <div id="info-panel" id="metrics"></div>
+</div>
+
+</div>
+
+<script>
+// ── globals ──
+const cvs=document.getElementById('cvs');
+const ctx=cvs.getContext('2d');
+const DPR=window.devicePixelRatio||1;
+let W=0,H=0,activeExp=0,showGrid=false,rayCount=1,animOn=false,animT=0,animRAF=null;
+let params={};
+
+// ── resize ──
+function resize(){
+  const area=document.getElementById('canvas-area');
+  W=area.offsetWidth; H=area.offsetHeight;
+  cvs.width=W*DPR; cvs.height=H*DPR;
+  cvs.style.width=W+'px'; cvs.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+  draw();
+}
+window.addEventListener('resize',resize);
+
+// ── overlay toggles ──
+function toggleGrid(){showGrid=!showGrid;document.getElementById('btn-grid').classList.toggle('on',showGrid);draw()}
+function toggleRayCount(){rayCount=rayCount===1?3:rayCount===3?5:1;document.getElementById('btn-rays').textContent='Rays: '+rayCount;draw()}
+function toggleAnim(){
+  animOn=!animOn;
+  document.getElementById('btn-anim').classList.toggle('on',animOn);
+  if(animOn){animLoop()}else{cancelAnimationFrame(animRAF)}
+}
+function animLoop(){animT+=0.012;draw();animRAF=requestAnimationFrame(animLoop)}
+
+// ── colour helpers ──
+const C={
+  bg:'#0a0c10',surf:'#12151c',surf2:'#1a1f2b',surf3:'#222837',
+  border:'#2a3040',border2:'#3a4560',
+  text:'#e8eaf0',text2:'#8892a4',text3:'#556070',
+  amber:'#f5a623',amber2:'#ffc96b',amberD:'rgba(245,166,35,',
+  blue:'#4a9eff',blue2:'#7bbeff',blueD:'rgba(74,158,255,',
+  green:'#3ddc84',greenD:'rgba(61,220,132,',
+  red:'#ff5f57',redD:'rgba(255,95,87,',
+  violet:'#b57aff',violetD:'rgba(181,122,255,',
+  cyan:'#00d4d8',
+};
+const SPECTRUM=['#ff0000','#ff6600','#ffcc00','#33cc33','#0066ff','#6600cc','#cc00ff'];
+const SPECN=[1.513,1.519,1.523,1.526,1.532,1.538,1.542]; // dispersion for glass
+
+// ── drawing primitives ──
+function bg(){
+  ctx.fillStyle=C.bg;ctx.fillRect(0,0,W,H);
+}
+function grid(){
+  if(!showGrid)return;
+  ctx.save();ctx.strokeStyle='rgba(255,255,255,0.03)';ctx.lineWidth=1;
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+  ctx.restore();
+}
+function axis(x1,y1,x2,y2,col=C.border2){
+  ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([4,4]);
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();
+}
+function solidAxis(x1,y1,x2,y2,col=C.border2){
+  ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();
+}
+function ray(x1,y1,x2,y2,col,alpha=1,w=1.8){
+  ctx.save();ctx.globalAlpha=alpha;ctx.strokeStyle=col;ctx.lineWidth=w;
+  ctx.shadowColor=col;ctx.shadowBlur=6;
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();
+}
+function rayArrow(x1,y1,x2,y2,col,alpha=1,w=2){
+  ray(x1,y1,x2,y2,col,alpha,w);
+  const dx=x2-x1,dy=y2-y1,len=Math.sqrt(dx*dx+dy*dy);
+  if(len<10)return;
+  const mx=x1+dx*0.55,my=y1+dy*0.55;
+  const ux=dx/len,uy=dy/len;
+  ctx.save();ctx.globalAlpha=alpha;ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=4;
+  ctx.beginPath();ctx.moveTo(mx+ux*7,my+uy*7);ctx.lineTo(mx-uy*4,my+ux*4);ctx.lineTo(mx+uy*4,my-ux*4);ctx.closePath();ctx.fill();ctx.restore();
+}
+function dashedRay(x1,y1,x2,y2,col,alpha=0.4){
+  ctx.save();ctx.globalAlpha=alpha;ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.setLineDash([5,5]);
+  ctx.shadowColor=col;ctx.shadowBlur=3;
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();
+}
+function dot(x,y,col,r=4){
+  ctx.save();ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=8;
+  ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();ctx.restore();
+}
+function lbl(text,x,y,col=C.text2,align='center',sz=12,bold=false){
+  ctx.save();ctx.fillStyle=col;ctx.font=(bold?'600 ':'')+sz+'px "Segoe UI",system-ui,sans-serif';
+  ctx.textAlign=align;ctx.textBaseline='middle';ctx.fillText(text,x,y);ctx.restore();
+}
+function pill(text,x,y,bgcol,tcol,w=80){
+  ctx.save();
+  ctx.fillStyle=bgcol;ctx.beginPath();
+  const h=22,r=5;
+  ctx.roundRect(x-w/2,y-h/2,w,h,r);ctx.fill();
+  ctx.fillStyle=tcol;ctx.font='600 11px "Segoe UI",system-ui,sans-serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,x,y);ctx.restore();
+}
+function angleMark(cx,cy,a1,a2,r,col){
+  ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1;ctx.globalAlpha=0.6;
+  ctx.beginPath();ctx.arc(cx,cy,r,a1,a2,a2<a1);ctx.stroke();ctx.restore();
+}
+function wavyRay(x1,y1,x2,y2,col,phase=0,alpha=1){
+  const dx=x2-x1,dy=y2-y1,len=Math.sqrt(dx*dx+dy*dy);
+  const ux=dx/len,uy=dy/len,nx=-uy,ny=ux;
+  const amp=4,freq=0.14;
+  ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1.8;ctx.globalAlpha=alpha;
+  ctx.shadowColor=col;ctx.shadowBlur=5;
+  ctx.beginPath();
+  for(let i=0;i<=len;i+=2){
+    const t=i/len,wave=amp*Math.sin(i*freq+phase);
+    const px=x1+ux*i+nx*wave,py=y1+uy*i+ny*wave;
+    i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+  }
+  ctx.stroke();ctx.restore();
+}
+
+// ── Controls builder ──
+function buildControls(html){document.getElementById('controls-panel').innerHTML=html}
+function setMetrics(items){
+  const panel=document.getElementById('info-panel');
+  panel.innerHTML=items.map(m=>`
+    <div class="metric">
+      <div class="metric-label">${m.label}</div>
+      <div class="metric-value" style="${m.color?'color:'+m.color:''}">${m.value}</div>
+      ${m.sub?`<div class="metric-sub">${m.sub}</div>`:''}
+      ${m.badge?`<div class="metric-badge ${m.badgeClass||'badge-amber'}">${m.badge}</div>`:''}
+    </div>`).join('');
+}
+function gv(id){return parseFloat(document.getElementById(id)?.value||0)}
+function sv(id,v){const el=document.getElementById(id+'_v');if(el)el.textContent=v}
+function trackSlider(id,fmt){
+  const el=document.getElementById(id);
+  if(!el)return;
+  const update=()=>{
+    sv(id,fmt(parseFloat(el.value)));
+    const pct=((el.value-el.min)/(el.max-el.min))*100;
+    el.style.setProperty('--pct',pct+'%');
+    draw();
+  };
+  el.addEventListener('input',update);
+  el.dispatchEvent(new Event('input'));
+}
+function trackSelect(id){document.getElementById(id)?.addEventListener('change',draw)}
+
+// ── EXPERIMENT DEFINITIONS ──
+const experiments=[
+  {name:"Snell's Law",setup:setup0,draw:draw0},
+  {name:"Convex Lens",setup:setup1,draw:draw1},
+  {name:"Concave Lens",setup:setup2,draw:draw2},
+  {name:"Concave Mirror",setup:setup3,draw:draw3},
+  {name:"Convex Mirror",setup:setup4,draw:draw4},
+  {name:"Prism Dispersion",setup:setup5,draw:draw5},
+  {name:"Fibre Optic TIR",setup:setup6,draw:draw6},
+];
+
+// ════════════════════════════════════════════
+// EXP 0 – Snell's Law & TIR
+// ════════════════════════════════════════════
+function setup0(){
+  buildControls(`
+    <div class="ctrl-section">
+      <div class="ctrl-label">Incident Ray</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Angle of incidence <span id="ang_v">45°</span></div>
+        <input type="range" id="ang" min="1" max="89" value="45">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Medium 2</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Refractive index n₂ <span id="n2_v">1.50</span></div>
+        <input type="range" id="n2" min="100" max="280" value="150">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Medium</div>
+        <select id="medium" onchange="applyMedium()">
+          <option value="150">Glass (1.50)</option>
+          <option value="133">Water (1.33)</option>
+          <option value="238">Diamond (2.42)</option>
+          <option value="177">Dense Glass (1.77)</option>
+          <option value="140">Ice (1.31) ≈ 1.40</option>
+          <option value="100">Vacuum (1.00)</option>
+        </select>
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Display</div>
+      <div class="toggle-row"><label>Show wavefronts</label>
+        <label class="toggle"><input type="checkbox" id="showWave" onchange="draw()">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+      <div class="toggle-row"><label>Show angles</label>
+        <label class="toggle"><input type="checkbox" id="showAngles" checked onchange="draw()">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+    </div>`);
+  trackSlider('ang',v=>v+'°');
+  trackSlider('n2',v=>(v/100).toFixed(2));
+}
+function applyMedium(){
+  const v=document.getElementById('medium').value;
+  document.getElementById('n2').value=v;
+  document.getElementById('n2').dispatchEvent(new Event('input'));
+}
+function draw0(){
+  bg();grid();
+  const ang=gv('ang')*Math.PI/180;
+  const n2=gv('n2')/100;
+  const n1=1.0;
+  const mx=W/2,my=H/2;
+  const showWave=document.getElementById('showWave')?.checked;
+  const showA=document.getElementById('showAngles')?.checked;
+
+  // Medium backgrounds
+  ctx.fillStyle='rgba(74,158,255,0.04)';ctx.fillRect(0,0,W,my);
+  ctx.fillStyle='rgba(181,122,255,0.07)';ctx.fillRect(0,my,W,H-my);
+  lbl('Medium 1  n₁ = 1.00',mx+80,my-30,C.blue2,'left',11);
+  lbl('Medium 2  n₂ = '+(n2).toFixed(2),mx+80,my+30,C.violet2,'left',11);
+
+  // Interface
+  solidAxis(0,my,W,my,'rgba(255,255,255,0.12)');
+  // Normal
+  axis(mx,20,mx,H-20,'rgba(255,255,255,0.15)');
+  lbl('Normal',mx+6,36,C.text3,'left',10);
+
+  const sinT=n1*Math.sin(ang)/n2;
+  const TIR=sinT>1;
+  const critA=Math.asin(n1/n2)*180/Math.PI;
+
+  const rayLen=Math.min(mx,my)*0.92;
+  // Incident ray
+  const ix=mx-rayLen*Math.sin(ang),iy=my-rayLen*Math.cos(ang);
+
+  if(showWave){
+    const phase=animOn?animT*2:0;
+    for(let i=0;i<3;i++) wavyRay(ix+(i-1)*10*Math.cos(ang),iy-(i-1)*10*Math.sin(ang),mx,my,C.amber,phase+i*1.2,0.6-i*0.15);
+  } else {
+    for(let r=0;r<rayCount;r++){
+      const off=(r-(rayCount-1)/2)*18;
+      rayArrow(ix+off*Math.cos(ang),iy+off*Math.sin(ang),mx+off*Math.cos(ang)*.1,my+off*Math.sin(ang)*.1,C.amber,1-(r>0?0.4:0));
+    }
+  }
+
+  if(TIR){
+    // Reflected ray
+    const rx=mx+rayLen*Math.sin(ang),ry=iy;
+    for(let r=0;r<rayCount;r++){
+      const off=(r-(rayCount-1)/2)*18;
+      rayArrow(mx+off*Math.cos(ang)*.1,my,rx+off*Math.cos(ang),ry+off*Math.sin(ang),C.red,1-(r>0?0.4:0));
+    }
+    pill('TOTAL INTERNAL REFLECTION',mx,my+60,'rgba(255,95,87,0.15)',C.red,200);
+    if(showA){
+      angleMark(mx,my,-Math.PI/2,-Math.PI/2+ang,50,C.amber);
+      lbl(gv('ang')+'°',mx-60*Math.sin(ang/2),my-60*Math.cos(ang/2),C.amber,'center',11);
+      angleMark(mx,my,-Math.PI/2,-(Math.PI/2+ang)%Math.PI,50,C.red);
+      lbl(gv('ang')+'°',mx+60*Math.sin(ang/2),my-60*Math.cos(ang/2),C.red,'center',11);
+    }
+    setMetrics([
+      {label:'Incident angle',value:gv('ang').toFixed(1)+'°',color:C.amber},
+      {label:'Critical angle',value:critA.toFixed(1)+'°',sub:'θ_c = arcsin(n₁/n₂)'},
+      {label:'Refracted angle',value:'—',sub:'No refraction'},
+      {label:'Condition',value:'TIR',color:C.red,badge:'θᵢ > θ_c',badgeClass:'badge-red'},
+    ]);
+  } else {
+    const angT=Math.asin(sinT);
+    for(let r=0;r<rayCount;r++){
+      const off=(r-(rayCount-1)/2)*18;
+      if(showWave){
+        const phase=animOn?animT*2.3:0;
+        wavyRay(mx,my,mx+rayLen*Math.sin(angT),my+rayLen*Math.cos(angT),C.violet,phase,0.9);
+      } else {
+        rayArrow(mx+off*Math.cos(angT)*.1,my,mx+off*Math.cos(angT)*1+(r-(rayCount-1)/2)*18,my+rayLen*Math.cos(angT),C.violet,1-(r>0?0.4:0));
+      }
+    }
+    // Partial reflection
+    const rx=mx+rayLen*0.35*Math.sin(ang),ry=my-rayLen*0.35*Math.cos(ang);
+    dashedRay(mx,my,rx,ry,C.amber,0.25);
+
+    if(showA){
+      angleMark(mx,my,-Math.PI/2,-Math.PI/2+ang,52,C.amber);
+      lbl(gv('ang').toFixed(0)+'°',mx-65*Math.sin(ang/2),my-65*Math.cos(ang/2),C.amber,'center',11);
+      angleMark(mx,my,Math.PI/2,Math.PI/2+angT,52,C.violet);
+      lbl((angT*180/Math.PI).toFixed(1)+'°',mx+65*Math.sin(angT/2),my+65*Math.cos(angT/2),C.violet,'center',11);
+    }
+    dot(mx,my,C.text,3);
+    setMetrics([
+      {label:'Incident angle θ₁',value:gv('ang').toFixed(1)+'°',color:C.amber},
+      {label:'Refracted angle θ₂',value:(angT*180/Math.PI).toFixed(2)+'°',color:C.violet},
+      {label:'Critical angle',value:critA.toFixed(1)+'°',sub:'n₂ > n₁'},
+      {label:"Snell's Law",value:'n₁sinθ₁ = n₂sinθ₂',badge:'Verified ✓',badgeClass:'badge-green'},
+    ]);
+  }
+}
+
+// ════════════════════════════════════════════
+// EXP 1 – Convex Lens
+// ════════════════════════════════════════════
+function setup1(){
+  buildControls(`
+    <div class="ctrl-section">
+      <div class="ctrl-label">Object</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object distance (u) <span id="uconv_v">60cm</span></div>
+        <input type="range" id="uconv" min="10" max="90" value="60">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object height <span id="oh1_v">40px</span></div>
+        <input type="range" id="oh1" min="10" max="60" value="40">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Lens</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Focal length (f) <span id="fconv_v">30cm</span></div>
+        <input type="range" id="fconv" min="8" max="45" value="30">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Display</div>
+      <div class="toggle-row"><label>Show focal plane</label>
+        <label class="toggle"><input type="checkbox" id="showFP1" checked onchange="draw()">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+    </div>`);
+  trackSlider('uconv',v=>v+'cm');
+  trackSlider('oh1',v=>v+'px');
+  trackSlider('fconv',v=>v+'cm');
+}
+function drawLensExpt(f_sign){
+  bg();grid();
+  const u=gv(f_sign>0?'uconv':'uconc');
+  const oh=gv(f_sign>0?'oh1':'oh2');
+  const f=gv(f_sign>0?'fconv':'fconc')*f_sign;
+  const showFP=document.getElementById(f_sign>0?'showFP1':'showFP2')?.checked;
+  const sc=3.5;
+  const cx=W/2,cy=H/2;
+  const fPx=cx+f*sc,fNx=cx-f*sc;
+  const objX=cx-u*sc;
+
+  // Axis
+  solidAxis(30,cy,W-30,cy,'rgba(255,255,255,0.1)');
+  // Focal plane
+  if(showFP){
+    axis(fPx,cy-80,fPx,cy+80,C.amber);axis(fNx,cy-80,fNx,cy+80,C.amber);
+    dot(fPx,cy,C.amber,4);dot(fNx,cy,C.amber,4);
+    lbl('F',fPx,cy-16,C.amber); lbl("F'",fNx,cy-16,C.amber);
+    // 2F marks
+    dot(cx+2*f*sc,cy,C.amber,3);dot(cx-2*f*sc,cy,C.amber,3);
+    lbl('2F',cx+2*f*sc,cy-14,C.text3,'center',10);lbl("2F'",cx-2*f*sc,cy-14,C.text3,'center',10);
+  }
+
+  // Lens shape
+  ctx.save();
+  ctx.strokeStyle=C.blue;ctx.lineWidth=2.5;ctx.shadowColor=C.blue;ctx.shadowBlur=12;
+  const lh=90;
+  if(f_sign>0){
+    ctx.beginPath();ctx.moveTo(cx,cy-lh);ctx.quadraticCurveTo(cx+20,cy,cx,cy+lh);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx,cy-lh);ctx.quadraticCurveTo(cx-20,cy,cx,cy+lh);ctx.stroke();
+  } else {
+    ctx.beginPath();ctx.moveTo(cx,cy-lh);ctx.quadraticCurveTo(cx-18,cy,cx,cy+lh);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx,cy-lh);ctx.quadraticCurveTo(cx+18,cy,cx,cy+lh);ctx.stroke();
+  }
+  ctx.restore();
+  lbl(f_sign>0?'Convex Lens':'Concave Lens',cx,cy+lh+18,C.blue2,'center',11,true);
+
+  // Lens formula
+  const denom=(1/f)-(1/-u);
+  const v=isFinite(denom)&&denom!==0?1/denom:Infinity;
+  const m=isFinite(v)?(-v/-u):NaN;
+  const imgX=isFinite(v)?cx+v*sc:Infinity;
+  const imgH=isFinite(m)?oh*m:0;
+
+  // Object
+  ctx.save();ctx.shadowColor=C.amber;ctx.shadowBlur=8;
+  rayArrow(objX,cy,objX,cy-oh,C.amber,1,2.5);ctx.restore();
+  lbl('Object',objX,cy-oh-14,C.amber,'center',11,true);
+
+  // 3 Rays from tip
+  const tx=objX,ty=cy-oh;
+
+  if(f_sign>0){
+    // Ray 1: Parallel → through F
+    ray(tx,ty,cx,ty,C.amber,0.9);
+    const slope1=(ty-cy)/(cx-fPx);
+    if(imgX<W+100) ray(cx,ty,imgX+60,ty+slope1*(imgX+60-cx),C.amber,0.5);
+    else ray(cx,ty,W,ty+slope1*(W-cx),C.amber,0.5);
+    // Ray 2: Through optical centre
+    const slope2=(cy-ty)/(cx-tx);
+    ray(tx,ty,cx,ty+slope2*(cx-tx),C.amber,0.7);
+    ray(cx,ty+slope2*(cx-tx),W,ty+slope2*(W-tx),C.amber,0.4);
+    // Ray 3: Through F' → emerges parallel
+    const slope3=(cy-ty)/(fNx-tx);
+    ray(tx,ty,cx,ty+slope3*(cx-tx),C.amber,0.6);
+    ray(cx,ty+slope3*(cx-tx),W,ty+slope3*(cx-tx),C.amber,0.3);
+  } else {
+    // Diverging rays
+    ray(tx,ty,cx,ty,C.amber,0.9);
+    const vfPx=fNx;
+    const slope1=(ty-cy)/(vfPx-cx)*0.5;
+    ray(cx,ty,W,ty+slope1*(W-cx),C.amber,0.5);
+    const slope2=(cy-ty)/(cx-tx);
+    ray(tx,ty,cx,ty+slope2*(cx-tx),C.amber,0.7);
+    ray(cx,ty+slope2*(cx-tx),W,ty+(slope2+0.12)*(W-tx),C.amber,0.4);
+  }
+
+  // Image
+  const isVirtual=!isFinite(v)||v<0;
+  if(!isNaN(imgH)&&isFinite(imgX)&&imgX>30&&imgX<W-10){
+    ctx.save();ctx.globalAlpha=isVirtual?0.45:0.95;ctx.shadowColor=isVirtual?C.red:C.green;ctx.shadowBlur=10;
+    rayArrow(imgX,cy,imgX,cy-imgH,isVirtual?C.red:C.green,1,2);ctx.restore();
+    lbl(isVirtual?'Virtual Image':'Real Image',imgX,cy-imgH-(imgH>0?16:-20),isVirtual?C.red:C.green,'center',11,true);
+  }
+
+  const imageType=isVirtual?'Virtual, Erect':m<0?'Real, Inverted':'Virtual, Erect';
+  setMetrics([
+    {label:'Object distance u',value:u.toFixed(0)+'cm',color:C.amber},
+    {label:'Image distance v',value:isFinite(v)?Math.abs(v).toFixed(1)+'cm':'∞',color:isVirtual?C.red:C.green},
+    {label:'Magnification m',value:isFinite(m)?m.toFixed(2)+'×':'—'},
+    {label:'Image nature',value:imageType,badge:isVirtual?'Virtual':'Real',badgeClass:isVirtual?'badge-red':'badge-green'},
+  ]);
+}
+function setup2(){
+  buildControls(`
+    <div class="ctrl-section">
+      <div class="ctrl-label">Object</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object distance (u) <span id="uconc_v">60cm</span></div>
+        <input type="range" id="uconc" min="10" max="90" value="60">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object height <span id="oh2_v">40px</span></div>
+        <input type="range" id="oh2" min="10" max="60" value="40">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Lens</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Focal length (f) <span id="fconc_v">30cm</span></div>
+        <input type="range" id="fconc" min="8" max="45" value="30">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Display</div>
+      <div class="toggle-row"><label>Show focal plane</label>
+        <label class="toggle"><input type="checkbox" id="showFP2" checked onchange="draw()">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+    </div>`);
+  trackSlider('uconc',v=>v+'cm');
+  trackSlider('oh2',v=>v+'px');
+  trackSlider('fconc',v=>v+'cm');
+}
+function draw1(){drawLensExpt(1)}
+function draw2(){drawLensExpt(-1)}
+
+// ════════════════════════════════════════════
+// EXP 3 – Concave Mirror
+// ════════════════════════════════════════════
+function setup3(){
+  buildControls(`
+    <div class="ctrl-section">
+      <div class="ctrl-label">Object</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object distance <span id="umir_v">50cm</span></div>
+        <input type="range" id="umir" min="8" max="90" value="50">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object height <span id="ohm_v">40px</span></div>
+        <input type="range" id="ohm" min="10" max="60" value="40">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Mirror</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Focal length <span id="fmir_v">25cm</span></div>
+        <input type="range" id="fmir" min="8" max="40" value="25">
+      </div>
+    </div>`);
+  trackSlider('umir',v=>v+'cm');
+  trackSlider('ohm',v=>v+'px');
+  trackSlider('fmir',v=>v+'cm');
+}
+function drawMirrorExpt(type){
+  bg();grid();
+  const u=gv(type==='concave'?'umir':'umirv');
+  const f0=gv(type==='concave'?'fmir':'fmirv');
+  const oh=gv(type==='concave'?'ohm':'ohmv');
+  const f=type==='concave'?f0:-f0;
+  const sc=3.5;
+  const pole=W*0.65,cy=H/2;
+  const fPx=pole-f*sc;
+  const cPx=pole-2*f*sc;
+
+  // Axis
+  solidAxis(30,cy,pole+20,cy,'rgba(255,255,255,0.1)');
+
+  // Mirror arc
+  const R=Math.abs(f)*sc*2;
+  ctx.save();
+  ctx.strokeStyle=C.blue;ctx.lineWidth=3;ctx.shadowColor=C.blue;ctx.shadowBlur=14;
+  if(type==='concave'){
+    ctx.beginPath();ctx.arc(pole+R,cy,R,Math.PI-0.6,Math.PI+0.6);ctx.stroke();
+    // Reflective backing lines
+    ctx.lineWidth=1;ctx.strokeStyle='rgba(74,158,255,0.25)';ctx.globalAlpha=1;
+    for(let i=-5;i<=5;i++){
+      const a=Math.PI+(i/5)*0.55;
+      const mx2=pole+R+R*Math.cos(a),my2=cy+R*Math.sin(a);
+      ctx.beginPath();ctx.moveTo(mx2,my2);ctx.lineTo(mx2+12,my2+12);ctx.stroke();
+    }
+  } else {
+    ctx.beginPath();ctx.arc(pole-R,cy,R,-0.6,0.6);ctx.stroke();
+    ctx.lineWidth=1;ctx.strokeStyle='rgba(74,158,255,0.25)';
+    for(let i=-5;i<=5;i++){
+      const a=(i/5)*0.55;
+      const mx2=pole-R+R*Math.cos(a),my2=cy+R*Math.sin(a);
+      ctx.beginPath();ctx.moveTo(mx2,my2);ctx.lineTo(mx2+12,my2-6);ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  dot(fPx,cy,C.amber,4);lbl('F',fPx,cy-14,C.amber);
+  if(type==='concave'){dot(cPx,cy,C.amber,3);lbl('C',cPx,cy-14,C.amber);}
+
+  // Mirror formula: 1/v + 1/u = 1/f (real-positive, object at +u)
+  const v=u*f/(u-f);
+  const m=-v/u;
+  const imgX=pole-v*sc;
+  const imgH=oh*m;
+  const isVirtual=v<0;
+
+  // Object
+  ctx.save();ctx.shadowColor=C.amber;ctx.shadowBlur=8;
+  rayArrow(pole-u*sc,cy,pole-u*sc,cy-oh,C.amber,1,2.5);ctx.restore();
+  lbl('Object',pole-u*sc,cy-oh-14,C.amber,'center',11,true);
+
+  // Rays
+  const tx=pole-u*sc,ty=cy-oh;
+  if(type==='concave'){
+    // R1: parallel → reflected through F
+    ray(tx,ty,pole,ty,C.amber,0.85);
+    const slope1=(ty-cy)/(pole-fPx);
+    ray(pole,ty,30,ty+slope1*(30-pole),C.amber,0.5);
+    // R2: through C → reflects back
+    const slope2=(cy-ty)/(cPx-tx);
+    ray(tx,ty,pole,ty+slope2*(pole-tx),C.amber,0.7);
+    ray(pole,ty+slope2*(pole-tx),tx-30,ty+slope2*(pole-tx)+(slope2)*(-(30)),C.amber,0.35);
+    // R3: through F → reflected parallel
+    ray(tx,ty,fPx,cy,C.amber,0.6);ray(fPx,cy,pole,cy,C.amber,0.6);ray(pole,cy,30,cy,C.amber,0.3);
+  } else {
+    ray(tx,ty,pole,ty,C.amber,0.85);
+    ray(pole,ty,30,ty+((ty-cy)/100)*(30-pole)*0.3,C.amber,0.5);
+    const slope2=(cy-ty)/(0-tx);
+    ray(tx,ty,pole,ty+slope2*(pole-tx),C.amber,0.7);
+    ray(pole,ty+slope2*(pole-tx),30,ty+slope2*(pole-tx)+(slope2+0.1)*(30-pole),C.amber,0.35);
+  }
+
+  // Image
+  if(!isNaN(imgH)&&isFinite(imgX)&&imgX>30&&imgX<pole+60){
+    ctx.save();ctx.globalAlpha=isVirtual?0.4:0.9;ctx.shadowColor=isVirtual?C.red:C.green;ctx.shadowBlur=10;
+    rayArrow(imgX,cy,imgX,cy-imgH,isVirtual?C.red:C.green,1,2);ctx.restore();
+    lbl(isVirtual?'Virtual Image':'Real Image',imgX,cy-imgH+(imgH<0?-16:16),isVirtual?C.red:C.green,'center',11,true);
+  }
+
+  let nat='';
+  if(type==='convex'){nat='Virtual, erect, diminished';}
+  else if(u>2*f0){nat='Real, inverted, diminished';}
+  else if(u===2*f0){nat='Real, inverted, same size';}
+  else if(u>f0){nat='Real, inverted, magnified';}
+  else{nat='Virtual, erect, magnified';}
+  setMetrics([
+    {label:'Object dist (u)',value:u+'cm',color:C.amber},
+    {label:'Image dist (v)',value:isFinite(v)?Math.abs(v).toFixed(1)+'cm':'∞',color:isVirtual?C.red:C.green},
+    {label:'Magnification',value:isFinite(m)?Math.abs(m).toFixed(2)+'×':'—'},
+    {label:'Image nature',value:nat,badge:isVirtual?'Virtual':'Real',badgeClass:isVirtual?'badge-red':'badge-green'},
+  ]);
+}
+function setup4(){
+  buildControls(`
+    <div class="ctrl-section">
+      <div class="ctrl-label">Object</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object distance <span id="umirv_v">50cm</span></div>
+        <input type="range" id="umirv" min="8" max="90" value="50">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Object height <span id="ohmv_v">40px</span></div>
+        <input type="range" id="ohmv" min="10" max="60" value="40">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Mirror</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Focal length <span id="fmirv_v">25cm</span></div>
+        <input type="range" id="fmirv" min="8" max="40" value="25">
+      </div>
+    </div>`);
+  trackSlider('umirv',v=>v+'cm');
+  trackSlider('ohmv',v=>v+'px');
+  trackSlider('fmirv',v=>v+'cm');
+}
+function draw3(){drawMirrorExpt('concave')}
+function draw4(){drawMirrorExpt('convex')}
+
+// ════════════════════════════════════════════
+// EXP 5 – Prism Dispersion
+// ════════════════════════════════════════════
+function setup5(){
+  buildControls(`
+    <div class="ctrl-section">
+      <div class="ctrl-label">Prism</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Apex angle (A) <span id="prA_v">45°</span></div>
+        <input type="range" id="prA" min="20" max="75" value="45">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Refractive index <span id="prN_v">1.60</span></div>
+        <input type="range" id="prN" min="130" max="200" value="160">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Material</div>
+        <select id="prMat" onchange="applyPrMat()">
+          <option value="152">Crown Glass (1.52)</option>
+          <option value="160">Flint Glass (1.60)</option>
+          <option value="242">Diamond (2.42)</option>
+          <option value="140">Quartz (1.46)</option>
+        </select>
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Display</div>
+      <div class="toggle-row"><label>Animate beam</label>
+        <label class="toggle"><input type="checkbox" id="prAnim" onchange="draw()">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+    </div>`);
+  trackSlider('prA',v=>v+'°');
+  trackSlider('prN',v=>(v/100).toFixed(2));
+}
+function applyPrMat(){
+  const v=document.getElementById('prMat').value;
+  document.getElementById('prN').value=v;
+  document.getElementById('prN').dispatchEvent(new Event('input'));
+}
+function draw5(){
+  bg();grid();
+  const A=gv('prA')*Math.PI/180;
+  const n=gv('prN')/100;
+  const cx=W*0.48,cy=H*0.54;
+  const side=H*0.52;
+  const ht=side*Math.sin(A/2)*1.3;
+  const hw=side*Math.cos(A/2)*0.9;
+
+  // Prism vertices
+  const px0=cx,py0=cy-ht;
+  const px1=cx-hw,py1=cy+side*0.15;
+  const px2=cx+hw,py2=cy+side*0.15;
+
+  // Prism fill
+  ctx.save();
+  const pg=ctx.createLinearGradient(cx-hw,cy-ht,cx+hw,cy+side*0.15);
+  pg.addColorStop(0,'rgba(74,158,255,0.08)');
+  pg.addColorStop(1,'rgba(181,122,255,0.12)');
+  ctx.fillStyle=pg;
+  ctx.beginPath();ctx.moveTo(px0,py0);ctx.lineTo(px1,py1);ctx.lineTo(px2,py2);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(74,158,255,0.5)';ctx.lineWidth=2;ctx.shadowColor=C.blue;ctx.shadowBlur=8;ctx.stroke();
+  ctx.restore();
+
+  // Apex label
+  lbl((gv('prA'))+'°',px0+16,py0+22,C.blue2,'left',12,true);
+  lbl('n = '+(n).toFixed(2),cx,py1+30,C.text2,'center',11);
+
+  // Entry point on left face
+  const eAlpha=0.3;
+  const ex=(px0+px1)*0.5-5,ey=(py0+py1)*0.5+8;
+
+  // Incident white ray
+  const incAngle=Math.PI/3.5;
+  const srcX=ex-130*Math.sin(incAngle),srcY=ey-130*Math.cos(incAngle);
+  const prAnim=document.getElementById('prAnim')?.checked;
+
+  const colors=['#FF2020','#FF8000','#FFE000','#20CC20','#2080FF','#8820FF','#CC00EE'];
+  const nVals=[1.512,1.518,1.523,1.527,1.533,1.540,1.546];
+
+  if(prAnim&&animOn){
+    const pulse=(Math.sin(animT*2)+1)/2;
+    ctx.save();ctx.strokeStyle=`rgba(255,255,220,${0.6+pulse*0.3})`;ctx.lineWidth=3;ctx.shadowColor='#fff';ctx.shadowBlur=12;
+    ctx.beginPath();ctx.moveTo(srcX,srcY);ctx.lineTo(ex,ey);ctx.stroke();ctx.restore();
+  } else {
+    ctx.save();ctx.strokeStyle='rgba(255,255,255,0.8)';ctx.lineWidth=2.5;ctx.shadowColor='#fff';ctx.shadowBlur=8;
+    ctx.beginPath();ctx.moveTo(srcX,srcY);ctx.lineTo(ex,ey);ctx.stroke();ctx.restore();
+  }
+  lbl('White light',srcX+22,srcY-12,C.text2,'left',11);
+
+  // Spectral rays
+  let minDev=999,maxDev=-999;
+  colors.forEach((col,i)=>{
+    const ni=n+(nVals[i]-1.52)*(n-1)/(1.52-1)*0.8;
+    const sinR1=Math.sin(incAngle)/ni;
+    if(Math.abs(sinR1)>1)return;
+    const r1=Math.asin(sinR1);
+    const r2=A-r1;
+    const sinE=ni*Math.sin(r2);
+    if(Math.abs(sinE)>1)return;
+    const e=Math.asin(sinE);
+    const dev=incAngle-r1+e-r2;
+    if(dev<minDev)minDev=dev;if(dev>maxDev)maxDev=dev;
+
+    // Internal ray: entry to exit face
+    // Exit point on right face
+    const t=(i-3)/6*0.18;
+    const rxE=(px0*0.38+px2*0.62)+t*20;
+    const ryE=(py0*0.38+py2*0.62)+t*20;
+    // Internal
+    ray(ex,ey,rxE,ryE,col,0.5,1);
+    // Exit
+    const outLen=200;
+    const exitA=Math.atan2(ryE-ey,rxE-ex)+e*0.6+(i-3)*0.025;
+    ray(rxE,ryE,rxE+outLen*Math.cos(exitA),ryE+outLen*Math.sin(exitA)*0.8,col,0.9,2);
+  });
+
+  // Spectrum label
+  const labX=px2+80,labY=(py0+py2)*0.5;
+  lbl('R',labX,labY-70,colors[0],'left',12,true);
+  lbl('O',labX+5,labY-42,colors[1],'left',12,true);
+  lbl('Y',labX+8,labY-18,colors[2],'left',12,true);
+  lbl('G',labX+8,labY+6,colors[3],'left',12,true);
+  lbl('B',labX+5,labY+30,colors[4],'left',12,true);
+  lbl('I',labX+2,labY+52,colors[5],'left',12,true);
+  lbl('V',labX,labY+72,colors[6],'left',12,true);
+
+  const spread=(maxDev-minDev)*180/Math.PI;
+  const devY=(minDev+maxDev)/2*180/Math.PI;
+  setMetrics([
+    {label:'Apex angle A',value:gv('prA')+'°',color:C.blue2},
+    {label:'Refractive index',value:n.toFixed(2),color:C.violet},
+    {label:'Angular spread',value:isFinite(spread)?spread.toFixed(2)+'°':'—',color:C.green},
+    {label:'Min deviation δ',value:isFinite(devY)?devY.toFixed(1)+'°':'—',badge:'ROYGBIV',badgeClass:'badge-violet'},
+  ]);
+}
+
+// ════════════════════════════════════════════
+// EXP 6 – Fibre Optic TIR
+// ════════════════════════════════════════════
+function setup6(){
+  buildControls(`
+    <div class="ctrl-section">
+      <div class="ctrl-label">Fibre</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Core n₁ <span id="fn1_v">1.50</span></div>
+        <input type="range" id="fn1" min="130" max="200" value="150">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Cladding n₂ <span id="fn2_v">1.45</span></div>
+        <input type="range" id="fn2" min="100" max="149" value="145">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Bend radius <span id="fbend_v">0</span></div>
+        <input type="range" id="fbend" min="0" max="50" value="0">
+      </div>
+    </div>
+    <div class="ctrl-section">
+      <div class="ctrl-label">Light</div>
+      <div class="ctrl-row">
+        <div class="ctrl-name">Entry angle <span id="fang_v">15°</span></div>
+        <input type="range" id="fang" min="1" max="30" value="15">
+      </div>
+    </div>`);
+  trackSlider('fn1',v=>(v/100).toFixed(2));
+  trackSlider('fn2',v=>(v/100).toFixed(2));
+  trackSlider('fbend',v=>v+'px');
+  trackSlider('fang',v=>v+'°');
+}
+function draw6(){
+  bg();grid();
+  const n1=gv('fn1')/100;
+  const n2=gv('fn2')/100;
+  const bend=gv('fbend');
+  const eang=gv('fang')*Math.PI/180;
+  const critA=n2/n1>1?null:Math.asin(n2/n1);
+  const canTIR=n1>n2;
+
+  const fy=H/2,fw=W-80,fx=40;
+  const fh=50;
+
+  // Fibre cladding
+  ctx.save();
+  ctx.fillStyle='rgba(74,158,255,0.08)';
+  ctx.beginPath();
+  if(bend>0){
+    const br=W*0.8+bend*5;
+    ctx.arc(fx+fw-br,fy,br+fh+12,-0.02,0.08);
+    ctx.arc(fx+fw-br,fy,br-fh-12,0.08,-0.02,true);
+  } else {
+    ctx.rect(fx,fy-fh-12,fw,fh*2+24);
+  }
+  ctx.fill();
+  ctx.strokeStyle='rgba(74,158,255,0.3)';ctx.lineWidth=1.5;
+  if(bend>0){
+    const br=W*0.8+bend*5;
+    ctx.beginPath();ctx.arc(fx+fw-br,fy,br+fh+12,-0.02,0.08);ctx.stroke();
+    ctx.beginPath();ctx.arc(fx+fw-br,fy,br-fh-12,-0.02,0.08);ctx.stroke();
+  } else {
+    ctx.beginPath();ctx.moveTo(fx,fy-fh-12);ctx.lineTo(fx+fw,fy-fh-12);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(fx,fy+fh+12);ctx.lineTo(fx+fw,fy+fh+12);ctx.stroke();
+  }
+  ctx.restore();
+
+  // Core
+  ctx.save();ctx.fillStyle='rgba(181,122,255,0.12)';
+  if(bend===0){ctx.fillRect(fx,fy-fh,fw,fh*2);}
+  ctx.strokeStyle='rgba(181,122,255,0.5)';ctx.lineWidth=1;
+  if(bend===0){
+    ctx.beginPath();ctx.moveTo(fx,fy-fh);ctx.lineTo(fx+fw,fy-fh);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(fx,fy+fh);ctx.lineTo(fx+fw,fy+fh);ctx.stroke();
+  }
+  ctx.restore();
+
+  lbl('Core n₁='+n1.toFixed(2),fx+20,fy,C.violet2,'left',11);
+  lbl('Cladding n₂='+n2.toFixed(2),fx+20,fy-fh-20,C.blue2,'left',10);
+
+  // Simulate bouncing ray
+  const phase=animOn?animT*80:0;
+  const colors2=[C.amber,C.green,C.cyan];
+  for(let ri=0;ri<rayCount;ri++){
+    const rc=colors2[ri%colors2.length];
+    const tanA=Math.tan(eang)*(1+ri*0.2);
+    let rx=fx+phase%60,ry=fy;
+    let dir=1;
+    ctx.save();ctx.strokeStyle=rc;ctx.lineWidth=2;ctx.shadowColor=rc;ctx.shadowBlur=6;ctx.globalAlpha=ri===0?1:0.5;
+    ctx.beginPath();ctx.moveTo(fx,ry);
+    while(rx<fx+fw-10){
+      const nx=rx+(fh/tanA);
+      const ny=ry+dir*fh;
+      if(canTIR){
+        ctx.lineTo(Math.min(nx,fx+fw),Math.min(Math.max(ny,fy-fh),fy+fh));
+        rx=Math.min(nx,fx+fw);ry=Math.min(Math.max(ny,fy-fh),fy+fh);
+        if(ny>=fy+fh||ny<=fy-fh)dir*=-1;
+      } else {
+        ctx.lineTo(nx,ny);
+        rx=nx;ry=ny;
+        if(ry>fy+fh+30||ry<fy-fh-30)break;
+      }
+    }
+    ctx.stroke();ctx.restore();
+  }
+
+  const NA=Math.sqrt(n1*n1-n2*n2);
+  setMetrics([
+    {label:'Core n₁',value:n1.toFixed(2),color:C.violet},
+    {label:'Cladding n₂',value:n2.toFixed(2),color:C.blue},
+    {label:'Critical angle',value:canTIR&&critA?((critA*180/Math.PI).toFixed(1)+'°'):'—',color:C.amber},
+    {label:'Numerical aperture',value:NA.toFixed(3),badge:canTIR?'TIR Active':'No TIR',badgeClass:canTIR?'badge-green':'badge-red'},
+  ]);
+}
+
+// ── Main draw dispatcher ──
+function draw(){
+  if(!W)return;
+  ctx.clearRect(0,0,W,H);
+  experiments[activeExp].draw();
+}
+
+// ── Experiment switcher ──
+function setExp(i){
+  activeExp=i;
+  document.querySelectorAll('.exp-btn').forEach((b,j)=>b.classList.toggle('active',i===j));
+  if(animOn){cancelAnimationFrame(animRAF);animOn=false;document.getElementById('btn-anim').classList.remove('on');}
+  experiments[i].setup();
+  setTimeout(draw,30);
+}
+
+window.addEventListener('load',()=>{
+  setup0();
+  resize();
+});
+</script>
+</body>
+</html>

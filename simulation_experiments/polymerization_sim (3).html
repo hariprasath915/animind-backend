@@ -1,0 +1,305 @@
+
+<h2 class="sr-only">Interactive polymerization simulation showing chain and step-growth mechanisms with live metrics.</h2>
+
+<div style="border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden;font-family:var(--font-sans)">
+
+  <div style="display:grid;grid-template-columns:220px minmax(0,1fr);min-height:420px">
+
+    <div style="background:var(--color-background-secondary);border-right:0.5px solid var(--color-border-tertiary);padding:14px;display:flex;flex-direction:column;gap:12px">
+
+      <div>
+        <div style="font-size:11px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">Mechanism</div>
+        <select id="mech" style="width:100%;font-size:12px" onchange="init()">
+          <option value="chain">Chain-growth (radical)</option>
+          <option value="step">Step-growth (condensation)</option>
+        </select>
+      </div>
+
+      <div>
+        <div style="font-size:11px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Parameters</div>
+
+        <div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--color-text-secondary);margin-bottom:2px">
+            <span>[M]₀ monomer</span><span id="lM" style="color:var(--color-text-primary);font-weight:500">2.0 mol/L</span>
+          </div>
+          <input type="range" id="M0" min="1" max="5" step="0.5" value="2" style="width:100%" oninput="document.getElementById('lM').textContent=this.value+'.0 mol/L';init()">
+        </div>
+
+        <div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--color-text-secondary);margin-bottom:2px">
+            <span>Rate kp</span><span id="lK" style="color:var(--color-text-primary);font-weight:500">0.10</span>
+          </div>
+          <input type="range" id="Kp" min="1" max="10" step="1" value="2" style="width:100%" oninput="document.getElementById('lK').textContent=(this.value*0.05).toFixed(2);init()">
+        </div>
+
+        <div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--color-text-secondary);margin-bottom:2px">
+            <span>Temperature</span><span id="lT" style="color:var(--color-text-primary);font-weight:500">298 K</span>
+          </div>
+          <input type="range" id="Temp" min="250" max="450" step="10" value="298" style="width:100%" oninput="document.getElementById('lT').textContent=this.value+' K';init()">
+        </div>
+
+        <div style="margin-bottom:2px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--color-text-secondary);margin-bottom:2px">
+            <span>[I]₀ initiator</span><span id="lI" style="color:var(--color-text-primary);font-weight:500">0.01</span>
+          </div>
+          <input type="range" id="I0" min="1" max="10" step="1" value="2" style="width:100%" oninput="document.getElementById('lI').textContent=(this.value*0.005).toFixed(3);init()">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:6px">
+        <button id="btnPlay" onclick="togglePlay()" style="flex:1;font-size:12px;padding:7px 4px">
+          <i class="ti ti-player-play" aria-hidden="true"></i> Play
+        </button>
+        <button onclick="init()" style="flex:1;font-size:12px;padding:7px 4px">
+          <i class="ti ti-refresh" aria-hidden="true"></i> Reset
+        </button>
+      </div>
+
+      <div style="font-size:11px;color:var(--color-text-tertiary);line-height:1.7;padding-top:8px;border-top:0.5px solid var(--color-border-tertiary)">
+        <span style="color:var(--color-text-secondary)">Step-growth:</span> X̄n = 1/(1−p)<br>
+        <span style="color:var(--color-text-secondary)">Chain-growth:</span> X̄n = kp[M]/kt<br>
+        PDI = Mw / Mn
+      </div>
+    </div>
+
+    <div style="padding:0;display:flex;flex-direction:column">
+      <div style="padding:8px 12px;border-bottom:0.5px solid var(--color-border-tertiary);display:flex;align-items:center;gap:8px">
+        <span style="font-size:12px;color:var(--color-text-secondary)">Conversion</span>
+        <div style="flex:1;height:6px;background:var(--color-background-secondary);border-radius:3px;overflow:hidden">
+          <div id="pbar" style="height:100%;width:0%;background:#378ADD;border-radius:3px;transition:width .2s"></div>
+        </div>
+        <span id="pval" style="font-size:12px;font-weight:500;color:var(--color-text-primary);min-width:36px;text-align:right">0%</span>
+        <span id="tstep" style="font-size:11px;color:var(--color-text-tertiary)">t=0</span>
+      </div>
+
+      <svg id="simsvg" viewBox="0 0 420 340" style="width:100%;flex:1" aria-hidden="true">
+        <rect width="420" height="340" fill="none"/>
+        <g id="layer-free"></g>
+        <g id="layer-bonds"></g>
+        <g id="layer-units"></g>
+        <g id="layer-labels"></g>
+      </svg>
+    </div>
+  </div>
+
+  <div style="border-top:0.5px solid var(--color-border-tertiary);display:grid;grid-template-columns:repeat(5,minmax(0,1fr))">
+    <div style="padding:10px 12px;border-right:0.5px solid var(--color-border-tertiary)">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-text-tertiary);margin-bottom:2px">p (conversion)</div>
+      <div id="m_p" style="font-size:18px;font-weight:500;color:var(--color-text-primary)">0.000</div>
+    </div>
+    <div style="padding:10px 12px;border-right:0.5px solid var(--color-border-tertiary)">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-text-tertiary);margin-bottom:2px">X̄n</div>
+      <div id="m_xn" style="font-size:18px;font-weight:500;color:var(--color-text-primary)">1.0</div>
+      <div style="font-size:10px;color:var(--color-text-tertiary)">avg chain len</div>
+    </div>
+    <div style="padding:10px 12px;border-right:0.5px solid var(--color-border-tertiary)">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-text-tertiary);margin-bottom:2px">Mn</div>
+      <div id="m_mn" style="font-size:18px;font-weight:500;color:var(--color-text-primary)">100</div>
+      <div style="font-size:10px;color:var(--color-text-tertiary)">g/mol</div>
+    </div>
+    <div style="padding:10px 12px;border-right:0.5px solid var(--color-border-tertiary)">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-text-tertiary);margin-bottom:2px">PDI</div>
+      <div id="m_pdi" style="font-size:18px;font-weight:500;color:var(--color-text-primary)">1.00</div>
+      <div id="m_pdi_label" style="font-size:10px;color:var(--color-text-tertiary)">dispersity</div>
+    </div>
+    <div style="padding:10px 12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-text-tertiary);margin-bottom:2px">Chains</div>
+      <div id="m_chains" style="font-size:18px;font-weight:500;color:var(--color-text-primary)">0</div>
+      <div id="m_active" style="font-size:10px;color:var(--color-text-tertiary)">0 active</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS = ['#378ADD','#1D9E75','#D85A30','#7F77DD','#BA7517','#D4537E'];
+const SVG_W = 420, SVG_H = 340;
+let monomers=[], chains=[], simStep=0, simTime=0, animating=false, rafId=null;
+
+const gLayer = id => document.getElementById(id);
+const svgEl = (tag, attrs) => {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for(const [k,v] of Object.entries(attrs)) el.setAttribute(k,v);
+  return el;
+};
+
+function gv(id){ return parseFloat(document.getElementById(id).value); }
+
+function init(){
+  if(animating) stopAnim();
+  simStep=0; simTime=0;
+  monomers=[]; chains=[];
+  const M0 = gv('M0');
+  const I0 = gv('I0')*0.005;
+  const mech = document.getElementById('mech').value;
+  const N = Math.min(72, Math.round(M0*20));
+  const cols = 12, rW=SVG_W/cols, rH=(SVG_H-20)/Math.ceil(N/cols);
+  for(let i=0;i<N;i++){
+    const col=i%cols, row=Math.floor(i/cols);
+    monomers.push({
+      x: rW*(col+0.2)+Math.random()*rW*0.6,
+      y: 10+rH*(row+0.2)+Math.random()*rH*0.6,
+      id:i, inChain:false, colorIdx:0
+    });
+  }
+  if(mech==='chain'){
+    const nI = Math.max(1, Math.min(6, Math.round(I0*N*10)));
+    for(let i=0;i<nI;i++){
+      const free=monomers.filter(m=>!m.inChain);
+      if(!free.length) break;
+      const m=free[Math.floor(Math.random()*free.length)];
+      m.inChain=true; m.colorIdx=i%COLORS.length;
+      chains.push({units:[m], colorIdx:m.colorIdx, active:true});
+    }
+  }
+  render();
+}
+
+function doStep(){
+  const mech=document.getElementById('mech').value;
+  const kp=gv('Kp')*0.05, T=gv('Temp');
+  const kEff=Math.min(1, kp*Math.exp(-5000/8.314*(1/T-1/298)));
+  simStep++; simTime+=0.5;
+
+  if(mech==='step'){
+    const free=monomers.filter(m=>!m.inChain);
+    const pool=[];
+    chains.forEach(c=>pool.push({t:'c',obj:c}));
+    free.forEach(m=>pool.push({t:'m',obj:m}));
+    const nR=Math.max(1,Math.round(kEff*pool.length*0.3));
+    for(let r=0;r<nR&&pool.length>=2;r++){
+      let i1=Math.floor(Math.random()*pool.length);
+      let i2=Math.floor(Math.random()*(pool.length-1));
+      if(i2>=i1)i2++;
+      const e1=pool[i1],e2=pool[i2];
+      let cA,cB;
+      if(e1.t==='m'){const m=e1.obj;m.inChain=true;const ci=chains.length%COLORS.length;m.colorIdx=ci;cA={units:[m],colorIdx:ci,active:false};chains.push(cA);}else cA=e1.obj;
+      if(e2.t==='m'){const m=e2.obj;m.inChain=true;m.colorIdx=cA.colorIdx;cB={units:[m],colorIdx:cA.colorIdx,active:false};chains.push(cB);}else cB=e2.obj;
+      if(cA!==cB){cB.units.forEach(u=>u.colorIdx=cA.colorIdx);cA.units=cA.units.concat(cB.units);const bi=chains.indexOf(cB);if(bi>-1)chains.splice(bi,1);}
+      pool.splice(Math.max(i1,i2),1); pool.splice(Math.min(i1,i2),1);
+    }
+  } else {
+    const freeM=monomers.filter(m=>!m.inChain);
+    const active=chains.filter(c=>c.active);
+    if(freeM.length&&active.length){
+      const nA=Math.max(1,Math.round(kEff*active.length*freeM.length*0.04));
+      for(let i=0;i<nA&&freeM.length&&active.length;i++){
+        const ci=Math.floor(Math.random()*active.length);
+        const mi=Math.floor(Math.random()*freeM.length);
+        const m=freeM[mi]; m.inChain=true; m.colorIdx=active[ci].colorIdx;
+        active[ci].units.push(m); freeM.splice(mi,1);
+        if(Math.random()<0.012){active[ci].active=false;active.splice(ci,1);}
+      }
+    }
+  }
+  layoutChains();
+}
+
+function layoutChains(){
+  chains.forEach((chain,ci)=>{
+    if(!chain.units.length) return;
+    const n=chain.units.length;
+    const ax=chain.units[0].x, ay=chain.units[0].y;
+    const ang=(ci*137.508*Math.PI/180);
+    const sp=14;
+    chain.units.forEach((u,ui)=>{
+      const off=(ui-(n-1)/2)*sp;
+      u.x=Math.max(8,Math.min(SVG_W-8, ax+Math.cos(ang)*off));
+      u.y=Math.max(8,Math.min(SVG_H-8, ay+Math.sin(ang)*off));
+    });
+  });
+}
+
+function render(){
+  const lg=gLayer('layer-free');
+  const lb=gLayer('layer-bonds');
+  const lu=gLayer('layer-units');
+  const ll=gLayer('layer-labels');
+  lg.innerHTML=''; lb.innerHTML=''; lu.innerHTML=''; ll.innerHTML='';
+
+  monomers.filter(m=>!m.inChain).forEach(m=>{
+    const c=svgEl('circle',{cx:m.x.toFixed(1),cy:m.y.toFixed(1),r:'4',fill:'#B4B2A9',opacity:'.55'});
+    lg.appendChild(c);
+  });
+
+  chains.forEach(chain=>{
+    if(!chain.units.length) return;
+    const col=COLORS[chain.colorIdx%COLORS.length];
+    if(chain.units.length>1){
+      let d='M'+chain.units.map(u=>u.x.toFixed(1)+','+u.y.toFixed(1)).join('L');
+      const path=svgEl('path',{d,stroke:col,'stroke-width':'2.5','stroke-linecap':'round',fill:'none',opacity:'.7'});
+      lb.appendChild(path);
+    }
+    chain.units.forEach((u,ui)=>{
+      const isEnd=(ui===chain.units.length-1)&&chain.active;
+      const r=isEnd?7:5;
+      const c=svgEl('circle',{cx:u.x.toFixed(1),cy:u.y.toFixed(1),r,fill:col,opacity:isEnd?'1':'.85'});
+      if(isEnd){c.setAttribute('stroke','#fff');c.setAttribute('stroke-width','1.5');}
+      lu.appendChild(c);
+      if(isEnd&&document.getElementById('mech').value==='chain'){
+        const dot=svgEl('circle',{cx:(u.x+5).toFixed(1),cy:(u.y-5).toFixed(1),r:'2',fill:'#fff'});
+        lu.appendChild(dot);
+      }
+    });
+    if(chain.units.length>=4){
+      const mid=chain.units[Math.floor(chain.units.length/2)];
+      const t=svgEl('text',{x:mid.x.toFixed(1),y:(mid.y-11).toFixed(1),'font-size':'9','text-anchor':'middle',fill:COLORS[chain.colorIdx%COLORS.length],'font-family':'monospace'});
+      t.textContent='n='+chain.units.length;
+      ll.appendChild(t);
+    }
+  });
+
+  updateMetrics();
+}
+
+function updateMetrics(){
+  const inC=monomers.filter(m=>m.inChain).length;
+  const total=monomers.length||1;
+  const p=inC/total;
+  const mech=document.getElementById('mech').value;
+  let Xn,PDI;
+  if(mech==='step'){
+    Xn=p>=0.999?999:1/(1-p); PDI=1+p;
+  } else {
+    const consumed=inC; const nChains=chains.length||1;
+    Xn=Math.max(1,consumed/nChains);
+    PDI=Math.min(1.5,1+1/Math.max(1,Xn));
+  }
+  const Mn=Math.round(Xn*100);
+  const active=chains.filter(c=>c.active).length;
+
+  document.getElementById('pbar').style.width=(p*100).toFixed(1)+'%';
+  document.getElementById('pval').textContent=(p*100).toFixed(1)+'%';
+  document.getElementById('tstep').textContent='t='+simTime.toFixed(1)+'s';
+  document.getElementById('m_p').textContent=p.toFixed(3);
+  document.getElementById('m_xn').textContent=Xn<999?Xn.toFixed(1):'>999';
+  document.getElementById('m_mn').textContent=Mn>99999?(Mn/1000).toFixed(1)+'k':Mn;
+  document.getElementById('m_pdi').textContent=PDI.toFixed(2);
+  document.getElementById('m_pdi_label').textContent=PDI<1.2?'narrow':PDI<1.5?'moderate':'broad';
+  document.getElementById('m_chains').textContent=chains.length;
+  document.getElementById('m_active').textContent=active+' active';
+}
+
+function togglePlay(){
+  animating?stopAnim():startAnim();
+}
+function startAnim(){
+  animating=true;
+  const btn=document.getElementById('btnPlay');
+  btn.innerHTML='<i class="ti ti-player-pause" aria-hidden="true"></i> Pause';
+  let last=0;
+  function loop(ts){
+    if(!animating) return;
+    if(ts-last>130){doStep();render();last=ts;}
+    rafId=requestAnimationFrame(loop);
+  }
+  rafId=requestAnimationFrame(loop);
+}
+function stopAnim(){
+  animating=false;
+  if(rafId){cancelAnimationFrame(rafId);rafId=null;}
+  document.getElementById('btnPlay').innerHTML='<i class="ti ti-player-play" aria-hidden="true"></i> Play';
+}
+
+init();
+</script>

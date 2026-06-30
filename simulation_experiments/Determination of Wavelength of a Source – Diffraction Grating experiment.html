@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diffraction Grating Lab — Wavelength Determination</title>
+<style>
+:root{
+  --bg:#0a0c10; --surface:#12151c; --surface2:#1a1f2b; --surface3:#222837;
+  --border:#2a3040; --border2:#3a4560;
+  --text:#e8eaf0; --text2:#8892a4; --text3:#556070;
+  --green:#3ddc84; --green-dim:#003320;
+  --red:#ff5f57;   --red-dim:#3d0000;
+  --violet:#b57aff; --violet-dim:#1e0040;
+  --cyan:#00d4d8;  --cyan-dim:#003d3e;
+  --accent:#00d4d8; --accent-dim:#003d3e; --accent-glow:rgba(0,212,216,.55);
+  --panel-w:280px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:var(--bg);color:var(--text);
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif;overflow:hidden}
+
+#app{display:flex;height:100vh}
+
+/* ---------- Sidebar ---------- */
+#sidebar{width:var(--panel-w);background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+#lab-title{padding:16px;border-bottom:1px solid var(--border)}
+.eyebrow{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px}
+#lab-title h1{font-size:17px;font-weight:600;color:var(--text);letter-spacing:-.01em}
+#lab-title h1 span{color:var(--accent)}
+.formula-pill{margin-top:10px;display:inline-block;font-family:monospace;font-size:12px;
+  background:var(--accent-dim);color:var(--accent);padding:5px 10px;border-radius:6px;
+  border:1px solid color-mix(in srgb, var(--accent) 25%, transparent)}
+
+#controls-panel{flex:1;overflow-y:auto;padding:12px}
+#controls-panel::-webkit-scrollbar{width:4px}
+#controls-panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+.ctrl-section{margin-bottom:16px}
+.ctrl-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+.ctrl-row{margin-bottom:10px}
+.ctrl-name{font-size:12px;color:var(--text2);margin-bottom:4px;display:flex;justify-content:space-between}
+.ctrl-name span{color:var(--accent);font-weight:600;font-family:monospace}
+.ctrl-sub{font-size:10.5px;color:var(--text3);margin-top:4px;font-family:monospace}
+
+input[type=range]{-webkit-appearance:none;width:100%;height:3px;border-radius:2px;
+  background:linear-gradient(to right,var(--accent) 0%,var(--accent) calc(var(--pct,50%) * 1%),
+  var(--border2) calc(var(--pct,50%) * 1%));outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--accent);cursor:pointer;box-shadow:0 0 6px var(--accent-glow)}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;border:none;
+  background:var(--accent);cursor:pointer;box-shadow:0 0 6px var(--accent-glow)}
+
+select{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);
+  font-size:12px;padding:6px 8px;border-radius:6px;outline:none;cursor:pointer}
+select option{background:var(--surface2)}
+
+.swatch-row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.swatch{width:18px;height:18px;border-radius:4px;border:1px solid var(--border2);flex-shrink:0}
+.swatch-label{font-size:10.5px;color:var(--text3)}
+
+.chip-row{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.chip-btn{font-size:10.5px;padding:5px 9px;border-radius:14px;border:1px solid var(--border2);
+  background:var(--surface2);color:var(--text2);cursor:pointer;transition:all .15s}
+.chip-btn:hover{background:var(--surface3);color:var(--text)}
+.chip-btn.active{background:var(--accent-dim);color:var(--accent);border-color:var(--accent)}
+
+.toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.toggle-row label{font-size:12px;color:var(--text2)}
+.toggle{position:relative;width:36px;height:20px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0;position:absolute}
+.toggle-track{position:absolute;inset:0;background:var(--border2);border-radius:10px;cursor:pointer;transition:background .2s}
+.toggle input:checked + .toggle-track{background:var(--accent)}
+.toggle-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;
+  transition:transform .2s;pointer-events:none}
+.toggle input:checked ~ .toggle-thumb{transform:translateX(16px)}
+
+.btn-row{display:flex;gap:8px;margin-top:6px}
+.btn{flex:1;padding:9px 6px;border-radius:8px;border:1px solid var(--border2);background:var(--surface2);
+  color:var(--text2);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;text-align:center}
+.btn:hover{background:var(--surface3);color:var(--text)}
+.btn.primary{background:var(--accent-dim);color:var(--accent);
+  border-color:color-mix(in srgb, var(--accent) 30%, transparent)}
+.btn.primary:hover{background:var(--accent);color:#000}
+
+.warn-box{margin-top:6px;font-size:10.5px;color:var(--red);background:var(--red-dim);
+  border:1px solid color-mix(in srgb, var(--red) 30%, transparent);border-radius:6px;
+  padding:6px 8px;display:none}
+
+/* ---------- Main / Canvas ---------- */
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#canvas-area{flex:1;position:relative;overflow:hidden;background:
+  radial-gradient(ellipse at 50% 45%, #11151d 0%, var(--bg) 70%)}
+#canvas-area canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+
+#overlay-bar{position:absolute;top:10px;right:12px;display:flex;gap:6px;z-index:10}
+.ov-btn{background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-size:11px;
+  padding:5px 10px;border-radius:6px;cursor:pointer;transition:all .15s}
+.ov-btn:hover,.ov-btn.on{background:var(--surface3);color:var(--accent);border-color:var(--accent-dim)}
+
+#eyepiece{position:absolute;top:10px;left:12px;width:150px;z-index:10;
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;
+  box-shadow:0 4px 16px rgba(0,0,0,.4)}
+#eyepiece .ep-head{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);
+  padding:6px 9px 4px}
+#eyepiece-view{height:54px;background:#000;margin:0 8px 8px;border-radius:6px;position:relative;
+  border:1px solid var(--border2);overflow:hidden}
+#eyepiece-line{position:absolute;top:0;bottom:0;width:6px;left:50%;transform:translateX(-50%);
+  border-radius:3px;opacity:0;transition:opacity .15s, box-shadow .15s;box-shadow:0 0 10px 2px transparent}
+#eyepiece-cross{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(255,255,255,.18)}
+
+#tip{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:var(--surface2);
+  border:1px solid var(--border);color:var(--text2);font-size:11px;padding:6px 14px;border-radius:20px;
+  pointer-events:none;white-space:nowrap;z-index:10}
+
+#info-panel{height:100px;background:var(--surface);border-top:1px solid var(--border);
+  display:flex;align-items:stretch;flex-shrink:0}
+.metric{flex:1;display:flex;flex-direction:column;justify-content:center;padding:12px 16px;
+  border-right:1px solid var(--border);min-width:0}
+.metric:last-child{border-right:none}
+.metric-label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);
+  margin-bottom:4px;white-space:nowrap}
+.metric-value{font-size:19px;font-weight:600;font-family:monospace;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.metric-sub{font-size:10px;color:var(--text2);margin-top:2px}
+.metric-badge{display:inline-block;font-size:10px;font-weight:600;padding:3px 8px;border-radius:4px;margin-top:4px}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-red{background:var(--red-dim);color:var(--red)}
+.badge-amber{background:var(--accent-dim);color:var(--accent)}
+
+#sim-error-fallback{display:none;position:absolute;inset:0;align-items:center;justify-content:center;
+  background:var(--bg);z-index:50;flex-direction:column;gap:10px;text-align:center;padding:30px}
+.sim-err-msg{font-size:11px;color:var(--text3);font-family:monospace;max-width:420px}
+
+/* ---------- Mobile ---------- */
+@media (max-width:760px){
+  #app{flex-direction:column}
+  #sidebar{width:100%;max-height:240px}
+  #controls-panel{display:flex;flex-wrap:wrap;gap:0 12px}
+  .ctrl-section{flex:1 1 200px}
+  #info-panel{height:auto}
+  .metric{flex:1 1 50%;border-bottom:1px solid var(--border)}
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="sidebar">
+    <div id="lab-title">
+      <div class="eyebrow">Interactive Simulation</div>
+      <h1>Diffraction <span>Grating</span> Lab</h1>
+      <div class="formula-pill">d·sinθ = mλ</div>
+    </div>
+
+    <div id="controls-panel">
+
+      <div class="ctrl-section">
+        <div class="ctrl-label">Light Source</div>
+        <div class="chip-row">
+          <button class="chip-btn" data-lambda="589" id="chipNa">Na (589nm)</button>
+          <button class="chip-btn" data-lambda="546" id="chipHg">Hg (546nm)</button>
+          <button class="chip-btn" data-lambda="656" id="chipHa">Hα (656nm)</button>
+        </div>
+        <div class="ctrl-row">
+          <div class="ctrl-name">Wavelength (λ) <span id="lambdaVal">589 nm</span></div>
+          <input type="range" id="lambdaSlider" min="400" max="700" step="1" value="589">
+        </div>
+        <div class="swatch-row">
+          <div class="swatch" id="lambdaSwatch"></div>
+          <div class="swatch-label">apparent spectral color</div>
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-label">Diffraction Grating</div>
+        <div class="ctrl-row">
+          <div class="ctrl-name">Lines per mm (N)</div>
+          <select id="linesSelect">
+            <option value="100">100</option>
+            <option value="300">300</option>
+            <option value="600" selected>600</option>
+            <option value="1200">1200</option>
+            <option value="2400">2400</option>
+          </select>
+          <div class="ctrl-sub" id="dDisplay">d = 1666.7 nm</div>
+        </div>
+        <div class="warn-box" id="noOrderWarn">No diffraction orders exist for this λ / N (d &lt; λ). Lower N or increase λ.</div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-label">Telescope (Detector)</div>
+        <div class="ctrl-row">
+          <div class="ctrl-name">Angle (θ) <span id="telVal">0.0°</span></div>
+          <input type="range" id="telSlider" min="-85" max="85" step="0.1" value="0">
+        </div>
+        <div class="toggle-row">
+          <label for="toggleAllOrders">Show all orders</label>
+          <div class="toggle">
+            <input type="checkbox" id="toggleAllOrders" checked>
+            <div class="toggle-track"></div><div class="toggle-thumb"></div>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <label for="toggleLabels">Show angle labels</label>
+          <div class="toggle">
+            <input type="checkbox" id="toggleLabels" checked>
+            <div class="toggle-track"></div><div class="toggle-thumb"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn primary" id="btnPlay">▶ Scan</button>
+        <button class="btn" id="btnReset">⟲ Reset</button>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="canvas-area">
+      <canvas id="cvs"></canvas>
+
+      <div id="eyepiece">
+        <div class="ep-head">Telescope view</div>
+        <div id="eyepiece-view">
+          <div id="eyepiece-cross"></div>
+          <div id="eyepiece-line"></div>
+        </div>
+      </div>
+
+      <div id="overlay-bar">
+        <button class="ov-btn on" id="ovEyepiece">Eyepiece</button>
+      </div>
+
+      <div id="tip">Drag the telescope along the arc · Space = scan · R = reset</div>
+
+      <div id="sim-error-fallback">
+        <div style="font-size:30px">⚠️</div>
+        <div style="font-size:14px;font-weight:600">Simulation hit a runtime error</div>
+        <div class="sim-err-msg"></div>
+      </div>
+    </div>
+
+    <div id="info-panel"></div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   Diffraction Grating Lab
+   Governing equation: d sin(theta_m) = m * lambda   (normal incidence)
+   d            = grating spacing (1 / lines-per-mm), in nm
+   theta_m      = diffraction angle of order m, measured from the
+                  straight-through (m = 0) direction
+   m_max        = floor(d / lambda)   (largest order with |sin| <= 1)
+   ============================================================ */
+
+/* ---------- DOM refs ---------- */
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
+let W = 0, H = 0;
+
+function resizeCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  const r = cvs.getBoundingClientRect();
+  cvs.width  = Math.max(1, r.width  * dpr);
+  cvs.height = Math.max(1, r.height * dpr);
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.scale(dpr, dpr);
+  W = r.width; H = r.height;
+  draw();
+}
+window.addEventListener('resize', resizeCanvas);
+
+/* ---------- helpers ---------- */
+function gv(id){ return parseFloat(document.getElementById(id)?.value ?? 0); }
+function gb(id){ return document.getElementById(id)?.checked ?? false; }
+function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
+function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function bindSlider(id, displayId, fmt, onChange){
+  const el = document.getElementById(id);
+  const dv = displayId ? document.getElementById(displayId) : null;
+  function update(){
+    const v = parseFloat(el.value);
+    if (dv) dv.textContent = fmt(v);
+    const pct = 100 * (v - parseFloat(el.min)) / (parseFloat(el.max) - parseFloat(el.min));
+    el.style.setProperty('--pct', pct.toFixed(1));
+    onChange(v);
+  }
+  el.addEventListener('input', update);
+  update();
+  return update;
+}
+
+function setMetrics(items){
+  const panel = document.getElementById('info-panel');
+  panel.innerHTML = items.map(m => `
+    <div class="metric">
+      <div class="metric-label">${m.label}</div>
+      <div class="metric-value">${m.value}</div>
+      ${m.sub ? `<div class="metric-sub">${m.sub}</div>` : ''}
+      ${m.badge ? `<div class="metric-badge ${m.badgeClass || 'badge-amber'}">${m.badge}</div>` : ''}
+    </div>`).join('');
+}
+
+/* Standard wavelength (nm, visible range) -> approximate sRGB color */
+function wavelengthToRGB(wl){
+  let r=0,g=0,b=0;
+  if (wl>=380 && wl<440){ r=-(wl-440)/(440-380); g=0; b=1; }
+  else if (wl>=440 && wl<490){ r=0; g=(wl-440)/(490-440); b=1; }
+  else if (wl>=490 && wl<510){ r=0; g=1; b=-(wl-510)/(510-490); }
+  else if (wl>=510 && wl<580){ r=(wl-510)/(580-510); g=1; b=0; }
+  else if (wl>=580 && wl<645){ r=1; g=-(wl-645)/(645-580); b=0; }
+  else if (wl>=645 && wl<=780){ r=1; g=0; b=0; }
+  let factor=1;
+  if (wl>=380 && wl<420) factor = 0.3 + 0.7*(wl-380)/(420-380);
+  else if (wl>=701 && wl<=780) factor = 0.3 + 0.7*(780-wl)/(780-700);
+  const gamma=0.8;
+  const f=(c)=> c<=0 ? 0 : Math.round(255 * Math.pow(c*factor, gamma));
+  return { r:f(r), g:f(g), b:f(b) };
+}
+function rgbCss(c, a){ return `rgba(${c.r},${c.g},${c.b},${a===undefined?1:a})`; }
+
+/* ---------- state ---------- */
+const state = { lambda: 589, N: 600, telDeg: 0, showAll: true, showLabels: true };
+let playing = false, rafId = null, lastTs = 0, sweepDir = 1;
+
+/* ---------- derived physics ---------- */
+function derive(){
+  const d_nm = 1e6 / state.N;                 // grating spacing in nm
+  const lambda = state.lambda;
+  const mMax = Math.floor(d_nm / lambda + 1e-9);
+  const telRad = state.telDeg * Math.PI/180;
+  let nearestOrder = 0;
+  if (mMax >= 1){
+    const sinVal = clamp(d_nm * Math.sin(telRad) / lambda, -mMax, mMax);
+    nearestOrder = clamp(Math.round(sinVal), -mMax, mMax);
+  }
+  let thetaIdealDeg = 0;
+  if (nearestOrder !== 0){
+    const s = clamp(nearestOrder * lambda / d_nm, -1, 1);
+    thetaIdealDeg = Math.asin(s) * 180/Math.PI;
+  }
+  const aligned = Math.abs(state.telDeg - thetaIdealDeg) < 1.0;
+  let recoveredLambda = null;
+  if (nearestOrder !== 0){
+    recoveredLambda = d_nm * Math.sin(telRad) / nearestOrder;
+  }
+  return { d_nm, lambda, mMax, telRad, nearestOrder, thetaIdealDeg, aligned, recoveredLambda };
+}
+
+/* ---------- drawing primitives ---------- */
+function glowLine(x1,y1,x2,y2,color,width,glow){
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  if (glow){ ctx.shadowColor = color; ctx.shadowBlur = glow; }
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  ctx.restore();
+}
+function glowDot(x,y,r,color,glow){
+  ctx.save();
+  ctx.fillStyle = color;
+  if (glow){ ctx.shadowColor = color; ctx.shadowBlur = glow; }
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function label(x,y,text,color,size,align){
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.font = `${size||11}px monospace`;
+  ctx.textAlign = align || 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/* geometry */
+let O = {x:0,y:0}, R = 0;
+function layout(){
+  O.x = W*0.50; O.y = H*0.54;
+  R = Math.max(60, Math.min(W, H) * 0.34);
+}
+
+/* ---------- main draw ---------- */
+function draw(){
+  if (!W || !H) return;
+  layout();
+  ctx.clearRect(0,0,W,H);
+
+  const d = derive();
+  const color = wavelengthToRGB(d.lambda);
+  const colCss = `rgb(${color.r},${color.g},${color.b})`;
+  const borderCol = cssVar('--border2') || '#3a4560';
+  const textCol = cssVar('--text3') || '#556070';
+  const accentCol = cssVar('--accent') || '#00d4d8';
+
+  document.getElementById('noOrderWarn').style.display = d.mMax === 0 ? 'block' : 'none';
+
+  /* incoming collimated beam */
+  glowLine(O.x - R*0.7, O.y, O.x, O.y, 'rgba(255,255,255,.85)', 1.6, 4);
+  label(O.x - R*0.7 - 6, O.y - 12, 'Collimator', textCol, 10, 'left');
+
+  /* grating symbol (small hatch marks) */
+  ctx.save();
+  ctx.strokeStyle = borderCol; ctx.lineWidth = 1.4;
+  for (let i=-6;i<=6;i++){
+    ctx.beginPath();
+    ctx.moveTo(O.x + i*2.4, O.y - 16);
+    ctx.lineTo(O.x + i*2.4, O.y + 16);
+    ctx.stroke();
+  }
+  ctx.restore();
+  label(O.x, O.y + 30, 'Grating', textCol, 10, 'center');
+
+  /* protractor arc */
+  ctx.save();
+  ctx.strokeStyle = borderCol; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(O.x, O.y, R + 18, -85*Math.PI/180, 85*Math.PI/180, false);
+  ctx.stroke();
+  for (let a=-90; a<=90; a+=10){
+    const rad = a*Math.PI/180;
+    const r1 = R+14, r2 = (a % 30 === 0) ? R+24 : R+20;
+    const x1 = O.x + r1*Math.cos(rad), y1 = O.y - r1*Math.sin(rad);
+    const x2 = O.x + r2*Math.cos(rad), y2 = O.y - r2*Math.sin(rad);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    if (a % 30 === 0){
+      const lx = O.x + (R+34)*Math.cos(rad), ly = O.y - (R+34)*Math.sin(rad);
+      label(lx, ly, a+'°', textCol, 9.5, 'center');
+    }
+  }
+  ctx.restore();
+
+  /* central order (m=0) */
+  glowLine(O.x, O.y, O.x + R, O.y, 'rgba(255,255,255,.55)', 1.4, 3);
+  if (state.showLabels) label(O.x + R + 6, O.y, 'm=0', textCol, 10, 'left');
+
+  /* diffracted orders */
+  const maxDrawn = Math.min(d.mMax, 5);
+  if (state.showAll){
+    for (let m=-maxDrawn; m<=maxDrawn; m++){
+      if (m === 0) continue;
+      const s = clamp(m * d.lambda / d.d_nm, -1, 1);
+      const rad = Math.asin(s);
+      const isLocked = (d.nearestOrder === m && d.aligned);
+      const ex = O.x + R*Math.cos(rad);
+      const ey = O.y - R*Math.sin(rad);
+      glowLine(O.x, O.y, ex, ey, rgbCss(color, isLocked?1:0.55), isLocked?2.6:1.4, isLocked?12:4);
+      glowDot(ex, ey, isLocked?5:3, colCss, isLocked?14:6);
+      if (state.showLabels){
+        const lx = O.x + (R+8)*Math.cos(rad), ly = O.y - (R+8)*Math.sin(rad);
+        label(lx, ly, `m=${m}`, isLocked?accentCol:textCol, 10, m>0?'left':'left');
+      }
+    }
+  }
+
+  /* telescope pointer */
+  const telLen = R + 30;
+  const tx = O.x + telLen*Math.cos(d.telRad);
+  const ty = O.y - telLen*Math.sin(d.telRad);
+  glowLine(O.x, O.y, tx, ty, accentCol, 2.4, 8);
+  ctx.save();
+  ctx.translate(tx, ty); ctx.rotate(-d.telRad);
+  ctx.fillStyle = accentCol;
+  ctx.beginPath();
+  ctx.moveTo(0,-7); ctx.lineTo(18,0); ctx.lineTo(0,7); ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  glowDot(tx, ty, 4.5, accentCol, 10);
+
+  if (state.showLabels){
+    label(tx + 24*Math.cos(d.telRad), ty - 24*Math.sin(d.telRad),
+      `${state.telDeg.toFixed(1)}°`, accentCol, 11.5, 'center');
+  }
+
+  /* eyepiece overlay */
+  const epLine = document.getElementById('eyepiece-line');
+  if (d.nearestOrder !== 0 && d.aligned){
+    epLine.style.background = colCss;
+    epLine.style.opacity = 1;
+    epLine.style.boxShadow = `0 0 12px 3px ${rgbCss(color,.8)}`;
+  } else if (d.mMax === 0 || state.telDeg === 0){
+    epLine.style.background = 'rgba(255,255,255,.85)';
+    epLine.style.opacity = Math.abs(state.telDeg) < 1.0 ? 1 : 0;
+    epLine.style.boxShadow = '0 0 12px 3px rgba(255,255,255,.6)';
+  } else {
+    epLine.style.opacity = 0;
+  }
+
+  /* metrics */
+  setMetrics([
+    { label:'Telescope Angle', value: state.telDeg.toFixed(1)+'°' },
+    { label:'Nearest Order', value: 'm = '+d.nearestOrder,
+      sub: d.aligned ? 'aligned with a spectral line' : 'between orders' },
+    { label:'Grating Spacing d', value: d.d_nm.toFixed(1)+' nm',
+      sub: state.N+' lines/mm' },
+    { label:'Max Order', value: d.mMax>0 ? '±'+d.mMax : '0',
+      badge: d.mMax===0 ? 'd < λ' : null, badgeClass: 'badge-red' },
+    d.recoveredLambda !== null
+      ? { label:'Recovered λ', value: d.recoveredLambda.toFixed(1)+' nm',
+          badge: d.aligned ? 'Verified ✓' : 'Not aligned',
+          badgeClass: d.aligned ? 'badge-green' : 'badge-red' }
+      : { label:'Recovered λ', value:'—', sub:'rotate to a non-zero order', badgeClass:'badge-amber' }
+  ]);
+}
+
+/* ---------- bindings ---------- */
+function updateDDisplay(){
+  const d_nm = 1e6/state.N;
+  document.getElementById('dDisplay').textContent = `d = ${d_nm.toFixed(1)} nm`;
+}
+
+const updateLambdaSlider = bindSlider('lambdaSlider','lambdaVal', v=>v.toFixed(0)+' nm', v=>{
+  state.lambda = v;
+  const c = wavelengthToRGB(v);
+  document.getElementById('lambdaSwatch').style.background = `rgb(${c.r},${c.g},${c.b})`;
+  ['chipNa','chipHg','chipHa'].forEach(id=>document.getElementById(id).classList.remove('active'));
+  draw();
+});
+
+document.getElementById('linesSelect').addEventListener('change', e=>{
+  state.N = parseInt(e.target.value, 10);
+  updateDDisplay();
+  draw();
+});
+
+const updateTelSlider = bindSlider('telSlider','telVal', v=>v.toFixed(1)+'°', v=>{
+  state.telDeg = v;
+  draw();
+});
+
+document.getElementById('toggleAllOrders').addEventListener('change', e=>{
+  state.showAll = e.target.checked; draw();
+});
+document.getElementById('toggleLabels').addEventListener('change', e=>{
+  state.showLabels = e.target.checked; draw();
+});
+document.getElementById('ovEyepiece').addEventListener('click', e=>{
+  const box = document.getElementById('eyepiece');
+  const on = box.style.display !== 'none';
+  box.style.display = on ? 'none' : 'block';
+  e.target.classList.toggle('on', !on);
+});
+
+[['chipNa',589],['chipHg',546],['chipHa',656]].forEach(([id,wl])=>{
+  document.getElementById(id).addEventListener('click', ()=>{
+    document.getElementById('lambdaSlider').value = wl;
+    updateLambdaSlider();
+    document.getElementById(id).classList.add('active');
+  });
+});
+
+/* ---------- drag-to-rotate telescope ---------- */
+let dragging = false;
+function angleFromEvent(clientX, clientY){
+  const rect = cvs.getBoundingClientRect();
+  const mx = clientX - rect.left, my = clientY - rect.top;
+  const dx = mx - O.x, dy = -(my - O.y);
+  let ang = Math.atan2(dy, dx) * 180/Math.PI;
+  return clamp(ang, -85, 85);
+}
+function pointerNearTelescope(clientX, clientY){
+  const rect = cvs.getBoundingClientRect();
+  const mx = clientX - rect.left, my = clientY - rect.top;
+  const dist = Math.hypot(mx - O.x, my - O.y);
+  return dist > R*0.4; // anywhere away from the grating hub counts as "grab the arm"
+}
+cvs.addEventListener('pointerdown', e=>{
+  if (!pointerNearTelescope(e.clientX, e.clientY)) return;
+  dragging = true;
+  cvs.setPointerCapture(e.pointerId);
+  setTelAngle(angleFromEvent(e.clientX, e.clientY));
+});
+cvs.addEventListener('pointermove', e=>{
+  if (!dragging) return;
+  setTelAngle(angleFromEvent(e.clientX, e.clientY));
+});
+cvs.addEventListener('pointerup', e=>{
+  dragging = false;
+  try{ cvs.releasePointerCapture(e.pointerId); }catch(_e){}
+});
+function setTelAngle(deg){
+  document.getElementById('telSlider').value = deg.toFixed(1);
+  updateTelSlider();
+}
+
+/* ---------- play / reset / keyboard ---------- */
+function togglePlay(){
+  playing = !playing;
+  document.getElementById('btnPlay').textContent = playing ? '⏸ Pause' : '▶ Scan';
+  if (playing){
+    lastTs = 0;
+    function loop(ts){
+      if (!playing) return;
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000;
+      lastTs = ts;
+      let next = state.telDeg + sweepDir * 22 * dt;
+      if (next >= 82){ next = 82; sweepDir = -1; }
+      if (next <= -82){ next = -82; sweepDir = 1; }
+      setTelAngle(next);
+      rafId = requestAnimationFrame(loop);
+    }
+    rafId = requestAnimationFrame(loop);
+  } else {
+    cancelAnimationFrame(rafId); rafId = null;
+  }
+}
+function resetSim(){
+  playing = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  document.getElementById('btnPlay').textContent = '▶ Scan';
+  document.getElementById('lambdaSlider').value = 589; updateLambdaSlider();
+  document.getElementById('linesSelect').value = '600';
+  state.N = 600; updateDDisplay();
+  document.getElementById('telSlider').value = 0; updateTelSlider();
+  document.getElementById('toggleAllOrders').checked = true; state.showAll = true;
+  document.getElementById('toggleLabels').checked = true; state.showLabels = true;
+  draw();
+}
+document.getElementById('btnPlay').addEventListener('click', togglePlay);
+document.getElementById('btnReset').addEventListener('click', resetSim);
+window.addEventListener('keydown', e=>{
+  if (e.code === 'Space'){ e.preventDefault(); togglePlay(); }
+  if (e.code === 'KeyR'){ resetSim(); }
+});
+
+/* ---------- init ---------- */
+updateDDisplay();
+window.addEventListener('load', resizeCanvas);
+resizeCanvas();
+</script>
+</body>
+</html>

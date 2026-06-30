@@ -1,0 +1,736 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans, sans-serif); }
+
+  #lab {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 20px;
+    padding: 16px 0;
+  }
+
+  /* ── LEFT: Experiment bench ─────────────── */
+  #bench { display: flex; flex-direction: column; gap: 16px; }
+
+  #circuit-area {
+    background: var(--surface-1);
+    border: 0.5px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    position: relative;
+  }
+
+  #bench-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+
+  /* ── RIGHT: Readings + Controls ────────── */
+  #panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .card {
+    background: var(--surface-2);
+    border: 0.5px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+
+  .card-title {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 10px;
+  }
+
+  .reading-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .reading-label { font-size: 13px; color: var(--text-secondary); }
+  .reading-value {
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .reading-unit { font-size: 12px; color: var(--text-muted); margin-left: 3px; }
+
+  .slider-row { margin-bottom: 12px; }
+  .slider-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+  .slider-val { font-weight: 500; color: var(--text-primary); }
+  input[type=range] { width: 100%; }
+
+  .btn-row { display: flex; gap: 8px; margin-top: 4px; }
+  button {
+    flex: 1;
+    padding: 7px 10px;
+    font-size: 13px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    border: 0.5px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-primary);
+    transition: background 0.15s;
+  }
+  button:hover { background: var(--surface-1); }
+  button.primary {
+    background: var(--fill-accent);
+    color: var(--on-accent);
+    border-color: transparent;
+  }
+  button.primary:hover { opacity: 0.9; }
+  button.danger-btn {
+    color: var(--text-danger);
+    border-color: var(--border-danger);
+  }
+
+  /* Graph */
+  #graph-wrap {
+    background: var(--surface-1);
+    border: 0.5px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+  }
+
+  #result-box {
+    background: var(--bg-success);
+    border: 0.5px solid var(--border-success);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--text-success);
+    display: none;
+  }
+
+  .formula {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    font-style: italic;
+  }
+
+  .material-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .badge {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 0.5px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    transition: all 0.15s;
+  }
+  .badge.active {
+    background: var(--bg-accent);
+    color: var(--text-accent);
+    border-color: var(--border-accent);
+  }
+
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+  #status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #888;
+    display: inline-block;
+    margin-right: 4px;
+    transition: background 0.3s;
+  }
+  #status-dot.on { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.2); }
+</style>
+
+<div id="lab">
+  <!-- LEFT: Apparatus -->
+  <div id="bench">
+    <div id="circuit-area">
+      <div id="bench-label">Experiment Apparatus</div>
+      <svg id="apparatus" width="100%" viewBox="0 0 440 360" style="display:block">
+        <defs>
+          <linearGradient id="oilGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#b8860b" stop-opacity="0.5"/>
+            <stop offset="100%" stop-color="#d4a017" stop-opacity="0.25"/>
+          </linearGradient>
+          <linearGradient id="woodGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#6b3a1f"/>
+            <stop offset="50%" stop-color="#8b5a2b"/>
+            <stop offset="100%" stop-color="#6b3a1f"/>
+          </linearGradient>
+          <linearGradient id="copperGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#8a6040"/>
+            <stop offset="50%" stop-color="#b07d50"/>
+            <stop offset="100%" stop-color="#8a6040"/>
+          </linearGradient>
+          <linearGradient id="thermGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#aaa"/>
+            <stop offset="100%" stop-color="#ccc"/>
+          </linearGradient>
+          <linearGradient id="mercuryGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#e53e3e"/>
+            <stop offset="100%" stop-color="#991b1b"/>
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="2" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <!-- ═══ WOODEN BOX ═══ -->
+        <rect x="55" y="195" width="240" height="150" rx="6" fill="url(#woodGrad)" opacity="0.95"/>
+        <!-- wood grain lines -->
+        <line x1="55" y1="220" x2="295" y2="220" stroke="#5a2d0c" stroke-width="0.5" opacity="0.3"/>
+        <line x1="55" y1="250" x2="295" y2="250" stroke="#5a2d0c" stroke-width="0.5" opacity="0.25"/>
+        <line x1="55" y1="280" x2="295" y2="280" stroke="#5a2d0c" stroke-width="0.5" opacity="0.25"/>
+        <line x1="55" y1="310" x2="295" y2="310" stroke="#5a2d0c" stroke-width="0.5" opacity="0.25"/>
+        <rect x="55" y="195" width="240" height="150" rx="6" fill="none" stroke="#4a2209" stroke-width="1.5"/>
+        <text x="175" y="340" text-anchor="middle" font-size="10" fill="#c9956a" font-family="var(--font-sans,sans-serif)" font-weight="500">Wooden box (insulation)</text>
+
+        <!-- ═══ COPPER VESSEL ═══ -->
+        <rect x="80" y="205" width="190" height="130" rx="4" fill="url(#copperGrad)" opacity="0.9"/>
+        <rect x="80" y="205" width="190" height="130" rx="4" fill="none" stroke="#7a4a2a" stroke-width="1.2"/>
+        <!-- vessel shine -->
+        <rect x="82" y="207" width="8" height="120" rx="2" fill="white" opacity="0.08"/>
+        <text x="175" y="280" text-anchor="middle" font-size="9" fill="#f0d0a0" opacity="0.7" font-family="var(--font-sans,sans-serif)">Copper vessel</text>
+
+        <!-- ═══ OIL BATH ═══ -->
+        <rect x="83" y="225" width="184" height="107" rx="2" fill="url(#oilGrad)"/>
+        <rect x="83" y="225" width="184" height="107" rx="2" fill="none" stroke="#9a7020" stroke-width="0.5" opacity="0.6"/>
+        <!-- oil surface ripple -->
+        <ellipse cx="175" cy="228" rx="80" ry="4" fill="#c9930a" opacity="0.3"/>
+        <text x="175" y="268" text-anchor="middle" font-size="10" fill="#f5c842" opacity="0.8" font-family="var(--font-sans,sans-serif)">Oil bath</text>
+
+        <!-- ═══ THERMOMETER ═══ -->
+        <rect x="248" y="195" width="8" height="145" rx="4" fill="url(#thermGrad)" stroke="#999" stroke-width="0.5"/>
+        <ellipse cx="252" cy="340" rx="7" ry="7" fill="#e53e3e"/>
+        <!-- mercury column (dynamic height) -->
+        <rect id="mercury" x="250" y="280" width="4" height="60" rx="2" fill="url(#mercuryGrad)"/>
+        <!-- tick marks -->
+        <line x1="256" y1="210" x2="262" y2="210" stroke="#999" stroke-width="0.8"/>
+        <line x1="256" y1="225" x2="260" y2="225" stroke="#999" stroke-width="0.6"/>
+        <line x1="256" y1="240" x2="262" y2="240" stroke="#999" stroke-width="0.8"/>
+        <line x1="256" y1="255" x2="260" y2="255" stroke="#999" stroke-width="0.6"/>
+        <line x1="256" y1="270" x2="262" y2="270" stroke="#999" stroke-width="0.8"/>
+        <line x1="256" y1="285" x2="260" y2="285" stroke="#999" stroke-width="0.6"/>
+        <line x1="256" y1="300" x2="262" y2="300" stroke="#999" stroke-width="0.8"/>
+        <line x1="256" y1="315" x2="260" y2="315" stroke="#999" stroke-width="0.6"/>
+        <text x="267" y="212" font-size="8" fill="#999" font-family="var(--font-sans,sans-serif)">100°</text>
+        <text x="267" y="242" font-size="8" fill="#999" font-family="var(--font-sans,sans-serif)">75°</text>
+        <text x="267" y="272" font-size="8" fill="#999" font-family="var(--font-sans,sans-serif)">50°</text>
+        <text x="267" y="302" font-size="8" fill="#999" font-family="var(--font-sans,sans-serif)">25°</text>
+
+        <!-- ═══ DIODE (in oil bath) ═══ -->
+        <!-- wire leads -->
+        <line x1="155" y1="255" x2="155" y2="210" stroke="#e0e0e0" stroke-width="2" stroke-linecap="round"/>
+        <line x1="195" y1="255" x2="195" y2="210" stroke="#e0e0e0" stroke-width="2" stroke-linecap="round"/>
+        <!-- diode body -->
+        <rect x="148" y="250" width="54" height="18" rx="9" fill="#1a1a2e" stroke="#4a4a8a" stroke-width="1.2"/>
+        <!-- diode symbol inside -->
+        <polygon points="163,255 163,262 170,258.5" fill="#7a7aff" opacity="0.8"/>
+        <line x1="170" y1="254" x2="170" y2="263" stroke="#7a7aff" stroke-width="1.5" opacity="0.8"/>
+        <!-- cathode band -->
+        <rect x="175" y="250" width="5" height="18" rx="1" fill="#888"/>
+        <!-- type label -->
+        <text id="diode-label" x="175" y="244" text-anchor="middle" font-size="9" fill="#a0c4ff" font-family="var(--font-sans,sans-serif)" font-weight="500">Ge</text>
+        <!-- wire current glow (animated) -->
+        <line id="wire-l" x1="155" y1="210" x2="155" y2="190" stroke="#4a9aff" stroke-width="2" opacity="0" stroke-linecap="round"/>
+        <line id="wire-r" x1="195" y1="210" x2="195" y2="190" stroke="#4a9aff" stroke-width="2" opacity="0" stroke-linecap="round"/>
+
+        <!-- ═══ CIRCUIT WIRES (top) ═══ -->
+        <!-- horizontal bus at y=180 -->
+        <line id="wire-top-l" x1="55" y1="185" x2="155" y2="185" stroke="#888" stroke-width="1.5" stroke-linecap="round"/>
+        <line id="wire-top-r" x1="195" y1="185" x2="295" y2="185" stroke="#888" stroke-width="1.5" stroke-linecap="round"/>
+        <!-- connect diode to bus -->
+        <line id="wire-ld" x1="155" y1="185" x2="155" y2="210" stroke="#888" stroke-width="1.5" stroke-linecap="round"/>
+        <line id="wire-rd" x1="195" y1="185" x2="195" y2="210" stroke="#888" stroke-width="1.5" stroke-linecap="round"/>
+
+        <!-- ═══ BATTERY (top centre-right) ═══ -->
+        <rect x="280" y="90" width="50" height="80" rx="5" fill="#2d3a1f" stroke="#4a5e30" stroke-width="1"/>
+        <!-- battery cells -->
+        <rect x="287" y="98" width="36" height="12" rx="2" fill="#3a5c1a"/>
+        <rect x="287" y="114" width="36" height="12" rx="2" fill="#3a5c1a"/>
+        <rect x="287" y="130" width="36" height="12" rx="2" fill="#3a5c1a"/>
+        <rect x="287" y="146" width="36" height="12" rx="2" fill="#3a5c1a"/>
+        <!-- battery terminals -->
+        <rect x="296" y="84" width="6" height="8" rx="1" fill="#e53e3e"/>
+        <text x="299" y="82" text-anchor="middle" font-size="10" fill="#e53e3e" font-weight="bold" font-family="var(--font-sans,sans-serif)">+</text>
+        <rect x="308" y="84" width="6" height="8" rx="1" fill="#888"/>
+        <text x="311" y="82" text-anchor="middle" font-size="10" fill="#888" font-weight="bold" font-family="var(--font-sans,sans-serif)">−</text>
+        <text x="305" y="183" text-anchor="middle" font-size="9" fill="#8bc34a" font-family="var(--font-sans,sans-serif)">Battery</text>
+
+        <!-- wires from battery to bus -->
+        <line x1="299" y1="168" x2="299" y2="185" stroke="#e53e3e" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="311" y1="168" x2="311" y2="185" stroke="#888" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="299" y1="185" x2="295" y2="185" stroke="#e53e3e" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="311" y1="185" x2="315" y2="185" stroke="#888" stroke-width="1.5"/>
+        <!-- return wire on the right -->
+        <line x1="315" y1="185" x2="315" y2="155" stroke="#888" stroke-width="1.5"/>
+        <line x1="315" y1="155" x2="370" y2="155" stroke="#888" stroke-width="1.5"/>
+        <line x1="370" y1="155" x2="370" y2="100" stroke="#888" stroke-width="1.5"/>
+        <line x1="370" y1="100" x2="311" y2="100" stroke="#888" stroke-width="1.5"/>
+
+        <!-- ═══ µA METER ═══ -->
+        <circle cx="90" cy="140" r="28" fill="#1a1a2e" stroke="#4a5a8a" stroke-width="1.5"/>
+        <circle cx="90" cy="140" r="24" fill="#0d1117" stroke="#2a3a6a" stroke-width="0.5"/>
+        <!-- meter face arcs -->
+        <path d="M 68 155 A 24 24 0 0 1 112 155" fill="none" stroke="#3a5a8a" stroke-width="0.5"/>
+        <!-- scale ticks -->
+        <line x1="68" y1="155" x2="72" y2="152" stroke="#6a8abf" stroke-width="0.8"/>
+        <line x1="78" y1="121" x2="80" y2="125" stroke="#6a8abf" stroke-width="0.8"/>
+        <line x1="90" y1="118" x2="90" y2="122" stroke="#6a8abf" stroke-width="0.8"/>
+        <line x1="102" y1="121" x2="100" y2="125" stroke="#6a8abf" stroke-width="0.8"/>
+        <line x1="112" y1="155" x2="108" y2="152" stroke="#6a8abf" stroke-width="0.8"/>
+        <!-- needle -->
+        <line id="ua-needle" x1="90" y1="140" x2="70" y2="125" stroke="#e53e3e" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="90" cy="140" r="3" fill="#e53e3e"/>
+        <!-- label -->
+        <text x="90" y="152" text-anchor="middle" font-size="8" fill="#7a9acf" font-family="var(--font-sans,sans-serif)">μA</text>
+        <text x="90" y="162" text-anchor="middle" font-size="7" fill="#5a7aaf" font-family="var(--font-sans,sans-serif)">MICRO</text>
+        <!-- terminals -->
+        <circle cx="78" cy="167" r="3" fill="#888"/>
+        <text x="78" y="178" text-anchor="middle" font-size="8" fill="#888" font-family="var(--font-sans,sans-serif)">−</text>
+        <circle cx="102" cy="167" r="3" fill="#e53e3e"/>
+        <text x="102" y="178" text-anchor="middle" font-size="8" fill="#e53e3e" font-family="var(--font-sans,sans-serif)">+</text>
+
+        <!-- wires for µA meter -->
+        <line x1="55" y1="185" x2="55" y2="155" stroke="#e53e3e" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="55" y1="155" x2="78" y2="155" stroke="#e53e3e" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="78" y1="155" x2="78" y2="167" stroke="#888" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="102" y1="167" x2="102" y2="155" stroke="#e53e3e" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="102" y1="155" x2="55" y2="155" stroke="#e53e3e" stroke-width="1.5" stroke-linecap="round"/>
+
+        <!-- ═══ VOLTMETER ═══ -->
+        <circle cx="200" cy="115" r="28" fill="#1a2a1a" stroke="#3a6a3a" stroke-width="1.5"/>
+        <circle cx="200" cy="115" r="24" fill="#0d170d" stroke="#2a4a2a" stroke-width="0.5"/>
+        <path d="M 178 130 A 24 24 0 0 1 222 130" fill="none" stroke="#3a6a3a" stroke-width="0.5"/>
+        <!-- scale ticks -->
+        <line x1="178" y1="130" x2="182" y2="127" stroke="#5a9a5a" stroke-width="0.8"/>
+        <line x1="188" y1="96" x2="190" y2="100" stroke="#5a9a5a" stroke-width="0.8"/>
+        <line x1="200" y1="93" x2="200" y2="97" stroke="#5a9a5a" stroke-width="0.8"/>
+        <line x1="212" y1="96" x2="210" y2="100" stroke="#5a9a5a" stroke-width="0.8"/>
+        <line x1="222" y1="130" x2="218" y2="127" stroke="#5a9a5a" stroke-width="0.8"/>
+        <!-- needle -->
+        <line id="v-needle" x1="200" y1="115" x2="186" y2="98" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="200" cy="115" r="3" fill="#22c55e"/>
+        <text x="200" y="127" text-anchor="middle" font-size="8" fill="#5a9a5a" font-family="var(--font-sans,sans-serif)">V</text>
+        <text x="200" y="137" text-anchor="middle" font-size="7" fill="#3a7a3a" font-family="var(--font-sans,sans-serif)">VOLT</text>
+        <!-- terminals -->
+        <circle cx="188" cy="142" r="3" fill="#888"/>
+        <text x="188" y="153" text-anchor="middle" font-size="8" fill="#888" font-family="var(--font-sans,sans-serif)">−</text>
+        <circle cx="212" cy="142" r="3" fill="#22c55e"/>
+        <text x="212" y="153" text-anchor="middle" font-size="8" fill="#22c55e" font-family="var(--font-sans,sans-serif)">+</text>
+
+        <!-- voltmeter connects across diode (parallel) -->
+        <line x1="188" y1="142" x2="188" y2="185" stroke="#888" stroke-width="1" stroke-dasharray="3 2"/>
+        <line x1="188" y1="185" x2="155" y2="185" stroke="#888" stroke-width="1" stroke-dasharray="3 2"/>
+        <line x1="212" y1="142" x2="212" y2="185" stroke="#22c55e" stroke-width="1" stroke-dasharray="3 2"/>
+        <line x1="212" y1="185" x2="195" y2="185" stroke="#22c55e" stroke-width="1" stroke-dasharray="3 2"/>
+
+      </svg>
+    </div>
+
+    <!-- Graph area -->
+    <div id="graph-wrap">
+      <div id="bench-label" style="margin-bottom:8px">ln(I) vs 1/T graph — Band gap determination</div>
+      <canvas id="graph" height="160" style="width:100%;display:block;border-radius:6px"></canvas>
+      <div id="result-box"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Controls + Readings -->
+  <div id="panel">
+
+    <!-- Status -->
+    <div class="card">
+      <div class="card-title">Status</div>
+      <div style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <span id="status-dot"></span>
+        <span id="status-text">Ready — press Start</span>
+      </div>
+    </div>
+
+    <!-- Semiconductor selection -->
+    <div class="card">
+      <div class="card-title">Semiconductor material</div>
+      <div class="material-badges">
+        <span class="badge active" data-mat="Ge" onclick="setMaterial(this)">Germanium (Ge)</span>
+        <span class="badge" data-mat="Si" onclick="setMaterial(this)">Silicon (Si)</span>
+        <span class="badge" data-mat="GaAs" onclick="setMaterial(this)">GaAs</span>
+      </div>
+      <div class="formula" id="mat-info">Ge — Eg ≈ 0.67 eV (standard, room-temp value)</div>
+    </div>
+
+    <!-- Live readings -->
+    <div class="card">
+      <div class="card-title">Live instrument readings</div>
+
+      <div class="reading-row">
+        <span class="reading-label">Temperature</span>
+        <span><span class="reading-value" id="disp-T">30</span><span class="reading-unit">°C</span></span>
+      </div>
+      <div class="reading-row">
+        <span class="reading-label">Reverse current (µA)</span>
+        <span><span class="reading-value" id="disp-I">—</span><span class="reading-unit">µA</span></span>
+      </div>
+      <div class="reading-row">
+        <span class="reading-label">Voltage</span>
+        <span><span class="reading-value" id="disp-V">1.5</span><span class="reading-unit">V</span></span>
+      </div>
+      <div class="reading-row">
+        <span class="reading-label">1/T (×10⁻³ K⁻¹)</span>
+        <span><span class="reading-value" id="disp-invT">—</span></span>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card">
+      <div class="card-title">Controls</div>
+
+      <div class="slider-row">
+        <div class="slider-label">
+          <span>Voltage applied</span>
+          <span class="slider-val" id="v-label">1.5 V</span>
+        </div>
+        <input type="range" id="v-slider" min="0.5" max="5" step="0.1" value="1.5" oninput="setV(this.value)">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-label">
+          <span>Heating rate</span>
+          <span class="slider-val" id="rate-label">1×</span>
+        </div>
+        <input type="range" id="rate-slider" min="1" max="5" step="1" value="1" oninput="setRate(this.value)">
+      </div>
+
+      <div class="btn-row">
+        <button class="primary" onclick="startExp()">▶ Start</button>
+        <button onclick="pauseExp()">⏸ Pause</button>
+        <button class="danger-btn" onclick="resetExp()">↺ Reset</button>
+      </div>
+    </div>
+
+    <!-- Data table -->
+    <div class="card">
+      <div class="card-title">Observation table <span id="count-label" style="font-weight:400;color:var(--text-muted)">(0 pts)</span></div>
+      <div style="max-height:120px;overflow-y:auto;font-size:11px">
+        <table id="obs-table" style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="color:var(--text-muted)">
+              <th style="text-align:left;padding:2px 4px;font-weight:500">T (°C)</th>
+              <th style="text-align:right;padding:2px 4px;font-weight:500">I (µA)</th>
+              <th style="text-align:right;padding:2px 4px;font-weight:500">ln(I)</th>
+              <th style="text-align:right;padding:2px 4px;font-weight:500">1/T (K⁻¹)</th>
+            </tr>
+          </thead>
+          <tbody id="obs-body"></tbody>
+        </table>
+        <div id="no-data" style="text-align:center;color:var(--text-muted);padding:12px 0;font-size:12px">No data yet. Start the experiment.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const kB = 8.617e-5; // eV/K
+const materials = {
+  Ge:   { Eg: 0.67,  I0: 2e-5, name: "Germanium", info: "Ge — Eg ≈ 0.67 eV (standard, room-temp value)" },
+  Si:   { Eg: 1.12,  I0: 2e-9, name: "Silicon",   info: "Si — Eg ≈ 1.12 eV (most common semiconductor)" },
+  GaAs: { Eg: 1.424, I0: 5e-12, name: "GaAs",    info: "GaAs — Eg ≈ 1.42 eV (direct bandgap, LEDs/lasers)" },
+};
+
+let mat = "Ge";
+let V = 1.5;
+let rate = 1;
+let T = 30; // Celsius
+let running = false;
+let timer = null;
+let data = [];
+let lastRecordT = null;
+
+const q = id => document.getElementById(id);
+
+function setMaterial(el) {
+  document.querySelectorAll('.badge').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  mat = el.dataset.mat;
+  q('mat-info').textContent = materials[mat].info;
+  q('diode-label').textContent = mat;
+  updateReadings();
+}
+
+function setV(val) {
+  V = parseFloat(val);
+  q('v-label').textContent = V.toFixed(1) + ' V';
+  q('disp-V').textContent = V.toFixed(1);
+  updateReadings();
+}
+
+function setRate(val) {
+  rate = parseInt(val);
+  q('rate-label').textContent = rate + '×';
+}
+
+function calcI(T_C) {
+  const T_K = T_C + 273.15;
+  const m = materials[mat];
+  // I = I0 * exp(-Eg / (2*kB*T)) * voltage_factor
+  const vf = Math.exp((V - 0.5) * 0.8);
+  return m.I0 * vf * Math.exp(-m.Eg / (2 * kB * T_K)) * 1e6; // µA
+}
+
+function updateReadings() {
+  const T_K = T + 273.15;
+  const I = calcI(T);
+  q('disp-T').textContent = T.toFixed(1);
+  q('disp-I').textContent = I < 0.001 ? I.toExponential(2) : I.toFixed(3);
+  q('disp-invT').textContent = (1000 / T_K).toFixed(3);
+
+  // update µA meter needle (angle: -60 to +60 deg mapped to 0–500µA)
+  const maxI = 500;
+  const frac = Math.min(I / maxI, 1);
+  const angle = -60 + frac * 120;
+  const r = 22;
+  const cx = 90, cy = 140;
+  const rad = (angle - 90) * Math.PI / 180;
+  const x2 = cx + r * Math.cos(rad);
+  const y2 = cy + r * Math.sin(rad);
+  q('ua-needle').setAttribute('x2', x2.toFixed(1));
+  q('ua-needle').setAttribute('y2', y2.toFixed(1));
+
+  // Voltmeter needle (fixed to V)
+  const vFrac = Math.min((V - 0.5) / 4.5, 1);
+  const vAngle = -60 + vFrac * 120;
+  const vcx = 200, vcy = 115;
+  const vr = 22;
+  const vRad = (vAngle - 90) * Math.PI / 180;
+  const vx2 = vcx + vr * Math.cos(vRad);
+  const vy2 = vcy + vr * Math.sin(vRad);
+  q('v-needle').setAttribute('x2', vx2.toFixed(1));
+  q('v-needle').setAttribute('y2', vy2.toFixed(1));
+
+  // Thermometer mercury height (30°C=bottom, 130°C=top)
+  const tFrac = Math.max(0, Math.min((T - 20) / 120, 1));
+  const maxH = 120, minY = 215;
+  const mercH = Math.max(4, tFrac * maxH);
+  const mercY = 215 + maxH - mercH;
+  q('mercury').setAttribute('y', mercY.toFixed(0));
+  q('mercury').setAttribute('height', mercH.toFixed(0));
+
+  // Wire glow when current flows
+  const glowOpacity = Math.min(I / 50, 0.9);
+  ['wire-l','wire-r'].forEach(id => {
+    q(id).style.opacity = glowOpacity;
+  });
+}
+
+function recordPoint() {
+  if (lastRecordT !== null && Math.abs(T - lastRecordT) < 4) return;
+  lastRecordT = T;
+  const T_K = T + 273.15;
+  const I = calcI(T);
+  if (I < 0.0001) return;
+  data.push({ T_C: T, T_K, I, lnI: Math.log(I), invT: 1 / T_K });
+  updateTable();
+  drawGraph();
+}
+
+function updateTable() {
+  const tbody = q('obs-body');
+  tbody.innerHTML = '';
+  q('no-data').style.display = data.length ? 'none' : 'block';
+  q('count-label').textContent = `(${data.length} pts)`;
+  data.slice(-8).forEach(d => {
+    const tr = document.createElement('tr');
+    tr.style.borderTop = '0.5px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:2px 4px;color:var(--text-secondary)">${d.T_C.toFixed(0)}</td>
+      <td style="padding:2px 4px;text-align:right;color:var(--text-secondary)">${d.I.toFixed(3)}</td>
+      <td style="padding:2px 4px;text-align:right;color:var(--text-secondary)">${d.lnI.toFixed(3)}</td>
+      <td style="padding:2px 4px;text-align:right;color:var(--text-secondary)">${(d.invT*1000).toFixed(4)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function drawGraph() {
+  const canvas = q('graph');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth;
+  const H = 160;
+  canvas.width = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const bg = dark ? '#1a1a2e' : '#f8f9fa';
+  const gridC = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+  const textC = dark ? '#888' : '#666';
+  const dotC = dark ? '#60a5fa' : '#3b82f6';
+  const lineC = dark ? '#f59e0b' : '#d97706';
+
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const pad = { l: 44, r: 12, t: 12, b: 28 };
+  const gW = W - pad.l - pad.r;
+  const gH = H - pad.t - pad.b;
+
+  if (data.length < 2) {
+    ctx.fillStyle = textC;
+    ctx.font = '12px var(--font-sans, sans-serif)';
+    ctx.textAlign = 'center';
+    ctx.fillText('Run experiment to plot ln(I) vs 1/T', W/2, H/2);
+    return;
+  }
+
+  const xs = data.map(d => d.invT * 1000);
+  const ys = data.map(d => d.lnI);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys) - 0.5, yMax = Math.max(...ys) + 0.5;
+  const dx = xMax - xMin || 0.001, dy = yMax - yMin || 1;
+
+  const toX = v => pad.l + (v - xMin) / dx * gW;
+  const toY = v => pad.t + gH - (v - yMin) / dy * gH;
+
+  // grid
+  ctx.strokeStyle = gridC;
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const x = pad.l + i * gW / 4;
+    ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + gH); ctx.stroke();
+    const y = pad.t + i * gH / 4;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + gW, y); ctx.stroke();
+  }
+
+  // axes
+  ctx.strokeStyle = textC; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t+gH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t+gH); ctx.lineTo(pad.l+gW, pad.t+gH); ctx.stroke();
+
+  // axis labels
+  ctx.fillStyle = textC; ctx.font = '10px var(--font-sans, sans-serif)'; ctx.textAlign = 'center';
+  ctx.fillText('1/T (×10⁻³ K⁻¹)', pad.l + gW/2, H - 4);
+  ctx.save(); ctx.translate(10, pad.t + gH/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('ln(I)', 0, 0); ctx.restore();
+
+  // dots
+  ctx.fillStyle = dotC;
+  data.forEach(d => {
+    ctx.beginPath();
+    ctx.arc(toX(d.invT*1000), toY(d.lnI), 3, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  // linear regression line
+  const n = data.length;
+  const sumX = xs.reduce((a,b)=>a+b,0), sumY = ys.reduce((a,b)=>a+b,0);
+  const sumXY = xs.reduce((a,x,i)=>a+x*ys[i],0), sumXX = xs.reduce((a,x)=>a+x*x,0);
+  const slope = (n*sumXY - sumX*sumY) / (n*sumXX - sumX*sumX);
+  const intercept = (sumY - slope*sumX) / n;
+
+  ctx.strokeStyle = lineC; ctx.lineWidth = 1.5;
+  ctx.setLineDash([4,3]);
+  ctx.beginPath();
+  ctx.moveTo(toX(xMin), toY(slope*xMin + intercept));
+  ctx.lineTo(toX(xMax), toY(slope*xMax + intercept));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // band gap from slope: Eg = -2*kB*slope*1000 (because x is in 10^-3 K^-1)
+  const Eg = -2 * kB * slope * 1000;
+  if (data.length >= 5 && Eg > 0) {
+    const ref = materials[mat].Eg;
+    const err = Math.abs((Eg - ref) / ref * 100).toFixed(1);
+    q('result-box').style.display = 'block';
+    q('result-box').innerHTML = `
+      <strong>Band gap Eg = ${Eg.toFixed(3)} eV</strong><br>
+      Reference (${mat}): ${ref} eV &nbsp;|&nbsp; Error: ${err}%<br>
+      <span style="font-size:11px">Slope = ${slope.toFixed(2)} × 10³ K &nbsp;→&nbsp; Eg = −2kB × slope</span>`;
+  }
+}
+
+function startExp() {
+  if (running) return;
+  running = true;
+  q('status-dot').className = 'on';
+  q('status-text').textContent = 'Heating oil bath…';
+
+  // show wire glow
+  q('wire-l').style.opacity = 0.6;
+  q('wire-r').style.opacity = 0.6;
+
+  timer = setInterval(() => {
+    if (T >= 130) {
+      clearInterval(timer);
+      running = false;
+      q('status-dot').className = '';
+      q('status-text').textContent = 'Complete — see graph for result';
+      return;
+    }
+    T += 0.5 * rate;
+    if (T > 130) T = 130;
+    updateReadings();
+    recordPoint();
+  }, 100);
+}
+
+function pauseExp() {
+  if (!running) return;
+  running = false;
+  clearInterval(timer);
+  q('status-dot').className = '';
+  q('status-text').textContent = 'Paused';
+}
+
+function resetExp() {
+  pauseExp();
+  T = 30;
+  data = [];
+  lastRecordT = null;
+  updateReadings();
+  updateTable();
+  const canvas = q('graph');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGraph();
+  q('result-box').style.display = 'none';
+  q('status-text').textContent = 'Ready — press Start';
+  q('wire-l').style.opacity = 0;
+  q('wire-r').style.opacity = 0;
+}
+
+// init
+updateReadings();
+drawGraph();
+</script>
