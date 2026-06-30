@@ -1,0 +1,337 @@
+
+<h2 class="sr-only">Optical fibre — fully animated signal journey from laser to detector</h2>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans,system-ui,sans-serif)}
+
+/* ── ray animations ── */
+@keyframes rf1{to{stroke-dashoffset:-80}}
+@keyframes rf2{to{stroke-dashoffset:-80}}
+@keyframes rf3{to{stroke-dashoffset:-80}}
+@keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
+@keyframes pulseRing{0%{r:9;opacity:.7}100%{r:20;opacity:0}}
+@keyframes laserBeam{0%,100%{opacity:.6}50%{opacity:1}}
+@keyframes detectorFlash{0%,100%{opacity:.5}50%{opacity:1}}
+@keyframes flowArrow{0%,100%{opacity:.3}50%{opacity:.9}}
+@keyframes signalPulse{0%{stroke-dashoffset:0}100%{stroke-dashoffset:-120}}
+@keyframes wfArrow{0%,100%{opacity:.25}50%{opacity:.9}}
+@keyframes shimmer{0%,100%{opacity:.7}50%{opacity:1}}
+
+.ray1{stroke-dasharray:18 12;animation:rf1 .95s linear infinite}
+.ray2{stroke-dasharray:14 16;animation:rf2 1.4s linear infinite .38s}
+.ray3{stroke-dasharray:9 21;animation:rf3 1.85s linear infinite .76s}
+.rdot {animation:blink 1s ease-in-out infinite}
+.rdot2{animation:blink 1s ease-in-out infinite .5s}
+.ring1{animation:pulseRing 1.6s ease-out infinite}
+.ring2{animation:pulseRing 1.6s ease-out infinite .8s}
+.lbeam{animation:laserBeam 1.2s ease-in-out infinite}
+.det{animation:detectorFlash 1.1s ease-in-out infinite}
+.sig{stroke-dasharray:20 10;animation:signalPulse 1s linear infinite}
+.sig2{stroke-dasharray:20 10;animation:signalPulse 1s linear infinite .5s}
+.wfa{animation:wfArrow 1.3s ease-in-out infinite}
+.wfa2{animation:wfArrow 1.3s ease-in-out infinite .43s}
+.wfa3{animation:wfArrow 1.3s ease-in-out infinite .86s}
+.wfa4{animation:wfArrow 1.3s ease-in-out infinite 1.1s}
+.shim{animation:shimmer 2s ease-in-out infinite}
+
+.card{background:var(--surface-2);border:0.5px solid var(--border);border-radius:14px;overflow:hidden}
+.card-inner{background:var(--surface-1);border:0.5px solid var(--border);border-radius:10px;padding:.9rem 1rem}
+.lbl{font-size:10px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted);margin-bottom:9px}
+.mval{font-size:21px;font-weight:500;line-height:1;margin-bottom:2px}
+.msub{font-size:11px;color:var(--text-secondary)}
+</style>
+
+<div style="padding:0 0 1.5rem">
+
+  <!-- ══════════════════════════════
+       SECTION 1 — HERO FIBRE ANIMATION
+  ══════════════════════════════ -->
+  <div class="lbl">Fibre structure · live light propagation</div>
+  <div class="card" style="margin-bottom:1.25rem">
+    <svg width="100%" viewBox="0 0 680 220" role="img">
+      <title>Optical fibre — animated light rays travelling by total internal reflection</title>
+      <desc>Side-view cross-section of fibre with jacket, cladding and core, animated photon paths bouncing off walls</desc>
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+        <clipPath id="kclip"><rect x="28" y="76" width="624" height="62" rx="8"/></clipPath>
+        <clipPath id="cclip"><rect x="28" y="54" width="624" height="106" rx="14"/></clipPath>
+      </defs>
+
+      <!-- Jacket -->
+      <rect x="28" y="30" width="624" height="154" rx="20" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+      <!-- Cladding -->
+      <rect x="28" y="54" width="624" height="106" rx="14" fill="#DEEEFB" stroke="#85B7EB" stroke-width="0.5"/>
+      <!-- Core -->
+      <rect x="28" y="76" width="624" height="62" rx="8" fill="#F4F9FF" stroke="#378ADD" stroke-width="1"/>
+
+      <!-- Core label -->
+      <text x="340" y="111" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" font-weight="500" fill="#185FA5" opacity=".6">Core  n = 1.48</text>
+
+      <!-- ── Animated rays (clipped inside core) ── -->
+      <!-- Primary ray — biggest amplitude -->
+      <polyline class="ray1"
+        points="34,107 92,79 170,135 248,79 326,135 404,79 482,135 560,79 640,107"
+        fill="none" stroke="#FCDE5A" stroke-width="3" stroke-linecap="round" clip-path="url(#kclip)"/>
+
+      <!-- Secondary ray — offset phase -->
+      <polyline class="ray2"
+        points="34,107 108,80 186,134 264,80 342,134 420,80 498,134 576,83 645,102"
+        fill="none" stroke="#EF9F27" stroke-width="1.8" stroke-linecap="round" opacity=".65" clip-path="url(#kclip)"/>
+
+      <!-- Tertiary — near-straight low-angle -->
+      <line class="ray3" x1="34" y1="107" x2="646" y2="107"
+        stroke="#FCDE5A" stroke-width="1" opacity=".25" clip-path="url(#kclip)"/>
+
+      <!-- Reflection flash dots on walls -->
+      <circle class="rdot"  cx="92"  cy="79"  r="5" fill="#FCDE5A" clip-path="url(#kclip)"/>
+      <circle class="rdot2" cx="170" cy="135" r="5" fill="#FCDE5A" clip-path="url(#kclip)"/>
+      <circle class="rdot"  cx="248" cy="79"  r="5" fill="#FCDE5A" clip-path="url(#kclip)"/>
+      <circle class="rdot2" cx="326" cy="135" r="5" fill="#FCDE5A" clip-path="url(#kclip)"/>
+      <circle class="rdot"  cx="404" cy="79"  r="5" fill="#FCDE5A" clip-path="url(#kclip)"/>
+      <circle class="rdot2" cx="482" cy="135" r="5" fill="#FCDE5A" clip-path="url(#kclip)"/>
+      <circle class="rdot"  cx="560" cy="79"  r="5" fill="#FCDE5A" clip-path="url(#kclip)"/>
+
+      <!-- TIR angle callout at one bounce -->
+      <line x1="170" y1="135" x2="170" y2="107" stroke="#378ADD" stroke-width="0.5" stroke-dasharray="3 2" clip-path="url(#cclip)"/>
+      <path d="M158,121 A13,13 0 0 1 170,107" fill="none" stroke="#378ADD" stroke-width="0.8" clip-path="url(#cclip)"/>
+      <text x="143" y="116" font-size="10" font-family="var(--font-sans,sans-serif)" fill="#185FA5">TIR</text>
+
+      <!-- Laser source (left) -->
+      <circle class="ring1" cx="28" cy="107" r="9" fill="none" stroke="#FCDE5A" stroke-width="1.5"/>
+      <circle class="ring2" cx="28" cy="107" r="9" fill="none" stroke="#EF9F27" stroke-width="1"/>
+      <circle cx="28" cy="107" r="8" fill="#EF9F27"/>
+      <circle cx="28" cy="107" r="4" fill="#FCDE5A"/>
+
+      <!-- Detector (right) -->
+      <circle class="det" cx="652" cy="107" r="10" fill="#1D9E75" opacity=".9"/>
+      <circle cx="652" cy="107" r="5.5" fill="#E1F5EE"/>
+      <circle cx="652" cy="107" r="2.5" fill="#1D9E75"/>
+
+      <!-- Layer labels — above -->
+      <line x1="340" y1="30" x2="340" y2="16" stroke="#C8C6BE" stroke-width="0.5"/>
+      <text x="340" y="12" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#5F5E5A">Jacket (polymer protection)</text>
+
+      <line x1="500" y1="54" x2="500" y2="40" stroke="#85B7EB" stroke-width="0.5"/>
+      <text x="500" y="36" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#185FA5">Cladding  n = 1.46</text>
+
+      <!-- Bottom labels -->
+      <text x="28"  y="200" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#854F0B">Laser</text>
+      <text x="652" y="200" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#0F6E56">Detector</text>
+
+      <!-- Wavelength annotation -->
+      <text x="340" y="210" text-anchor="middle" font-size="10" font-family="var(--font-sans,sans-serif)" fill="#888780">1550 nm infrared · ~200,000 km/s · 100 km+ range</text>
+    </svg>
+  </div>
+
+  <!-- ══════════════════════════════
+       SECTION 2 — CROSS-SECTION + METRICS
+  ══════════════════════════════ -->
+  <div style="display:grid;grid-template-columns:220px 1fr;gap:16px;margin-bottom:1.25rem">
+
+    <!-- Cross-section animation -->
+    <div>
+      <div class="lbl">Cross-section</div>
+      <div class="card" style="padding:0">
+        <svg width="100%" viewBox="0 0 220 220" role="img">
+          <title>Optical fibre cross-section — three concentric layers</title>
+          <desc>Jacket, cladding, core circles with pulsing light at centre</desc>
+
+          <!-- Jacket -->
+          <circle cx="110" cy="110" r="98" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+          <!-- Cladding -->
+          <circle cx="110" cy="110" r="70" fill="#DEEEFB" stroke="#85B7EB" stroke-width="0.5"/>
+          <!-- Core -->
+          <circle cx="110" cy="110" r="30" fill="#F4F9FF" stroke="#378ADD" stroke-width="1"/>
+
+          <!-- Pulsing light inside core -->
+          <circle class="ring1" cx="110" cy="110" r="9" fill="none" stroke="#FCDE5A" stroke-width="2"/>
+          <circle class="ring2" cx="110" cy="110" r="9" fill="none" stroke="#EF9F27" stroke-width="1.5"/>
+          <circle cx="110" cy="110" r="7" fill="#EF9F27" opacity=".95"/>
+          <circle cx="110" cy="110" r="3.5" fill="#FCDE5A"/>
+
+          <!-- Dimension lines -->
+          <line x1="110" y1="110" x2="110" y2="40"  stroke="#85B7EB" stroke-width="0.5" stroke-dasharray="3 2"/>
+          <line x1="110" y1="110" x2="110" y2="12"  stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="3 2"/>
+
+          <!-- Labels -->
+          <text x="115" y="88"  font-size="10" font-family="var(--font-sans,sans-serif)" fill="#0C447C">Core</text>
+          <text x="115" y="62"  font-size="10" font-family="var(--font-sans,sans-serif)" fill="#185FA5">Cladding</text>
+          <text x="115" y="30"  font-size="10" font-family="var(--font-sans,sans-serif)" fill="#5F5E5A">Jacket</text>
+
+          <!-- n values -->
+          <text x="110" y="148" text-anchor="middle" font-size="10" font-family="var(--font-sans,sans-serif)" fill="#185FA5">n=1.46</text>
+          <text x="110" y="118" text-anchor="middle" font-size="9"  font-family="var(--font-sans,sans-serif)" fill="#0C447C" opacity=".6">n=1.48</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Metrics grid -->
+    <div>
+      <div class="lbl">Key numbers</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div class="card-inner">
+          <div class="mval" style="color:#0C447C">~82°</div>
+          <div class="msub">Critical angle</div>
+        </div>
+        <div class="card-inner">
+          <div class="mval" style="color:#0F6E56">200K</div>
+          <div class="msub">km/s speed</div>
+        </div>
+        <div class="card-inner">
+          <div class="mval" style="color:#854F0B">100 km</div>
+          <div class="msub">Max range</div>
+        </div>
+        <div class="card-inner">
+          <div class="mval" style="color:#534AB7">100 Tb/s</div>
+          <div class="msub">Peak bandwidth</div>
+        </div>
+        <div class="card-inner">
+          <div class="mval" style="color:#993C1D">1550 nm</div>
+          <div class="msub">Wavelength</div>
+        </div>
+        <div class="card-inner">
+          <div class="mval" style="color:#3B6D11">9 µm</div>
+          <div class="msub">SMF core dia.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════
+       SECTION 3 — WORKFLOW ANIMATION
+  ══════════════════════════════ -->
+  <div class="lbl">Signal workflow · animated</div>
+  <div class="card" style="margin-bottom:1.25rem">
+    <svg width="100%" viewBox="0 0 680 130" role="img">
+      <title>Animated signal workflow: electrical input to laser to fibre to detector to output</title>
+      <desc>Five colour-coded nodes connected by animated flowing arrows</desc>
+      <defs>
+        <marker id="wah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- ── Node 1: Electrical in ── -->
+      <rect x="12" y="28" width="110" height="52" rx="10" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+      <text x="67" y="50"  text-anchor="middle" font-size="12" font-weight="500" font-family="var(--font-sans,sans-serif)" fill="#444441">Electrical</text>
+      <text x="67" y="66"  text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#888780">input signal</text>
+      <!-- Animated signal squiggle inside -->
+      <polyline class="sig" points="22,54 32,46 42,62 52,46 62,62 72,46 82,62 92,46 102,54 112,54"
+        fill="none" stroke="#888780" stroke-width="1" opacity=".5" clip-path="url(#n1c)"/>
+
+      <!-- Arrow 1→2 -->
+      <line class="wfa" x1="124" y1="54" x2="140" y2="54" stroke="#B4B2A9" stroke-width="1.5" marker-end="url(#wah)"/>
+
+      <!-- ── Node 2: Laser ── -->
+      <rect x="142" y="28" width="110" height="52" rx="10" fill="#FAEEDA" stroke="#FAC775" stroke-width="0.5"/>
+      <text x="197" y="50" text-anchor="middle" font-size="12" font-weight="500" font-family="var(--font-sans,sans-serif)" fill="#633806">Laser / LED</text>
+      <text x="197" y="66" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#854F0B">electrical → light</text>
+      <!-- Pulsing glow dot -->
+      <circle class="shim" cx="197" cy="20" r="5" fill="#EF9F27" opacity=".8"/>
+
+      <!-- Arrow 2→3 -->
+      <line class="wfa2" x1="254" y1="54" x2="270" y2="54" stroke="#EF9F27" stroke-width="1.5" marker-end="url(#wah)"/>
+
+      <!-- ── Node 3: Fibre ── -->
+      <rect x="272" y="28" width="136" height="52" rx="10" fill="#E6F1FB" stroke="#85B7EB" stroke-width="1"/>
+      <text x="340" y="50" text-anchor="middle" font-size="12" font-weight="500" font-family="var(--font-sans,sans-serif)" fill="#0C447C">Optical fibre</text>
+      <text x="340" y="66" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#185FA5">total internal reflection</text>
+      <!-- Mini animated ray inside node -->
+      <polyline class="sig" points="280,50 300,36 320,64 340,36 360,64 380,36 400,50"
+        fill="none" stroke="#FCDE5A" stroke-width="1.5" stroke-linecap="round"
+        clip-path="url(#n3c)"/>
+
+      <!-- Arrow 3→4 -->
+      <line class="wfa3" x1="410" y1="54" x2="426" y2="54" stroke="#378ADD" stroke-width="1.5" marker-end="url(#wah)"/>
+
+      <!-- ── Node 4: Photodetector ── -->
+      <rect x="428" y="28" width="120" height="52" rx="10" fill="#E1F5EE" stroke="#9FE1CB" stroke-width="0.5"/>
+      <text x="488" y="50" text-anchor="middle" font-size="12" font-weight="500" font-family="var(--font-sans,sans-serif)" fill="#085041">Photodetector</text>
+      <text x="488" y="66" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#0F6E56">light → electrons</text>
+      <circle class="det" cx="488" cy="20" r="5" fill="#1D9E75" opacity=".8"/>
+
+      <!-- Arrow 4→5 -->
+      <line class="wfa4" x1="550" y1="54" x2="566" y2="54" stroke="#1D9E75" stroke-width="1.5" marker-end="url(#wah)"/>
+
+      <!-- ── Node 5: Electrical out ── -->
+      <rect x="568" y="28" width="100" height="52" rx="10" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+      <text x="618" y="50" text-anchor="middle" font-size="12" font-weight="500" font-family="var(--font-sans,sans-serif)" fill="#444441">Electrical</text>
+      <text x="618" y="66" text-anchor="middle" font-size="11" font-family="var(--font-sans,sans-serif)" fill="#888780">output signal</text>
+      <polyline class="sig2" points="574,54 584,44 594,64 604,44 614,64 624,44 634,54 660,54"
+        fill="none" stroke="#888780" stroke-width="1" opacity=".5"/>
+
+      <!-- Speed label under fibre node -->
+      <rect x="298" y="94" width="84" height="14" rx="4" fill="#E6F1FB"/>
+      <text x="340" y="104" text-anchor="middle" font-size="10" font-family="var(--font-sans,sans-serif)" fill="#185FA5">200,000 km/s</text>
+    </svg>
+  </div>
+
+  <!-- ══════════════════════════════
+       SECTION 4 — FIBRE TYPES
+  ══════════════════════════════ -->
+  <div class="lbl">Fibre types</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+
+    <div class="card" style="padding:0;cursor:pointer" onclick="sendPrompt('Explain single-mode optical fibre in detail')">
+      <svg width="100%" viewBox="0 0 320 90" role="img">
+        <title>Single-mode fibre animation — one straight ray</title>
+        <desc>Narrow core with a single straight light ray</desc>
+        <!-- Jacket -->
+        <rect x="10" y="12" width="300" height="66" rx="14" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+        <!-- Cladding -->
+        <rect x="10" y="24" width="300" height="42" rx="10" fill="#DEEEFB" stroke="#B5D4F4" stroke-width="0.5"/>
+        <!-- Core — narrow -->
+        <rect x="10" y="38" width="300" height="14" rx="5" fill="#F4F9FF" stroke="#378ADD" stroke-width="0.8"/>
+        <!-- Single straight ray -->
+        <line class="ray1" x1="14" y1="45" x2="306" y2="45"
+          fill="none" stroke="#FCDE5A" stroke-width="2" stroke-dasharray="18 10"/>
+        <!-- Laser dot -->
+        <circle cx="14" cy="45" r="5" fill="#EF9F27"/>
+        <circle class="ring1" cx="14" cy="45" r="5" fill="none" stroke="#FCDE5A" stroke-width="1.5"/>
+        <!-- Detector -->
+        <circle class="det" cx="306" cy="45" r="6" fill="#1D9E75"/>
+      </svg>
+      <div style="padding:.7rem 1rem .9rem">
+        <div style="font-size:13px;font-weight:500;color:var(--text-primary);margin-bottom:3px">Single-mode (SMF)</div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">Core ~9 µm · one light path · long-distance telecom · low dispersion</div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;cursor:pointer" onclick="sendPrompt('Explain multi-mode optical fibre in detail')">
+      <svg width="100%" viewBox="0 0 320 90" role="img">
+        <title>Multi-mode fibre animation — three zigzagging rays</title>
+        <desc>Wide core with multiple light rays bouncing at different angles</desc>
+        <!-- Jacket -->
+        <rect x="10" y="8" width="300" height="74" rx="14" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+        <!-- Cladding -->
+        <rect x="10" y="18" width="300" height="54" rx="10" fill="#DEEEFB" stroke="#B5D4F4" stroke-width="0.5"/>
+        <!-- Core — wide -->
+        <rect x="10" y="26" width="300" height="38" rx="7" fill="#F4F9FF" stroke="#378ADD" stroke-width="0.8"/>
+        <!-- Ray 1 — high bounce -->
+        <polyline class="ray1" points="14,45 60,28 110,62 160,28 210,62 260,28 306,45"
+          fill="none" stroke="#FCDE5A" stroke-width="2" stroke-linecap="round"
+          clip-path="url(#mmclip)"/>
+        <!-- Ray 2 — medium bounce -->
+        <polyline class="ray2" points="14,45 75,30 130,60 185,30 240,60 306,45"
+          fill="none" stroke="#EF9F27" stroke-width="1.4" stroke-linecap="round" opacity=".7"
+          clip-path="url(#mmclip)"/>
+        <!-- Ray 3 — near straight -->
+        <line class="ray3" x1="14" y1="45" x2="306" y2="45"
+          stroke="#FCDE5A" stroke-width="1" opacity=".3" clip-path="url(#mmclip)"/>
+        <defs><clipPath id="mmclip"><rect x="10" y="26" width="300" height="38" rx="7"/></clipPath></defs>
+        <!-- Laser dot -->
+        <circle cx="14" cy="45" r="5" fill="#EF9F27"/>
+        <circle class="ring1" cx="14" cy="45" r="5" fill="none" stroke="#FCDE5A" stroke-width="1.5"/>
+        <!-- Detector -->
+        <circle class="det" cx="306" cy="45" r="6" fill="#1D9E75"/>
+      </svg>
+      <div style="padding:.7rem 1rem .9rem">
+        <div style="font-size:13px;font-weight:500;color:var(--text-primary);margin-bottom:3px">Multi-mode (MMF)</div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">Core 50–62 µm · many light paths · data centres and short links · higher local bandwidth</div>
+      </div>
+    </div>
+
+  </div>
+</div>

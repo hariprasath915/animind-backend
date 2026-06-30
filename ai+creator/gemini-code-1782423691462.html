@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Quality Hybrid Solar-Wind Animation</title>
+    <style>
+        /* CSS Variables for dynamic JavaScript updates */
+        :root {
+            --wind-speed: 2s;      /* Lower is faster */
+            --sun-intensity: 1;    /* 0 to 1 */
+            --turbine-state: running;
+            --power-flow-speed: 2s;
+        }
+
+        /* General Layout */
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: #eef2f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+            margin: 0;
+            color: #2c3e50;
+        }
+
+        h2 {
+            margin-bottom: 20px;
+            color: #1a252f;
+        }
+
+        /* The Animation Scene */
+        .scene {
+            position: relative;
+            width: 900px;
+            height: 450px;
+            background: linear-gradient(to bottom, #74ebd5, #9face6 65%, #8bc34a 65%, #558b2f);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.15);
+            border: 4px solid #fff;
+        }
+
+        /* Sun Object */
+        .sun {
+            position: absolute;
+            top: 40px;
+            left: 80px;
+            width: 80px;
+            height: 80px;
+            background: #ffeb3b;
+            border-radius: 50%;
+            box-shadow: 0 0 50px 20px rgba(255, 235, 59, 0.6);
+            opacity: var(--sun-intensity);
+            transition: opacity 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+        }
+
+        /* Wind Turbine */
+        .turbine {
+            position: absolute;
+            bottom: 157px;
+            left: 150px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .pole {
+            width: 12px;
+            height: 150px;
+            background: linear-gradient(to right, #ddd, #999);
+            border-radius: 4px 4px 0 0;
+        }
+        .blades-container {
+            position: absolute;
+            top: -20px;
+            width: 140px;
+            height: 140px;
+            animation: spin var(--wind-speed) linear infinite;
+            animation-play-state: var(--turbine-state);
+        }
+        .blade {
+            position: absolute;
+            width: 6px;
+            height: 70px;
+            background: #fdfdfd;
+            left: 67px;
+            bottom: 50%;
+            transform-origin: bottom center;
+            border-radius: 50% 50% 0 0;
+            box-shadow: inset -2px 0 5px rgba(0,0,0,0.1);
+        }
+        .blade:nth-child(2) { transform: rotate(120deg); }
+        .blade:nth-child(3) { transform: rotate(240deg); }
+        
+        .hub {
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            background: #555;
+            border-radius: 50%;
+            top: 61px;
+            left: 61px;
+            z-index: 2;
+        }
+
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Solar Panel Array */
+        .solar-panel {
+            position: absolute;
+            bottom: 165px;
+            left: 360px;
+            width: 120px;
+            height: 70px;
+            background: #0b3d91;
+            border: 3px solid #bdc3c7;
+            transform: skewX(-25deg);
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 2px;
+            padding: 3px;
+            box-shadow: 10px 10px 15px rgba(0,0,0,0.3);
+        }
+        .solar-cell {
+            background: #1565c0;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        /* Battery Storage */
+        .battery {
+            position: absolute;
+            bottom: 157px;
+            left: 580px;
+            width: 70px;
+            height: 100px;
+            background: #34495e;
+            border-radius: 8px;
+            border: 4px solid #2c3e50;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            padding: 4px;
+            box-shadow: 5px 5px 10px rgba(0,0,0,0.3);
+            z-index: 2;
+        }
+        .battery-top {
+            position: absolute;
+            top: -10px;
+            left: 20px;
+            width: 30px;
+            height: 6px;
+            background: #2c3e50;
+            border-radius: 4px 4px 0 0;
+        }
+        .battery-level {
+            background: #2ecc71;
+            width: 100%;
+            height: 50%;
+            border-radius: 4px;
+            transition: height 0.5s, background-color 0.5s;
+        }
+
+        /* House */
+        .house {
+            position: absolute;
+            bottom: 157px;
+            right: 80px;
+            width: 110px;
+            height: 90px;
+            background: #fdf6e3;
+            border: 2px solid #d4c8a9;
+            z-index: 2;
+        }
+        .roof {
+            position: absolute;
+            bottom: 247px;
+            right: 65px;
+            width: 0;
+            height: 0;
+            border-left: 70px solid transparent;
+            border-right: 70px solid transparent;
+            border-bottom: 60px solid #e74c3c;
+        }
+        .door {
+            position: absolute;
+            bottom: 0;
+            left: 40px;
+            width: 30px;
+            height: 45px;
+            background: #8e44ad;
+        }
+        .window {
+            position: absolute;
+            top: 20px;
+            left: 10px;
+            width: 25px;
+            height: 25px;
+            background: #aed6f1;
+            border: 2px solid #34495e;
+        }
+        .window.right {
+            left: auto;
+            right: 10px;
+        }
+
+        /* Wires */
+        .wire {
+            position: absolute;
+            background: #2c3e50;
+            height: 4px;
+            bottom: 153px;
+            z-index: 1;
+        }
+        .wire-1 { left: 156px; width: 220px; }
+        .wire-2 { left: 420px; width: 170px; }
+        .wire-3 { left: 630px; width: 160px; }
+
+        /* Power Flow Indicators (Animated Dots) */
+        .flow-dot {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: #f1c40f;
+            border-radius: 50%;
+            bottom: 150px;
+            z-index: 3;
+            box-shadow: 0 0 10px #f1c40f;
+            opacity: 0;
+        }
+
+        .flow-wind { animation: flowRight var(--power-flow-speed) linear infinite; left: 156px; }
+        .flow-solar { animation: flowRight var(--power-flow-speed) linear infinite; left: 420px; animation-delay: 0.5s; }
+        .flow-house { animation: flowHouse var(--power-flow-speed) linear infinite; left: 630px; }
+
+        @keyframes flowRight {
+            0% { transform: translateX(0); opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateX(200px); opacity: 0; }
+        }
+
+        @keyframes flowHouse {
+            0% { transform: translateX(0); opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateX(140px); opacity: 0; }
+        }
+
+        /* Control Panel */
+        .dashboard {
+            margin-top: 30px;
+            background: white;
+            padding: 25px 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 820px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            gap: 40px;
+        }
+
+        .slider-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        input[type=range] {
+            width: 100%;
+            cursor: pointer;
+        }
+
+        .metrics {
+            display: flex;
+            justify-content: space-between;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            font-weight: 700;
+        }
+
+        .metric-box {
+            text-align: center;
+        }
+        
+        .metric-box span {
+            display: block;
+            font-size: 1.5em;
+            color: #2980b9;
+            margin-top: 5px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h2>Hybrid Solar-Wind Energy System</h2>
+
+    <div class="scene">
+        <div class="sun"></div>
+
+        <div class="turbine">
+            <div class="blades-container">
+                <div class="blade"></div>
+                <div class="blade"></div>
+                <div class="blade"></div>
+                <div class="hub"></div>
+            </div>
+            <div class="pole"></div>
+        </div>
+
+        <div class="solar-panel">
+            <div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div>
+            <div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div>
+            <div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div><div class="solar-cell"></div>
+        </div>
+
+        <div class="battery">
+            <div class="battery-top"></div>
+            <div class="battery-level" id="batteryFill"></div>
+        </div>
+
+        <div class="roof"></div>
+        <div class="house">
+            <div class="window"></div>
+            <div class="window right"></div>
+            <div class="door"></div>
+        </div>
+
+        <div class="wire wire-1"></div>
+        <div class="wire wire-2"></div>
+        <div class="wire wire-3"></div>
+
+        <div class="flow-dot flow-wind" id="windParticle"></div>
+        <div class="flow-dot flow-solar" id="solarParticle"></div>
+        <div class="flow-dot flow-house"></div>
+    </div>
+
+    <div class="dashboard">
+        <div class="controls">
+            <div class="slider-group">
+                <label>
+                    <span>Wind Speed</span>
+                    <span id="windVal">50%</span>
+                </label>
+                <input type="range" id="windSlider" min="0" max="100" value="50">
+            </div>
+            
+            <div class="slider-group">
+                <label>
+                    <span>Sunlight Intensity</span>
+                    <span id="sunVal">80%</span>
+                </label>
+                <input type="range" id="sunSlider" min="0" max="100" value="80">
+            </div>
+        </div>
+
+        <div class="metrics">
+            <div class="metric-box">
+                Wind Output
+                <span id="windOutput">500 W</span>
+            </div>
+            <div class="metric-box">
+                Solar Output
+                <span id="solarOutput">800 W</span>
+            </div>
+            <div class="metric-box">
+                Total Power Generation
+                <span id="totalOutput" style="color: #27ae60;">1300 W</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const windSlider = document.getElementById('windSlider');
+        const sunSlider = document.getElementById('sunSlider');
+        
+        const windValTxt = document.getElementById('windVal');
+        const sunValTxt = document.getElementById('sunVal');
+        
+        const windOutputTxt = document.getElementById('windOutput');
+        const solarOutputTxt = document.getElementById('solarOutput');
+        const totalOutputTxt = document.getElementById('totalOutput');
+        
+        const batteryFill = document.getElementById('batteryFill');
+        const windParticle = document.getElementById('windParticle');
+        const solarParticle = document.getElementById('solarParticle');
+
+        // Function to update the system based on slider inputs
+        function updateSystem() {
+            const windValue = parseInt(windSlider.value);
+            const sunValue = parseInt(sunSlider.value);
+
+            // Update text labels
+            windValTxt.innerText = windValue + '%';
+            sunValTxt.innerText = sunValue + '%';
+
+            // Calculate mock wattage (Max wind = 1000W, Max solar = 1000W)
+            const windWatts = windValue * 10;
+            const solarWatts = sunValue * 10;
+            const totalWatts = windWatts + solarWatts;
+
+            windOutputTxt.innerText = windWatts + ' W';
+            solarOutputTxt.innerText = solarWatts + ' W';
+            totalOutputTxt.innerText = totalWatts + ' W';
+
+            // Update Battery Color & Height based on total power
+            const batteryPercentage = Math.min((totalWatts / 2000) * 100, 100);
+            batteryFill.style.height = Math.max(batteryPercentage, 10) + '%';
+            
+            if (batteryPercentage < 25) {
+                batteryFill.style.backgroundColor = '#e74c3c'; // Red
+            } else if (batteryPercentage < 60) {
+                batteryFill.style.backgroundColor = '#f1c40f'; // Yellow
+            } else {
+                batteryFill.style.backgroundColor = '#2ecc71'; // Green
+            }
+
+            // Update CSS Variables for Sun Visuals
+            document.documentElement.style.setProperty('--sun-intensity', sunValue / 100);
+
+            // Update CSS Variables for Wind Turbine
+            if (windValue === 0) {
+                document.documentElement.style.setProperty('--turbine-state', 'paused');
+                windParticle.style.display = 'none';
+            } else {
+                document.documentElement.style.setProperty('--turbine-state', 'running');
+                windParticle.style.display = 'block';
+                // Map 1-100 to a speed where 100 is 0.5s and 1 is 5s
+                const speed = 5.5 - (windValue * 0.05); 
+                document.documentElement.style.setProperty('--wind-speed', speed + 's');
+            }
+
+            // Manage solar particles visibility
+            if (sunValue === 0) {
+                solarParticle.style.display = 'none';
+            } else {
+                solarParticle.style.display = 'block';
+            }
+        }
+
+        // Add Event Listeners
+        windSlider.addEventListener('input', updateSystem);
+        sunSlider.addEventListener('input', updateSystem);
+
+        // Initialize on load
+        updateSystem();
+    </script>
+</body>
+</html>
