@@ -29,6 +29,7 @@ import os
 import re
 import asyncio
 import json
+from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
@@ -361,11 +362,65 @@ async def create_question_animation(request: QuestionAnimRequest):
         raise HTTPException(status_code=500, detail=f"Question animation generation failed: {e}")
 
 
+# ── Simulation experiment cache ───────────────────────────────────────────────
+# Path to the folder that stores pre-built experiment HTML files.
+_SIM_EXPERIMENTS_DIR = Path(__file__).parent / "simulation_experiments"
+
+
+def _normalize_for_match(text: str) -> str:
+    """
+    Normalise a string for fuzzy matching:
+      • lowercase
+      • collapse any run of whitespace / underscores / hyphens to a single space
+      • strip leading / trailing whitespace
+    """
+    text = text.lower()
+    text = re.sub(r"[\s_\-]+", " ", text)
+    return text.strip()
+
+
+def _find_cached_simulation(topic: str) -> str | None:
+    """
+    Search `simulation_experiments/` for an HTML file whose filename
+    (minus the .html extension) normalises to a string that *contains*
+    the normalised topic — or vice-versa.
+
+    Returns the full HTML content string on a hit, or None on a miss.
+    """
+    if not _SIM_EXPERIMENTS_DIR.is_dir():
+        return None
+
+    needle = _normalize_for_match(topic)
+
+    for html_file in _SIM_EXPERIMENTS_DIR.glob("*.html"):
+        # Use the stem (filename without extension) as the candidate key
+        candidate = _normalize_for_match(html_file.stem)
+        # Match if the needle is contained in the candidate, or the candidate
+        # is contained in the needle (handles both "optics lab" ↔ "optics lab experiment" style)
+        if needle in candidate or candidate in needle:
+            print(f"[SimCache] ✅ Hit: '{topic}' → {html_file.name}")
+            try:
+                return html_file.read_text(encoding="utf-8")
+            except Exception as read_err:
+                print(f"[SimCache] ⚠ Could not read {html_file.name}: {read_err}")
+                return None
+
+    print(f"[SimCache] ❌ Miss: no experiment file matched '{topic}'")
+    return None
+
+
 @app.post("/generate-simulation")
 async def create_simulation(request: SimulationRequest):
     """
     Generate a complete, self-contained interactive HTML5 simulation.
-    Uses generate_simulation from simulation.py.
+
+    Flow:
+      1. Normalise the topic string.
+      2. Search `simulation_experiments/` for a pre-built HTML file whose
+         filename (sans extension) matches the topic (case-insensitive,
+         whitespace-normalised, substring match).
+      3. If found → return the cached HTML immediately (no AI call).
+      4. If not found → call generate_simulation from simulation.py.
     """
     topic = (request.topic or "").strip()
     if not topic:
@@ -373,6 +428,24 @@ async def create_simulation(request: SimulationRequest):
     if len(topic) > 2000:
         raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
 
+    # ── Step 1: Check the experiment cache ───────────────────────────────────
+    cached_html = _find_cached_simulation(topic)
+    if cached_html:
+        return {
+            "title":             topic,
+            "category":          "cached",
+            "summary":           f"Pre-built experiment loaded for: {topic}",
+            "controls_overview": [],
+            "key_formula":       "",
+            "learning_notes":    [],
+            "image_refs":        [],
+            "html":              cached_html,
+            "engine_version":    "cache",
+            "render_status":     "ok",
+            "source":            "cache",
+        }
+
+    # ── Step 2: Generate via AI pipeline ─────────────────────────────────────
     # Optionally prepend the subject-mode as context hint
     if request.mode and request.mode.lower() not in ("general", ""):
         topic_with_mode = f"{topic} (subject area: {request.mode})"
@@ -380,6 +453,7 @@ async def create_simulation(request: SimulationRequest):
         topic_with_mode = topic
 
     result = await generate_simulation(topic_with_mode)
+    result["source"] = "generated"
     # generate_simulation never raises — on failure render_status == "error"
     return result
 
