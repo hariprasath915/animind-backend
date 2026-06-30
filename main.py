@@ -56,7 +56,7 @@ from claude_client import (                                            # pyrefly
     subtopics_json_to_genzet_args,
     generate_ultimate_learning_content,
 )
-from simulation import simulation_router                               # pyrefly: ignore [missing-import]
+from simulation import generate_simulation                               # pyrefly: ignore [missing-import]
 from pdf_handler import (                                              # pyrefly: ignore [missing-import]
     extract_pdf_text,
     find_subtopics_in_pdf,
@@ -192,8 +192,6 @@ else:
 app.include_router(auth_router)       # /auth/*
 app.include_router(sync_router)       # /sync/*  (v6 normalized + legacy)
 app.include_router(admin_router_obj)  # /admin/*
-if simulation_router is not None:
-    app.include_router(simulation_router)  # /generate-simulation
 
 # Global error handler → feeds /admin/errors ring
 install_error_handler(app)
@@ -321,6 +319,11 @@ class QuestionAnimRequest(BaseModel):
     question: str
 
 
+class SimulationRequest(BaseModel):
+    topic: str
+    mode: Optional[str] = None   # e.g. 'physics', 'chemistry' (informational only)
+
+
 class SkillContentRequest(BaseModel):
     topic:        str
     subject:      Optional[str]  = "Engineering"
@@ -356,6 +359,29 @@ async def create_question_animation(request: QuestionAnimRequest):
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Question animation generation failed: {e}")
+
+
+@app.post("/generate-simulation")
+async def create_simulation(request: SimulationRequest):
+    """
+    Generate a complete, self-contained interactive HTML5 simulation.
+    Uses generate_simulation from simulation.py.
+    """
+    topic = (request.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+    if len(topic) > 2000:
+        raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
+
+    # Optionally prepend the subject-mode as context hint
+    if request.mode and request.mode.lower() not in ("general", ""):
+        topic_with_mode = f"{topic} (subject area: {request.mode})"
+    else:
+        topic_with_mode = topic
+
+    result = await generate_simulation(topic_with_mode)
+    # generate_simulation never raises — on failure render_status == "error"
+    return result
 
 
 @app.post("/generate-topic-content")
