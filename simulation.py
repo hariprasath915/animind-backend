@@ -91,79 +91,6 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 
 
-# ---------------------------------------------------------------------------
-# Background / colour theme configuration
-# ---------------------------------------------------------------------------
-# Generated simulations now default to a single LIGHT, high-contrast theme
-# (legible on smartboards / projectors / large screens in bright rooms)
-# instead of the old per-topic dark/light branching.
-#
-# All foreground-on-background text pairs below have been verified to meet
-# WCAG AA contrast (>= 4.5:1) -- see the comment after each token. To
-# override the palette (e.g. to restore a dark theme, or to brand the
-# simulations), edit THEME_TOKENS below, or set the SIM_THEME_OVERRIDE env
-# var to the path of a JSON file containing a partial/complete replacement
-# token set; any keys present there are merged over the defaults at
-# prompt-build time.
-THEME_TOKENS = {
-    # base surfaces -- light, neutral/pastel, low-glare
-    "bg":         "#fdfdfc",   # page background
-    "surface":    "#ffffff",   # cards / sidebar / panels
-    "surface2":   "#f3f1ea",   # secondary surface (inputs, hover states)
-    "surface3":   "#e9e6da",   # tertiary surface (active/pressed states)
-    "border":     "#d8d3c4",
-    "border2":    "#c2bca8",
-    # text -- text on bg/surface/surface2 all exceed 13:1
-    "text":       "#1f2421",   # primary text,   ~15.5:1 on bg
-    "text2":      "#46504a",   # secondary text,  ~8.2:1 on bg
-    "text3":      "#6b7570",   # tertiary/label text, ~4.7:1 on bg (AA min)
-    # accent -- one accent colour, ~7.5:1 on bg/surface
-    "accent":      "#0f5e4f",
-    "accent_dim":  "#dceee8",
-    "accent_glow": "rgba(15,94,79,.35)",
-    # semantic colors -- all >= 4.5:1 against their own *_dim background
-    "green":      "#1a7a3c",  "green_dim":  "#dcf3e3",
-    "red":        "#b3241f",  "red_dim":    "#fbe1df",
-    "violet":     "#5b3aa0",  "violet_dim": "#ece4f8",
-    "cyan":       "#0a6e78",  "cyan_dim":   "#dcf1f3",
-    "panel_w":    "260px",
-}
-
-SIM_THEME_OVERRIDE = os.environ.get("SIM_THEME_OVERRIDE", "")
-
-
-def _load_theme_tokens() -> dict:
-    """Returns THEME_TOKENS merged with an optional JSON override file."""
-    tokens = dict(THEME_TOKENS)
-    if SIM_THEME_OVERRIDE:
-        try:
-            with open(SIM_THEME_OVERRIDE, "r", encoding="utf-8") as f:
-                tokens.update(json.load(f))
-        except Exception as e:
-            SimLogger.warn("Theme", f"Could not load SIM_THEME_OVERRIDE: {e}")
-    return tokens
-
-
-def _theme_css_block(tokens: Optional[dict] = None) -> str:
-    """Renders the :root{...} CSS custom-property block for a token dict."""
-    t = tokens or _load_theme_tokens()
-    return (
-        "  :root {\n"
-        f"    --bg:{t['bg']};  --surface:{t['surface']};  --surface2:{t['surface2']};  --surface3:{t['surface3']};\n"
-        f"    --border:{t['border']};  --border2:{t['border2']};\n"
-        f"    --text:{t['text']};  --text2:{t['text2']};  --text3:{t['text3']};\n"
-        f"    --green:{t['green']};  --green-dim:{t['green_dim']};\n"
-        f"    --red:{t['red']};    --red-dim:{t['red_dim']};\n"
-        f"    --violet:{t['violet']}; --violet-dim:{t['violet_dim']};\n"
-        f"    --cyan:{t['cyan']};   --cyan-dim:{t['cyan_dim']};\n"
-        f"    --accent:{t['accent']};\n"
-        f"    --accent-dim:{t['accent_dim']};\n"
-        f"    --accent-glow:{t['accent_glow']};\n"
-        f"    --panel-w: {t['panel_w']};\n"
-        "  }"
-    )
-
-
 # ===========================================================================
 #  MODULE 1 -- SimLogger
 # ===========================================================================
@@ -359,25 +286,24 @@ class RecoveryEngine:
     def fallback_html(topic, reason):
         t_safe      = html_module.escape(topic[:120])
         reason_safe = html_module.escape(reason[:300])
-        t = _load_theme_tokens()
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
-html,body{{width:100%;height:100%;background:{t['bg']};
+html,body{{width:100%;height:100%;background:#0a0c10;
   font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  display:flex;align-items:center;justify-content:center;color:{t['text']}}}
-.card{{background:{t['surface']};border:1px solid {t['border']};border-radius:16px;
-  box-shadow:0 4px 24px rgba(0,0,0,.08);padding:36px 40px;max-width:520px;text-align:center}}
+  display:flex;align-items:center;justify-content:center;color:#e8eaf0}}
+.card{{background:#12151c;border:1px solid #2a3040;border-radius:16px;
+  box-shadow:0 4px 24px rgba(0,0,0,.4);padding:36px 40px;max-width:520px;text-align:center}}
 .icon{{font-size:40px;margin-bottom:16px}}
-.title{{font-size:17px;font-weight:700;color:{t['text']};margin-bottom:10px}}
-.reason{{font-size:11px;color:{t['text2']};background:{t['surface2']};border-radius:10px;
-  padding:10px 14px;margin:12px 0;border:1px solid {t['border']};text-align:left;
+.title{{font-size:17px;font-weight:700;color:#e8eaf0;margin-bottom:10px}}
+.reason{{font-size:11px;color:#8892a4;background:#1a1f2b;border-radius:10px;
+  padding:10px 14px;margin:12px 0;border:1px solid #2a3040;text-align:left;
   line-height:1.6;font-family:monospace}}
-.topic{{font-size:12px;color:{t['text3']};line-height:1.6;margin-top:10px;font-style:italic}}
+.topic{{font-size:12px;color:#556070;line-height:1.6;margin-top:10px;font-style:italic}}
 .retry-hint{{margin-top:18px;font-size:11px;font-weight:700;letter-spacing:1.5px;
-  text-transform:uppercase;color:{t['accent']}}}
+  text-transform:uppercase;color:#f5a623}}
 </style></head><body>
 <div class="card">
 <div class="icon">&#x26A0;&#xFE0F;</div>
@@ -392,12 +318,11 @@ html,body{{width:100%;height:100%;background:{t['bg']};
         if '<!DOCTYPE' in sim_code or '<html' in sim_code:
             return sim_code
         t_safe = html_module.escape(topic[:120])
-        t = _load_theme_tokens()
         return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>html,body{{margin:0;padding:0;width:100%;height:100%;background:{t['bg']};
-  font-family:-apple-system,sans-serif;color:{t['text']}}}</style></head><body>
-<div style="font-size:11px;color:{t['text2']};position:fixed;top:8px;left:0;right:0;text-align:center;z-index:99">
+<style>html,body{{margin:0;padding:0;width:100%;height:100%;background:#0a0c10;
+  font-family:-apple-system,sans-serif;color:#e8eaf0}}</style></head><body>
+<div style="font-size:11px;color:#8892a4;position:fixed;top:8px;left:0;right:0;text-align:center;z-index:99">
   {t_safe}</div>
 {sim_code}</body></html>"""
 
@@ -627,26 +552,36 @@ MOBILE BREAKPOINT (max-width: 760px):
 ════════════════════════════════════════════════════════
   COLOUR TOKENS  (define ALL in :root on <html>)
 ════════════════════════════════════════════════════════
-Use this single LIGHT, high-contrast theme for every simulation,
-regardless of topic. It is tuned for legibility on smartboards,
-projectors, and large screens (light pastel/neutral surfaces, dark
-text, every foreground/background text pairing >= 4.5:1 contrast).
-Do NOT invent a dark theme and do NOT branch theme choice by topic.
+DARK THEME — default for science/math/engineering:
+  :root {
+    --bg:#0a0c10;  --surface:#12151c;  --surface2:#1a1f2b;  --surface3:#222837;
+    --border:#2a3040;  --border2:#3a4560;
+    --text:#e8eaf0;  --text2:#8892a4;  --text3:#556070;
+    /* semantic colors -- use these for data/state, not decoration */
+    --green:#3ddc84;  --green-dim:#003320;
+    --red:#ff5f57;    --red-dim:#3d0000;
+    --violet:#b57aff; --violet-dim:#1e0040;
+    --cyan:#00d4d8;   --cyan-dim:#003d3e;
+    /* accent -- ONE per simulation, chosen by topic character */
+    --accent: <pick one: #f5a623 amber | #4a9eff blue | #00d4d8 cyan
+                         | #3ddc84 green | #e056b4 magenta>;
+    --accent-dim: <matching dim, e.g. #3d2800 for amber>;
+    --accent-glow: <rgba version with 0.5 alpha for box-shadow/shadowBlur>;
+    --panel-w: 260px;
+  }
 
-__THEME_CSS_BLOCK__
-
-Notes:
-  - --accent is a single deep, saturated colour (not pastel) so it reads
-    clearly as the "this is interactive / active" signal against the
-    light surfaces. Do not lighten it further.
-  - The --*-dim tokens (accent-dim, green-dim, red-dim, violet-dim,
-    cyan-dim) are pastel tints meant ONLY as backgrounds behind their
-    matching saturated foreground colour (e.g. color:var(--green) on
-    background:var(--green-dim)) -- never use a *-dim token as body text.
-  - To re-theme every generated simulation at once (e.g. restore a dark
-    theme, or apply brand colours), edit THEME_TOKENS in simulation.py,
-    or point the SIM_THEME_OVERRIDE env var at a JSON file with
-    replacement keys -- do not hand-edit colours per generation.
+LIGHT THEME — use ONLY for economics/statistics/printed-diagram topics:
+  :root {
+    --bg:#f0f5ff;  --surface:#ffffff;  --surface2:#f1f5f9;
+    --border:#e2e8f0;  --border2:#cbd5e1;
+    --text:#1e293b;  --text2:#475569;  --text3:#94a3b8;
+    --accent:#3b5bdb;  --accent-dim:#dbe4ff;  --accent-glow:rgba(59,91,219,.3);
+    --green:#16a34a;  --green-dim:#dcfce7;
+    --red:#dc2626;    --red-dim:#fee2e2;
+    --violet:#7c3aed; --violet-dim:#ede9fe;
+    --cyan:#0891b2;   --cyan-dim:#cffafe;
+    --panel-w: 260px;
+  }
 
 ════════════════════════════════════════════════════════
   SIDEBAR + CONTROLS CSS PATTERNS
@@ -912,12 +847,6 @@ function togglePlay() {
   that belongs in the sidebar or as short canvas labels only.
 """
 
-# Inject the actual light-theme CSS custom-property block (built from
-# THEME_TOKENS / SIM_THEME_OVERRIDE) into the otherwise-static prompt text.
-# Done once at import time so DESIGN_SYSTEM / SYSTEM stay plain strings and
-# the prompt-caching behaviour noted in the module docstring is unaffected.
-DESIGN_SYSTEM = DESIGN_SYSTEM.replace("__THEME_CSS_BLOCK__", _theme_css_block())
-
 SYSTEM = """You are SimEngine v2.0 -- an expert interactive-simulation engineer who builds
 single-page HTML5 virtual-lab simulations for students and curious learners.
 
@@ -1001,10 +930,8 @@ STRATEGY_TEMPLATES = {
         "Metrics: period T, max velocity, current KE, current PE, total E.",
 
     "PHYSICS_WAVES_OPTICS":
-        "Canvas with rays/wavefronts on the standard light theme background; "
-        "use bold, saturated strokes (accent + semantic colors) with a soft "
-        "shadowBlur glow so beams stay clearly legible against the light surface. "
-        "Build a multi-experiment switcher for at least 3 related setups "
+        "Canvas with rays/wavefronts on a dark background, glow strokes for "
+        "beams. Build a multi-experiment switcher for at least 3 related setups "
         "(e.g. refraction, convex lens, concave mirror). "
         "REQUIRED equations: Snell's n₁sinθ₁=n₂sinθ₂; lens 1/f=1/do+1/di; "
         "mirror same form; critical angle θc=arcsin(n₂/n₁); magnification M=-di/do. "
@@ -1065,7 +992,7 @@ STRATEGY_TEMPLATES = {
         "Metrics: projected values at chosen year, rate of change, anomaly vs baseline.",
 
     "ECONOMICS_SOCIAL":
-        "Canvas/SVG plotting supply-demand curves or a time-series. "
+        "Light-theme canvas/SVG plotting supply-demand curves or a time-series. "
         "Controls: price, elasticity, tax/subsidy, growth rate. "
         "REQUIRED equations: consumer surplus CS=½(Pmax-Pe)·Qe; elasticity "
         "E=(ΔQ/Q)/(ΔP/P); compound growth A=P(1+r/n)^(nt). "
