@@ -70,61 +70,6 @@ from typing import Optional, List
 
 import anthropic
 
-# FastAPI router — exposes POST /generate-simulation to main.py
-try:
-    from fastapi import APIRouter, HTTPException
-    from pydantic import BaseModel
-
-    _router = APIRouter(tags=["simulation"])
-
-    class SimulationRequest(BaseModel):
-        topic: str
-        mode: Optional[str] = None   # e.g. 'physics', 'chemistry' (informational only)
-
-    @_router.post("/generate-simulation")
-    async def create_simulation(req: SimulationRequest):
-        """
-        Generate a complete, self-contained interactive HTML5 simulation.
-
-        The frontend simulation panel POSTs here with the user's prompt/topic.
-        The backend runs the full SimEngine v2.0 pipeline (classify → image-ref
-        → prompt → Claude → parse → sanitize → validate) and returns:
-
-          {
-            "html":              "<complete self-contained simulation page>",
-            "title":             "Pendulum Lab",
-            "category":          "PHYSICS_MECHANICS",
-            "summary":           "...",
-            "controls_overview": [...],
-            "key_formula":       "T = 2π√(L/g)",
-            "learning_notes":    [...],
-            "render_status":     "ok" | "error",
-            "engine_version":    "v2.0"
-          }
-        """
-        topic = (req.topic or "").strip()
-        if not topic:
-            raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
-        if len(topic) > 2000:
-            raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
-
-        # Optionally prepend the subject-mode as context hint
-        if req.mode and req.mode.lower() not in ("general", ""):
-            topic_with_mode = f"{topic} (subject area: {req.mode})"
-        else:
-            topic_with_mode = topic
-
-        result = await generate_simulation(topic_with_mode)
-        # generate_simulation never raises — on failure render_status == "error"
-        # and html is a user-facing fallback page, so always return 200.
-        return result
-
-    simulation_router = _router
-
-except ImportError:
-    # FastAPI not installed — module still works as a pure library
-    simulation_router = None
-
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
