@@ -56,6 +56,7 @@ from claude_client import (                                            # pyrefly
     subtopics_json_to_genzet_args,
     generate_ultimate_learning_content,
 )
+from simulation import simulation_router                               # pyrefly: ignore [missing-import]
 from pdf_handler import (                                              # pyrefly: ignore [missing-import]
     extract_pdf_text,
     find_subtopics_in_pdf,
@@ -191,6 +192,8 @@ else:
 app.include_router(auth_router)       # /auth/*
 app.include_router(sync_router)       # /sync/*  (v6 normalized + legacy)
 app.include_router(admin_router_obj)  # /admin/*
+if simulation_router is not None:
+    app.include_router(simulation_router)  # /generate-simulation
 
 # Global error handler → feeds /admin/errors ring
 install_error_handler(app)
@@ -296,6 +299,7 @@ async def health(request: Request):
                 "question_animation": "POST /generate-question-animation",
                 "book_mode":          "POST /generate-from-book",
                 "topic_content":      "POST /generate-topic-content",
+                "simulation":         "POST /generate-simulation",
             },
             "admin": {
                 "errors": "GET /admin/errors  (X-Admin-Token header required)",
