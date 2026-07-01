@@ -1,5 +1,5 @@
 """
-simulation.py -- Simulation Creator Engine  v2.0
+simulation.py -- Simulation Creator Engine  v2.1
 ====================================================================
 PURPOSE
   Turn a user-supplied topic / concept / lab experiment (e.g.
@@ -18,6 +18,16 @@ PURPOSE
     - Google Image Search used as a visual-reference step so the
       model understands real instrument / diagram aesthetics before
       generating the simulation
+
+WHAT'S NEW IN v2.1
+  • Game-style onboarding/tutorial system, generated as a core part of
+    every simulation: spotlight overlay, welcome/step/completion cards,
+    Previous/Next/Skip navigation, progress dots, and a replay ("?")
+    button. The tutorial steps are authored per-simulation from the
+    actual controls, overlay buttons, metrics, and canvas interactions
+    that were generated for that topic (with a DOM-based auto-fill
+    safety net so no control is silently skipped) -- never a hardcoded
+    or generic script. See DESIGN_SYSTEM's onboarding section.
 
 WHAT'S NEW IN v2.0
   • Image-reference pre-step: searches Google Images for the topic
@@ -95,7 +105,7 @@ GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 #  MODULE 1 -- SimLogger
 # ===========================================================================
 class SimLogger:
-    PREFIX = "[SimEngine v2.0]"
+    PREFIX = "[SimEngine v2.1]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -169,6 +179,10 @@ class GenerationValidator:
         for pattern, reason in cls.DANGEROUS_PATTERNS:
             if re.search(pattern, html, re.IGNORECASE):
                 SimLogger.warn("Validator", f"Dangerous pattern: {reason}")
+        if "tut-root" not in html or "TUT_STEPS" not in html:
+            SimLogger.warn("Validator", "Onboarding tutorial system missing or incomplete "
+                                         "(no #tut-root / TUT_STEPS found) -- generation did "
+                                         "not follow the required onboarding design pattern")
         open_scripts  = len(re.findall(r'<script(?:\s[^>]*)?>',  html, re.IGNORECASE))
         close_scripts = len(re.findall(r'</script>',              html, re.IGNORECASE))
         if open_scripts != close_scripts:
@@ -835,6 +849,266 @@ function togglePlay() {
 // Wire this in mousedown/mousemove/mouseup on #canvas-area when relevant.
 
 ════════════════════════════════════════════════════════
+  ONBOARDING / TUTORIAL SYSTEM  (REQUIRED -- every simulation)
+════════════════════════════════════════════════════════
+Every generated page must include a game-style, first-run interactive
+tutorial that is BUILT FROM THE ACTUAL CONTROLS you generated for THIS
+simulation -- never a generic or hardcoded script. Treat this as a core
+part of the page, on par with the canvas and the controls panel.
+
+WHY: a first-time user sees sliders/toggles/buttons with no idea what
+they do. The tutorial spotlights one control at a time, explains it in
+plain language (what it is, what changing it does, why it matters, what
+to observe), then moves to the next -- exactly like onboarding in Canva,
+Figma, Notion, or a well-made game.
+
+MARKUP TO ADD (inside #app, after #main, as fixed-position layers):
+
+  <div id="tut-help" title="Replay tutorial" aria-label="Replay tutorial">?</div>
+
+  <div id="tut-root" class="tut-hidden" aria-hidden="true">
+    <div id="tut-spot"></div>                <!-- the spotlight cutout box -->
+    <div id="tut-welcome" class="tut-card tut-modal">
+      <div class="tut-eyebrow">Welcome to</div>
+      <h2 id="tut-w-title"></h2>
+      <p id="tut-w-body"></p>
+      <div class="tut-actions">
+        <button id="tut-skip-w" class="btn">Skip</button>
+        <button id="tut-start" class="btn primary">Start Tour</button>
+      </div>
+    </div>
+    <div id="tut-tooltip" class="tut-card tut-tip">
+      <div class="tut-dots" id="tut-dots"></div>
+      <div class="tut-step-count" id="tut-count"></div>
+      <h3 id="tut-t-title"></h3>
+      <p id="tut-t-body"></p>
+      <div class="tut-actions">
+        <button id="tut-prev" class="btn">Previous</button>
+        <button id="tut-skip" class="btn">Skip Tutorial</button>
+        <button id="tut-next" class="btn primary">Next</button>
+      </div>
+    </div>
+    <div id="tut-done" class="tut-card tut-modal">
+      <div class="tut-eyebrow">You're ready!</div>
+      <h2>Now experiment for yourself</h2>
+      <p>Have fun exploring -- adjust anything, anytime.</p>
+      <div class="tut-actions">
+        <button id="tut-finish" class="btn primary">Start Experiment</button>
+      </div>
+    </div>
+  </div>
+
+CSS PATTERNS (add alongside the other component CSS, using the same
+--surface/--accent/--border tokens so it matches the sim's own theme):
+
+  #tut-root { position:fixed; inset:0; z-index:1000; }
+  #tut-root.tut-hidden { display:none; }
+  #tut-spot {
+    position:fixed; z-index:1001; border-radius:12px;
+    /* spotlight technique: a transparent box whose huge box-shadow IS
+       the darkened backdrop everywhere except this box's own bounds */
+    box-shadow:0 0 0 9999px rgba(4,6,10,.78);
+    transition:top .35s cubic-bezier(.4,0,.2,1), left .35s cubic-bezier(.4,0,.2,1),
+               width .35s cubic-bezier(.4,0,.2,1), height .35s cubic-bezier(.4,0,.2,1),
+               opacity .25s;
+    pointer-events:none;
+  }
+  #tut-spot.tut-none { opacity:0; box-shadow:0 0 0 9999px rgba(4,6,10,.78); }
+  .tut-card {
+    position:fixed; z-index:1002; background:var(--surface2);
+    border:1px solid var(--border2); border-radius:14px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5); padding:20px 22px;
+    max-width:300px; opacity:0; transform:translateY(6px) scale(.98);
+    transition:opacity .25s, transform .25s; pointer-events:none;
+  }
+  .tut-card.tut-visible { opacity:1; transform:translateY(0) scale(1); pointer-events:auto; }
+  .tut-modal { max-width:380px; left:50%; top:50%;
+               transform:translate(-50%,-46%) scale(.98); text-align:left; }
+  .tut-modal.tut-visible { transform:translate(-50%,-50%) scale(1); }
+  .tut-eyebrow { font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+                 color:var(--accent); font-weight:700; margin-bottom:6px; }
+  .tut-card h2 { font-size:19px; font-weight:700; color:var(--text); margin-bottom:8px; }
+  .tut-card h3 { font-size:14px; font-weight:700; color:var(--text); margin-bottom:6px; }
+  .tut-card p { font-size:12.5px; line-height:1.55; color:var(--text2); }
+  .tut-actions { display:flex; gap:8px; margin-top:16px; justify-content:flex-end; }
+  .tut-tip .tut-actions { justify-content:space-between; }
+  .tut-step-count { font-size:10px; color:var(--text3); margin-bottom:4px; }
+  .tut-dots { display:flex; gap:5px; margin-bottom:8px; }
+  .tut-dot { width:5px; height:5px; border-radius:50%; background:var(--border2); }
+  .tut-dot.tut-dot-active { background:var(--accent); width:14px; border-radius:3px; }
+  #tut-help {
+    position:fixed; bottom:16px; right:16px; z-index:999;
+    width:32px; height:32px; border-radius:50%; background:var(--surface2);
+    border:1px solid var(--border2); color:var(--text2); font-size:13px;
+    font-weight:700; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; transition:all .15s;
+  }
+  #tut-help:hover { background:var(--accent-dim); color:var(--accent); }
+  @media (max-width:760px) {
+    .tut-tip { left:8px !important; right:8px; max-width:none;
+               width:auto; bottom:8px !important; top:auto !important; }
+    .tut-modal { width:88%; max-width:340px; }
+  }
+
+JS PATTERN -- the tutorial is DATA-DRIVEN from the exact controls you
+built for this specific page. Author a `TUT_STEPS` array by hand,
+ONE entry per control/overlay-button/metric you actually created
+(skip nothing; do not invent controls that don't exist):
+
+  const TUT_STEPS = [
+    // selector: CSS selector of the element to spotlight (omit/null for
+    // a full-page step like intro/canvas explanation)
+    { selector:'#lenSlider', title:'Pendulum Length',
+      body:'Controls the length of the pendulum arm. Longer pendulums swing slower. Try dragging it and watch the period change.' },
+    { selector:'#gravitySlider', title:'Gravity',
+      body:'Sets the gravitational acceleration g. Increasing gravity makes the pendulum swing faster.' },
+    { selector:'#dampingToggle', title:'Damping',
+      body:'When enabled, adds friction so the pendulum gradually loses energy and comes to rest.' },
+    { selector:'#btnPlay', title:'Play',
+      body:'Starts the animation. Use this after adjusting parameters to watch the motion unfold.' },
+    { selector:'#cvs', title:'The Canvas',
+      body:'You can drag the pendulum bob directly with your mouse and release it to set a starting angle.' },
+    { selector:'.ov-btn[data-ov="trace"]', title:'Trace',
+      body:'Leaves behind the path so you can compare trajectories across runs.' },
+    { selector:'#info-panel .metric:nth-child(1)', title:'Total Energy',
+      body:'Shows the total mechanical energy. Notice kinetic and potential energy trade off while the total stays constant.' },
+  ];
+  // Adapt this list to whatever YOU actually generated: if there are 4
+  // sliders, write 4 slider steps; if there's a dropdown, add a step for
+  // it; if there's no drag interaction, omit the canvas-drag step, etc.
+  // SAFETY NET: after defining TUT_STEPS, auto-append a generic step for
+  // any .ctrl-row, .ov-btn, or .metric element that TUT_STEPS didn't
+  // already cover, so the tour can never silently miss a control:
+  (function autoFillTutorial() {
+    const covered = new Set(TUT_STEPS.map(s => s.selector).filter(Boolean));
+    document.querySelectorAll('#controls-panel [id], .ov-btn, #info-panel .metric')
+      .forEach(el => {
+        const sel = el.id ? '#' + el.id : null;
+        if (!sel || covered.has(sel)) return;
+        const label = el.closest('.ctrl-row')?.querySelector('.ctrl-name')?.textContent
+                    || el.textContent || 'This control';
+        TUT_STEPS.push({ selector: sel, title: label.trim(),
+          body: 'Adjust this to see how it changes the simulation.' });
+        covered.add(sel);
+      });
+  })();
+
+  let tutIdx = -1, tutWasPlaying = false;
+  function tutEl(id) { return document.getElementById(id); }
+  function tutPositionSpot(target) {
+    const spot = tutEl('tut-spot');
+    if (!target) { spot.classList.add('tut-none'); return; }
+    const r = target.getBoundingClientRect(), pad = 6;
+    spot.classList.remove('tut-none');
+    spot.style.top = (r.top - pad) + 'px';
+    spot.style.left = (r.left - pad) + 'px';
+    spot.style.width = (r.width + pad*2) + 'px';
+    spot.style.height = (r.height + pad*2) + 'px';
+  }
+  function tutPositionCard(target) {
+    const card = tutEl('tut-tooltip');
+    if (!target) { card.style.left='50%'; card.style.top='50%';
+      card.style.transform='translate(-50%,-50%)'; return; }
+    const r = target.getBoundingClientRect();
+    const cw = 300, ch = card.offsetHeight || 160, margin = 14;
+    let left = r.right + margin, top = r.top;
+    if (left + cw > window.innerWidth - 10) left = Math.max(10, r.left - cw - margin);
+    if (top + ch > window.innerHeight - 10) top = Math.max(10, window.innerHeight - ch - 10);
+    card.style.transform = 'none';
+    card.style.left = left + 'px'; card.style.top = top + 'px';
+  }
+  function tutRenderDots() {
+    tutEl('tut-dots').innerHTML = TUT_STEPS.map((_, i) =>
+      `<span class="tut-dot${i===tutIdx?' tut-dot-active':''}"></span>`).join('');
+    tutEl('tut-count').textContent = `Step ${tutIdx+1} of ${TUT_STEPS.length}`;
+  }
+  function tutShowStep(i) {
+    tutIdx = Math.max(0, Math.min(i, TUT_STEPS.length - 1));
+    const step = TUT_STEPS[tutIdx];
+    const target = step.selector ? document.querySelector(step.selector) : null;
+    tutEl('tut-t-title').textContent = step.title;
+    tutEl('tut-t-body').textContent = step.body;
+    tutPositionSpot(target);
+    tutPositionCard(target);
+    tutRenderDots();
+    tutEl('tut-prev').disabled = tutIdx === 0;
+    tutEl('tut-next').textContent = tutIdx === TUT_STEPS.length - 1 ? 'Finish' : 'Next';
+    tutEl('tut-tooltip').classList.add('tut-visible');
+    tutEl('tut-welcome').classList.remove('tut-visible');
+    tutEl('tut-done').classList.remove('tut-visible');
+  }
+  function tutStart() {
+    if (typeof playing !== 'undefined') { tutWasPlaying = playing; if (playing) togglePlay(); }
+    tutEl('tut-root').classList.remove('tut-hidden');
+    tutEl('tut-root').setAttribute('aria-hidden', 'false');
+    tutShowStep(0);
+  }
+  function tutOpenWelcome() {
+    tutEl('tut-root').classList.remove('tut-hidden');
+    tutEl('tut-root').setAttribute('aria-hidden', 'false');
+    tutPositionSpot(null);
+    tutEl('tut-tooltip').classList.remove('tut-visible');
+    tutEl('tut-done').classList.remove('tut-visible');
+    tutEl('tut-welcome').classList.add('tut-visible');
+  }
+  function tutEnd(resume) {
+    tutEl('tut-root').classList.add('tut-hidden');
+    tutEl('tut-root').setAttribute('aria-hidden', 'true');
+    tutEl('tut-welcome').classList.remove('tut-visible');
+    tutEl('tut-tooltip').classList.remove('tut-visible');
+    tutEl('tut-done').classList.remove('tut-visible');
+    if (resume && tutWasPlaying && typeof togglePlay === 'function' && !playing) togglePlay();
+  }
+  function tutFinishSteps() {
+    tutEl('tut-tooltip').classList.remove('tut-visible');
+    tutEl('tut-done').classList.add('tut-visible');
+  }
+  tutEl('tut-help').addEventListener('click', tutOpenWelcome);
+  tutEl('tut-start').addEventListener('click', tutStart);
+  tutEl('tut-skip-w').addEventListener('click', () => tutEnd(true));
+  tutEl('tut-skip').addEventListener('click', () => tutEnd(true));
+  tutEl('tut-finish').addEventListener('click', () => tutEnd(true));
+  tutEl('tut-next').addEventListener('click', () => {
+    if (tutIdx >= TUT_STEPS.length - 1) tutFinishSteps(); else tutShowStep(tutIdx + 1);
+  });
+  tutEl('tut-prev').addEventListener('click', () => tutShowStep(tutIdx - 1));
+  window.addEventListener('keydown', e => {
+    if (tutEl('tut-root').classList.contains('tut-hidden')) return;
+    if (e.key === 'Escape') tutEnd(true);
+    if (e.key === 'ArrowRight' && tutEl('tut-tooltip').classList.contains('tut-visible')) tutEl('tut-next').click();
+    if (e.key === 'ArrowLeft') tutEl('tut-prev').click();
+  });
+  window.addEventListener('resize', () => {
+    if (tutIdx >= 0 && !tutEl('tut-root').classList.contains('tut-hidden')) tutShowStep(tutIdx);
+  });
+  // Auto-run on first load of this page (no persistence -- runs every open,
+  // since localStorage/sessionStorage are not allowed in this engine):
+  window.addEventListener('load', () => setTimeout(tutOpenWelcome, 300));
+
+WELCOME/DONE COPY: set `#tut-w-title` to the sim's title and `#tut-w-body`
+to one short sentence ("Let's quickly learn how to use this simulation --
+about 30 seconds."). Keep tone friendly and brief, matching the sim's topic.
+
+RULES:
+- Every slider, toggle, select, action button, overlay button, and metric
+  you generate needs a corresponding tutorial step (the auto-fill safety
+  net above guarantees this even if you miss one by hand -- but always
+  write the hand-authored steps first for good copy).
+- If canvas dragging is supported, include one step (selector `#cvs` or
+  `#simsvg`) explaining what can be dragged and what happens on release.
+- Keep each step's body to 1-3 short sentences: what it is, what changing
+  it does, and (where relevant) why it matters scientifically or what to
+  observe.
+- The tutorial must pause any running animation on open and resume it
+  (only if it was running) on close/finish -- shown above via `playing`/
+  `togglePlay` hooks; if the sim doesn't use that pattern, wire an
+  equivalent pause/resume around your own animation state.
+- Tutorial elements must never block interaction with the sim once closed
+  (`tut-root` is `display:none` via `.tut-hidden`).
+- This system must be fully generated inline -- no external libraries, no
+  CDN, same offline-only constraints as the rest of the page.
+
+════════════════════════════════════════════════════════
   WHAT TO OMIT
 ════════════════════════════════════════════════════════
 - No external URLs of any kind (scripts, fonts, images, CSS, API calls).
@@ -845,9 +1119,11 @@ function togglePlay() {
 - No more than 7 controls in the sidebar (trim to the most meaningful).
 - No narration panels or "theory" text blocks inside the canvas area --
   that belongs in the sidebar or as short canvas labels only.
+- Do NOT skip the onboarding tutorial system above -- it is required on
+  every generated page, adapted to that page's own controls.
 """
 
-SYSTEM = """You are SimEngine v2.0 -- an expert interactive-simulation engineer who builds
+SYSTEM = """You are SimEngine v2.1 -- an expert interactive-simulation engineer who builds
 single-page HTML5 virtual-lab simulations for students and curious learners.
 
 YOUR MISSION: Given ONE topic, concept, or lab experiment, design and build a
@@ -874,7 +1150,9 @@ Return ONLY raw JSON (no markdown, no code fences, no commentary):
   "learning_notes": ["2-4 short simple-English sentences a learner reads
               while using the sim -- what to notice, what to try"],
   "simulation_code": "COMPLETE SELF-CONTAINED <!DOCTYPE html>...</html>
-              AS A SINGLE PROPERLY-ESCAPED JSON STRING"
+              AS A SINGLE PROPERLY-ESCAPED JSON STRING -- MUST include the
+              onboarding/tutorial system from the design system, with one
+              tutorial step per control actually generated on this page"
 }
 
 ════════════════════════════════════════════════════════
@@ -912,6 +1190,12 @@ Return ONLY raw JSON (no markdown, no code fences, no commentary):
   drag pendulum to release position, place charge in electric field), wire
   mousedown/mousemove/mouseup on the canvas to let the user interact
   directly without sliders alone.
+- EVERY simulation includes the onboarding/tutorial system from the design
+  system above: a spotlight-style, first-run walkthrough that is generated
+  from the exact controls, overlay buttons, metrics, and canvas interactions
+  YOU built for this page -- not a generic or copy-pasted script. This is a
+  required core feature, not an optional polish pass. A simulation without
+  it is an incomplete simulation.
 """
 
 
@@ -1032,7 +1316,7 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
     ]
 
     user_parts = [
-        f"Build an interactive HTML5 simulation for SimEngine v2.0.\n",
+        f"Build an interactive HTML5 simulation for SimEngine v2.1.\n",
         f"TOPIC / LAB EXPERIMENT: {topic}",
         f"CATEGORY: {category}",
         f"STRATEGY HINT: {strategy}",
@@ -1054,6 +1338,10 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
         "- Include a Play/Animate button + requestAnimationFrame loop if the topic involves motion.",
         "- Mobile-responsive down to 380px viewport width.",
         "- The visual quality bar is a professional virtual-lab screenshot -- not a rough sketch.",
+        "- REQUIRED: include the onboarding/tutorial system (#tut-root, #tut-help, spotlight, "
+        "welcome/step/done cards) from the design system, with TUT_STEPS containing one entry "
+        "for EVERY control, overlay button, and metric you generated for THIS topic -- adapted "
+        "to this exact set of controls, not a generic placeholder tour.",
         "\nReturn ONLY raw JSON. simulation_code must be a complete "
         "<!DOCTYPE html>...</html> document as a properly escaped JSON string.",
     ]
@@ -1226,7 +1514,7 @@ def _build_failure_result(topic, reason):
         "learning_notes":    [],
         "image_refs":        [],
         "html":              fallback,
-        "engine_version":    "v2.0",
+        "engine_version":    "v2.1",
         "render_status":     "error",
         "error_reason":      reason,
     }
@@ -1245,7 +1533,7 @@ async def _run_generation_pipeline(topic: str) -> dict:
       8. Return result dict
     """
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
-    SimLogger.info("Pipeline", f"START v2.0 -- '{short_topic}'")
+    SimLogger.info("Pipeline", f"START v2.1 -- '{short_topic}'")
 
     # Step 1: Classify
     category = _classify_topic(topic)
@@ -1301,7 +1589,7 @@ async def _run_generation_pipeline(topic: str) -> dict:
             return _build_failure_result(topic, str(e))
 
     result["html"]           = sim_html
-    result["engine_version"] = "v2.0"
+    result["engine_version"] = "v2.1"
     result["render_status"]  = "ok"
 
     SimLogger.ok("Pipeline", (
@@ -1374,7 +1662,7 @@ if __name__ == "__main__":
 
     for cat, t in topics_to_test.items():
         print("=" * 72)
-        print(f"  SimEngine v2.0 | {cat}")
+        print(f"  SimEngine v2.1 | {cat}")
         print(f"  Topic: {t[:65]}")
         print("=" * 72)
 
