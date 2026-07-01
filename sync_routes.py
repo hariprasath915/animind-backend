@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -159,6 +160,7 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
             "id":          s["id"],
             "name":        s["name"],
             "description": s.get("description", ""),
+            "share_token": s.get("share_token"),
             "cos":         cos_by_subject.get(s["id"], []),
             "syllabus": {
                 "pdf_name": s.get("syllabus_pdf_name"),
@@ -413,6 +415,7 @@ def get_subjects(current_user: dict = Depends(get_current_user)):
             "id":          s["id"],
             "name":        s["name"],
             "description": s.get("description", ""),
+            "share_token": s.get("share_token"),
             "cos":         cos_by_subject.get(s["id"], []),
             "syllabus": {
                 "pdf_name": s.get("syllabus_pdf_name"),
@@ -434,15 +437,22 @@ def create_subject(
     # ✅ Use service-role client to insert user row (bypasses RLS on users table)
     _ensure_user_row(current_user)
     supabase = _sb(current_user)
+    # Generate a URL-safe share token (10 chars, ~60 bits of entropy).
+    # Stored in engineering_subjects.share_token (UNIQUE column).
+    share_token = secrets.token_urlsafe(8)  # e.g. "aB3xQ7mNpL"
     row = {
         "user_id":     current_user["id"],
         "name":        body.name.strip(),
         "description": body.description or "",
         "sort_order":  body.sort_order,
+        "share_token": share_token,
     }
     res = supabase.table("engineering_subjects").insert(row).execute()
     subject = res.data[0] if res.data else {}
-    print(f"[SYNC] ✅ Subject created: {body.name!r} user={current_user['email']!r}")
+    # Always echo share_token even if the DB row didn't return it
+    if "share_token" not in subject:
+        subject["share_token"] = share_token
+    print(f"[SYNC] ✅ Subject created: {body.name!r} share_token={share_token!r} user={current_user['email']!r}")
     return {"success": True, "subject": subject}
 
 
@@ -755,6 +765,88 @@ def delete_file(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# PUBLIC SHARE ENDPOINT  —  GET /sync/share/{token}
+# No JWT required — students access this without logging in.
+# ════════════════════════════════════════════════════════════════
+
+@router.get("/share/{token}", status_code=200)
+def get_shared_subject(token: str):
+    """
+    Public (no-auth) endpoint that returns a subject's full CO+topic tree
+    identified by its share_token.  No user PII is exposed.
+    """
+    # Use the service-role client so RLS doesn't block the read.
+    svc = get_supabase()  # no token → service-role singleton
+
+    subj_res = (
+        svc.table("engineering_subjects")
+        .select("id, name, description, share_token")
+        .eq("share_token", token)
+        .maybe_single()
+        .execute()
+    )
+    subj = subj_res.data if subj_res else None
+    if not subj:
+        raise HTTPException(status_code=404, detail="Shared subject not found.")
+
+    subject_id = subj["id"]
+
+    # ── COs ──────────────────────────────────────────────────────
+    cos_res = (
+        svc.table("course_outcomes")
+        .select("id, co_num, description, sort_order")
+        .eq("subject_id", subject_id)
+        .order("sort_order")
+        .execute()
+    )
+    cos = cos_res.data or []
+    co_ids = [c["id"] for c in cos]
+
+    # ── Topics (with html_code_cache so students can view animations) ─
+    topics = []
+    if co_ids:
+        topics_res = (
+            svc.table("course_topics")
+            .select("id, co_id, name, description, sort_order, html_code_cache")
+            .in_("co_id", co_ids)
+            .order("sort_order")
+            .execute()
+        )
+        topics = topics_res.data or []
+
+    topics_by_co: dict = {}
+    for t in topics:
+        topics_by_co.setdefault(t["co_id"], []).append({
+            "id":          t["id"],
+            "name":        t["name"],
+            "description": t.get("description", ""),
+            "has_content": bool(t.get("html_code_cache")),
+            "html_code":   t.get("html_code_cache") or "",
+        })
+
+    cos_out = [
+        {
+            "id":          co["id"],
+            "coNum":       co["co_num"],
+            "name":        co.get("description") or co["co_num"],
+            "topics":      topics_by_co.get(co["id"], []),
+        }
+        for co in cos
+    ]
+
+    print(f"[SHARE] Public access: subject={subj['name']!r} token={token!r}")
+    return {
+        "subject": {
+            "id":          subject_id,
+            "name":        subj["name"],
+            "description": subj.get("description", ""),
+            "share_token": token,
+        },
+        "cos": cos_out,
+    }
 
 
 # ════════════════════════════════════════════════════════════════
