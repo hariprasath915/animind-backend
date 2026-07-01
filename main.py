@@ -286,6 +286,7 @@ async def health(request: Request):
                 "vault_delete":   "DELETE /sync/vault/entries/{id}     → delete + storage",
                 "file_upload":    "POST   /sync/files/upload           → upload to Storage",
                 "file_delete":    "DELETE /sync/files/delete           → delete from Storage",
+                "subject_share":  "GET    /sync/share/{token}          → public (no-auth) CO viewer",
                 # ── legacy (kept for migration window) ───────────────
                 "legacy_pull":    "GET    /sync/animations             [LEGACY]",
                 "legacy_push":    "POST   /sync/animations             [LEGACY]",
