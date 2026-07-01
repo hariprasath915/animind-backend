@@ -183,6 +183,10 @@ class GenerationValidator:
             SimLogger.warn("Validator", "Onboarding tutorial system missing or incomplete "
                                          "(no #tut-root / TUT_STEPS found) -- generation did "
                                          "not follow the required onboarding design pattern")
+        if "viewport" not in html or "@media" not in html:
+            SimLogger.warn("Validator", "Responsive design signals missing (no viewport meta "
+                                         "and/or no @media breakpoints found) -- generation may "
+                                         "not follow the required responsive design pattern")
         open_scripts  = len(re.findall(r'<script(?:\s[^>]*)?>',  html, re.IGNORECASE))
         close_scripts = len(re.findall(r'</script>',              html, re.IGNORECASE))
         if open_scripts != close_scripts:
@@ -302,22 +306,38 @@ class RecoveryEngine:
         reason_safe = html_module.escape(reason[:300])
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-html,body{{width:100%;height:100%;background:#0a0c10;
+*{{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}}
+html,body{{width:100%;min-height:100%;background:#0a0c10;
   font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  display:flex;align-items:center;justify-content:center;color:#e8eaf0}}
+  display:flex;align-items:center;justify-content:center;color:#e8eaf0;
+  overflow-x:hidden;font-size:16px}}
+body{{padding:16px}}
 .card{{background:#12151c;border:1px solid #2a3040;border-radius:16px;
-  box-shadow:0 4px 24px rgba(0,0,0,.4);padding:36px 40px;max-width:520px;text-align:center}}
+  box-shadow:0 4px 24px rgba(0,0,0,.4);padding:36px 40px;width:100%;max-width:520px;
+  text-align:center}}
 .icon{{font-size:40px;margin-bottom:16px}}
 .title{{font-size:17px;font-weight:700;color:#e8eaf0;margin-bottom:10px}}
-.reason{{font-size:11px;color:#8892a4;background:#1a1f2b;border-radius:10px;
+.reason{{font-size:13px;color:#8892a4;background:#1a1f2b;border-radius:10px;
   padding:10px 14px;margin:12px 0;border:1px solid #2a3040;text-align:left;
-  line-height:1.6;font-family:monospace}}
-.topic{{font-size:12px;color:#556070;line-height:1.6;margin-top:10px;font-style:italic}}
-.retry-hint{{margin-top:18px;font-size:11px;font-weight:700;letter-spacing:1.5px;
+  line-height:1.6;font-family:monospace;word-break:break-word;overflow-wrap:break-word}}
+.topic{{font-size:13px;color:#556070;line-height:1.6;margin-top:10px;font-style:italic;
+  word-break:break-word;overflow-wrap:break-word}}
+.retry-hint{{margin-top:18px;font-size:12px;font-weight:700;letter-spacing:1.5px;
   text-transform:uppercase;color:#f5a623}}
+@media (max-width:480px){{
+  body{{padding:12px}}
+  .card{{padding:24px 20px;border-radius:14px}}
+  .icon{{font-size:34px;margin-bottom:12px}}
+  .title{{font-size:16px}}
+}}
+@media (min-width:1600px){{
+  .card{{max-width:640px;padding:48px 52px}}
+  .icon{{font-size:48px}}
+  .title{{font-size:20px}}
+  .reason,.topic{{font-size:15px}}
+}}
 </style></head><body>
 <div class="card">
 <div class="icon">&#x26A0;&#xFE0F;</div>
@@ -333,10 +353,13 @@ html,body{{width:100%;height:100%;background:#0a0c10;
             return sim_code
         t_safe = html_module.escape(topic[:120])
         return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>html,body{{margin:0;padding:0;width:100%;height:100%;background:#0a0c10;
-  font-family:-apple-system,sans-serif;color:#e8eaf0}}</style></head><body>
-<div style="font-size:11px;color:#8892a4;position:fixed;top:8px;left:0;right:0;text-align:center;z-index:99">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<style>*{{box-sizing:border-box}}
+html,body{{margin:0;padding:0;width:100%;min-height:100%;background:#0a0c10;
+  font-family:-apple-system,sans-serif;color:#e8eaf0;overflow-x:hidden;font-size:16px}}
+img,svg,canvas{{max-width:100%;height:auto}}</style></head><body>
+<div style="font-size:12px;color:#8892a4;position:fixed;top:8px;left:0;right:0;text-align:center;
+  z-index:99;padding:0 12px;word-break:break-word">
   {t_safe}</div>
 {sim_code}</body></html>"""
 
@@ -557,11 +580,106 @@ no network calls) structured as:
             — horizontal row of 3–5 .metric cards, each showing ONE
               live-computed value with label, value, and optional badge
 
-MOBILE BREAKPOINT (max-width: 760px):
-  - #app becomes flex-direction:column
-  - #sidebar becomes width:100%; max-height:220px; overflow-y:auto
-  - #controls-panel becomes a wrapping flex-row of compact controls
-  - #info-panel stacks metrics in a 2×N grid instead of a single row
+════════════════════════════════════════════════════════
+  RESPONSIVE DESIGN REQUIREMENTS (MANDATORY -- ALL breakpoints)
+════════════════════════════════════════════════════════
+The page MUST render correctly and usably on phones, tablets, laptops,
+and large smartboard/TV displays with NO horizontal scrolling at ANY
+width from 320px up. Treat this with the same rigor as the correctness
+requirements -- a simulation that overflows or is unusable on a phone
+is an incomplete simulation.
+
+GLOBAL RULES (apply at every breakpoint):
+  - `<meta name="viewport" content="width=device-width, initial-scale=1.0,
+    maximum-scale=5.0">` is required in <head>.
+  - `html, body { overflow-x:hidden; width:100%; }` and
+    `*, *::before, *::after { box-sizing:border-box; }` are required.
+  - Base body font-size must never drop below 16px on any breakpoint
+    (prevents iOS auto-zoom on inputs and keeps text legible). Only
+    small metadata labels (.eyebrow, .metric-label, badges) may go
+    smaller, and never below 10px.
+  - Every interactive element a user taps -- buttons, .btn, .ov-btn,
+    .exp-btn, toggle switches, slider thumbs, tutorial nav buttons,
+    #tut-help -- must have a minimum hit area of 44x44px on touch
+    breakpoints (use padding or min-width/min-height, not just visual
+    size, so the tap target is generous even if the visible icon is
+    small).
+  - Canvas/SVG must always be set via CSS to `width:100%; height:100%`
+    inside a sized parent (never a fixed pixel width) so it scales
+    fluidly; the DPR-aware resize logic below already reads the
+    parent's actual rendered size on every resize, so this works
+    automatically as long as no fixed widths are hardcoded elsewhere.
+  - Any long text (topic titles, error text, metric values) must use
+    `word-break:break-word; overflow-wrap:break-word` so a long string
+    can never force horizontal overflow.
+  - Use `dvh`/`svh` fallback pattern for full-height containers where
+    supported (`height:100vh; height:100dvh;`) so mobile browser
+    chrome (address bar) doesn't clip content.
+
+BREAKPOINTS (mobile-first additive overrides; write base styles for
+desktop/laptop as the default, then override downward with max-width
+queries, PLUS one upward query for very large displays):
+
+  ── Smartboard / large display -- min-width:1600px ──
+    - Increase --panel-w to ~320-340px, base font sizes up ~10-15%,
+      and metric-value font-size up to ~26-28px so text reads clearly
+      from a distance. Canvas area gets proportionally more breathing
+      room; cap overall content max-width if useful to avoid absurdly
+      stretched single-column canvases on ultra-wide screens.
+
+  ── Laptop / desktop -- default styles (no query needed) ──
+    - The #app sidebar+main+info-panel layout described above.
+
+  ── Tablet -- max-width:1024px ──
+    - #sidebar width can shrink to ~220-240px OR (portrait tablets,
+      max-width:900px) collapse to the mobile column layout below --
+      choose whichever keeps controls comfortably tappable.
+    - #info-panel metrics may wrap to 3+2 or similar grid if 5 metrics
+      no longer fit in one row without truncation.
+
+  ── Mobile -- max-width:760px ──
+    - #app becomes flex-direction:column; height:100vh; height:100dvh.
+    - #sidebar becomes width:100%; max-height:38vh; overflow-y:auto;
+      border-right:none; border-bottom:1px solid var(--border).
+    - #canvas-area gets flex:1; min-height:220px so it never collapses
+      to zero when the sidebar and info-panel both claim space.
+    - #controls-panel becomes a wrapping flex-row (flex-wrap:wrap) of
+      compact controls, each control taking ~45-100% width so 2 can
+      sit side-by-side where space allows, full-width otherwise.
+    - .btn-row buttons stack full-width if there are more than 2, and
+      every .btn keeps min-height:44px.
+    - input[type=range] thumbs grow to at least 20px so they're easy
+      to drag with a finger; add extra vertical padding around the
+      track (e.g. padding:10px 0) to enlarge the touch hit area
+      without changing the visual track thickness.
+    - #info-panel switches to a 2-column (2×N) CSS grid instead of a
+      single flex row; each .metric keeps min-height ~64px and
+      border-right is dropped in favor of a subtle border-bottom /
+      grid gap.
+    - #overlay-bar buttons (.ov-btn) get min-height:44px and slightly
+      larger padding; if there are more than 3, allow them to wrap
+      (flex-wrap:wrap) instead of shrinking unreadably.
+    - #tip becomes `left:8px; right:8px; max-width:none; width:auto;
+      transform:none; text-align:center` so it can't overflow narrow
+      screens, and font-size stays >=12px.
+    - Tutorial cards/modals (.tut-card, .tut-modal) go full-width with
+      side margins (`left:8px; right:8px; width:auto; max-width:none`)
+      per the tutorial CSS pattern below.
+
+  ── Small phone -- max-width:400px ──
+    - Reduce padding on .card/.tut-card/#lab-title/.ctrl-row slightly
+      (e.g. 12-14px instead of 16-22px) to reclaim space, but never
+      shrink body text below 16px or touch targets below 44px.
+    - If #controls-panel had 2-across controls at the 760px breakpoint,
+      drop to a strict single column here.
+
+TESTING CHECKLIST (verify mentally before finalizing the page):
+  - No element's rendered width ever exceeds 100% of the viewport at
+    320px, 375px, 768px, 1024px, 1440px, and 1920px+.
+  - Every button/slider/toggle is comfortably tappable with a thumb.
+  - All body copy is >=16px; nothing requires pinch-zoom to read.
+  - The canvas/SVG never gets clipped, squashed to near-zero height,
+    or forced into a scrollbar.
 
 ════════════════════════════════════════════════════════
   COLOUR TOKENS  (define ALL in :root on <html>)
@@ -944,10 +1062,20 @@ CSS PATTERNS (add alongside the other component CSS, using the same
     cursor:pointer; transition:all .15s;
   }
   #tut-help:hover { background:var(--accent-dim); color:var(--accent); }
+  /* Touch-friendly nav buttons inside .tut-actions (Prev/Next/Skip/Start) --
+     keep a real 44x44 hit area at every breakpoint, not just mobile. */
+  .tut-actions .btn { min-height:44px; display:flex; align-items:center;
+                       justify-content:center; }
   @media (max-width:760px) {
     .tut-tip { left:8px !important; right:8px; max-width:none;
                width:auto; bottom:8px !important; top:auto !important; }
-    .tut-modal { width:88%; max-width:340px; }
+    .tut-modal { width:auto; left:8px; right:8px; max-width:none;
+                 transform:translateY(-46%) scale(.98); }
+    .tut-modal.tut-visible { transform:translateY(-50%) scale(1); }
+    .tut-card { padding:16px 18px; }
+    .tut-card h2 { font-size:17px; }
+    .tut-card p { font-size:14px; }
+    #tut-help { width:44px; height:44px; bottom:12px; right:12px; }
   }
 
 JS PATTERN -- the tutorial is DATA-DRIVEN from the exact controls you
@@ -1180,7 +1308,10 @@ Return ONLY raw JSON (no markdown, no code fences, no commentary):
   sketches.
 - The metrics strip shows 3–5 of the MOST MEANINGFUL live-computed values
   for this topic, color-coded where it aids understanding.
-- Mobile-responsive: usable down to a 380px-wide viewport.
+- Fully responsive per the RESPONSIVE DESIGN REQUIREMENTS section above:
+  usable with no horizontal scrolling from 320px phones through tablets,
+  laptops, and large smartboard displays, with >=16px body text and
+  >=44px touch targets on touch breakpoints.
 - Include keyboard shortcuts (Space = play/pause, R = reset) when applicable.
 - If the topic naturally spans multiple related experiments (optics: Snell's
   law, convex lens, concave mirror...) build a multi-experiment sidebar
