@@ -443,8 +443,9 @@ def _format_image_refs_for_prompt(refs: List[dict]) -> str:
 
 
 # ===========================================================================
-#  MODULE 6 -- Topic Classification
+# MODULE 6 -- Topic Classification
 # ===========================================================================
+
 CATEGORIES = [
     "PHYSICS_MECHANICS",
     "PHYSICS_WAVES_OPTICS",
@@ -456,62 +457,184 @@ CATEGORIES = [
     "EARTH_ENV_SCIENCE",
     "ECONOMICS_SOCIAL",
     "GENERAL_PROCESS",
+    "ASTRONOMY",
+    "THERMODYNAMICS",
+    "FLUID_MECHANICS",
+    "NUCLEAR_PHYSICS",
+    "MATERIALS_SCIENCE",
+    "GENETICS",
+    "ECOLOGY",
+    "STATISTICS_DATA_SCIENCE",
+    "SOFTWARE_ENGINEERING",
+    "AI_ML",
 ]
 
 _CATEGORY_KEYWORDS = {
-    "PHYSICS_MECHANICS": ["projectile", "pendulum", "spring", "friction", "collision",
+    "PHYSICS_MECHANICS": [
+        "projectile", "pendulum", "spring", "friction", "collision",
         "momentum", "force", "velocity", "acceleration", "gravity", "torque",
         "newton", "oscillation", "harmonic motion", "free fall", "incline",
-        "kinematics", "dynamics", "angular", "rotational", "centripetal"],
-    "PHYSICS_WAVES_OPTICS": ["wave", "light", "lens", "mirror", "refraction", "reflection",
+        "kinematics", "dynamics", "angular", "rotational", "centripetal",
+        "work", "energy", "power", "impulse", "inertia", "equilibrium",
+        "center of mass", "rigid body", "angular momentum"
+    ],
+    "PHYSICS_WAVES_OPTICS": [
+        "wave", "light", "lens", "mirror", "refraction", "reflection",
         "diffraction", "interference", "prism", "snell", "optic", "sound",
         "frequency", "wavelength", "doppler", "polarization", "photoelectric",
-        "electromagnetic", "spectrum", "coherent", "interference pattern"],
-    "ELECTRICITY_CIRCUITS": ["circuit", "resistor", "capacitor", "inductor", "voltage",
+        "electromagnetic", "spectrum", "coherent", "interference pattern",
+        "phase", "amplitude", "ray diagram", "focal length", "refractive index"
+    ],
+    "ELECTRICITY_CIRCUITS": [
+        "circuit", "resistor", "capacitor", "inductor", "voltage",
         "current", "ohm", "charge", "electric field", "magnetic field", "rc circuit",
         "rlc", "kirchhoff", "battery", "diode", "transistor", "semiconductor",
-        "band gap", "p-n junction", "logic gate", "digital circuit"],
-    "CHEMISTRY": ["reaction", "equilibrium", "ph", "titration", "molarity", "gas law",
+        "band gap", "p-n junction", "logic gate", "digital circuit",
+        "power", "resistance", "conductance", "series", "parallel", "emf",
+        "acit", "charging", "discharging", "impedance", "reactance"
+    ],
+    "CHEMISTRY": [
+        "reaction", "equilibrium", "ph", "titration", "molarity", "gas law",
         "boyle", "charles", "stoichiometry", "acid", "base", "catalyst", "bond",
         "electron configuration", "periodic", "polymerization", "polymer",
-        "enthalpy", "entropy", "activation energy", "colligative"],
-    "BIOLOGY": ["cell", "dna", "rna", "protein", "photosynthesis", "mitosis", "enzyme",
+        "enthalpy", "entropy", "activation energy", "colligative",
+        "oxidation", "reduction", "electrochemistry", "thermochemistry",
+        "kinetics", "solution", "solubility", "hybridization", "mole"
+    ],
+    "BIOLOGY": [
+        "cell", "dna", "rna", "protein", "photosynthesis", "mitosis", "enzyme",
         "hormone", "gene", "population growth", "predator", "prey", "ecosystem",
         "natural selection", "neuron", "heart rate", "osmosis", "diffusion",
-        "action potential", "genetics", "heredity"],
-    "MATH_GEOMETRY": ["function", "derivative", "integral", "matrix", "vector", "polygon",
+        "action potential", "genetics", "heredity", "reproduction", "respiration",
+        "tissue", "organ", "homeostasis", "immunity", "bacteria", "virus"
+    ],
+    "MATH_GEOMETRY": [
+        "function", "derivative", "integral", "matrix", "vector", "polygon",
         "triangle", "circle", "probability", "distribution", "fourier", "fractal",
         "trigonometry", "graph of", "parametric", "transformation", "linear algebra",
-        "differential equation", "taylor series", "complex number"],
-    "CS_ALGORITHMS": ["sorting", "sort algorithm", "binary search", "linked list", "stack",
+        "differential equation", "taylor series", "complex number",
+        "limit", "sequence", "series", "coordinate geometry", "area", "volume"
+    ],
+    "CS_ALGORITHMS": [
+        "sorting", "sort algorithm", "binary search", "linked list", "stack",
         "queue", "tree traversal", "graph algorithm", "dijkstra", "recursion",
         "dynamic programming", "hash table", "automaton", "neural network",
-        "pathfinding", "convex hull", "compression", "encryption"],
-    "EARTH_ENV_SCIENCE": ["climate", "plate tectonic", "earthquake", "weather", "erosion",
+        "pathfinding", "convex hull", "compression", "encryption",
+        "greedy", "backtracking", "bfs", "dfs", "heap", "trie", "complexity"
+    ],
+    "EARTH_ENV_SCIENCE": [
+        "climate", "plate tectonic", "earthquake", "weather", "erosion",
         "carbon cycle", "greenhouse", "orbit", "solar system", "tide", "volcano",
-        "water cycle", "ecosystem", "seismic", "atmospheric", "ocean current"],
-    "ECONOMICS_SOCIAL": ["supply and demand", "market", "interest rate", "inflation",
+        "water cycle", "ecosystem", "seismic", "atmospheric", "ocean current",
+        "monsoon", "humidity", "air pressure", "fossil", "geomorphology",
+        "biosphere", "lithosphere", "hydrosphere", "atmosphere"
+    ],
+    "ECONOMICS_SOCIAL": [
+        "supply and demand", "market", "interest rate", "inflation",
         "compound interest", "population dynamics", "game theory", "auction",
-        "elasticity", "gdp", "investment", "portfolio", "regression"],
+        "elasticity", "gdp", "investment", "portfolio", "regression",
+        "economy", "tax", "cost", "revenue", "profit", "consumer", "producer",
+        "trade", "policy", "unemployment", "income"
+    ],
+    "GENERAL_PROCESS": [
+        "process", "workflow", "steps", "procedure", "method", "explain how",
+        "how to", "algorithmic steps", "pipeline", "approach", "strategy"
+    ],
+    "ASTRONOMY": [
+        "star", "planet", "galaxy", "orbit", "black hole", "nebula", "supernova",
+        "telescope", "constellation", "cosmology", "universe", "moon", "comet",
+        "asteroid", "satellite", "astronomy", "redshift"
+    ],
+    "THERMODYNAMICS": [
+        "temperature", "heat", "entropy", "enthalpy", "internal energy",
+        "first law", "second law", "gas", "work done", "adiabatic", "isothermal",
+        "specific heat", "heat engine", "refrigerator"
+    ],
+    "FLUID_MECHANICS": [
+        "fluid", "pressure", "buoyancy", "viscosity", "flow", "bernoulli",
+        "continuity", "laminar", "turbulent", "streamline", "hydrostatic",
+        "surface tension", "capillary"
+    ],
+    "NUCLEAR_PHYSICS": [
+        "nuclear", "radioactive", "decay", "fission", "fusion", "half-life",
+        "alpha", "beta", "gamma", "isotope", "mass defect", "binding energy"
+    ],
+    "MATERIALS_SCIENCE": [
+        "crystal", "alloy", "polymer", "semiconductor", "conductor", "insulator",
+        "lattice", "stress", "strain", "hardness", "yield strength", "fracture"
+    ],
+    "GENETICS": [
+        "allele", "genotype", "phenotype", "punnett", "mutation", "inheritance",
+        "chromosome", "dominant", "recessive", "dna", "gene expression"
+    ],
+    "ECOLOGY": [
+        "food chain", "food web", "habitat", "biome", "biodiversity", "population",
+        "community", "succession", "nitrogen cycle", "ecosystem", "conservation"
+    ],
+    "STATISTICS_DATA_SCIENCE": [
+        "mean", "median", "variance", "standard deviation", "probability",
+        "correlation", "regression", "sampling", "hypothesis", "distribution",
+        "dataset", "outlier", "confidence interval", "p-value", "statistics"
+    ],
+    "SOFTWARE_ENGINEERING": [
+        "api", "database", "backend", "frontend", "deployment", "testing",
+        "debugging", "microservice", "authentication", "authorization",
+        "version control", "git", "architecture", "refactor", "sdk"
+    ],
+    "AI_ML": [
+        "machine learning", "deep learning", "neural network", "training",
+        "inference", "classifier", "regression", "embedding", "transformer",
+        "llm", "fine-tuning", "tokenization", "prompt", "reinforcement learning"
+    ],
 }
 
-# Topics that benefit from a multi-experiment sidebar (like the optics lab reference)
+# Topics that benefit from a multi-experiment sidebar
 _MULTI_EXPERIMENT_TOPICS = {
     "PHYSICS_WAVES_OPTICS": [
         "Snell's Law / Refraction", "Convex Lens", "Concave Lens",
         "Concave Mirror", "Double-Slit Interference", "Single-Slit Diffraction",
+        "Prism Dispersion", "Total Internal Reflection"
     ],
     "ELECTRICITY_CIRCUITS": [
         "RC Charging/Discharging", "RLC Oscillator", "Ohm's Law",
-        "Series & Parallel Circuits", "EM Induction",
+        "Series & Parallel Circuits", "EM Induction", "Kirchhoff's Laws",
+        "Diode Characteristics", "Transistor Switching"
     ],
     "PHYSICS_MECHANICS": [
         "Projectile Motion", "Simple Pendulum", "Spring-Mass System",
-        "Elastic Collision", "Inclined Plane",
+        "Elastic Collision", "Inclined Plane", "Circular Motion",
+        "Rotational Dynamics", "Work-Energy Theorem"
     ],
     "CHEMISTRY": [
         "Acid-Base Titration", "Gas Laws (Boyle/Charles)", "Chemical Equilibrium",
-        "Reaction Kinetics", "Electrochemistry",
+        "Reaction Kinetics", "Electrochemistry", "Redox Reactions",
+        "Thermochemistry", "Solubility Product"
+    ],
+    "BIOLOGY": [
+        "Cell Structure", "Mitosis vs Meiosis", "Photosynthesis",
+        "Respiration", "Enzyme Activity", "Genetic Inheritance",
+        "Nervous System", "Ecology"
+    ],
+    "MATH_GEOMETRY": [
+        "Triangles", "Circles", "Coordinate Geometry", "Trigonometry",
+        "Vectors", "Matrices", "Probability", "Differential Equations"
+    ],
+    "CS_ALGORITHMS": [
+        "Sorting Algorithms", "Binary Search", "Tree Traversal",
+        "Graph Search", "Dynamic Programming", "Hashing",
+        "Pathfinding", "Greedy Algorithms"
+    ],
+    "ASTRONOMY": [
+        "Planetary Motion", "Stellar Evolution", "Black Holes",
+        "Galaxies", "Cosmology", "Exoplanets"
+    ],
+    "THERMODYNAMICS": [
+        "Isothermal Process", "Adiabatic Process", "Heat Engines",
+        "Refrigerators", "Entropy Change"
+    ],
+    "FLUID_MECHANICS": [
+        "Bernoulli's Principle", "Continuity Equation", "Buoyancy",
+        "Viscosity", "Surface Tension"
     ],
 }
 
