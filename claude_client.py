@@ -2070,7 +2070,13 @@ Return ONLY valid JSON:
 }}
 
 *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-html {{ scroll-behavior: smooth; font-size: 16px; }}
+html {{
+  scroll-behavior: smooth;
+  font-size: 16px;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}}
 body {{
   font-family: Verdana, Geneva, sans-serif;
   font-size: clamp(1rem,2.5vw,1.05rem);
@@ -2078,6 +2084,45 @@ body {{
   color: var(--text-dark);
   background: white;
   min-height: 100vh;
+  width: 100%;
+  overflow-x: hidden;
+}}
+
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE BREAKPOINT MAP — mobile-first
+   base (0–479px)   : phones
+   480px+           : large phones / phablets
+   768px+           : tablets
+   1024px+          : laptops & desktops
+   1440px+          : smartboards & large displays
+   Every layout rule below is written mobile-first: unqualified
+   rules target phones, and each min-width query progressively
+   layers on more room, restoring the full original desktop
+   design from 1024px up and scaling further for smartboards.
+══════════════════════════════════════════════════════════ */
+
+/* Media/overflow safety net — nothing is allowed to force
+   horizontal scrolling on a narrow viewport. */
+img, svg, video, iframe, table, canvas {{ max-width: 100%; height: auto; }}
+pre, code {{ white-space: pre-wrap; word-break: break-word; }}
+
+/* Touch-friendly controls: any coarse-pointer device (phone,
+   tablet, or a touch-enabled smartboard) gets larger tap
+   targets. Mouse-driven desktops are completely unaffected. */
+@media (hover: none) and (pointer: coarse) {{
+  button, .acc-header, .acc-goto-btn, .quiz-tab, .anim-tab, .q-opt,
+  .footer-cta-btn, .anim-ctrl-btn, .anim-save-btn, .img-upload-btn,
+  .delete-image-btn, .vault-refresh-btn, .anim-clear-btn,
+  input, select, textarea {{
+    min-height: 44px;
+  }}
+  .footer-cta-btn, .anim-ctrl-btn, .anim-save-btn, .q-opt, .img-upload-btn {{
+    min-width: 44px;
+  }}
+  .fc-subtype-item, .app-card, .concept-card, .hook-card, .definition-box,
+  .formula-card, .anim-lib-card, .vault-card, .quiz-question {{
+    min-height: 44px;
+  }}
 }}
 
 /* ── PROGRESS BAR ── */
@@ -2087,20 +2132,22 @@ body {{
   z-index: 9999; transition: width .1s linear; border-radius: 0 2px 2px 0;
 }}
 
-/* ── PAGE CONTAINER ── */
+/* ── PAGE CONTAINER (mobile-first padding) ── */
 .page-container {{
-  max-width: 1200px; margin: 0 auto; padding: 48px 24px;
+  width: 100%;
+  max-width: 1200px; margin: 0 auto; padding: 18px 14px;
   display: flex; flex-direction: column;
   background:
     url("{svg_pattern_b64}") repeat,
     linear-gradient(135deg, #f0f8ff 0%, #e0f7fa 100%);
   background-size: 100px 100px, cover;
   min-height: 100vh;
+  overflow-x: hidden;
 }}
 
-/* ── PAGE HEADER ── */
+/* ── PAGE HEADER (mobile-first padding) ── */
 .page-header {{
-  text-align: center; margin-bottom: 24px; padding: 48px;
+  text-align: center; margin-bottom: 16px; padding: 22px 16px;
   background: white; border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl); display: flex; flex-direction: column;
   align-items: center; width: 100%;
@@ -2148,40 +2195,56 @@ body {{
 .audit-summary h3 {{ color: #1e40af; margin-bottom: 8px; font-family: Verdana,sans-serif; }}
 .audit-summary p  {{ color: var(--text-dark); font-family: Verdana,sans-serif; }}
 
-/* ── ACCORDION NAV ── */
+/* ── CONTENT LAYOUT (mobile-first: single column) ──
+   Stacked nav-above-content on phones/tablets; becomes a
+   sidebar-beside-main layout at laptop widths (1024px+),
+   matching the original desktop design — see breakpoints below. */
+.content-layout {{
+  display: flex; flex-direction: column; gap: 14px; align-items: stretch; width: 100%;
+}}
+/* ── MAIN CONTENT / SECTIONS ── */
+.main-content {{ display: flex; flex-direction: column; gap: 20px; flex: 1; min-width: 0; width: 100%; }}
+
+/* ── SECTION NAV (mobile-first) ──
+   Default = compact, horizontally-wrapping tab strip that sits
+   above the content and never causes page-level horizontal
+   scroll. A vertical sticky sidebar accordion (the original
+   desktop look) is restored at 1024px+. */
 .section-nav {{
-  position: sticky; top: 0; z-index: 100;
-  width: 260px; min-width: 220px; max-width: 280px;
-  align-self: flex-start;
+  position: static; top: 0; z-index: 100;
+  width: 100%; min-width: 0; max-width: 100%;
+  align-self: stretch;
   background: white;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  padding: 12px 0 16px;
-  margin-bottom: 32px;
-  display: flex; flex-direction: column;
+  padding: 8px;
+  margin-bottom: 4px;
+  display: flex; flex-direction: row; flex-wrap: wrap;
   border: 1.5px solid var(--gray-200);
-  overflow: hidden;
 }}
 .acc-panel-title {{
-  font-family: Verdana,sans-serif; font-size: 11px; font-weight: 800;
+  display: none;
+  font-family: Verdana,sans-serif; font-size: 12px; font-weight: 800;
   text-transform: uppercase; letter-spacing: .6px; color: var(--gray-700);
   padding: 0 16px 10px; border-bottom: 2px solid var(--gray-200); margin-bottom: 4px;
 }}
 .acc-item {{
-  border-bottom: 1px solid var(--gray-100);
+  position: relative;
+  border-bottom: none; border-right: 1px solid var(--gray-100);
+  flex: 1 1 auto; min-width: 88px;
 }}
-.acc-item:last-child {{ border-bottom: none; }}
+.acc-item:last-child {{ border-right: none; }}
 .acc-header {{
-  width: 100%; display: flex; align-items: center; gap: 8px;
-  padding: 10px 16px; background: transparent; border: none;
-  font-family: Verdana,sans-serif; font-size: 12px; font-weight: 700;
-  color: var(--gray-700); cursor: pointer; text-align: left;
+  width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 9px 6px; background: transparent; border: none; border-radius: 8px;
+  font-family: Verdana,sans-serif; font-size: 11.5px; font-weight: 700;
+  color: var(--gray-700); cursor: pointer; text-align: center;
   transition: background .2s, color .2s;
 }}
 .acc-header:hover {{ background: var(--gray-100); color: var(--primary-blue); }}
 .acc-header.acc-active {{ color: var(--primary-blue); background: var(--blue-bg); }}
-.acc-icon  {{ font-size: 15px; flex-shrink: 0; }}
-.acc-label {{ flex: 1; line-height: 1.3; }}
+.acc-icon  {{ font-size: 16px; flex-shrink: 0; }}
+.acc-label {{ flex: none; line-height: 1.25; }}
 .acc-arrow {{
   font-size: 11px; color: var(--gray-700); flex-shrink: 0;
   transition: transform .25s;
@@ -2191,29 +2254,26 @@ body {{
   max-height: 0; overflow: hidden; opacity: 0;
   transition: max-height .3s ease, opacity .25s ease;
   background: var(--gray-50);
-  padding: 0 16px;
+  padding: 0 12px;
+  position: absolute; z-index: 200; top: 100%; left: 50%; transform: translateX(-50%);
+  min-width: 160px; max-width: min(220px, calc(100vw - 24px));
+  border: 1.5px solid var(--primary-blue); border-radius: 8px;
+  box-shadow: var(--shadow-lg);
 }}
 .acc-item.acc-open .acc-body {{ /* JS sets max-height + opacity */ }}
 .acc-goto-btn {{
   display: block; width: 100%; text-align: left;
-  padding: 8px 10px; margin: 8px 0;
+  padding: 10px 10px; margin: 8px 0;
   background: white; border: 1.5px solid var(--primary-blue);
-  border-radius: 8px; font-family: Verdana,sans-serif; font-size: 11px;
+  border-radius: 8px; font-family: Verdana,sans-serif; font-size: 12px;
   font-weight: 700; color: var(--primary-blue); cursor: pointer;
   transition: background .2s, color .2s;
 }}
 .acc-goto-btn:hover {{ background: var(--primary-blue); color: white; }}
-
-/* ── CONTENT LAYOUT (sidebar + main) ── */
-.content-layout {{
-  display: flex; gap: 28px; align-items: flex-start; width: 100%;
-}}
-/* ── MAIN CONTENT / SECTIONS ── */
-.main-content {{ display: flex; flex-direction: column; gap: 32px; flex: 1; min-width: 0; }}
 .lesson-section {{
-  width: 100%; margin: 2rem 0; border-radius: 12px;
+  width: 100%; margin: 1.25rem 0; border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0,0,0,.1); background: white; overflow: hidden;
-  padding: 2rem; scroll-margin-top: 80px;
+  padding: 1.25rem; scroll-margin-top: 80px; max-width: 100%;
 }}
 .section-header h2 {{
   font-family: Verdana,sans-serif; font-size: clamp(1.3rem,4vw,1.8rem);
@@ -2592,34 +2652,107 @@ body {{
   .anim-lib-card-title {{ color: #f1f5f9; }}
 }}
 
-/* ── RESPONSIVE ── */
-@media (max-width: 768px) {{
-  .page-container {{ padding: 24px 16px; }}
-  .page-header {{ padding: 24px; }}
-  .page-title {{ font-size: 1.8rem; }}
-  .content-layout {{ flex-direction: column; }}
-  .section-nav {{
-    position: static; width: 100%; max-width: 100%; min-width: unset;
-    flex-direction: row; flex-wrap: wrap; padding: 8px;
-    border-radius: var(--radius-md);
-  }}
-  .acc-panel-title {{ display: none; }}
-  .acc-item {{ border-bottom: none; border-right: 1px solid var(--gray-100); flex: 1; min-width: 90px; }}
-  .acc-header {{ font-size: 10px; padding: 8px 8px; gap: 4px; }}
-  .acc-body {{ position: absolute; z-index: 200; background: white; min-width: 160px;
-               border: 1.5px solid var(--primary-blue); border-radius: 8px;
-               padding: 0 10px; box-shadow: var(--shadow-lg); }}
-  .lesson-section {{ padding: 24px 16px; margin: 1rem 0; }}
-  .app-grid {{ grid-template-columns: 1fr; }}
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE — mobile-first breakpoint ladder
+   Everything above this point already renders correctly on a
+   phone (single column, stacked nav, no horizontal scroll).
+   Each block below only ADDS more room/structure as the
+   viewport grows — nothing here needs to "fix" mobile.
+══════════════════════════════════════════════════════════ */
+
+/* ── PHONE — small screens (≤479px): a bit more compact ── */
+@media (max-width: 479px) {{
+  .page-container {{ padding: 14px 10px; }}
+  .page-header {{ padding: 18px 12px; }}
+  .acc-item {{ min-width: 74px; }}
+  .acc-header {{ font-size: 10.5px; padding: 8px 4px; }}
+  .acc-label {{ display: none; }}           /* icon-only tabs on the smallest screens */
+  .q-difficulty, .fc-type-desc, .anim-lib-card-date, .vault-info, .symbol-var {{ font-size: 11px; }}
+  .fc-branches-row {{ flex-direction: column; align-items: center; }}
+  .fc-branch-col {{ max-width: 100%; width: 100%; }}
+  .footer-cta {{ flex-direction: column; align-items: stretch; }}
+  .footer-cta-btn {{ width: 100%; text-align: center; }}
+  .uploaded-image {{ max-height: 320px; }}
   .quiz-tabs {{ gap: 4px; }}
   .quiz-tab {{ font-size: 11px; padding: 8px 6px; }}
-  .anim-lib-grid {{ grid-template-columns: 1fr; }}
-  .fc-branches-row {{ flex-direction: column; align-items: center; }}
-  .fc-branch-col {{ max-width: 280px; width: 100%; }}
-  .footer-cta {{ flex-direction: column; align-items: center; }}
-  .uploaded-image {{ max-height: 420px; }}
-  .uploaded-image-wrap {{ max-width: 100%; }}
-  .vault-title-row {{ flex-wrap: wrap; }}
+  .anim-player-actions {{ width: 100%; justify-content: stretch; }}
+  .anim-ctrl-btn {{ flex: 1; justify-content: center; }}
+}}
+
+/* ── PHABLET / large phones (480px+) ── */
+@media (min-width: 480px) {{
+  .page-container {{ padding: 22px 18px; }}
+  .page-header {{ padding: 26px 20px; }}
+  .lesson-section {{ padding: 1.5rem; }}
+  .acc-item {{ min-width: 96px; }}
+}}
+
+/* ── TABLET (768px+): more breathing room, still stacked nav ── */
+@media (min-width: 768px) {{
+  .page-container {{ padding: 32px 24px; }}
+  .page-header {{ padding: 36px 32px; }}
+  .content-layout {{ gap: 20px; }}
+  .main-content {{ gap: 28px; }}
+  .lesson-section {{ padding: 1.75rem; margin: 1.5rem 0; }}
+  .section-nav {{ padding: 10px; }}
+  .acc-header {{ font-size: 12.5px; padding: 10px 8px; }}
+  .app-grid {{ grid-template-columns: repeat(2,1fr); }}
+  .anim-lib-grid {{ grid-template-columns: repeat(auto-fill,minmax(160px,1fr)); }}
+  .footer-cta {{ flex-direction: row; }}
+}}
+
+/* ── LAPTOP / DESKTOP (1024px+): restores the original sidebar
+   layout — sticky vertical accordion nav beside the content,
+   exactly as in the desktop-only design this was based on. ── */
+@media (min-width: 1024px) {{
+  .page-container {{ padding: 48px 24px; }}
+  .page-header {{ padding: 48px; margin-bottom: 24px; }}
+  .content-layout {{ flex-direction: row; gap: 28px; align-items: flex-start; }}
+  .main-content {{ gap: 32px; }}
+  .lesson-section {{ padding: 2rem; margin: 2rem 0; }}
+
+  .section-nav {{
+    position: sticky; top: 0;
+    width: 260px; min-width: 220px; max-width: 280px;
+    align-self: flex-start;
+    flex-direction: column; flex-wrap: nowrap;
+    padding: 12px 0 16px;
+    margin-bottom: 32px;
+    border-radius: var(--radius-lg);
+  }}
+  .acc-panel-title {{ display: block; }}
+  .acc-item {{
+    border-right: none; border-bottom: 1px solid var(--gray-100);
+    flex: none; min-width: 0;
+  }}
+  .acc-header {{
+    flex-direction: row; align-items: center; justify-content: flex-start;
+    gap: 8px; padding: 10px 16px; font-size: 12px; text-align: left;
+  }}
+  .acc-label {{ display: inline; flex: 1; }}
+  .acc-body {{
+    position: static; left: auto; top: auto; transform: none;
+    min-width: 0; max-width: none;
+    border: none; border-radius: 0; box-shadow: none;
+    padding: 0 16px;
+  }}
+}}
+
+/* ── SMARTBOARD / large interactive displays (1440px+):
+   wider canvas and bigger type for room-scale, at-a-distance
+   readability, plus extra-generous touch targets for
+   touch-enabled smartboards/kiosks. ── */
+@media (min-width: 1440px) {{
+  html {{ font-size: 18px; }}
+  .page-container {{ max-width: 1500px; padding: 64px 40px; }}
+  .page-header {{ padding: 56px; }}
+  .content-layout {{ gap: 36px; }}
+  .section-nav {{ width: 300px; min-width: 260px; max-width: 320px; padding: 16px 0 20px; }}
+  .acc-header {{ font-size: 13.5px; padding: 14px 18px; }}
+  .lesson-section {{ padding: 2.5rem; }}
+  button, .footer-cta-btn, .anim-ctrl-btn, .anim-save-btn, .q-opt, .quiz-tab, .anim-tab {{
+    min-height: 48px;
+  }}
 }}
 
 @media print {{
