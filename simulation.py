@@ -306,10 +306,44 @@ class HtmlSanitizer:
 
     @classmethod
     def _fix_unescaped_string_newlines(cls, html):
-        STRING_RE = re.compile(r'(["\'])((?:\\.|(?!\1).)*)\1', re.DOTALL)
+        """
+        BUGFIX (v2.1.1): the original STRING_RE only recognised ' and "
+        as string delimiters, with no concept of backtick template
+        literals. Generated sims build control panels via JS template
+        literals containing HTML, e.g.:
 
-        def fix_str(sm):
-            quote, inner = sm.group(1), sm.group(2)
+            innerHTML = `<div class="ctrl-label">Ohm's Law</div>...`
+
+        The apostrophe in "Ohm's" was read as an *opening* single-quote
+        string, and the old regex then greedily scanned forward for the
+        next single quote ANYWHERE in the script -- often dozens of
+        lines later, inside an unrelated call like sliderHTML('sR', ...).
+        Everything in between (including real newlines separating whole
+        function bodies) was treated as "inside a string" and had its
+        newlines rewritten to literal backslash-n text, producing a
+        multi-thousand-character single line with a bare backslash
+        sitting outside any string -- a JS syntax error that silently
+        kills the entire <script> block (try/catch can't save a parse
+        error), so the sim renders blank/incomplete.
+
+        Fix: match backtick template literals as a single atomic token
+        first and leave them completely untouched -- real newlines
+        inside backticks are already valid JS and never needed escaping
+        in the first place. Only genuine single/double-quoted strings
+        (where a raw newline really would break JS) get fixed.
+        """
+        TOKEN_RE = re.compile(
+            r'`(?:\\.|[^`\\])*`'            # template literal -- leave as-is
+            r'|(["\'])(?:\\.|(?!\1).)*\1',  # single/double-quoted string -- fix
+            re.DOTALL
+        )
+
+        def fix_token(sm):
+            text = sm.group(0)
+            if text.startswith('`'):
+                return text
+            quote = sm.group(1)
+            inner = text[1:-1]
             fixed = (inner.replace('\r\n', '\\n')
                            .replace('\n', '\\n')
                            .replace('\r', '\\n')
@@ -318,7 +352,7 @@ class HtmlSanitizer:
 
         def process_script(m):
             tag, body, close = m.group(1), m.group(2), m.group(3)
-            fixed_body = STRING_RE.sub(fix_str, body)
+            fixed_body = TOKEN_RE.sub(fix_token, body)
             if fixed_body != body:
                 SimLogger.warn("Sanitizer", "Raw newline/tab inside a JS string literal -- escaped")
             return f"{tag}{fixed_body}{close}"
