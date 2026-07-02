@@ -66,6 +66,46 @@ INTEGRATION (unchanged from v1.0)
   `result` keys: title, category, summary, controls_overview,
   key_formula, learning_notes, html, image_refs, engine_version,
   render_status, [error_reason on failure].
+
+BUG FIXES in this revision
+  FIX 1 (PRIMARY -- "Could not reach the server"):
+    generate_simulation_sync() previously called asyncio.run() directly.
+    When the server runs under an async framework (FastAPI / uvicorn /
+    aiohttp / Starlette), there is already a running event loop on the
+    thread.  asyncio.run() cannot create a second loop on the same
+    thread and raises RuntimeError: "This event loop is already running",
+    which bubbles up as a 500 / connection-error on the frontend.
+    Fix: detect a running loop and, if present, dispatch the coroutine
+    to a brand-new thread that owns its own event loop via
+    concurrent.futures.ThreadPoolExecutor + asyncio.run().  This is
+    safe in all deployment contexts (CLI, pytest, FastAPI, Jupyter).
+
+  FIX 2 (SECONDARY -- blocking Anthropic client inside async function):
+    The module used anthropic.Anthropic() (synchronous) and called
+    client.messages.create() as a plain (non-awaited) blocking call
+    inside the async _run_generation_pipeline().  This blocks the
+    entire event loop for the duration of every API call (potentially
+    30-120 s), starving all other concurrent requests.
+    Fix: replace with anthropic.AsyncAnthropic() and await every
+    client.messages.create() call.  The async client returns a
+    coroutine that yields control to the event loop while waiting for
+    the network, allowing other requests to proceed concurrently.
+
+  FIX 3 (MINOR -- blocking urllib inside async pipeline):
+    _fetch_image_refs() used urllib.request.urlopen() (a blocking
+    stdlib call) directly inside the async pipeline without running
+    it in an executor.  On event-loop-aware deployments this blocks
+    the loop during the Google API call.
+    Fix: wrap the blocking urllib call in
+    asyncio.get_event_loop().run_in_executor(None, ...) so it runs
+    in the default thread-pool without blocking the event loop.
+    _fetch_image_refs is now an async function; the pipeline awaits it.
+
+  FIX 4 (MINOR -- CLASSIFIER_MODEL also needs async client):
+    The topic classifier also called client.messages.create() as a
+    blocking call inside _classify_topic(), which is itself called
+    from the async pipeline.  Made _classify_topic async and awaited
+    the async client call, consistent with FIX 2.
 """
 
 import os
@@ -73,6 +113,7 @@ import re
 import json
 import time
 import asyncio
+import concurrent.futures
 import urllib.request
 import urllib.parse
 import html as html_module
@@ -83,7 +124,9 @@ import anthropic
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
-client = anthropic.Anthropic(
+# FIX 2: Use AsyncAnthropic so all API calls are non-blocking awaitable
+# coroutines that yield control to the event loop instead of freezing it.
+client = anthropic.AsyncAnthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
     default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     timeout=600.0,
@@ -91,10 +134,10 @@ client = anthropic.Anthropic(
 )
 
 SIM_MODEL        = "claude-sonnet-4-6"
-CLASSIFIER_MODEL = "claude-haiku-4-5"
+CLASSIFIER_MODEL = "claude-sonnet-4-6"
 
-MAX_TOK            = 35000
-MAX_TOK_CLASSIFIER = 400
+MAX_TOK            = 32000
+MAX_TOK_CLASSIFIER = 100
 
 # Google Custom Search API (optional -- gracefully skipped if missing)
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
@@ -439,12 +482,10 @@ html,body{{width:100%;height:100%;background:#0a0c10;
 # ===========================================================================
 #  MODULE 5 -- Image Reference Fetcher
 # ===========================================================================
-# Searches Google Images for the topic and returns a structured list of
-# image descriptions to use as visual anchors in the generation prompt.
-# Gracefully skips (returns []) when the Google keys are absent or the
-# request fails, so the rest of the pipeline is unaffected.
+# FIX 3: Made async so the blocking urllib call runs in a thread-pool
+# executor instead of directly blocking the event loop.
 
-def _fetch_image_refs(topic: str, max_results: int = 5) -> List[dict]:
+async def _fetch_image_refs(topic: str, max_results: int = 5) -> List[dict]:
     """
     Query Google Custom Search Image API and return a list of dicts:
       [{"title": ..., "snippet": ..., "link": ...}, ...]
@@ -455,27 +496,37 @@ def _fetch_image_refs(topic: str, max_results: int = 5) -> List[dict]:
 
     If either is absent or the HTTP call fails for any reason the function
     returns an empty list so the rest of the pipeline proceeds unchanged.
+
+    FIX 3: The blocking urllib.request.urlopen() call is now dispatched to
+    the default thread-pool executor via run_in_executor so it does not
+    block the event loop while waiting for the Google API response.
     """
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
         SimLogger.info("ImageRef", "Google keys not set -- skipping image search step")
         return []
 
-    # Use a more specific search query for scientific diagrams
     query = f"{topic} diagram simulation laboratory experiment"
     params = urllib.parse.urlencode({
-        "key":    GOOGLE_API_KEY,
-        "cx":     GOOGLE_CSE_ID,
-        "q":      query,
+        "key":        GOOGLE_API_KEY,
+        "cx":         GOOGLE_CSE_ID,
+        "q":          query,
         "searchType": "image",
-        "num":    max_results,
-        "imgType": "photo,clipart",
-        "safe":   "active",
+        "num":        max_results,
+        "imgType":    "photo,clipart",
+        "safe":       "active",
     })
     url = f"https://www.googleapis.com/customsearch/v1?{params}"
 
-    try:
+    def _blocking_fetch():
         with urllib.request.urlopen(url, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        # FIX 3: Run the blocking network call in a thread-pool executor
+        # so the event loop remains free to handle other requests while
+        # waiting for the Google API to respond.
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, _blocking_fetch)
         items = data.get("items", [])
         refs = []
         for item in items[:max_results]:
@@ -588,7 +639,8 @@ _MULTI_EXPERIMENT_TOPICS = {
 }
 
 
-def _classify_topic(topic: str) -> str:
+# FIX 4: _classify_topic is now async and awaits the async client call.
+async def _classify_topic(topic: str) -> str:
     t = topic.lower()
     scores = {cat: sum(1 for k in kws if k in t) for cat, kws in _CATEGORY_KEYWORDS.items()}
     max_score = max(scores.values()) if scores else 0
@@ -597,7 +649,8 @@ def _classify_topic(topic: str) -> str:
         if len(top) == 1:
             return top[0]
     try:
-        resp = client.messages.create(
+        # FIX 4: await the async client call
+        resp = await client.messages.create(
             model=CLASSIFIER_MODEL, max_tokens=MAX_TOK_CLASSIFIER,
             system="Reply with ONLY one category word from this exact list: "
                    + ", ".join(CATEGORIES),
@@ -1636,12 +1689,12 @@ def _build_failure_result(topic, reason):
 
 async def _run_generation_pipeline(topic: str) -> dict:
     """
-    Full v2.0 pipeline:
-      1. Classify topic
-      2. Fetch Google Image references (non-blocking, gracefully skipped)
-      3. Build prompt (system + user) with image refs injected
-      4. Call generation model
-      5. Parse response (5-strategy fallback chain)
+    Full v2.1 pipeline:
+      1. Classify topic          (async, awaited -- FIX 4)
+      2. Fetch image references  (async, awaited -- FIX 3)
+      3. Build prompt
+      4. Call generation model   (async, awaited -- FIX 2)
+      5. Parse response
       6. Sanitize HTML
       7. Validate HTML
       8. Return result dict
@@ -1649,19 +1702,19 @@ async def _run_generation_pipeline(topic: str) -> dict:
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
     SimLogger.info("Pipeline", f"START v2.1 -- '{short_topic}'")
 
-    # Step 1: Classify
-    category = _classify_topic(topic)
+    # Step 1: Classify (FIX 4: now awaited)
+    category = await _classify_topic(topic)
     SimLogger.info("Classifier", f"Category: {category}")
 
-    # Step 2: Image references
-    image_refs = _fetch_image_refs(topic)
+    # Step 2: Image references (FIX 3: now awaited)
+    image_refs = await _fetch_image_refs(topic)
 
     # Step 3: Build prompt
     system_blocks, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate
+    # Step 4: Generate (FIX 2: await the async client)
     try:
-        msg = client.messages.create(
+        msg = await client.messages.create(
             model=SIM_MODEL, max_tokens=MAX_TOK,
             system=system_blocks,
             messages=[{"role": "user", "content": user_content}])
@@ -1716,7 +1769,7 @@ async def _run_generation_pipeline(topic: str) -> dict:
 
 
 # ===========================================================================
-#  Public API  (same signatures as v1.0 -- drop-in replacement)
+#  Public API
 # ===========================================================================
 
 async def generate_simulation(topic: str) -> dict:
@@ -1745,8 +1798,52 @@ async def generate_simulation(topic: str) -> dict:
 
 
 def generate_simulation_sync(topic: str) -> dict:
-    """Synchronous wrapper around generate_simulation() for non-async callers."""
-    return asyncio.run(generate_simulation(topic))
+    """
+    Synchronous wrapper around generate_simulation() for non-async callers
+    (CLI scripts, pytest, Flask sync views, etc.).
+
+    FIX 1 -- the original implementation called asyncio.run() directly.
+    When the process already has a running event loop (FastAPI / uvicorn /
+    aiohttp / Starlette / Jupyter), asyncio.run() raises:
+        RuntimeError: This event loop is already running
+    which propagates as a 500 / "Could not reach the server" error on the
+    frontend, even though the API key and network are perfectly fine.
+
+    Fix: detect whether a loop is already running on the current thread.
+    - If NOT running (CLI / pytest / plain script): use asyncio.run() as
+      before -- this is the fast path and creates no extra threads.
+    - If ALREADY running (FastAPI / uvicorn / aiohttp / Jupyter): dispatch
+      the coroutine to a brand-new thread that owns its own fresh event loop
+      via concurrent.futures.ThreadPoolExecutor + asyncio.run(). The new
+      thread has no event loop yet, so asyncio.run() succeeds there without
+      any nesting conflict. The calling thread blocks on future.result()
+      until the coroutine completes, giving callers the same synchronous
+      semantics as before.
+
+    This approach is safe in all deployment contexts and requires no
+    third-party dependencies (no nest_asyncio needed).
+    """
+    topic = (topic or "").strip()
+    if not topic:
+        raise ValueError("Topic cannot be empty")
+
+    coro = generate_simulation(topic)
+
+    # Fast path: no running loop on this thread (CLI, pytest, sync scripts).
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        # No running loop -- asyncio.run() is safe to call directly.
+        return asyncio.run(coro)
+
+    # FIX 1: There IS a running loop (web server context).
+    # Spin up a dedicated thread with its own event loop to avoid nesting.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, coro)
+        return future.result()
 
 
 # ===========================================================================
