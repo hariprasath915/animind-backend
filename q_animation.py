@@ -5055,9 +5055,9 @@ def build_page_html(question, result, given_cards, category, n_scenes: int = 5):
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
 <style id="qanim-scroll-fix">
-html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
-svg{width:100%!important;height:auto!important;max-width:100%!important;}
-#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
+html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
+svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
+#container,[id="container"]{{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}}
 </style>
 </head>
 <body>
