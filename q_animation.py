@@ -5055,9 +5055,9 @@ def build_page_html(question, result, given_cards, category, n_scenes: int = 5):
 <title>{html_module.escape(title_text)} — Interactive Animation</title>
 {BASE_PAGE_CSS}
 <style id="qanim-scroll-fix">
-html,body{{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}}
-svg{{width:100%!important;height:auto!important;max-width:100%!important;}}
-#container,[id="container"]{{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}}
+html,body{overflow-x:hidden!important;overflow-y:auto!important;height:100%!important;min-height:100vh;width:100%!important;}
+svg{width:100%!important;height:auto!important;max-width:100%!important;}
+#container,[id="container"]{padding-bottom:80px;width:100%;max-width:100%;box-sizing:border-box;}
 </style>
 </head>
 <body>
@@ -5335,8 +5335,26 @@ animate_scene0_js rules:
 
     @classmethod
     def _call_gemini(cls, question: str, category: str, n_scenes: int) -> tuple:
-        """Blocking Gemini API call (runs in executor). Supports both SDK styles."""
-        QAnimLogger.info("Gemini", f"Generating Scene 1 for category={category} n_scenes={n_scenes}...")
+        """Blocking Gemini API call with retry + exponential backoff for 429s.
+
+        FIXES APPLIED:
+        1. system_instruction passed separately (not concatenated into contents)
+           so Gemini receives it as a true system prompt and returns clean JSON.
+        2. 429 TooManyRequests errors are retried with exponential backoff
+           (3 attempts: wait 15s, 30s, 60s) instead of immediately falling back
+           to Claude. This keeps gemini-3.1-pro-preview as the Scene 1 model
+           even when free-tier rate limits are temporarily hit.
+        """
+        import time as _time
+
+        MAX_RETRIES   = 3          # total attempts before giving up
+        RETRY_DELAYS  = [15, 30, 60]  # seconds to wait before each retry
+
+        QAnimLogger.info(
+            "Gemini",
+            f"Generating Scene 1 — model={GEMINI_MODEL} "
+            f"category={category} n_scenes={n_scenes}..."
+        )
         user_prompt = (
             f"Generate ONLY Scene 0 (\"What Are We Looking At?\") for this educational animation.\n\n"
             f"QUESTION: {question}\n"
@@ -5351,39 +5369,86 @@ animate_scene0_js rules:
             f"- Hook the student visually before the detailed explanation begins.\n\n"
             f"Return ONLY raw JSON with keys 'scene0_svg_group' and 'animate_scene0_js'."
         )
-        full_prompt = cls._SCENE1_SYSTEM + "\n\n" + user_prompt
-        try:
-            if _GEMINI_SDK_STYLE == "generativeai":
-                # google-generativeai SDK style
-                model_obj = _gemini_client.GenerativeModel(GEMINI_MODEL)
-                response  = model_obj.generate_content(full_prompt)
-                raw = response.text.strip()
-            else:
-                # google-genai SDK style
-                response = _gemini_client.models.generate_content(
-                    model=GEMINI_MODEL,
-                    contents=full_prompt,
-                )
-                raw = response.text.strip()
-        except Exception as e:
-            QAnimLogger.error("Gemini", f"API call failed: {e}")
+
+        raw = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                if _GEMINI_SDK_STYLE == "generativeai":
+                    # google-generativeai SDK: system_instruction passed separately
+                    model_obj = _gemini_client.GenerativeModel(
+                        model_name=GEMINI_MODEL,
+                        system_instruction=cls._SCENE1_SYSTEM,
+                        generation_config={"temperature": 0.4, "max_output_tokens": 8192},
+                    )
+                    response = model_obj.generate_content(user_prompt)
+                    raw = response.text.strip()
+                else:
+                    # google-genai SDK: system_instruction via GenerateContentConfig
+                    response = _gemini_client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=user_prompt,
+                        config=_google_genai.types.GenerateContentConfig(
+                            system_instruction=cls._SCENE1_SYSTEM,
+                            temperature=0.4,
+                            max_output_tokens=8192,
+                        ),
+                    )
+                    raw = response.text.strip()
+
+                QAnimLogger.info("Gemini", f"Attempt {attempt} succeeded — raw length={len(raw)} chars")
+                break  # success — exit retry loop
+
+            except Exception as e:
+                err_str = str(e)
+                is_429  = "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
+
+                if is_429 and attempt < MAX_RETRIES:
+                    wait = RETRY_DELAYS[attempt - 1]
+                    QAnimLogger.warn(
+                        "Gemini",
+                        f"429 TooManyRequests on attempt {attempt}/{MAX_RETRIES} — "
+                        f"waiting {wait}s then retrying... (model={GEMINI_MODEL})"
+                    )
+                    _time.sleep(wait)
+                    continue  # retry
+                else:
+                    if is_429:
+                        QAnimLogger.error(
+                            "Gemini",
+                            f"429 TooManyRequests — all {MAX_RETRIES} attempts exhausted. "
+                            f"Upgrade to paid tier at console.cloud.google.com to remove rate limits."
+                        )
+                    else:
+                        QAnimLogger.error("Gemini", f"API call failed (attempt {attempt}): {e}")
+                    return "", ""
+
+        if not raw:
+            QAnimLogger.error("Gemini", "No response received after all retries")
             return "", ""
 
         # Strip markdown fences if present
         raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()
 
         try:
-            data = json.loads(raw)
-            svg_group  = data.get("scene0_svg_group", "").strip()
-            anim_fn    = data.get("animate_scene0_js", "").strip()
+            data      = json.loads(raw)
+            svg_group = data.get("scene0_svg_group", "").strip()
+            anim_fn   = data.get("animate_scene0_js", "").strip()
 
             # Basic sanity checks
             if not svg_group or '<g' not in svg_group:
-                QAnimLogger.warn("Gemini", "scene0_svg_group missing or invalid -- skipping")
+                QAnimLogger.warn("Gemini", f"scene0_svg_group missing or invalid (len={len(svg_group)}) -- skipping")
                 return "", ""
             if not anim_fn or 'animateScene0' not in anim_fn:
-                QAnimLogger.warn("Gemini", "animate_scene0_js missing or invalid -- skipping")
+                QAnimLogger.warn("Gemini", f"animate_scene0_js missing or invalid (len={len(anim_fn)}) -- skipping")
                 return "", ""
+
+            QAnimLogger.ok("Gemini", f"Scene 1 generated OK — svg_len={len(svg_group)} js_len={len(anim_fn)}")
+            return svg_group, anim_fn
+
+        except (json.JSONDecodeError, KeyError, AttributeError) as e:
+            QAnimLogger.warn("Gemini", f"JSON parse failed: {e} -- raw preview: {raw[:300]!r} -- skipping Scene 1")
+            return "", ""
+
 
             QAnimLogger.ok("Gemini", f"Scene 1 generated: svg_len={len(svg_group)} js_len={len(anim_fn)}")
             return svg_group, anim_fn
