@@ -93,8 +93,8 @@ client = anthropic.Anthropic(
 SIM_MODEL        = "claude-sonnet-4-6"
 CLASSIFIER_MODEL = "claude-haiku-4-5"
 
-MAX_TOK            = 32000
-MAX_TOK_CLASSIFIER = 20
+MAX_TOK            = 35000
+MAX_TOK_CLASSIFIER = 400
 
 # Google Custom Search API (optional -- gracefully skipped if missing)
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
