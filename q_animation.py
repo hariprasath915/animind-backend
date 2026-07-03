@@ -6023,6 +6023,17 @@ def _classify_topic(question):
     return "PROCESS_BASED"
 
 
+async def _classify_topic_async(question):
+    """
+    Async wrapper around _classify_topic(). The keyword scorer inside is
+    instant, but its fallback path makes a blocking client.messages.create()
+    call. Running that directly on the event loop would freeze the whole
+    server for the duration of the call, so it's offloaded to a thread here
+    -- same pattern used for every other AI call in this file.
+    """
+    return await asyncio.to_thread(_classify_topic, question)
+
+
 def _build_concept_prompt(question, category, n_scenes: int = 5, enrichment: str = ""):
     """
     Build the system + user prompt for the Concept Animation AI (Stage 1).
@@ -6152,7 +6163,17 @@ async def _generate_concept_animation(question, category, n_scenes: int = 5, enr
     QAnimLogger.info("ConceptPipeline", f"START  category={category}  n_scenes={n_scenes}")
     system_blocks, user_content = _build_concept_prompt(question, category, n_scenes, enrichment)
     try:
-        msg = client.messages.create(
+        # Offloaded to a thread: client.messages.create() is a blocking sync
+        # call. Left un-offloaded, it freezes the entire asyncio event loop
+        # for the whole duration of this Sonnet call (often 30-60s+ for
+        # complex questions) -- which stalls every other request the server
+        # is handling and can look like the server hung, producing
+        # "Failed to fetch" on the frontend. This was also silently
+        # cancelling the intended concurrency with the Solution AI call,
+        # since two blocking calls can't actually run in parallel on one
+        # event loop no matter how they're scheduled.
+        msg = await asyncio.to_thread(
+            client.messages.create,
             model=CONCEPT_MODEL, max_tokens=MAX_TOK_CONCEPT,
             system=system_blocks,
             messages=[{"role": "user", "content": user_content}])
@@ -6273,7 +6294,7 @@ async def _run_generation_pipeline(question):
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
     QAnimLogger.info("Pipeline", f"GivenCards: {len(given_cards)} card(s)")
 
-    category = _classify_topic(ai_question)
+    category = await _classify_topic_async(ai_question)
     QAnimLogger.info("Classifier", f"Category: {category}")
 
     # ── Scene count: heuristic detector (no extra AI call) ──────────────────
@@ -6342,7 +6363,13 @@ async def _run_generation_pipeline(question):
 
         async def _run_solution_ai():
             try:
-                msg = client.messages.create(
+                # Offloaded to a thread for the same reason as the Concept
+                # AI call above -- this is the heaviest call in the whole
+                # pipeline (full solution page HTML/SVG/JS), so leaving it
+                # blocking the event loop is the single biggest contributor
+                # to long, server-freezing requests on hard questions.
+                msg = await asyncio.to_thread(
+                    client.messages.create,
                     model=SOLUTION_MODEL, max_tokens=MAX_TOK,
                     system=_sys_blocks,
                     messages=[{"role": "user", "content": enriched_user_content}])
