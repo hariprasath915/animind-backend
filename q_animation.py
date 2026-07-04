@@ -5448,9 +5448,12 @@ animate_scene0_js rules:
                             thinking_level="low"
                         )
                         _config = _google_genai.types.GenerateContentConfig(**_gen_config_kwargs)
-                    except TypeError:
-                        # Older google-genai versions may not support thinking_config
-                        # / thinking_level -- fall back to just the higher token budget.
+                    except Exception:
+                        # google-genai==1.16.1 raises a pydantic ValidationError (not
+                        # TypeError) when ThinkingConfig does not accept thinking_level.
+                        # Catching the broad Exception base class handles BOTH TypeError
+                        # (old SDK) and ValidationError (pydantic, new SDK) so Gemini
+                        # still runs cleanly without falling back to Claude.
                         _gen_config_kwargs.pop("thinking_config", None)
                         _config = _google_genai.types.GenerateContentConfig(**_gen_config_kwargs)
 
