@@ -119,16 +119,16 @@ _GEMINI_SDK_STYLE  = None   # "generativeai" | "genai" | None
 _google_genai      = None
 
 try:
-    import google.generativeai as _google_genai        # SDK style 1
+    from google import genai as _google_genai       # SDK style 2 (modern, actively maintained)
     _GEMINI_AVAILABLE = True
-    _GEMINI_SDK_STYLE = "generativeai"
-    print("[QAnim Gemini] SDK: google-generativeai loaded")
+    _GEMINI_SDK_STYLE = "genai"
+    print("[QAnim Gemini] SDK: google-genai loaded")
 except ImportError:
     try:
-        from google import genai as _google_genai       # SDK style 2
+        import google.generativeai as _google_genai        # SDK style 1 (deprecated, kept as last-resort fallback)
         _GEMINI_AVAILABLE = True
-        _GEMINI_SDK_STYLE = "genai"
-        print("[QAnim Gemini] SDK: google-genai loaded")
+        _GEMINI_SDK_STYLE = "generativeai"
+        print("[QAnim Gemini] SDK: google-generativeai loaded (deprecated SDK -- consider removing it, it may not support newer models like gemini-3.1-pro-preview)")
     except ImportError:
         print("[QAnim Gemini] No Gemini SDK found -- Scene 1 will use Claude fallback")
 
@@ -168,27 +168,65 @@ HAIKU_SOLUTION_MODEL = "claude-haiku-4-5"
 GEMINI_MODEL   = "gemini-3.1-pro-preview"   # Gemini 3.1 Pro
 _gemini_client = None
 
+_GEMINI_DISABLED_REASON = None   # set to a short string the moment Gemini becomes unusable
+import os as _os
+
 if _GEMINI_AVAILABLE:
-    import os as _os
     _gkey = _os.environ.get("GEMINI_API_KEY", "").strip()
     if not _gkey:
+        _GEMINI_DISABLED_REASON = "GEMINI_API_KEY not set in the environment running this process"
         print("[QAnim Gemini] GEMINI_API_KEY not set -- Scene 1 will use Claude fallback")
         print("[QAnim Gemini] To enable: export GEMINI_API_KEY=your-key-here")
+    elif _GEMINI_SDK_STYLE == "generativeai":
+        # The deprecated google-generativeai SDK does NOT support gemini-3.1-pro-preview
+        # (confirmed unsupported -- see comment above). If requirements.txt lists
+        # "google-generativeai" instead of "google-genai", this branch silently
+        # activates and every real API call below will fail with a model/404-style
+        # error, which gets caught and quietly falls back to Claude. This is the
+        # #1 recurring cause of "still using Claude for scene 1" after editing
+        # requirements.txt -- the wrong package name was installed.
+        _GEMINI_DISABLED_REASON = (
+            "installed SDK is the deprecated 'google-generativeai' package, which does NOT "
+            "support gemini-3.1-pro-preview. Fix requirements.txt: remove google-generativeai "
+            "and add 'google-genai' instead, then reinstall (pip install -r requirements.txt) "
+            "and RESTART the process/server -- editing requirements.txt alone does not "
+            "reinstall packages or restart a running process."
+        )
+        print("[QAnim Gemini] CRITICAL: deprecated google-generativeai SDK detected.")
+        print("[QAnim Gemini] CRITICAL: this SDK cannot call gemini-3.1-pro-preview -- every Scene 0 call WILL fail and fall back to Claude.")
+        print("[QAnim Gemini] FIX: pip uninstall google-generativeai && pip install google-genai , then restart the process.")
+        _gemini_client = None
     else:
         try:
-            if _GEMINI_SDK_STYLE == "generativeai":
-                # google-generativeai SDK: configure() sets the global API key,
-                # then we use the module itself as the "client".
-                _google_genai.configure(api_key=_gkey)
-                _gemini_client = _google_genai   # module acts as client
-                print(f"[QAnim Gemini] Client ready (google-generativeai, model={GEMINI_MODEL})")
-            else:
-                # google-genai SDK: explicit Client object
-                _gemini_client = _google_genai.Client(api_key=_gkey)
-                print(f"[QAnim Gemini] Client ready (google-genai, model={GEMINI_MODEL})")
+            # google-genai SDK: explicit Client object
+            _gemini_client = _google_genai.Client(api_key=_gkey)
+            print(f"[QAnim Gemini] Client ready (google-genai, model={GEMINI_MODEL})")
         except Exception as _gem_init_err:
+            _GEMINI_DISABLED_REASON = f"client init raised: {_gem_init_err!r}"
             print(f"[QAnim Gemini] Client init failed: {_gem_init_err} -- Gemini disabled")
             _gemini_client = None
+else:
+    _GEMINI_DISABLED_REASON = "no Gemini SDK importable (neither 'google-genai' nor 'google-generativeai' installed in this Python environment)"
+
+
+def _print_gemini_status_banner():
+    """Unmissable one-shot startup banner so the exact Gemini state is always
+    obvious in the logs -- no more silently falling back to Claude with no clue why."""
+    import sys as _sys
+    bar = "=" * 78
+    print(bar, file=_sys.stderr)
+    print("[QAnim Gemini STATUS]", file=_sys.stderr)
+    print(f"  SDK installed      : {_GEMINI_SDK_STYLE or 'NONE'}", file=_sys.stderr)
+    print(f"  API key present    : {'yes' if _os.environ.get('GEMINI_API_KEY', '').strip() else 'NO'}", file=_sys.stderr)
+    print(f"  Client initialized : {'yes' if _gemini_client is not None else 'NO'}", file=_sys.stderr)
+    print(f"  Model              : {GEMINI_MODEL}", file=_sys.stderr)
+    if _gemini_client is None:
+        print(f"  >>> Scene 0 WILL use Claude fallback. Reason: {_GEMINI_DISABLED_REASON}", file=_sys.stderr)
+    else:
+        print("  >>> Gemini is ACTIVE for Scene 0. (A failed API call at generation time will still fall back to Claude -- watch for '[Gemini] API call failed' in logs.)", file=_sys.stderr)
+    print(bar, file=_sys.stderr)
+
+_print_gemini_status_banner()
 
 # Token budgets raised well above the old limits. Claude Sonnet 4.6 and
 # Claude Haiku 4.5 both support up to 64,000 output tokens, so there is
@@ -5373,29 +5411,66 @@ animate_scene0_js rules:
         raw = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
+                # NOTE: gemini-3.1-pro-preview uses "thinking" (internal reasoning)
+                # tokens by default, and those thinking tokens are deducted from
+                # max_output_tokens BEFORE the visible JSON output is written. With
+                # max_output_tokens=8192 this was silently eating almost the entire
+                # budget on reasoning, leaving only a couple hundred characters for
+                # the actual scene0_svg_group/animate_scene0_js JSON -- which is why
+                # responses were coming back truncated (raw length ~800 chars) with
+                # "Unterminated string" JSON errors even though the HTTP call itself
+                # succeeded with 200 OK. Fix: raise the budget substantially AND turn
+                # thinking down to "low" since this call just needs structured JSON,
+                # not deep reasoning.
                 if _GEMINI_SDK_STYLE == "generativeai":
                     # google-generativeai SDK: system_instruction passed separately
                     model_obj = _gemini_client.GenerativeModel(
                         model_name=GEMINI_MODEL,
                         system_instruction=cls._SCENE1_SYSTEM,
-                        generation_config={"temperature": 0.4, "max_output_tokens": 8192},
+                        generation_config={"temperature": 0.4, "max_output_tokens": 32768},
                     )
                     response = model_obj.generate_content(user_prompt)
                     raw = response.text.strip()
+                    finish_reason = getattr(
+                        getattr(response.candidates[0], "finish_reason", None), "name", None
+                    ) if getattr(response, "candidates", None) else None
                 else:
                     # google-genai SDK: system_instruction via GenerateContentConfig
+                    _gen_config_kwargs = dict(
+                        system_instruction=cls._SCENE1_SYSTEM,
+                        temperature=0.4,
+                        max_output_tokens=32768,
+                    )
+                    try:
+                        # Dial internal reasoning down to "low" so the token budget
+                        # goes to the actual JSON output instead of hidden thinking.
+                        _gen_config_kwargs["thinking_config"] = _google_genai.types.ThinkingConfig(
+                            thinking_level="low"
+                        )
+                        _config = _google_genai.types.GenerateContentConfig(**_gen_config_kwargs)
+                    except TypeError:
+                        # Older google-genai versions may not support thinking_config
+                        # / thinking_level -- fall back to just the higher token budget.
+                        _gen_config_kwargs.pop("thinking_config", None)
+                        _config = _google_genai.types.GenerateContentConfig(**_gen_config_kwargs)
+
                     response = _gemini_client.models.generate_content(
                         model=GEMINI_MODEL,
                         contents=user_prompt,
-                        config=_google_genai.types.GenerateContentConfig(
-                            system_instruction=cls._SCENE1_SYSTEM,
-                            temperature=0.4,
-                            max_output_tokens=8192,
-                        ),
+                        config=_config,
                     )
                     raw = response.text.strip()
+                    finish_reason = getattr(
+                        getattr(response.candidates[0], "finish_reason", None), "name", None
+                    ) if getattr(response, "candidates", None) else None
 
-                QAnimLogger.info("Gemini", f"Attempt {attempt} succeeded — raw length={len(raw)} chars")
+                QAnimLogger.info("Gemini", f"Attempt {attempt} succeeded — raw length={len(raw)} chars — finish_reason={finish_reason}")
+                if finish_reason == "MAX_TOKENS":
+                    QAnimLogger.warn(
+                        "Gemini",
+                        f"Response was TRUNCATED (finish_reason=MAX_TOKENS) at {len(raw)} chars -- "
+                        f"raise max_output_tokens further or shorten the prompt."
+                    )
                 break  # success — exit retry loop
 
             except Exception as e:
@@ -5419,7 +5494,9 @@ animate_scene0_js rules:
                             f"Upgrade to paid tier at console.cloud.google.com to remove rate limits."
                         )
                     else:
-                        QAnimLogger.error("Gemini", f"API call failed (attempt {attempt}): {e}")
+                        import traceback as _tb
+                        QAnimLogger.error("Gemini", f"API call failed (attempt {attempt}): {type(e).__name__}: {e}")
+                        QAnimLogger.error("Gemini", f"Full traceback:\n{_tb.format_exc()}")
                     return "", ""
 
         if not raw:
