@@ -66,46 +66,6 @@ INTEGRATION (unchanged from v1.0)
   `result` keys: title, category, summary, controls_overview,
   key_formula, learning_notes, html, image_refs, engine_version,
   render_status, [error_reason on failure].
-
-BUG FIXES in this revision
-  FIX 1 (PRIMARY -- "Could not reach the server"):
-    generate_simulation_sync() previously called asyncio.run() directly.
-    When the server runs under an async framework (FastAPI / uvicorn /
-    aiohttp / Starlette), there is already a running event loop on the
-    thread.  asyncio.run() cannot create a second loop on the same
-    thread and raises RuntimeError: "This event loop is already running",
-    which bubbles up as a 500 / connection-error on the frontend.
-    Fix: detect a running loop and, if present, dispatch the coroutine
-    to a brand-new thread that owns its own event loop via
-    concurrent.futures.ThreadPoolExecutor + asyncio.run().  This is
-    safe in all deployment contexts (CLI, pytest, FastAPI, Jupyter).
-
-  FIX 2 (SECONDARY -- blocking Anthropic client inside async function):
-    The module used anthropic.Anthropic() (synchronous) and called
-    client.messages.create() as a plain (non-awaited) blocking call
-    inside the async _run_generation_pipeline().  This blocks the
-    entire event loop for the duration of every API call (potentially
-    30-120 s), starving all other concurrent requests.
-    Fix: replace with anthropic.AsyncAnthropic() and await every
-    client.messages.create() call.  The async client returns a
-    coroutine that yields control to the event loop while waiting for
-    the network, allowing other requests to proceed concurrently.
-
-  FIX 3 (MINOR -- blocking urllib inside async pipeline):
-    _fetch_image_refs() used urllib.request.urlopen() (a blocking
-    stdlib call) directly inside the async pipeline without running
-    it in an executor.  On event-loop-aware deployments this blocks
-    the loop during the Google API call.
-    Fix: wrap the blocking urllib call in
-    asyncio.get_event_loop().run_in_executor(None, ...) so it runs
-    in the default thread-pool without blocking the event loop.
-    _fetch_image_refs is now an async function; the pipeline awaits it.
-
-  FIX 4 (MINOR -- CLASSIFIER_MODEL also needs async client):
-    The topic classifier also called client.messages.create() as a
-    blocking call inside _classify_topic(), which is itself called
-    from the async pipeline.  Made _classify_topic async and awaited
-    the async client call, consistent with FIX 2.
 """
 
 import os
@@ -113,7 +73,6 @@ import re
 import json
 import time
 import asyncio
-import concurrent.futures
 import urllib.request
 import urllib.parse
 import html as html_module
@@ -124,9 +83,7 @@ import anthropic
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
-# FIX 2: Use AsyncAnthropic so all API calls are non-blocking awaitable
-# coroutines that yield control to the event loop instead of freezing it.
-client = anthropic.AsyncAnthropic(
+client = anthropic.Anthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
     default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     timeout=600.0,
@@ -134,10 +91,10 @@ client = anthropic.AsyncAnthropic(
 )
 
 SIM_MODEL        = "claude-sonnet-4-6"
-CLASSIFIER_MODEL = "claude-sonnet-4-6"
+CLASSIFIER_MODEL = "claude-haiku-4-5"
 
 MAX_TOK            = 32000
-MAX_TOK_CLASSIFIER = 100
+MAX_TOK_CLASSIFIER = 20
 
 # Google Custom Search API (optional -- gracefully skipped if missing)
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
@@ -270,69 +227,8 @@ class HtmlSanitizer:
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
         html = html.replace('\x00', '')
-        html = cls._ensure_initial_render(html)
         SimLogger.ok("Sanitizer", "HTML sanitized")
         return html
-
-    # -- known entry-point function names the generator commonly produces,
-    #    in the order they should be invoked if present (controls/layout
-    #    must exist before a draw pass that reads them).
-    _BOOT_FN_CANDIDATES = [
-        "buildControls", "initControls", "setupControls",
-        "resizeCanvas", "resize",
-        "draw", "render", "redraw", "drawAll", "update", "step",
-        "init", "initSim", "initialize", "start",
-    ]
-
-    @classmethod
-    def _ensure_initial_render(cls, html):
-        """
-        Failsafe against blank-on-load simulations.
-
-        Root cause this guards against: generated simulations define
-        resizeCanvas()/buildControls()/draw() (or similarly-named entry
-        points) and wire them to event listeners (window resize, sidebar
-        button clicks, slider input) but never invoke them ONCE on initial
-        page load. The canvas, control panel, and metrics strip are then
-        left empty until the user happens to resize the window or click
-        something -- which looks like a totally blank simulation.
-
-        This appends a small bootstrap <script> that runs once after the
-        DOM (and all prior scripts) have loaded, and calls whichever of
-        the known entry-point functions actually exist on `window`, each
-        guarded with a typeof check so it's a complete no-op for any
-        generation that already renders correctly on load. This makes
-        "blank until first interaction" structurally impossible rather
-        than relying on the model remembering to call its own init code.
-        """
-        if '<script' not in html.lower():
-            return html
-        calls = "\n".join(
-            f"      if (typeof {fn} === 'function') {{ try {{ {fn}(); }} "
-            f"catch(e) {{ console.error('[SimEngine InitialRender] {fn}() failed', e); }} }}"
-            for fn in cls._BOOT_FN_CANDIDATES
-        )
-        bootstrap = (
-            "\n<script>\n"
-            "(function(){\n"
-            "  function __simInitialRender(){\n"
-            f"{calls}\n"
-            "  }\n"
-            "  if (document.readyState === 'loading') {\n"
-            "    document.addEventListener('DOMContentLoaded', __simInitialRender);\n"
-            "  } else {\n"
-            "    __simInitialRender();\n"
-            "  }\n"
-            "})();\n"
-            "</script>\n"
-        )
-        idx = html.rfind('</body>')
-        if idx != -1:
-            return html[:idx] + bootstrap + html[idx:]
-        end = html.rfind('</html>')
-        if end != -1:
-            return html[:end] + bootstrap + html[end:]
-        return html + bootstrap
 
     @classmethod
     def _strip_network_calls(cls, html):
@@ -349,44 +245,10 @@ class HtmlSanitizer:
 
     @classmethod
     def _fix_unescaped_string_newlines(cls, html):
-        """
-        BUGFIX (v2.1.1): the original STRING_RE only recognised ' and "
-        as string delimiters, with no concept of backtick template
-        literals. Generated sims build control panels via JS template
-        literals containing HTML, e.g.:
+        STRING_RE = re.compile(r'(["\'])((?:\\.|(?!\1).)*)\1', re.DOTALL)
 
-            innerHTML = `<div class="ctrl-label">Ohm's Law</div>...`
-
-        The apostrophe in "Ohm's" was read as an *opening* single-quote
-        string, and the old regex then greedily scanned forward for the
-        next single quote ANYWHERE in the script -- often dozens of
-        lines later, inside an unrelated call like sliderHTML('sR', ...).
-        Everything in between (including real newlines separating whole
-        function bodies) was treated as "inside a string" and had its
-        newlines rewritten to literal backslash-n text, producing a
-        multi-thousand-character single line with a bare backslash
-        sitting outside any string -- a JS syntax error that silently
-        kills the entire <script> block (try/catch can't save a parse
-        error), so the sim renders blank/incomplete.
-
-        Fix: match backtick template literals as a single atomic token
-        first and leave them completely untouched -- real newlines
-        inside backticks are already valid JS and never needed escaping
-        in the first place. Only genuine single/double-quoted strings
-        (where a raw newline really would break JS) get fixed.
-        """
-        TOKEN_RE = re.compile(
-            r'`(?:\\.|[^`\\])*`'            # template literal -- leave as-is
-            r'|(["\'])(?:\\.|(?!\1).)*\1',  # single/double-quoted string -- fix
-            re.DOTALL
-        )
-
-        def fix_token(sm):
-            text = sm.group(0)
-            if text.startswith('`'):
-                return text
-            quote = sm.group(1)
-            inner = text[1:-1]
+        def fix_str(sm):
+            quote, inner = sm.group(1), sm.group(2)
             fixed = (inner.replace('\r\n', '\\n')
                            .replace('\n', '\\n')
                            .replace('\r', '\\n')
@@ -395,7 +257,7 @@ class HtmlSanitizer:
 
         def process_script(m):
             tag, body, close = m.group(1), m.group(2), m.group(3)
-            fixed_body = TOKEN_RE.sub(fix_token, body)
+            fixed_body = STRING_RE.sub(fix_str, body)
             if fixed_body != body:
                 SimLogger.warn("Sanitizer", "Raw newline/tab inside a JS string literal -- escaped")
             return f"{tag}{fixed_body}{close}"
@@ -482,10 +344,12 @@ html,body{{width:100%;height:100%;background:#0a0c10;
 # ===========================================================================
 #  MODULE 5 -- Image Reference Fetcher
 # ===========================================================================
-# FIX 3: Made async so the blocking urllib call runs in a thread-pool
-# executor instead of directly blocking the event loop.
+# Searches Google Images for the topic and returns a structured list of
+# image descriptions to use as visual anchors in the generation prompt.
+# Gracefully skips (returns []) when the Google keys are absent or the
+# request fails, so the rest of the pipeline is unaffected.
 
-async def _fetch_image_refs(topic: str, max_results: int = 5) -> List[dict]:
+def _fetch_image_refs(topic: str, max_results: int = 5) -> List[dict]:
     """
     Query Google Custom Search Image API and return a list of dicts:
       [{"title": ..., "snippet": ..., "link": ...}, ...]
@@ -496,37 +360,27 @@ async def _fetch_image_refs(topic: str, max_results: int = 5) -> List[dict]:
 
     If either is absent or the HTTP call fails for any reason the function
     returns an empty list so the rest of the pipeline proceeds unchanged.
-
-    FIX 3: The blocking urllib.request.urlopen() call is now dispatched to
-    the default thread-pool executor via run_in_executor so it does not
-    block the event loop while waiting for the Google API response.
     """
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
         SimLogger.info("ImageRef", "Google keys not set -- skipping image search step")
         return []
 
+    # Use a more specific search query for scientific diagrams
     query = f"{topic} diagram simulation laboratory experiment"
     params = urllib.parse.urlencode({
-        "key":        GOOGLE_API_KEY,
-        "cx":         GOOGLE_CSE_ID,
-        "q":          query,
+        "key":    GOOGLE_API_KEY,
+        "cx":     GOOGLE_CSE_ID,
+        "q":      query,
         "searchType": "image",
-        "num":        max_results,
-        "imgType":    "photo,clipart",
-        "safe":       "active",
+        "num":    max_results,
+        "imgType": "photo,clipart",
+        "safe":   "active",
     })
     url = f"https://www.googleapis.com/customsearch/v1?{params}"
 
-    def _blocking_fetch():
-        with urllib.request.urlopen(url, timeout=8) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-
     try:
-        # FIX 3: Run the blocking network call in a thread-pool executor
-        # so the event loop remains free to handle other requests while
-        # waiting for the Google API to respond.
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, _blocking_fetch)
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
         items = data.get("items", [])
         refs = []
         for item in items[:max_results]:
@@ -639,8 +493,7 @@ _MULTI_EXPERIMENT_TOPICS = {
 }
 
 
-# FIX 4: _classify_topic is now async and awaits the async client call.
-async def _classify_topic(topic: str) -> str:
+def _classify_topic(topic: str) -> str:
     t = topic.lower()
     scores = {cat: sum(1 for k in kws if k in t) for cat, kws in _CATEGORY_KEYWORDS.items()}
     max_score = max(scores.values()) if scores else 0
@@ -649,8 +502,7 @@ async def _classify_topic(topic: str) -> str:
         if len(top) == 1:
             return top[0]
     try:
-        # FIX 4: await the async client call
-        resp = await client.messages.create(
+        resp = client.messages.create(
             model=CLASSIFIER_MODEL, max_tokens=MAX_TOK_CLASSIFIER,
             system="Reply with ONLY one category word from this exact list: "
                    + ", ".join(CATEGORIES),
@@ -915,20 +767,7 @@ DPR-AWARE SETUP (required):
     draw();
   }
   window.addEventListener('resize', resizeCanvas);
-
-REQUIRED -- INITIAL RENDER ON LOAD (this is the #1 cause of a blank
-simulation and MUST NOT be skipped):
-  Defining resizeCanvas()/buildControls()/draw() and only ever calling
-  them from event listeners (resize, button clicks, slider input) leaves
-  the canvas, control panel, and metrics strip EMPTY the moment the page
-  first loads, before the user has interacted with anything. You MUST
-  call the full init sequence explicitly, once, at the very end of your
-  <script> (after every function it references has been defined):
-    buildControls();   // populate the sidebar controls (if you build them dynamically)
-    resizeCanvas();     // sets W/H from layout AND calls draw() internally
-  If you do not build controls dynamically, still call resizeCanvas()
-  (or draw() directly) as the last line of the script. Never leave the
-  first paint dependent on a resize event or a user click.
+  // call once after layout: window.addEventListener('load', resizeCanvas)
 
 DRAWING HELPERS to define once and reuse across draw calls:
   - Arrow with arrowhead: drawArrow(ctx, x1,y1, x2,y2, color, width)
@@ -1497,12 +1336,6 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
         "- Every control MUST visibly affect canvas AND/OR a metric.",
         "- All computed values MUST follow the real governing equations -- no placeholder numbers.",
         "- Include a Play/Animate button + requestAnimationFrame loop if the topic involves motion.",
-        "- CRITICAL: at the very end of the main <script> block, explicitly CALL your "
-        "initial render sequence (e.g. buildControls(); resizeCanvas(); -- or draw() "
-        "directly if there's no dynamic control builder). Defining these functions and "
-        "only wiring them to event listeners is NOT enough -- the page must render "
-        "fully populated (canvas, controls, metrics) on first load, with zero user "
-        "interaction. A blank canvas/sidebar on load is a critical failure.",
         "- Mobile-responsive down to 380px viewport width.",
         "- The visual quality bar is a professional virtual-lab screenshot -- not a rough sketch.",
         "- REQUIRED: include the onboarding/tutorial system (#tut-root, #tut-help, spotlight, "
@@ -1689,12 +1522,12 @@ def _build_failure_result(topic, reason):
 
 async def _run_generation_pipeline(topic: str) -> dict:
     """
-    Full v2.1 pipeline:
-      1. Classify topic          (async, awaited -- FIX 4)
-      2. Fetch image references  (async, awaited -- FIX 3)
-      3. Build prompt
-      4. Call generation model   (async, awaited -- FIX 2)
-      5. Parse response
+    Full v2.0 pipeline:
+      1. Classify topic
+      2. Fetch Google Image references (non-blocking, gracefully skipped)
+      3. Build prompt (system + user) with image refs injected
+      4. Call generation model
+      5. Parse response (5-strategy fallback chain)
       6. Sanitize HTML
       7. Validate HTML
       8. Return result dict
@@ -1702,19 +1535,19 @@ async def _run_generation_pipeline(topic: str) -> dict:
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
     SimLogger.info("Pipeline", f"START v2.1 -- '{short_topic}'")
 
-    # Step 1: Classify (FIX 4: now awaited)
-    category = await _classify_topic(topic)
+    # Step 1: Classify
+    category = _classify_topic(topic)
     SimLogger.info("Classifier", f"Category: {category}")
 
-    # Step 2: Image references (FIX 3: now awaited)
-    image_refs = await _fetch_image_refs(topic)
+    # Step 2: Image references
+    image_refs = _fetch_image_refs(topic)
 
     # Step 3: Build prompt
     system_blocks, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate (FIX 2: await the async client)
+    # Step 4: Generate
     try:
-        msg = await client.messages.create(
+        msg = client.messages.create(
             model=SIM_MODEL, max_tokens=MAX_TOK,
             system=system_blocks,
             messages=[{"role": "user", "content": user_content}])
@@ -1769,7 +1602,7 @@ async def _run_generation_pipeline(topic: str) -> dict:
 
 
 # ===========================================================================
-#  Public API
+#  Public API  (same signatures as v1.0 -- drop-in replacement)
 # ===========================================================================
 
 async def generate_simulation(topic: str) -> dict:
@@ -1798,52 +1631,8 @@ async def generate_simulation(topic: str) -> dict:
 
 
 def generate_simulation_sync(topic: str) -> dict:
-    """
-    Synchronous wrapper around generate_simulation() for non-async callers
-    (CLI scripts, pytest, Flask sync views, etc.).
-
-    FIX 1 -- the original implementation called asyncio.run() directly.
-    When the process already has a running event loop (FastAPI / uvicorn /
-    aiohttp / Starlette / Jupyter), asyncio.run() raises:
-        RuntimeError: This event loop is already running
-    which propagates as a 500 / "Could not reach the server" error on the
-    frontend, even though the API key and network are perfectly fine.
-
-    Fix: detect whether a loop is already running on the current thread.
-    - If NOT running (CLI / pytest / plain script): use asyncio.run() as
-      before -- this is the fast path and creates no extra threads.
-    - If ALREADY running (FastAPI / uvicorn / aiohttp / Jupyter): dispatch
-      the coroutine to a brand-new thread that owns its own fresh event loop
-      via concurrent.futures.ThreadPoolExecutor + asyncio.run(). The new
-      thread has no event loop yet, so asyncio.run() succeeds there without
-      any nesting conflict. The calling thread blocks on future.result()
-      until the coroutine completes, giving callers the same synchronous
-      semantics as before.
-
-    This approach is safe in all deployment contexts and requires no
-    third-party dependencies (no nest_asyncio needed).
-    """
-    topic = (topic or "").strip()
-    if not topic:
-        raise ValueError("Topic cannot be empty")
-
-    coro = generate_simulation(topic)
-
-    # Fast path: no running loop on this thread (CLI, pytest, sync scripts).
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is None:
-        # No running loop -- asyncio.run() is safe to call directly.
-        return asyncio.run(coro)
-
-    # FIX 1: There IS a running loop (web server context).
-    # Spin up a dedicated thread with its own event loop to avoid nesting.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, coro)
-        return future.result()
+    """Synchronous wrapper around generate_simulation() for non-async callers."""
+    return asyncio.run(generate_simulation(topic))
 
 
 # ===========================================================================
