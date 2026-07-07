@@ -37,7 +37,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from pydantic import BaseModel, Field
 
 from auth_utils import get_current_user, get_supabase
@@ -118,7 +118,7 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
         if co_ids:
             topics_res = (
                 supabase.table("course_topics")
-                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, created_at")
+                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
                 .in_("co_id", co_ids)
                 .order("sort_order")
                 .execute()
@@ -128,18 +128,28 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
     # Build nested engineeringCourses-compatible structure
     topics_by_co = {}
     for t in topics:
-        html_cache = t.get("html_code_cache")
+        html_cache   = t.get("html_code_cache")
+        db_type      = t.get("topic_type") or "animation"
+        # Derive display type: prefer DB value, fall back to content sniffing
+        if db_type == "ppt_upload":
+            display_type = "ppt_upload"
+        elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
+            display_type = "html_upload"
+        else:
+            display_type = "animation"
         topics_by_co.setdefault(t["co_id"], []).append({
             "id":               t["id"],
             "name":             t["name"],
             "description":      t.get("description", ""),
             "prompt":           t.get("prompt", ""),
-            # animCode and html_code both carry the HTML — frontend uses animCode
-            # for AI-generated animations and html_code for uploaded HTML topics.
+            # animCode and html_code carry HTML for animation/html_upload topics
             "animCode":         html_cache,
             "html_code":        html_cache,
-            # type=html_upload lets the UI render the correct badge & preview btn
-            "type":             "html_upload" if html_cache and html_cache.strip().startswith("<!DOCTYPE") else "animation",
+            # PPT-specific fields
+            "type":             display_type,
+            "pptUrl":           t.get("ppt_public_url"),
+            "pptStoragePath":   t.get("ppt_storage_path"),
+            "fileName":         t.get("ppt_file_name"),
             "created_at":       t["created_at"],
             "generated_item_id": t.get("generated_item_id"),
         })
@@ -382,7 +392,7 @@ def get_subjects(current_user: dict = Depends(get_current_user)):
         if co_ids:
             topics_res = (
                 supabase.table("course_topics")
-                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, created_at")
+                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
                 .in_("co_id", co_ids)
                 .order("sort_order")
                 .execute()
@@ -391,12 +401,24 @@ def get_subjects(current_user: dict = Depends(get_current_user)):
 
     topics_by_co = {}
     for t in topics:
+        html_cache   = t.get("html_code_cache")
+        db_type      = t.get("topic_type") or "animation"
+        if db_type == "ppt_upload":
+            display_type = "ppt_upload"
+        elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
+            display_type = "html_upload"
+        else:
+            display_type = "animation"
         topics_by_co.setdefault(t["co_id"], []).append({
             "id":                t["id"],
             "name":              t["name"],
             "description":       t.get("description", ""),
             "prompt":            t.get("prompt", ""),
-            "animCode":          t.get("html_code_cache"),
+            "animCode":          html_cache,
+            "type":              display_type,
+            "pptUrl":            t.get("ppt_public_url"),
+            "pptStoragePath":    t.get("ppt_storage_path"),
+            "fileName":          t.get("ppt_file_name"),
             "created_at":        t["created_at"],
             "generated_item_id": t.get("generated_item_id"),
         })
@@ -575,6 +597,10 @@ class TopicCreate(BaseModel):
     sort_order:        int   = Field(default=0)
     generated_item_id: Optional[str] = None
     html_code:         Optional[str] = None  # fills html_code_cache
+    topic_type:        str            = Field(default="animation")
+    ppt_storage_path:  Optional[str] = None
+    ppt_public_url:    Optional[str] = None
+    ppt_file_name:     Optional[str] = None
 
 
 class TopicUpdate(BaseModel):
@@ -584,6 +610,10 @@ class TopicUpdate(BaseModel):
     sort_order:        Optional[int] = None
     generated_item_id: Optional[str] = None
     html_code_cache:   Optional[str] = None
+    topic_type:        Optional[str] = None
+    ppt_storage_path:  Optional[str] = None
+    ppt_public_url:    Optional[str] = None
+    ppt_file_name:     Optional[str] = None
 
 
 @router.post("/topics", status_code=201)
@@ -605,10 +635,14 @@ def create_topic(
         "sort_order":        body.sort_order,
         "generated_item_id": body.generated_item_id,
         "html_code_cache":   body.html_code,
+        "topic_type":        body.topic_type or "animation",
+        "ppt_storage_path":  body.ppt_storage_path,
+        "ppt_public_url":    body.ppt_public_url,
+        "ppt_file_name":     body.ppt_file_name,
     }
     res   = supabase.table("course_topics").insert(row).execute()
     topic = res.data[0] if res.data else {}
-    print(f"[SYNC] ✅ Topic created: {body.name!r} co={body.co_id!r}")
+    print(f"[SYNC] ✅ Topic created: {body.name!r} type={body.topic_type!r} co={body.co_id!r}")
     return {"success": True, "topic": topic}
 
 
@@ -640,7 +674,25 @@ def delete_topic(
     current_user: dict = Depends(get_current_user),
 ):
     supabase = _sb(current_user)
-    supabase.table("course_topics").delete().eq("id", topic_id).eq("user_id", current_user["id"]).execute()
+    user_id  = current_user["id"]
+    # Fetch ppt_storage_path before deleting row so we can clean up Storage
+    row_res = (
+        supabase.table("course_topics")
+        .select("ppt_storage_path, topic_type")
+        .eq("id", topic_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if row_res and row_res.data:
+        ppt_path = row_res.data.get("ppt_storage_path")
+        if ppt_path and row_res.data.get("topic_type") == "ppt_upload":
+            try:
+                supabase.storage.from_("ppt-files").remove([ppt_path])
+                print(f"[PPT] 🗑 Storage file deleted: {ppt_path}")
+            except Exception as e:
+                print(f"[PPT] ⚠ Storage delete failed for {topic_id}: {e}")
+    supabase.table("course_topics").delete().eq("id", topic_id).eq("user_id", user_id).execute()
     print(f"[SYNC] 🗑 Topic deleted: {topic_id} user={current_user['email']!r}")
     return {"success": True}
 
@@ -749,6 +801,111 @@ async def upload_file(
     except Exception as e:
         print(f"[STORAGE] ❌ Upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# PPT UPLOAD  —  POST /sync/ppt/upload
+# Uploads a .pptx file to Supabase Storage (ppt-files bucket)
+# and creates a course_topics row of type 'ppt_upload'.
+# ════════════════════════════════════════════════════════════════
+
+@router.post("/ppt/upload", status_code=201)
+async def upload_ppt(
+    file:         UploadFile  = File(...),
+    co_id:        str         = Form(...),
+    subject_id:   str         = Form(...),
+    name:         str         = Form(...),
+    sort_order:   int         = Form(0),
+    current_user: dict        = Depends(get_current_user),
+):
+    """
+    Multipart endpoint: upload a .pptx binary to Supabase Storage
+    (bucket: ppt-files, path: {user_id}/{timestamp}_{filename})
+    and create a corresponding course_topics row with:
+      topic_type       = 'ppt_upload'
+      ppt_storage_path = storage path
+      ppt_public_url   = public download URL
+      ppt_file_name    = original filename
+    Returns the created topic row so the frontend can track the cloud ID.
+    """
+    if not co_id or not subject_id or not name:
+        raise HTTPException(
+            status_code=422,
+            detail="co_id, subject_id, and name are required form fields."
+        )
+
+    fn = (file.filename or "upload.pptx").replace(" ", "_")
+    if not fn.lower().endswith(".pptx"):
+        raise HTTPException(status_code=400, detail="Only .pptx files are accepted.")
+
+    data = await file.read()
+    if len(data) > 52_428_800:   # 50 MB
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit.")
+
+    # ── Ensure user row exists (FK guard) ──────────────────────
+    _ensure_user_row(current_user)
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+
+    # ── Upload to Supabase Storage: ppt-files/{user_id}/{ts}_{fn} ──
+    ts      = int(datetime.now(timezone.utc).timestamp())
+    path    = f"{user_id}/{ts}_{fn}"
+    ct      = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    try:
+        supabase.storage.from_("ppt-files").upload(
+            path=path,
+            file=data,
+            file_options={"content-type": ct},
+        )
+        public_url = supabase.storage.from_("ppt-files").get_public_url(path)
+        print(f"[PPT] ✅ Uploaded: {path} ({len(data)} bytes)")
+    except Exception as e:
+        print(f"[PPT] ❌ Storage upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"PPT storage upload failed: {e}")
+
+    # ── Insert course_topics row ────────────────────────────────
+    row = {
+        "co_id":            co_id,
+        "subject_id":       subject_id,
+        "user_id":          user_id,
+        "name":             name.strip(),
+        "description":      "Uploaded PPT file",
+        "prompt":           "[PPT Upload]",
+        "sort_order":       sort_order,
+        "topic_type":       "ppt_upload",
+        "ppt_storage_path": path,
+        "ppt_public_url":   public_url,
+        "ppt_file_name":    fn,
+    }
+    try:
+        res   = supabase.table("course_topics").insert(row).execute()
+        topic = res.data[0] if res.data else row
+    except Exception as e:
+        # Storage upload succeeded but DB insert failed — try to clean up
+        print(f"[PPT] ❌ DB insert failed (cleaning up storage): {e}")
+        try:
+            supabase.storage.from_("ppt-files").remove([path])
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"PPT DB save failed: {e}")
+
+    print(f"[PPT] ✅ Topic created: {name!r} co={co_id!r} user={current_user['email']!r}")
+    # Return shape the frontend expects
+    return {
+        "success":    True,
+        "topic": {
+            "id":             topic.get("id"),
+            "name":           topic.get("name", name),
+            "description":    "Uploaded PPT file",
+            "prompt":         "[PPT Upload]",
+            "type":           "ppt_upload",
+            "topic_type":     "ppt_upload",
+            "pptUrl":         public_url,
+            "pptStoragePath": path,
+            "fileName":       fn,
+            "created_at":     topic.get("created_at", _now()),
+        },
+    }
 
 
 @router.delete("/files/delete", status_code=200)
