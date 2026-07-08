@@ -2162,7 +2162,13 @@ _FINAL_ANSWER_JS = r"""
     }
 
     var insEl = _el('fa-insight-text');
-    if(insEl) insEl.textContent = data.key_insight || '';
+    var insCard = _el('fa-insight-card');
+    if(data.key_insight){
+      if(insEl) insEl.textContent = data.key_insight;
+      if(insCard) insCard.style.display = '';
+    } else {
+      if(insCard) insCard.style.display = 'none';
+    }
   }
 
   function _animateReveal(){
@@ -6893,6 +6899,23 @@ async def _run_generation_pipeline(question):
 
     if haiku_sol.get("key_insight") and not result["key_insight"]:
         result["key_insight"] = haiku_sol["key_insight"]
+
+    if not result["key_insight"]:
+        raw_haiku = haiku_sol.get("raw", "").strip()
+        if raw_haiku:
+            _ki_match = re.search(
+                r'\*{0,2}Key Insight\*{0,2}\s*:\s*(.+?)$',
+                raw_haiku, re.DOTALL | re.IGNORECASE)
+            if _ki_match:
+                result["key_insight"] = _ki_match.group(1).strip().lstrip('*').rstrip('*').strip()
+                QAnimLogger.warn("Pipeline", "key_insight extracted from Haiku raw text")
+
+    if not result["key_insight"]:
+        result["key_insight"] = (
+            "Focus on the core concept behind this problem -- spotting it "
+            "quickly is what makes similar questions easier next time."
+        )
+        QAnimLogger.warn("Pipeline", "key_insight was empty; used fallback message")
 
     # ── v0.2 PAGE LAYOUT BUILD ──
     # Build the full standalone page HTML with proper layout
