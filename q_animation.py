@@ -1,6 +1,34 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v0.5
+q_animation.py  --  QAnim Question Animation Generator  v0.6
 =============================================================
+v0.6 -- DIFFICULT WORDS GLOSSARY (backward-compatible with v0.5):
+
+  NEW IN v0.6:
+  - GlossaryAnalyzer (Module 6.7):
+      * Fires for every question, concurrently with SimpleMethodAnalyzer and
+        SmartPromptBuilder (zero added latency on the critical path).
+      * Uses claude-haiku-4-5 to scan the question for tough / technical /
+        jargon words that could confuse a student, and returns a short JSON
+        list of {term, meaning} pairs, each meaning written in very simple,
+        everyday language (max ~18 words).
+      * Falls back silently to an empty list on any error -- if nothing is
+        found (or the analyzer fails), NO glossary button/panel is shown at
+        all, so the existing UI/UX is fully preserved for simple questions.
+  - New "Glossary" panel (Module 10.5):
+      * A slide-in aside/drawer on the right edge of the screen, in the same
+        visual language as the existing Notes / Answer Box panels but with
+        its own teal accent so it's easy to tell apart.
+      * Toggled from a new "📖 Glossary" button appended to the existing
+        floating controls bar (#qanim-controls-bar), right after "Answer
+        Box" -- so it sits alongside Find / Final Answer / Answer Box
+        exactly like a native control, not a bolted-on extra.
+      * The button shows a small badge with the number of difficult words
+        found, and is omitted entirely when there are none.
+      * Terms are rendered server-side (no extra client-side AI calls, no
+        extra network round-trip once the page has loaded).
+  - Engine version bumped to "v0.6" in result dict.
+  - QAnimLogger prefix updated to "[QAnim v0.6]".
+
 v0.5 -- GEMINI SCENE 1 ACTIVE BY DEFAULT (backward-compatible with v0.4):
 
   NEW IN v0.5:
@@ -245,7 +273,7 @@ MAX_TOK_HAIKU_SOLUTION = 12000
 #  MODULE 1 -- QAnimLogger
 # ===========================================================================
 class QAnimLogger:
-    PREFIX = "[QAnim v0.5]"
+    PREFIX = "[QAnim v0.6]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -2398,6 +2426,107 @@ class SimpleMethodAnalyzer:
 
 
 # ===========================================================================
+#  MODULE 6.7 -- Difficult Words Glossary Analyzer
+# ===========================================================================
+#
+#  Detects tough / technical / jargon words inside the RAW question that
+#  could confuse a student, and produces a very-simple, plain-English
+#  meaning for each one. This feeds the "Glossary" aside panel (Module
+#  10.5). It runs concurrently with SimpleMethodAnalyzer + SmartPromptBuilder
+#  so it adds ZERO latency to the critical path, and it fails silently to
+#  an empty list -- when there is nothing to explain (or the call errors
+#  out) no glossary button/panel is shown at all, so the existing UI/UX is
+#  fully preserved for questions that don't need it.
+# ===========================================================================
+
+_GLOSSARY_SYSTEM = """You help students by finding DIFFICULT or TECHNICAL words inside a
+question that could confuse them, and explaining each one in extremely
+simple, everyday language.
+
+RULES (follow every one):
+1. Read the question carefully.
+2. Pick out words / short phrases that are technical, subject-specific
+   jargon, or advanced vocabulary an average school/early-college student
+   might NOT know. Examples: "convection coefficient", "stoichiometric",
+   "authoritarianism", "diffusion coefficient", "polymorphism", "entropy".
+3. Do NOT include: plain numbers, units (cm, kg, W/mK), everyday words,
+   or the general subject name -- only genuinely hard terms.
+4. Pick AT MOST 8 terms -- only ones that would actually confuse a
+   student. If the question has no hard words, return an empty list.
+   Do not force terms into the list just to fill it.
+5. For each term give a SIMPLE meaning:
+   - One short sentence, about 18 words or fewer.
+   - Everyday language -- do not explain jargon using more jargon.
+   - Explain it the way a friend would, not a textbook.
+   - Keep it factually correct.
+6. Respond with ONLY valid JSON -- no markdown fences, no preamble, no
+   commentary before or after:
+{
+  "terms": [
+    {"term": "convection coefficient", "meaning": "A number that shows how well heat moves from a surface into moving air or liquid."}
+  ]
+}"""
+
+_GLOSSARY_USER_TEMPLATE = """Find any difficult words in this question and explain each one simply.
+
+QUESTION: {question}"""
+
+
+class GlossaryAnalyzer:
+    """
+    Stage 0.6: lightweight pre-analysis that scans the question for tough
+    vocabulary and returns simple definitions for an on-screen glossary
+    ("aside") panel. Runs concurrently with Stages 0.5 / 1 / 2 / 3 (no
+    added latency on the critical path).
+
+    Returns a dict: {"terms": [{"term": str, "meaning": str}, ...]}
+    """
+
+    _FALLBACK = {"terms": []}
+
+    @classmethod
+    def analyze(cls, question: str) -> dict:
+        QAnimLogger.info("Glossary", f"Scanning for difficult words ({len(question)} chars)...")
+        prompt = _GLOSSARY_USER_TEMPLATE.format(question=question[:1200])
+        try:
+            msg = client.messages.create(
+                model=HAIKU_SOLUTION_MODEL,   # fast + cheap
+                max_tokens=600,
+                system=[{
+                    "type": "text",
+                    "text": _GLOSSARY_SYSTEM,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = msg.content[0].text.strip()
+            # Strip markdown fences if the model wrapped the JSON
+            raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+            raw = re.sub(r'\s*```$', '', raw)
+            parsed = json.loads(raw)
+            terms = []
+            for t in (parsed.get("terms") or [])[:8]:
+                term    = str(t.get("term", "") or "").strip()
+                meaning = str(t.get("meaning", "") or "").strip()
+                if term and meaning:
+                    terms.append({"term": term, "meaning": meaning})
+            if terms:
+                QAnimLogger.ok("Glossary", f"Found {len(terms)} difficult word(s): "
+                                            f"{', '.join(t['term'] for t in terms)}")
+            else:
+                QAnimLogger.info("Glossary", "No difficult words found -- panel will be omitted")
+            return {"terms": terms}
+        except Exception as e:
+            QAnimLogger.warn("Glossary", f"Analysis failed ({e}); glossary panel will be omitted")
+            return cls._FALLBACK
+
+    @classmethod
+    async def analyze_async(cls, question: str) -> dict:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, cls.analyze, question)
+
+
+# ===========================================================================
 #  MODULE 7.5 -- Haiku Step-by-Step Solution Generator
 # ===========================================================================
 
@@ -3661,6 +3790,235 @@ def inject_controls_bar(html):
         QAnimLogger.ok("ControlsBar", "Controls bar injected")
     except Exception as e:
         QAnimLogger.warn("ControlsBar", f"DOM failed: {e}")
+    return html
+
+
+# ===========================================================================
+#  MODULE 10.5 -- Difficult Words Glossary Panel
+# ===========================================================================
+#
+#  A slide-in aside/drawer on the right edge of the screen that lists tough
+#  words from the question with simple, plain-English meanings (produced by
+#  GlossaryAnalyzer, Module 6.7). Visually it matches the existing panels
+#  (Notes / Answer Box) -- white card, rounded corners, header + close
+#  button -- but uses its own teal accent so it reads as a distinct feature.
+#
+#  The toggle button is appended to the END of the existing floating
+#  controls bar (#qanim-controls-bar), right after "Answer Box", so it
+#  behaves like a native control rather than a bolted-on extra. If no
+#  difficult words were found, NEITHER the button NOR the panel are
+#  injected -- the UI is left exactly as it was before this feature existed.
+# ===========================================================================
+
+_GLOSSARY_CSS = """
+<style id="qanim-glossary-styles">
+#glossary-ctrl-btn { position: relative; }
+.glossary-ctrl-badge {
+  position: absolute;
+  top: -6px; right: -6px;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #0d9488;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+#qanim-glossary-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 7150;
+  background: rgba(15, 23, 42, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+#qanim-glossary-backdrop.open { opacity: 1; pointer-events: auto; }
+#qanim-glossary-panel {
+  position: fixed;
+  top: 0; right: 0;
+  z-index: 7300;
+  width: 340px;
+  max-width: 88vw;
+  height: 100vh;
+  background: #ffffff;
+  border-left: 1px solid #e2e8f0;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.14);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  transform: translateX(100%);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#qanim-glossary-panel.open { transform: translateX(0); }
+#qanim-glossary-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px;
+  background: #f0fdfa;
+  border-bottom: 1px solid #ccfbf1;
+  flex-shrink: 0;
+}
+.glossary-header-title {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 14px; font-weight: 700; color: #0f766e;
+}
+.glossary-hdr-btn {
+  width: 26px; height: 26px; border-radius: 7px;
+  border: 1px solid #99f6e4;
+  background: rgba(255, 255, 255, 0.7);
+  color: #0f766e;
+  font-size: 12px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.glossary-hdr-btn:hover { background: #ccfbf1; }
+#qanim-glossary-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px 14px 20px;
+  -webkit-overflow-scrolling: touch;
+}
+.glossary-term-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #0d9488;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.glossary-term-word {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px; font-weight: 800; color: #134e4a;
+  margin-bottom: 4px;
+  text-transform: capitalize;
+}
+.glossary-term-meaning {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12.5px; line-height: 1.55; color: #475569;
+}
+#qanim-glossary-empty {
+  padding: 24px 6px; text-align: center;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12.5px; color: #94a3b8;
+}
+@media (max-width: 600px) {
+  #qanim-glossary-panel { width: 92vw; max-width: 92vw; }
+  .glossary-term-word { font-size: 12.5px; }
+  .glossary-term-meaning { font-size: 12px; }
+}
+</style>
+"""
+
+_GLOSSARY_CTRL_BTN_TEMPLATE = """  <div class="qanim-ctrl-sep"></div>
+  <button class="qanim-ctrl-btn" id="glossary-ctrl-btn" title="Difficult words explained simply">
+    <span>&#x1F4D6;</span><span class="ctrl-label">Glossary</span><span class="glossary-ctrl-badge">{count}</span>
+  </button>"""
+
+_GLOSSARY_JS = r"""
+(function initGlossaryPanel(){
+  'use strict';
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function openGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(!p)return;p.classList.add('open');p.setAttribute('aria-hidden','false');if(b)b.classList.add('open');}
+  function closeGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}if(b)b.classList.remove('open');}
+  _onReady(function(){
+    var btn=_el('glossary-ctrl-btn');
+    if(btn)btn.addEventListener('click',function(){
+      var p=_el('qanim-glossary-panel');
+      if(p&&p.classList.contains('open'))closeGlossary();else openGlossary();
+    });
+    var cb=_el('glossary-close-btn');if(cb)cb.addEventListener('click',closeGlossary);
+    var bd=_el('qanim-glossary-backdrop');if(bd)bd.addEventListener('click',closeGlossary);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeGlossary();});
+  });
+})();
+"""
+
+
+def _build_glossary_dom(terms):
+    """
+    Builds the (button_html, panel_html) pair for the glossary feature.
+    Returns ("", "") when there are no terms -- callers must skip
+    injection entirely in that case so the UI is left untouched.
+    """
+    if not terms:
+        return "", ""
+    cards = []
+    for t in terms:
+        term    = html_module.escape(str(t.get("term", "")))
+        meaning = html_module.escape(str(t.get("meaning", "")))
+        if not term or not meaning:
+            continue
+        cards.append(
+            f'    <div class="glossary-term-card">\n'
+            f'      <div class="glossary-term-word">{term}</div>\n'
+            f'      <div class="glossary-term-meaning">{meaning}</div>\n'
+            f'    </div>'
+        )
+    if not cards:
+        return "", ""
+    cards_html = "\n".join(cards)
+    btn_html = _GLOSSARY_CTRL_BTN_TEMPLATE.format(count=len(cards))
+    panel_html = (
+        '<div id="qanim-glossary-backdrop"></div>\n'
+        '<div id="qanim-glossary-panel" role="dialog" aria-label="Difficult words glossary" aria-hidden="true">\n'
+        '  <div id="qanim-glossary-header">\n'
+        '    <div class="glossary-header-title">&#x1F4D6; Difficult Words, Explained</div>\n'
+        '    <button class="glossary-hdr-btn" id="glossary-close-btn" title="Close">&#x2715;</button>\n'
+        '  </div>\n'
+        '  <div id="qanim-glossary-body">\n'
+        f'{cards_html}\n'
+        '  </div>\n'
+        '</div>\n'
+    )
+    return btn_html, panel_html
+
+
+def inject_glossary_panel(html, terms=None):
+    """
+    Injects the Glossary aside panel + its controls-bar toggle button.
+    No-op (returns html unchanged) when `terms` is empty/falsy, so
+    questions with no difficult words render exactly as before.
+    Must be called AFTER inject_controls_bar (it appends its button to the
+    already-injected controls bar markup).
+    """
+    btn_html, panel_html = _build_glossary_dom(terms or [])
+    if not panel_html:
+        QAnimLogger.info("GlossaryInjector", "No difficult words -- panel skipped")
+        return html
+    try:
+        if '</head>' in html:
+            html = html.replace('</head>', _GLOSSARY_CSS + '\n</head>', 1)
+    except Exception as e:
+        QAnimLogger.warn("GlossaryInjector", f"CSS failed: {e}")
+    try:
+        # Append the toggle button right after the existing "Answer Box"
+        # button inside the controls bar, so it reads as a native control.
+        anchor = '<span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>\n  </button>'
+        if anchor in html:
+            html = html.replace(anchor, anchor + '\n' + btn_html, 1)
+        else:
+            QAnimLogger.warn("GlossaryInjector", "Controls bar anchor not found -- button not attached")
+    except Exception as e:
+        QAnimLogger.warn("GlossaryInjector", f"Button attach failed: {e}")
+    try:
+        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
+        if body_match:
+            ins = body_match.end()
+            html = html[:ins] + '\n' + panel_html + html[ins:]
+    except Exception as e:
+        QAnimLogger.warn("GlossaryInjector", f"DOM failed: {e}")
+    try:
+        glossary_script = '<script>\n' + _GLOSSARY_JS + '\n</script>'
+        if '</body>' in html:
+            html = html.replace('</body>', glossary_script + '\n</body>', 1)
+        else:
+            html += '\n' + glossary_script
+    except Exception as e:
+        QAnimLogger.warn("GlossaryInjector", f"JS failed: {e}")
+    QAnimLogger.ok("GlossaryInjector", f"Glossary panel injected ({len(terms)} term(s))")
     return html
 
 
@@ -6338,10 +6696,11 @@ async def _run_generation_pipeline(question):
     Stage -1  -- LargeInputPreprocessor  (sync; fires only when len > threshold)
     Stage 0   -- ToFind + GivenValues Extraction  (sync, no AI, uses RAW question)
     Stage 0.5 -- SimpleMethodAnalyzer             (claude-haiku-4-5, concurrent)
+    Stage 0.6 -- GlossaryAnalyzer (difficult-words) (claude-haiku-4-5, concurrent)
     Stage 1   -- Concept Animation   (claude-sonnet-4-6, uses COMPRESSED question)
     Stage 2   -- Solution Animation  (claude-sonnet-4-6, uses COMPRESSED question)
     Stage 3   -- Haiku Solution      (claude-haiku-4-5,  uses COMPRESSED question)
-               [Stages 0.5, 1, 2, 3 concurrent via asyncio.gather]
+               [Stages 0.5, 0.6, 1, 2, 3 concurrent via asyncio.gather]
 
     Post-processing builds the full v0.2 page layout from the AI SVG.
 
@@ -6411,15 +6770,17 @@ async def _run_generation_pipeline(question):
         # finishes so it receives the real scene-0 SVG and is told not to generate it.
         analyzer_fut   = asyncio.ensure_future(_run_simple_analyzer())
         enrichment_fut = asyncio.ensure_future(_run_smart_prompt_builder())
+        glossary_fut   = asyncio.ensure_future(GlossaryAnalyzer.analyze_async(ai_question))
         QAnimLogger.info("Gemini", "Gemini Scene 0 starting as PRIMARY generator (before Claude)...")
         gemini_fut     = asyncio.ensure_future(
             GeminiScene1Generator.generate_async(ai_question, category, n_scenes)
         )
 
-        # Wait for all three pre-stage tasks to complete
-        simple_result, enrichment, (gemini_scene0_group, gemini_animate0_fn) = await asyncio.gather(
-            analyzer_fut, enrichment_fut, gemini_fut
+        # Wait for all four pre-stage tasks to complete
+        simple_result, enrichment, glossary_result, (gemini_scene0_group, gemini_animate0_fn) = await asyncio.gather(
+            analyzer_fut, enrichment_fut, glossary_fut, gemini_fut
         )
+        QAnimLogger.info("Pipeline", f"Glossary done: {len(glossary_result.get('terms', []))} term(s)")
         QAnimLogger.info("Pipeline", f"SimpleMethod done: use_simple={simple_result['use_simple']}")
         QAnimLogger.info("Pipeline", f"SmartPromptBuilder done: enrichment_len={len(enrichment)}")
         if gemini_scene0_group:
@@ -6481,11 +6842,11 @@ async def _run_generation_pipeline(question):
         # Wait for concept (may already be done)
         concept_html = await concept_fut
 
-        return concept_html, sol_raw, haiku_sol, simple_result, gemini_scene0_group, gemini_animate0_fn
+        return concept_html, sol_raw, haiku_sol, simple_result, glossary_result, gemini_scene0_group, gemini_animate0_fn
 
     QAnimLogger.info("Pipeline", "Launching concurrent AI stages (0.5 + 1 + 2 + 3)...")
     try:
-        concept_html, sol_raw, haiku_sol, simple_result, gemini_scene0_group, gemini_animate0_fn = await _run_all_stages()
+        concept_html, sol_raw, haiku_sol, simple_result, glossary_result, gemini_scene0_group, gemini_animate0_fn = await _run_all_stages()
     except Exception as e:
         QAnimLogger.error("Pipeline", f"Concurrent generation failed: {e}")
         return _build_failure_result(question, f"API error: {e}")
@@ -6494,11 +6855,12 @@ async def _run_generation_pipeline(question):
     result = _parse_response(sol_raw, question)
     result["category"]               = category
     result["n_scenes"]               = n_scenes
-    result["engine_version"]         = "v0.5"
+    result["engine_version"]         = "v0.6"
     result["concept_animation_code"] = concept_html
     result["to_find"]                = to_find_targets
     result["given_cards"]            = given_cards
     result["haiku_solution"]         = haiku_sol
+    result["glossary_terms"]         = glossary_result.get("terms", [])
     result.setdefault("solution_steps", [])
     result.setdefault("final_answer",   "")
     result.setdefault("key_insight",    "")
@@ -6644,6 +7006,7 @@ async def _run_generation_pipeline(question):
     html = inject_notes_system(html)
     html = inject_answer_box_panel(html, answer_targets)
     html = inject_controls_bar(html)
+    html = inject_glossary_panel(html, result.get("glossary_terms", []))  # NEW in v0.6
     html = inject_teacher_voice(html)
     html = inject_nav_patch_and_scene_desc(html, scene_descs)  # NEW in v0.2
     html = inject_step_controller(html)   # MUST be absolute last
@@ -6686,8 +7049,9 @@ def _build_failure_result(question, reason):
         "given_cards":            [],
         "answer_targets":         [],
         "haiku_solution":         {"steps": [], "final_answer": "", "key_insight": "", "raw": ""},
+        "glossary_terms":         [],
         "category":               "UNKNOWN",
-        "engine_version":         "v0.5",
+        "engine_version":         "v0.6",
         "render_status":          "error",
     }
 
