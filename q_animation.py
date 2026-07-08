@@ -5216,15 +5216,71 @@ def inject_nav_patch_and_scene_desc(html, scene_descriptions):
 _SCENE_ACCENT_COLORS = ["#3b5bdb", "#0ea5e9", "#16a34a", "#f59e0b", "#e64980"]
 
 
+# ---------------------------------------------------------------------------
+# Physics-notation formatter
+#   - Renders "10-31", "10^-31", "×10-4" style exponents as real <sup> powers.
+#   - Renders vector symbols (B, E, ... with an arrow-above mark) as a proper
+#     small arrow glyph above the letter instead of a "tofu" box, regardless
+#     of whether the source used a combining mark (U+20D7) or literal "\vec".
+#   NOTE: must be called on text that has ALREADY been through
+#   html_module.escape() -- none of the characters it matches (×, digits,
+#   ^, -, the combining arrow mark) are touched by html.escape(), so this is
+#   safe to run afterwards and only introduces our own trusted <sup>/<span> tags.
+# ---------------------------------------------------------------------------
+_UNIT_EXPONENT_RE = re.compile(
+    r'\b(ms|kg|km|cm|mm|nm|mol|cd|Hz|Pa|rad|sr|lm|lx|Wb|Sv|Gy|kat|'
+    r'N|J|W|C|V|F|T|H|m|s|K|A|g|\u03a9)(-\d+)\b'
+)
+_SCI_NOTATION_RE = re.compile(
+    r'(&#215;|&times;|\u00d7|[xX]\s)\s*10\s*\^?\s*(-?\d+)\b'
+)
+_BARE_CARET_RE = re.compile(r'\b10\s*\^\s*(-?\d+)\b')
+_VEC_BRACE_RE  = re.compile(r'\\vec\{([A-Za-z])\}')
+_VEC_BARE_RE   = re.compile(r'\\vec\s*([A-Za-z])\b')
+_VEC_COMBINING_RE = re.compile(r'([A-Za-z])\u20d7')
+_VEC_MANGLED_RE   = re.compile(r'([A-Za-z])\s?\ufffd')
+
+
+def _vector_span(letter):
+    """Render `letter` with a small right-arrow above it (proper vector symbol)."""
+    return (
+        '<span class="qanim-vec" style="position:relative;display:inline-block;'
+        'padding-top:0.6em;">' + letter +
+        '<span style="position:absolute;top:0;left:50%;transform:translateX(-50%);'
+        'font-size:0.62em;line-height:1;">\u2192</span></span>'
+    )
+
+
+def _apply_physics_notation(text):
+    """Convert exponent/power notation to <sup> and vector marks to a real arrow glyph."""
+    if not text:
+        return text
+
+    # Vectors first (so a subsequent exponent regex doesn't touch the letter)
+    text = _VEC_BRACE_RE.sub(lambda m: _vector_span(m.group(1)), text)
+    text = _VEC_BARE_RE.sub(lambda m: _vector_span(m.group(1)), text)
+    text = _VEC_COMBINING_RE.sub(lambda m: _vector_span(m.group(1)), text)
+    text = _VEC_MANGLED_RE.sub(lambda m: _vector_span(m.group(1)), text)
+
+    # Scientific notation: "× 10-31", "×10-19", "x 108" -> "× 10<sup>-31</sup>"
+    text = _SCI_NOTATION_RE.sub(lambda m: f'{m.group(1)}10<sup>{m.group(2)}</sup>', text)
+    # Bare caret form: "10^-31" -> "10<sup>-31</sup>"
+    text = _BARE_CARET_RE.sub(lambda m: f'10<sup>{m.group(1)}</sup>', text)
+    # Unit exponents: "ms-1" -> "ms<sup>-1</sup>", "kg-1" -> "kg<sup>-1</sup>"
+    text = _UNIT_EXPONENT_RE.sub(lambda m: f'{m.group(1)}<sup>{m.group(2)}</sup>', text)
+
+    return text
+
+
 def _build_given_strip_html(given_cards):
     """Render the #given-strip from extracted given values."""
     if not given_cards:
         return ""
     cards_html = ""
     for card in given_cards:
-        label = html_module.escape(card.get("label", ""))
-        value = html_module.escape(card.get("value", ""))
-        unit  = html_module.escape(card.get("unit",  ""))
+        label = _apply_physics_notation(html_module.escape(card.get("label", "")))
+        value = _apply_physics_notation(html_module.escape(card.get("value", "")))
+        unit  = _apply_physics_notation(html_module.escape(card.get("unit",  "")))
         color = card.get("color", "gc-blue")
         cards_html += f"""
     <div class="given-card {color}">
@@ -5432,7 +5488,7 @@ def build_page_html(question, result, given_cards, category, n_scenes: int = 5):
     em_part   = html_module.escape(title_parts[0].strip())
     rest_part = html_module.escape((" — " + title_parts[1].strip()) if len(title_parts) > 1 else "")
 
-    q_escaped = html_module.escape(question)
+    q_escaped = _apply_physics_notation(html_module.escape(question))
 
     # Given strip
     given_html = _build_given_strip_html(given_cards)
