@@ -1,0 +1,538 @@
+
+<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0 4px;">
+  <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;">
+    <button id="b0" onclick="setStage(0)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #1a3a5c;background:#1a3a5c;color:#fff;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">① intake</button>
+    <button id="b1" onclick="setStage(1)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">② compression</button>
+    <button id="b2" onclick="setStage(2)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">③ power</button>
+    <button id="b3" onclick="setStage(3)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">④ exhaust</button>
+    <button id="ba" onclick="toggleAuto()" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;min-width:72px;">▶ auto</button>
+  </div>
+  <div id="infoBar" style="font-family:sans-serif;font-size:12px;color:#666;text-align:center;min-height:16px;padding:0 8px;"></div>
+  <canvas id="eng" width="560" height="560" style="width:100%;max-width:560px;"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('eng');
+const ctx = canvas.getContext('2d');
+const W = 560, H = 560;
+
+const CX = 280;
+const BORE_X = 180, BORE_W = 200;
+const BORE_TOP = 120, BORE_BOT = 380;
+const HEAD_TOP = 50, HEAD_H = 72;
+const CRANK_CY = 460;
+const CRANK_THROW = 70;
+const CON_ROD_LEN = 140;
+const PISTON_H = 50;
+
+const STAGE_INFO = [
+  "Intake valve open · piston descends · air-fuel mixture drawn in",
+  "Both valves closed · piston rises · mixture compressed",
+  "Spark fires · combustion · piston forced down at high pressure",
+  "Exhaust valve open · piston rises · burnt gases expelled"
+];
+
+const STAGE_ANGLES = [Math.PI*0.5, Math.PI*1.5, Math.PI*0.5, Math.PI*1.5];
+
+let crankAngle = Math.PI*0.5;
+let targetAngle = Math.PI*0.5;
+let stage = 0;
+let autoMode = false;
+let autoTimer = null;
+let animId = null;
+let sparkPhase = 0;
+let t = 0;
+
+function pistonY(angle) {
+  const y = CRANK_CY - CRANK_THROW * Math.sin(angle)
+    - Math.sqrt(CON_ROD_LEN*CON_ROD_LEN - (CRANK_THROW * Math.cos(angle))*(CRANK_THROW * Math.cos(angle)));
+  return y - PISTON_H;
+}
+
+function crankPin(angle) {
+  return {
+    x: CX + CRANK_THROW * Math.cos(angle),
+    y: CRANK_CY - CRANK_THROW * Math.sin(angle)
+  };
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+function drawEngine(angle) {
+  ctx.clearRect(0, 0, W, H);
+
+  const pY = pistonY(angle);
+  const cp = crankPin(angle);
+  const wristX = CX, wristY = pY + PISTON_H;
+  const gasTop = BORE_TOP + HEAD_H;
+  const gasH = pY - gasTop;
+
+  const isIntake = stage === 0;
+  const isCompress = stage === 1;
+  const isPower = stage === 2;
+  const isExhaust = stage === 3;
+
+  // ── BACKGROUND BODY ──
+  ctx.fillStyle = '#e8e6e0';
+  ctx.beginPath();
+  ctx.roundRect(BORE_X - 30, HEAD_TOP - 10, BORE_W + 60, BORE_BOT - HEAD_TOP + 130, 8);
+  ctx.fill();
+
+  // ── GAS FILL ──
+  if (gasH > 2) {
+    if (isPower) {
+      const grad = ctx.createLinearGradient(0, gasTop, 0, gasTop + gasH);
+      grad.addColorStop(0, 'rgba(255,220,60,0.65)');
+      grad.addColorStop(0.4, 'rgba(240,100,0,0.55)');
+      grad.addColorStop(1, 'rgba(180,30,0,0.35)');
+      ctx.fillStyle = grad;
+    } else if (isExhaust) {
+      ctx.fillStyle = 'rgba(100,96,80,0.30)';
+    } else {
+      const grad = ctx.createLinearGradient(0, gasTop, 0, gasTop + gasH);
+      grad.addColorStop(0, 'rgba(40,160,200,0.18)');
+      grad.addColorStop(1, 'rgba(20,180,100,0.25)');
+      ctx.fillStyle = grad;
+    }
+    ctx.fillRect(BORE_X, gasTop, BORE_W, gasH);
+  }
+
+  // ── CYLINDER BORE WALLS ──
+  const leftGrad = ctx.createLinearGradient(BORE_X, 0, BORE_X + 28, 0);
+  leftGrad.addColorStop(0, '#7a7870');
+  leftGrad.addColorStop(0.5, '#d0cec5');
+  leftGrad.addColorStop(1, '#f0ede6');
+  ctx.fillStyle = leftGrad;
+  ctx.fillRect(BORE_X - 28, HEAD_TOP + HEAD_H - 4, 28, BORE_BOT - HEAD_TOP - HEAD_H + 4 + 30);
+
+  const rightGrad = ctx.createLinearGradient(BORE_X + BORE_W, 0, BORE_X + BORE_W + 28, 0);
+  rightGrad.addColorStop(0, '#f0ede6');
+  rightGrad.addColorStop(0.5, '#d0cec5');
+  rightGrad.addColorStop(1, '#7a7870');
+  ctx.fillStyle = rightGrad;
+  ctx.fillRect(BORE_X + BORE_W, HEAD_TOP + HEAD_H - 4, 28, BORE_BOT - HEAD_TOP - HEAD_H + 4 + 30);
+
+  // Bore surface sheen
+  ctx.strokeStyle = 'rgba(200,198,192,0.5)';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i < 6; i++) {
+    const lx = BORE_X + 10 + i * 36;
+    ctx.beginPath(); ctx.moveTo(lx, gasTop); ctx.lineTo(lx, BORE_BOT + 30); ctx.stroke();
+  }
+
+  // ── COOLING FINS ──
+  ctx.fillStyle = '#c0bdb4';
+  for (let i = 0; i < 12; i++) {
+    const fy = BORE_TOP + HEAD_H + 8 + i * 18;
+    ctx.fillRect(BORE_X - 52, fy, 24, 5);
+    ctx.fillRect(BORE_X + BORE_W + 28, fy, 24, 5);
+  }
+  ctx.strokeStyle = '#a8a59c';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i < 12; i++) {
+    const fy = BORE_TOP + HEAD_H + 8 + i * 18;
+    ctx.strokeRect(BORE_X - 52, fy, 24, 5);
+    ctx.strokeRect(BORE_X + BORE_W + 28, fy, 24, 5);
+  }
+
+  // ── CYLINDER HEAD ──
+  const headGrad = ctx.createLinearGradient(BORE_X - 30, 0, BORE_X + BORE_W + 30, 0);
+  headGrad.addColorStop(0, '#6a6860');
+  headGrad.addColorStop(0.15, '#b8b5ab');
+  headGrad.addColorStop(0.5, '#d8d5cc');
+  headGrad.addColorStop(0.85, '#b8b5ab');
+  headGrad.addColorStop(1, '#6a6860');
+  ctx.fillStyle = headGrad;
+  ctx.beginPath();
+  ctx.roundRect(BORE_X - 30, HEAD_TOP, BORE_W + 60, HEAD_H, 6);
+  ctx.fill();
+  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  // Head ribs
+  ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 0.6;
+  [HEAD_TOP + 22, HEAD_TOP + 44].forEach(ry => {
+    ctx.beginPath(); ctx.moveTo(BORE_X - 28, ry); ctx.lineTo(BORE_X + BORE_W + 28, ry); ctx.stroke();
+  });
+  // Bolt holes
+  [[BORE_X - 18, HEAD_TOP+16],[BORE_X - 18, HEAD_TOP+56],[BORE_X+BORE_W+18, HEAD_TOP+16],[BORE_X+BORE_W+18, HEAD_TOP+56]].forEach(([bx,by]) => {
+    ctx.beginPath(); ctx.arc(bx, by, 4, 0, Math.PI*2);
+    ctx.fillStyle = '#3a3830'; ctx.fill();
+    ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
+  });
+
+  // Combustion chamber dome
+  ctx.fillStyle = '#c8c5bc';
+  ctx.beginPath();
+  ctx.moveTo(BORE_X, HEAD_TOP + HEAD_H);
+  ctx.quadraticCurveTo(CX, HEAD_TOP + HEAD_H - 10, BORE_X + BORE_W, HEAD_TOP + HEAD_H);
+  ctx.fill();
+  ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 0.8; ctx.stroke();
+
+  // ── INTAKE PORT ──
+  ctx.strokeStyle = '#1a6090';
+  ctx.lineWidth = 12;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(BORE_X - 28, HEAD_TOP + 36);
+  ctx.quadraticCurveTo(BORE_X - 80, HEAD_TOP + 36, BORE_X - 110, HEAD_TOP + 20);
+  ctx.stroke();
+  // Throttle body
+  ctx.fillStyle = '#c0bdb4';
+  ctx.strokeStyle = '#7a7870'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.roundRect(BORE_X - 148, HEAD_TOP + 10, 32, 24, 4); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#2a4a6a';
+  ctx.fillRect(BORE_X - 144, HEAD_TOP + 14, 18, 16);
+
+  // Intake flow arrows
+  if (isIntake) {
+    ctx.save();
+    const dashOffset = (Date.now() * 0.04) % 20;
+    ctx.strokeStyle = '#20b0e0';
+    ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.setLineDash([8, 6]); ctx.lineDashOffset = -dashOffset;
+    ctx.beginPath();
+    ctx.moveTo(BORE_X - 140, HEAD_TOP + 22);
+    ctx.quadraticCurveTo(BORE_X - 70, HEAD_TOP + 30, BORE_X - 28, HEAD_TOP + 36);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // ── EXHAUST PORT ──
+  ctx.strokeStyle = '#6a6860';
+  ctx.lineWidth = 12; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(BORE_X + BORE_W + 28, HEAD_TOP + 36);
+  ctx.quadraticCurveTo(BORE_X + BORE_W + 80, HEAD_TOP + 36, BORE_X + BORE_W + 100, HEAD_TOP + 20);
+  ctx.stroke();
+  // Exhaust pipe going down
+  ctx.lineWidth = 10;
+  ctx.beginPath();
+  ctx.moveTo(BORE_X + BORE_W + 108, HEAD_TOP + 16);
+  ctx.lineTo(BORE_X + BORE_W + 115, HEAD_TOP + 60);
+  ctx.quadraticCurveTo(BORE_X + BORE_W + 118, HEAD_TOP + 90, BORE_X + BORE_W + 100, HEAD_TOP + 110);
+  ctx.stroke();
+
+  // Exhaust flow
+  if (isExhaust) {
+    ctx.save();
+    const dashOffset2 = (Date.now() * 0.04) % 20;
+    ctx.strokeStyle = '#909080';
+    ctx.lineWidth = 2; ctx.setLineDash([8,6]); ctx.lineDashOffset = dashOffset2;
+    ctx.beginPath();
+    ctx.moveTo(BORE_X + BORE_W + 28, HEAD_TOP + 36);
+    ctx.quadraticCurveTo(BORE_X + BORE_W + 80, HEAD_TOP + 36, BORE_X + BORE_W + 108, HEAD_TOP + 18);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Smoke puffs
+    const sp = (Date.now() * 0.001) % 1;
+    [0, 0.33, 0.67].forEach(off => {
+      const p = (sp + off) % 1;
+      const sx = BORE_X + BORE_W + 108 + p * 12;
+      const sy = HEAD_TOP + 16 - p * 30;
+      const r = 3 + p * 8;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(130,126,110,${0.5*(1-p)})`;
+      ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  // ── INTAKE VALVE ──
+  const ivOpen = isIntake;
+  const evOpen = isExhaust;
+  const ivLift = ivOpen ? 10 : 0;
+  const evLift = evOpen ? 10 : 0;
+
+  function drawValve(vx, lift, open) {
+    // Spring
+    ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 1.5;
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(vx + (i%2===0?-4:4), HEAD_TOP + 18 + i*8);
+      ctx.lineTo(vx + (i%2===0?4:-4), HEAD_TOP + 18 + (i+1)*8);
+      ctx.stroke();
+    }
+    // Stem
+    const stemGrad = ctx.createLinearGradient(vx-4, 0, vx+4, 0);
+    stemGrad.addColorStop(0,'#8a8880'); stemGrad.addColorStop(0.5,'#d8d5cc'); stemGrad.addColorStop(1,'#8a8880');
+    ctx.fillStyle = stemGrad;
+    ctx.fillRect(vx-4, HEAD_TOP + 12 - lift, 8, HEAD_H - 8 + lift);
+    // Disc
+    ctx.fillStyle = '#b0ada5';
+    ctx.beginPath(); ctx.ellipse(vx, HEAD_TOP+HEAD_H - lift, 13, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#d0cdc4';
+    ctx.beginPath(); ctx.ellipse(vx, HEAD_TOP+HEAD_H - lift - 2, 13, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#7a7870'; ctx.lineWidth = 0.8; ctx.stroke();
+  }
+  drawValve(CX - 50, ivLift, ivOpen);
+  drawValve(CX + 50, evLift, evOpen);
+
+  // Camshaft
+  ctx.fillStyle = '#8a8880';
+  ctx.beginPath(); ctx.roundRect(BORE_X + 20, HEAD_TOP - 2, BORE_W - 40, 6, 3); ctx.fill();
+  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
+  [[CX-50, HEAD_TOP-4],[CX+50, HEAD_TOP-4]].forEach(([ex,ey]) => {
+    ctx.fillStyle = '#b0ada5';
+    ctx.beginPath(); ctx.ellipse(ex, ey, 14, 8, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#3a3830'; ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI*2); ctx.fill();
+  });
+
+  // ── SPARK PLUG ──
+  const px_sp = CX;
+  ctx.fillStyle = '#d0cdc4';
+  ctx.beginPath(); ctx.roundRect(px_sp-6, HEAD_TOP+2, 12, 34, 3); ctx.fill();
+  ctx.strokeStyle = '#7a7870'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = '#e8e5e0'; ctx.fillRect(px_sp-3, HEAD_TOP+6, 6, 22);
+  ctx.fillStyle = '#8a8880';
+  ctx.fillRect(px_sp-4, HEAD_TOP+36, 8, 14);
+
+  // Spark arc (power stroke)
+  if (isPower) {
+    sparkPhase += 0.18;
+    const visible = Math.sin(sparkPhase * 3) > 0;
+    if (visible) {
+      ctx.save();
+      ctx.shadowColor = '#ffee44'; ctx.shadowBlur = 8;
+      ctx.strokeStyle = '#ffe060'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px_sp, HEAD_TOP+50);
+      ctx.lineTo(px_sp-4, HEAD_TOP+56);
+      ctx.lineTo(px_sp+3, HEAD_TOP+53);
+      ctx.lineTo(px_sp-2, HEAD_TOP+62);
+      ctx.stroke();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(px_sp, HEAD_TOP+50);
+      ctx.lineTo(px_sp-4, HEAD_TOP+56);
+      ctx.lineTo(px_sp+3, HEAD_TOP+53);
+      ctx.lineTo(px_sp-2, HEAD_TOP+62);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ── PISTON ──
+  // Skirt
+  const pSkirtGrad = ctx.createLinearGradient(BORE_X+2, 0, BORE_X+BORE_W-2, 0);
+  pSkirtGrad.addColorStop(0,'#7a7870'); pSkirtGrad.addColorStop(0.12,'#b8b5ac');
+  pSkirtGrad.addColorStop(0.5,'#d8d5cc'); pSkirtGrad.addColorStop(0.88,'#b8b5ac'); pSkirtGrad.addColorStop(1,'#7a7870');
+  ctx.fillStyle = pSkirtGrad;
+  ctx.beginPath(); ctx.roundRect(BORE_X+2, pY, BORE_W-4, PISTON_H, 3); ctx.fill();
+  ctx.strokeStyle = '#6a6860'; ctx.lineWidth = 1.2; ctx.stroke();
+
+  // Crown
+  const crownGrad = ctx.createLinearGradient(0, pY, 0, pY+14);
+  crownGrad.addColorStop(0,'#dedad2'); crownGrad.addColorStop(1,'#a8a59c');
+  ctx.fillStyle = crownGrad;
+  ctx.fillRect(BORE_X+2, pY, BORE_W-4, 14);
+  // Crown bowl
+  ctx.fillStyle = '#b0ada5';
+  ctx.beginPath(); ctx.ellipse(CX, pY+10, 36, 6, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 0.6; ctx.stroke();
+
+  // Piston rings
+  [18, 24, 30, 36].forEach((ry, i) => {
+    ctx.strokeStyle = i < 2 ? '#9a9890' : '#7a7870';
+    ctx.lineWidth = i < 3 ? 2.5 : 2;
+    ctx.beginPath(); ctx.moveTo(BORE_X+2, pY+ry); ctx.lineTo(BORE_X+BORE_W-2, pY+ry); ctx.stroke();
+  });
+
+  // Wrist pin
+  const wpGrad = ctx.createLinearGradient(CX-30, 0, CX+30, 0);
+  wpGrad.addColorStop(0,'#6a6860'); wpGrad.addColorStop(0.4,'#c0bdb4'); wpGrad.addColorStop(1,'#6a6860');
+  ctx.fillStyle = wpGrad;
+  ctx.beginPath(); ctx.roundRect(CX-30, pY+38, 60, 8, 4); ctx.fill();
+  ctx.fillStyle = '#4a4840'; ctx.beginPath(); ctx.arc(CX, pY+42, 5, 0, Math.PI*2); ctx.fill();
+
+  // ── CONNECTING ROD ──
+  const rodGrad = ctx.createLinearGradient(CX-6, 0, CX+6, 0);
+  rodGrad.addColorStop(0,'#6a6860'); rodGrad.addColorStop(0.5,'#c0bdb4'); rodGrad.addColorStop(1,'#6a6860');
+  ctx.fillStyle = rodGrad;
+  ctx.beginPath();
+  ctx.moveTo(wristX-7, wristY);
+  ctx.lineTo(cp.x-9, cp.y);
+  ctx.lineTo(cp.x+9, cp.y);
+  ctx.lineTo(wristX+7, wristY);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
+
+  // Rod I-beam detail
+  ctx.strokeStyle = '#b8b5ac'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo((wristX+cp.x)/2, (wristY+cp.y)/2 - 20);
+  ctx.lineTo((wristX+cp.x)/2, (wristY+cp.y)/2 + 20);
+  ctx.stroke();
+
+  // Small end
+  ctx.fillStyle = '#c0bdb4'; ctx.beginPath(); ctx.arc(wristX, wristY, 11, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#5a5850'; ctx.beginPath(); ctx.arc(wristX, wristY, 5, 0, Math.PI*2); ctx.fill();
+  // Big end
+  ctx.fillStyle = '#b0ada5'; ctx.beginPath(); ctx.arc(cp.x, cp.y, 14, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#6a6860'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = '#6a6860'; ctx.beginPath(); ctx.arc(cp.x, cp.y, 7, 0, Math.PI*2); ctx.fill();
+
+  // ── CRANKSHAFT ──
+  // Counterweight
+  const cwAngle = angle + Math.PI;
+  ctx.fillStyle = '#7a7870';
+  ctx.beginPath();
+  ctx.arc(CX, CRANK_CY, 42, cwAngle - 0.8, cwAngle + 0.8);
+  ctx.lineTo(CX, CRANK_CY); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
+
+  // Crank web
+  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 10; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(CX, CRANK_CY); ctx.lineTo(cp.x, cp.y); ctx.stroke();
+
+  // Main journal
+  const mainGrad = ctx.createRadialGradient(CX-8, CRANK_CY-8, 2, CX, CRANK_CY, 22);
+  mainGrad.addColorStop(0,'#d0cdc5'); mainGrad.addColorStop(1,'#5a5850');
+  ctx.fillStyle = mainGrad;
+  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 22, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#4a4840'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = '#3a3830'; ctx.beginPath(); ctx.arc(CX, CRANK_CY, 10, 0, Math.PI*2); ctx.fill();
+
+  // Crank pin
+  const pinGrad = ctx.createRadialGradient(cp.x-3, cp.y-3, 1, cp.x, cp.y, 11);
+  pinGrad.addColorStop(0,'#d0cdc5'); pinGrad.addColorStop(1,'#5a5850');
+  ctx.fillStyle = pinGrad;
+  ctx.beginPath(); ctx.arc(cp.x, cp.y, 11, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#4a4840'; ctx.lineWidth = 1; ctx.stroke();
+
+  // ── FLYWHEEL ──
+  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 9; ctx.lineCap = 'butt';
+  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 58, 0, Math.PI*2); ctx.stroke();
+  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 58, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 50, 0, Math.PI*2); ctx.stroke();
+  // Spokes (rotate with crank)
+  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 2.5;
+  for (let s = 0; s < 8; s++) {
+    const sa = angle + s * Math.PI / 4;
+    ctx.beginPath();
+    ctx.moveTo(CX + Math.cos(sa)*24, CRANK_CY + Math.sin(sa)*24);
+    ctx.lineTo(CX + Math.cos(sa)*52, CRANK_CY + Math.sin(sa)*52);
+    ctx.stroke();
+  }
+
+  // ── CRANKCASE ──
+  ctx.fillStyle = '#c8c5bc';
+  ctx.beginPath();
+  ctx.moveTo(BORE_X-28, BORE_BOT+30);
+  ctx.lineTo(BORE_X-28, CRANK_CY+70);
+  ctx.quadraticCurveTo(BORE_X-28, CRANK_CY+90, BORE_X-8, CRANK_CY+90);
+  ctx.lineTo(BORE_X+BORE_W+8, CRANK_CY+90);
+  ctx.quadraticCurveTo(BORE_X+BORE_W+28, CRANK_CY+90, BORE_X+BORE_W+28, CRANK_CY+70);
+  ctx.lineTo(BORE_X+BORE_W+28, BORE_BOT+30);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 1.2; ctx.stroke();
+
+  // Oil level
+  ctx.strokeStyle = 'rgba(160,120,30,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.moveTo(BORE_X-20, CRANK_CY+80); ctx.lineTo(BORE_X+BORE_W+20, CRANK_CY+80); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── LABELS ──
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777';
+  const labels = [
+    [BORE_X-28, HEAD_TOP+36, BORE_X-60, HEAD_TOP+26, 'intake valve', -1],
+    [BORE_X+BORE_W+28, HEAD_TOP+36, BORE_X+BORE_W+60, HEAD_TOP+26, 'exhaust valve', 1],
+    [CX, HEAD_TOP+4, CX+80, HEAD_TOP-6, 'spark plug', 1],
+    [BORE_X-28, pY+20, BORE_X-60, pY+14, 'piston rings', -1],
+    [BORE_X-28, BORE_BOT+20, BORE_X-60, BORE_BOT+22, 'cylinder bore', -1],
+    [BORE_X+BORE_W+28, pY+42, BORE_X+BORE_W+60, pY+40, 'wrist pin', 1],
+    [cp.x, cp.y, BORE_X+BORE_W+60, cp.y+16, 'crank pin', 1],
+    [CX, CRANK_CY, BORE_X+BORE_W+60, CRANK_CY+8, 'crankshaft', 1],
+    [CX, CRANK_CY+56, BORE_X-60, CRANK_CY+62, 'flywheel', -1],
+  ];
+  labels.forEach(([lx,ly,tx,ty,label,side]) => {
+    ctx.strokeStyle = '#ccc'; ctx.lineWidth = 0.6;
+    ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(tx,ty); ctx.stroke();
+    ctx.fillStyle = '#888';
+    ctx.textAlign = side < 0 ? 'right' : 'left';
+    ctx.fillText(label, tx + side*2, ty+4);
+  });
+  ctx.textAlign = 'center';
+
+  // ── STAGE LABEL ──
+  ctx.fillStyle = '#444'; ctx.font = 'bold 11px sans-serif';
+  const stageNames = ['intake stroke','compression stroke','power stroke','exhaust stroke'];
+  ctx.fillText(stageNames[stage].toUpperCase(), CX, H - 12);
+}
+
+let animating = false;
+let animFrom = 0, animTo = 0, animStart = 0, animDur = 750;
+
+function animLoop(now) {
+  if (animating) {
+    const p = Math.min((now - animStart) / animDur, 1);
+    const ep = easeInOut(p);
+    let da = animTo - animFrom;
+    if (Math.abs(da) > Math.PI) da -= Math.sign(da) * Math.PI * 2;
+    crankAngle = animFrom + da * ep;
+    drawEngine(crankAngle);
+    if (p < 1) { animId = requestAnimationFrame(animLoop); }
+    else { crankAngle = animTo; animating = false; drawEngine(crankAngle); }
+  }
+}
+
+function setStage(s) {
+  stage = s;
+  sparkPhase = 0;
+  const btns = ['b0','b1','b2','b3','ba'];
+  [0,1,2,3].forEach(i => {
+    const b = document.getElementById('b'+i);
+    if (i === s) {
+      b.style.background = s===2?'#8b2000':'#1a3a5c';
+      b.style.borderColor = s===2?'#8b2000':'#1a3a5c';
+      b.style.color = '#fff';
+    } else {
+      b.style.background = '#f5f5f3';
+      b.style.borderColor = '#ccc';
+      b.style.color = '#555';
+    }
+  });
+  document.getElementById('infoBar').textContent = STAGE_INFO[s];
+
+  animFrom = crankAngle;
+  animTo = STAGE_ANGLES[s];
+  animStart = performance.now();
+  animating = true;
+  if (animId) cancelAnimationFrame(animId);
+  animId = requestAnimationFrame(animLoop);
+}
+
+let autoOn = false, autoT = null;
+function toggleAuto() {
+  autoOn = !autoOn;
+  const ba = document.getElementById('ba');
+  if (autoOn) {
+    ba.textContent = '⏸ pause';
+    ba.style.background = '#1a3a5c'; ba.style.borderColor = '#1a3a5c'; ba.style.color = '#fff';
+    runAuto();
+  } else {
+    ba.textContent = '▶ auto';
+    ba.style.background = '#f5f5f3'; ba.style.borderColor = '#ccc'; ba.style.color = '#555';
+    if (autoT) clearTimeout(autoT);
+  }
+}
+function runAuto() {
+  if (!autoOn) return;
+  const next = (stage + 1) % 4;
+  setStage(next);
+  autoT = setTimeout(runAuto, 1200);
+}
+
+// Redraw loop for live animation effects (spark, smoke, flow dashes)
+let liveId;
+function liveLoop() {
+  if (!animating) drawEngine(crankAngle);
+  liveId = requestAnimationFrame(liveLoop);
+}
+
+setStage(0);
+liveLoop();
+</script>
