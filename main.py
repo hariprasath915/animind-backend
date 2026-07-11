@@ -437,6 +437,36 @@ async def list_simulations(type: str = "experiments"):
     return {"type": type, "count": len(items), "items": items}
 
 
+@app.post("/simulations/upload")
+async def upload_simulation(
+    type: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """
+    Upload an HTML simulation file to either topics or experiments.
+    """
+    if type not in ["topics", "experiments"]:
+        raise HTTPException(status_code=400, detail="Invalid type. Must be 'topics' or 'experiments'.")
+    
+    if not file.filename.endswith(".html") and not file.filename.endswith(".htm"):
+        raise HTTPException(status_code=400, detail="Only HTML files are allowed.")
+
+    folder = _SIM_TOPICS_DIR if type == "topics" else _SIM_EXPERIMENTS_DIR
+    # Safe filename
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-\.\s]', '', file.filename)
+    if not safe_name:
+        safe_name = "uploaded_sim.html"
+    
+    target = folder / safe_name
+    
+    try:
+        content = await file.read()
+        target.write_bytes(content)
+        return {"status": "success", "filename": safe_name, "type": type}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+
 @app.get("/simulations/file")
 async def get_simulation_file(type: str = "experiments", file: str = ""):
     """
