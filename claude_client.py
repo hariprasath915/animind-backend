@@ -90,6 +90,7 @@ import logging
 import sys
 import base64
 import hashlib
+import requests
 from pathlib import Path
 from typing import Optional, Dict, List
 from concurrent.futures import ThreadPoolExecutor
@@ -115,6 +116,15 @@ client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 VIDEO_STORAGE_DIR = Path(os.getenv("VIDEO_STORAGE_DIR", "/tmp/videos"))
 VIDEO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
+# ─── Google Custom Search (Rough Diagram — 2D image fetch) ───────────────────
+# Requires a Google Custom Search JSON API key + a Programmable Search Engine
+# (CX) with "Image search" turned ON. Set these in your .env:
+#   GOOGLE_SEARCH_API_KEY=...
+#   GOOGLE_SEARCH_CX=...
+GOOGLE_SEARCH_API_KEY   = os.getenv("GOOGLE_SEARCH_API_KEY", "")
+GOOGLE_SEARCH_CX        = os.getenv("GOOGLE_SEARCH_CX", "")
+GOOGLE_IMAGE_SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
+
 # ════════════════════════════════════════════════════════════════════════
 #  MODEL CONSTANTS
 # ════════════════════════════════════════════════════════════════════════
@@ -135,6 +145,7 @@ BASE_SECTIONS: List[str] = [
     "applications",
     "quiz",
     "animation",
+    "rough_diagram",
 ]
 
 CONDITIONAL_SECTIONS: List[str] = ["formulas", "derivation"]
@@ -150,6 +161,7 @@ ORDERED_SECTION_TEMPLATE: List[str] = [
     "applications",
     "quiz",
     "animation",
+    "rough_diagram",
 ]
 
 SECTION_MODEL_MAP: Dict[str, str] = {
@@ -163,6 +175,10 @@ SECTION_MODEL_MAP: Dict[str, str] = {
     "applications":     MODEL_HAIKU,
     "quiz":             MODEL_HAIKU,
     "animation":        MODEL_HAIKU,
+    # rough_diagram doesn't call the section-writer prompt (it fetches real
+    # images), but Haiku is used briefly to turn the topic into a good
+    # Google Images search query — see generate_rough_diagram_section().
+    "rough_diagram":    MODEL_HAIKU,
 }
 
 
@@ -1374,6 +1390,65 @@ def _strip_verification_tail(html: str) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════
+#  ✏️  ROUGH DIAGRAM — GOOGLE IMAGE SEARCH (2D, exam-sketchable diagrams)
+# ════════════════════════════════════════════════════════════════════════
+#
+#  The 3D "Working Process" / "Animation" sections are intentionally rich
+#  and immersive — great for understanding, but not something a student
+#  can realistically reproduce by hand in an exam. This section fetches a
+#  handful of REAL, existing 2D diagrams from Google Images so students
+#  have something simple they can actually copy/practice drawing.
+#
+#  This does NOT touch the animation pipeline in any way — it is a fully
+#  separate, additive section that runs alongside it.
+# ════════════════════════════════════════════════════════════════════════
+
+def _fetch_google_diagram_images(query: str, num: int = 4) -> List[Dict]:
+    """Blocking call to the Google Custom Search JSON API (image search).
+    Returns [] on any failure/misconfiguration so the caller can fall back
+    gracefully instead of breaking the whole lesson generation."""
+    if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_CX:
+        log.warning(
+            "[_fetch_google_diagram_images] GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_CX "
+            "not configured — skipping live image fetch."
+        )
+        return []
+
+    params = {
+        "key":        GOOGLE_SEARCH_API_KEY,
+        "cx":         GOOGLE_SEARCH_CX,
+        "q":          query,
+        "searchType": "image",
+        "num":        min(max(int(num), 1), 10),
+        "safe":       "active",
+        # bias results toward simple line-art/diagram style rather than photos
+        "imgType":    "clipart",
+    }
+
+    try:
+        resp = requests.get(GOOGLE_IMAGE_SEARCH_URL, params=params, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", []) or []
+
+        results: List[Dict] = []
+        for item in items:
+            image_meta = item.get("image", {}) or {}
+            results.append({
+                "url":       item.get("link", ""),
+                "thumbnail": image_meta.get("thumbnailLink") or item.get("link", ""),
+                "title":     item.get("title", "Diagram"),
+                "context":   image_meta.get("contextLink", ""),
+            })
+        log.info(f"[_fetch_google_diagram_images] '{query}' → {len(results)} images")
+        return results
+
+    except Exception as e:
+        log.warning(f"[_fetch_google_diagram_images] request failed: {e}")
+        return []
+
+
+# ════════════════════════════════════════════════════════════════════════
 #  ULTIMATE LEARNING GENERATOR CLASS
 # ════════════════════════════════════════════════════════════════════════
 
@@ -1570,6 +1645,89 @@ Return ONLY valid JSON:
         )
 
     # ──────────────────────────────────────────────────────────────────
+    #  ✏️  ROUGH DIAGRAM  (2D, exam-sketchable — separate from animation)
+    # ──────────────────────────────────────────────────────────────────
+
+    async def _generate_diagram_search_query(self, topic: str) -> str:
+        """Turn the raw topic into a short, well-targeted Google Images
+        query that favours simple labeled 2D line-diagrams over photos,
+        3D renders, or busy infographics."""
+        prompt = (
+            f'Give ONE short Google Images search query (max 8 words) that will '
+            f'find a simple, clearly-labeled 2D line diagram of this topic — the '
+            f'kind found in a school textbook. NOT a photo, NOT a 3D render, '
+            f'NOT decorative infographic art.\n\n'
+            f'Topic: "{topic}"\n\n'
+            f'Reply with ONLY the search query text — no quotes, no explanation.'
+        )
+        try:
+            msg = await self._client.messages.create(
+                model=MODEL_HAIKU,
+                max_tokens=40,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            query = msg.content[0].text.strip().strip('"').strip()
+            return query or f"{topic} labeled diagram"
+        except Exception as e:
+            log.warning(f"[_generate_diagram_search_query] failed ({e}), using raw topic")
+            return f"{topic} labeled diagram simple"
+
+    def _build_rough_diagram_html(self, topic: str, query: str, images: List[Dict]) -> str:
+        search_link = f"https://www.google.com/search?tbm=isch&q={requests.utils.quote(query)}"
+
+        if not images:
+            return f"""
+    <div class="rough-diagram-intro">
+      <p>✏️ These should be simple <strong>2D diagrams</strong> you can actually
+      draw in an exam — quick sketches, not the 3D animation above.</p>
+    </div>
+    <div class="rough-diagram-fallback">
+      <p>⚠️ Couldn't fetch a live diagram right now.</p>
+      <p><a href="{search_link}" target="_blank" rel="noopener">
+        🔍 Search "{query}" on Google Images ↗</a></p>
+    </div>"""
+
+        cards = ""
+        for img in images:
+            safe_title = (img.get("title") or "Diagram").replace('"', "'")
+            img_url    = img.get("url", "")
+            thumb_url  = img.get("thumbnail", img_url)
+            cards += f"""
+      <a class="rough-diagram-card" href="{img_url}" target="_blank" rel="noopener">
+        <img src="{thumb_url}" alt="{safe_title}" loading="lazy"
+             onerror="this.closest('.rough-diagram-card').style.display='none'">
+        <span class="rough-diagram-caption">{safe_title}</span>
+      </a>"""
+
+        return f"""
+    <div class="rough-diagram-intro">
+      <p>✏️ These are simple <strong>2D diagrams</strong> you can actually draw
+      in an exam — quick, hand-sketchable versions of the concept above.</p>
+    </div>
+    <div class="rough-diagram-grid">{cards}
+    </div>
+    <p class="rough-diagram-more">
+      <a href="{search_link}" target="_blank" rel="noopener">
+        🔍 See more diagrams for "{topic}" on Google Images ↗</a>
+    </p>"""
+
+    async def generate_rough_diagram_section(self, topic: str) -> str:
+        """Fetches real 2D diagram images for the topic via Google Image
+        Search and renders them as a small gallery. Fully independent of
+        the 3D animation pipeline — never modifies it."""
+        log.info("  Generating [rough_diagram] ...")
+        query = topic
+        try:
+            query = await self._generate_diagram_search_query(topic)
+            images = await asyncio.to_thread(_fetch_google_diagram_images, query, 4)
+            html = self._build_rough_diagram_html(topic, query, images)
+            log.info(f"  ✅ [rough_diagram] done ({len(images)} images, query='{query}')")
+            return html
+        except Exception as e:
+            log.error(f"  ❌ [rough_diagram] failed: {e}")
+            return self._build_rough_diagram_html(topic, query, [])
+
+    # ──────────────────────────────────────────────────────────────────
     #  GENERATE COMPLETE LESSON
     # ──────────────────────────────────────────────────────────────────
 
@@ -1604,6 +1762,9 @@ Return ONLY valid JSON:
         log.info(f"[STAGES 2-{len(lesson_sections)+1}] Generating {len(lesson_sections)} sections in parallel...")
 
         async def _gen(s: str) -> str:
+            if s == "rough_diagram":
+                # Not Claude-generated text — fetches real 2D diagram images.
+                return await self.generate_rough_diagram_section(topic)
             return await self.generate_section(
                 s, topic, context,
                 subtopics_list=(subtopics_list if s == "core_concepts" else None),
@@ -1656,6 +1817,7 @@ Return ONLY valid JSON:
             "applications":     "🌍 Applications",
             "quiz":             "❓ Quiz",
             "animation":        "🎬 Animation",
+            "rough_diagram":    "✏️ Rough Diagram",
         }
 
         nav_items = [
@@ -1734,7 +1896,11 @@ Return ONLY valid JSON:
   src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>"""
 
         quiz_idx = sum(1 for s in lesson_sections if s not in ("quiz", "animation")) + 1
-        anim_idx = len(lesson_sections)
+        anim_idx = (
+            lesson_sections.index("animation") + 1
+            if "animation" in lesson_sections
+            else len(lesson_sections)
+        )
 
         footer_cta = f"""
     <div class="footer-cta">
@@ -2611,6 +2777,31 @@ pre, code {{ white-space: pre-wrap; word-break: break-word; }}
 
 /* ── DARK MODE ── */
 @media (prefers-color-scheme: dark) {{
+  /* Re-point the shared design tokens at dark-safe values. Every
+     component that reads var(--text-dark), var(--gray-900/700),
+     var(--bg-card), or a semantic tinted-panel color (--blue-bg,
+     --orange-bg, etc.) picks this up automatically — this fixes
+     "text becomes invisible in dark mode" at the root instead of
+     chasing it selector by selector. */
+  :root {{
+    --text-dark:    #f1f5f9;
+    --text-gray:    #cbd5e1;
+    --gray-900:     #f1f5f9;
+    --gray-700:     #cbd5e1;
+    --gray-300:     #475569;
+    --gray-200:     #334155;
+    --gray-100:     #1e293b;
+    --gray-50:      #0f172a;
+    --bg-card:      #0f172a;
+    --primary-dark: #93c5fd;
+    --blue-bg:      rgba(59,130,246,.16);
+    --green-bg:     rgba(34,197,94,.16);
+    --red-bg:       rgba(239,68,68,.16);
+    --yellow-bg:    rgba(234,179,8,.16);
+    --purple-bg:    rgba(168,85,247,.16);
+    --orange-bg:    rgba(249,115,22,.16);
+  }}
+
   body {{ background: #0f172a; color: #f1f5f9; }}
   .page-container {{
     background:
@@ -2650,6 +2841,24 @@ pre, code {{ white-space: pre-wrap; word-break: break-word; }}
   .vault-title {{ color: #f1f5f9; }}
   .anim-lib-card {{ background: #1e293b; border-color: #334155; }}
   .anim-lib-card-title {{ color: #f1f5f9; }}
+
+  /* ── Remaining panels that use a hardcoded (non-token) light
+     fill, or rely on a browser-default white form-control
+     background, still need an explicit dark surface so the
+     now-light text drawn on top of them stays readable. ── */
+  .formula-equation      {{ background: linear-gradient(135deg,#241a3d,#2f2150); border-color: #7c3aed; color: #f1f5f9; }}
+  .deriv-step-eq          {{ background: linear-gradient(135deg,#0f2b18,#123a1e); border-color: #22c55e; color: #f1f5f9; }}
+  .deriv-header           {{ background: linear-gradient(135deg,#0f2b18,#123a1e); border-color: #22c55e; }}
+  .deriv-title            {{ color: #86efac; }}
+  .deriv-subtitle         {{ color: #bbf7d0; }}
+  .deriv-meaning-title    {{ color: #86efac; }}
+  .audit-summary h3       {{ color: #93c5fd; }}
+  .types-flowchart-wrap   {{ background: linear-gradient(135deg,#0f172a,#132030); border-color: #334155; }}
+  .fc-type-card           {{ background: #1e293b; }}
+  .types-compare-box      {{ background: #1e293b; border-color: #334155; }}
+  .tc-header              {{ background: #0f172a; }}
+  .anim-lib-search        {{ background: #0f172a; color: #f1f5f9; }}
+  .anim-lib-search::placeholder {{ color: #94a3b8; }}
 }}
 
 /* ══════════════════════════════════════════════════════════
@@ -2758,6 +2967,85 @@ pre, code {{ white-space: pre-wrap; word-break: break-word; }}
 @media print {{
   .section-nav, .page-footer, .anim-player-wrap, .quiz-section {{ display: none; }}
   .lesson-section {{ break-inside: avoid; page-break-inside: avoid; }}
+}}
+
+/* ══════════════════════════════════════════════════════════════
+   ✏️  ROUGH DIAGRAM  — 2D exam-sketchable image gallery
+════════════════════════════════════════════════════════════════ */
+.rough-diagram-intro {{
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  font-size: 0.95rem;
+  color: #7c2d12;
+}}
+.rough-diagram-intro p {{ margin: 0; }}
+
+.rough-diagram-grid {{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}}
+
+.rough-diagram-card {{
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}}
+.rough-diagram-card:hover {{
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+}}
+.rough-diagram-card img {{
+  width: 100%;
+  height: 140px;
+  object-fit: contain;
+  background: #f9fafb;
+  padding: 8px;
+}}
+.rough-diagram-caption {{
+  font-size: 0.8rem;
+  color: #4b5563;
+  padding: 8px 10px;
+  border-top: 1px solid #f0f0f0;
+  line-height: 1.3;
+}}
+
+.rough-diagram-more {{
+  font-size: 0.9rem;
+  margin-top: 8px;
+}}
+.rough-diagram-more a,
+.rough-diagram-fallback a {{
+  color: #0891b2;
+  font-weight: 600;
+  text-decoration: none;
+}}
+.rough-diagram-more a:hover,
+.rough-diagram-fallback a:hover {{ text-decoration: underline; }}
+
+.rough-diagram-fallback {{
+  background: #f9fafb;
+  border: 1px dashed #d1d5db;
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+  color: #4b5563;
+}}
+.rough-diagram-fallback p {{ margin: 6px 0; }}
+
+@media (max-width: 640px) {{
+  .rough-diagram-grid {{ grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }}
+  .rough-diagram-card img {{ height: 110px; }}
 }}
 """
 
