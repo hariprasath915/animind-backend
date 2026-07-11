@@ -1618,19 +1618,31 @@ Return ONLY valid JSON:
         model = SECTION_MODEL_MAP.get(section_name, MODEL_SONNET)
         log.info(f"  Generating [{section_name}] with {model.split('-')[1]} ...")
 
+        # ── PER-SECTION TIMEOUT: 90 s for Sonnet (large output), 60 s for Haiku
+        # This prevents a single hung API call from blocking the whole pipeline
+        # and eventually causing the client-side 499 "connection closed" error.
+        section_timeout = 90 if "sonnet" in model.lower() else 60
+
         for attempt in range(1, max_retries + 1):
             try:
-                msg = await self._client.messages.create(
-                    model=model,
-                    max_tokens=16000,
-                    system=ULTIMATE_LEARNING_SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": prompt}]
+                msg = await asyncio.wait_for(
+                    self._client.messages.create(
+                        model=model,
+                        max_tokens=16000,
+                        system=ULTIMATE_LEARNING_SYSTEM_PROMPT,
+                        messages=[{"role": "user", "content": prompt}]
+                    ),
+                    timeout=section_timeout,
                 )
                 content = msg.content[0].text.strip()
                 content = re.sub(r'```html\s*|\s*```', '', content).strip()
                 content = _strip_verification_tail(content)
                 log.info(f"  ✅ [{section_name}] done ({len(content):,} chars)")
                 return content
+            except asyncio.TimeoutError:
+                log.warning(f"  ⚠️ [{section_name}] attempt {attempt}/{max_retries}: TIMED OUT after {section_timeout}s")
+                if attempt < max_retries:
+                    await asyncio.sleep(1)
             except Exception as e:
                 log.warning(f"  ⚠️ [{section_name}] attempt {attempt}/{max_retries}: {e}")
                 if attempt < max_retries:
@@ -3054,17 +3066,35 @@ pre, code {{ white-space: pre-wrap; word-break: break-word; }}
 #  generate_animation  — PRIMARY BACKEND ENTRY POINT  (v19.3)
 # ════════════════════════════════════════════════════════════════════════
 
-async def generate_animation(prompt: str) -> dict:
-    if not prompt or not prompt.strip():
-        raise ValueError("Prompt cannot be empty")
+# ════════════════════════════════════════════════════════════════════════
+#  generate_animation  — PRIMARY BACKEND ENTRY POINT  (v20.1)
+#
+#  FIX: HTTP 499 / "not valid JSON" errors were caused by two problems:
+#   1. No per-section timeout → a single hung Claude call blocked the
+#      entire asyncio.gather for >2 min → Railway dropped the socket
+#      (HTTP 499 "client closed request") → FastAPI sent a plain-text
+#      error string → frontend JSON.parse() threw "not valid JSON".
+#   2. No global timeout on the outer coroutine → same result if the
+#      total wall time drifted above the HTTP idle timeout.
+#
+#  Fixes applied:
+#   • Per-section timeout: 90 s (Sonnet) / 60 s (Haiku) — see generate_section()
+#   • Global timeout: 115 s on the full generate_complete_lesson call
+#   • generate_animation() now always returns a dict (never raises) so
+#     FastAPI always sends a JSON response, never a plain-text exception.
+#   • generate_animation_stream() yields SSE keepalive pings every 15 s
+#     so long-running requests never trigger proxy idle-timeout 499s.
+# ════════════════════════════════════════════════════════════════════════
 
-    prompt = prompt.strip()
-    log.info(f"\n{'═'*64}")
-    log.info(f"[generate_animation v19.3] prompt='{prompt}'")
-    log.info(f"{'═'*64}")
+# Total wall-clock limit for the whole lesson pipeline.
+# Set to 115 s — comfortably under Railway's 120-s response timeout and
+# any reverse-proxy / CDN idle-timeout you're likely to encounter.
+_GENERATION_GLOBAL_TIMEOUT = 115
 
+
+def _parse_topic(prompt: str) -> tuple:
+    """Extract (topic, subtopics_list) from a raw prompt string."""
     subtopics_list = _extract_subtopics_from_input(prompt)
-
     if " -- " in prompt:
         topic = prompt.split(" -- ", 1)[0].strip()
     elif prompt.count(" - ") > 1:
@@ -3077,32 +3107,132 @@ async def generate_animation(prompt: str) -> dict:
             topic = f"{topic} — {subtopic}" if subtopic else topic
     else:
         topic = prompt
+    return topic, subtopics_list
 
+
+async def generate_animation(prompt: str) -> dict:
+    """
+    Always returns a dict. Never raises — errors come back as
+    {"error": True, "detail": "..."} so FastAPI can always respond
+    with valid JSON (HTTP 200 or 500) instead of a plain-text exception
+    that the frontend can't JSON.parse().
+    """
+    if not prompt or not prompt.strip():
+        return {"error": True, "detail": "Prompt cannot be empty"}
+
+    prompt = prompt.strip()
+    log.info(f"\n{'═'*64}")
+    log.info(f"[generate_animation v20.1] prompt='{prompt}'")
+    log.info(f"{'═'*64}")
+
+    topic, subtopics_list = _parse_topic(prompt)
     is_specific = _is_specific_subtopic(topic)
-    log.info(f"[generate_animation v19.3] topic='{topic}' | specific_subtopic={is_specific}")
+    log.info(f"[generate_animation v20.1] topic='{topic}' | specific={is_specific}")
 
-    generator = UltimateLearningGenerator()
-    result = await generator.generate_complete_lesson(
-        topic=topic,
-        include_audit=False,
-        subtopics_list=subtopics_list if subtopics_list else None,
-    )
+    try:
+        generator = UltimateLearningGenerator()
 
-    html = result["html"]
+        # ── GLOBAL TIMEOUT: abort cleanly rather than letting the
+        # connection hang until Railway/proxy closes it with a 499.
+        result = await asyncio.wait_for(
+            generator.generate_complete_lesson(
+                topic=topic,
+                include_audit=False,
+                subtopics_list=subtopics_list if subtopics_list else None,
+            ),
+            timeout=_GENERATION_GLOBAL_TIMEOUT,
+        )
 
-    hook_html   = result["sections"].get("hook", "")
-    explanation = re.sub(r"<[^>]+>", " ", hook_html)
-    explanation = " ".join(explanation.split())[:220]
-    if not explanation:
-        explanation = f"A complete interactive lesson on {topic}."
+        html = result["html"]
+        hook_html   = result["sections"].get("hook", "")
+        explanation = re.sub(r"<[^>]+>", " ", hook_html)
+        explanation = " ".join(explanation.split())[:220]
+        if not explanation:
+            explanation = f"A complete interactive lesson on {topic}."
 
-    log.info(f"[generate_animation v19.3] ✅ HTML={len(html):,} chars | topic='{topic}'")
+        log.info(f"[generate_animation v20.1] ✅ HTML={len(html):,} chars | topic='{topic}'")
+        return {
+            "title":          topic,
+            "explanation":    explanation,
+            "animation_code": html,
+        }
 
-    return {
-        "title":          topic,
-        "explanation":    explanation,
-        "animation_code": html,
-    }
+    except asyncio.TimeoutError:
+        msg = (
+            f"Generation timed out after {_GENERATION_GLOBAL_TIMEOUT} s. "
+            "The topic may be too complex. Please try a simpler or more specific topic."
+        )
+        log.error(f"[generate_animation v20.1] ❌ GLOBAL TIMEOUT: {msg}")
+        return {"error": True, "detail": msg}
+
+    except Exception as e:
+        log.error(f"[generate_animation v20.1] ❌ UNEXPECTED ERROR: {e}", exc_info=True)
+        return {"error": True, "detail": str(e)}
+
+
+async def generate_animation_stream(prompt: str):
+    """
+    SSE (Server-Sent Events) variant of generate_animation().
+
+    Yields newline-delimited SSE text:
+      - "data: {ping}\\n\\n"  every 15 s while generation runs (keeps the
+        HTTP connection alive through proxies that close idle connections)
+      - "data: {result JSON}\\n\\n"  when done (or on error)
+
+    Usage in FastAPI (add this route to your main.py):
+
+        from fastapi import FastAPI, Request
+        from fastapi.responses import StreamingResponse
+        from claude_client import generate_animation_stream
+
+        @app.post("/generate-animation")
+        async def generate_animation_endpoint(request: Request):
+            body = await request.json()
+            prompt = body.get("prompt") or body.get("topic", "")
+            return StreamingResponse(
+                generate_animation_stream(prompt),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",   # disable Nginx buffering
+                },
+            )
+
+    Frontend must be updated to read the SSE stream and parse the last
+    "data:" line as JSON — see update note in generate_animation_stream.
+    If you cannot change the FastAPI endpoint to SSE, use
+    generate_animation() directly; it now always returns valid JSON within
+    the global timeout so proxy 499s will not occur as long as Railway's
+    idle-timeout > _GENERATION_GLOBAL_TIMEOUT.
+    """
+    import json as _json
+
+    KEEPALIVE_INTERVAL = 15   # seconds between ping frames
+    ping_frame = 'data: {"ping":true}\n\n'
+
+    # Run the actual generation as a background task so we can interleave
+    # keepalive pings while it runs.
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(generate_animation(prompt))
+
+    elapsed = 0
+    while not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=KEEPALIVE_INTERVAL)
+        except asyncio.TimeoutError:
+            # Still running — send a keepalive ping
+            elapsed += KEEPALIVE_INTERVAL
+            log.info(f"[generate_animation_stream] keepalive ping at {elapsed}s ...")
+            yield ping_frame
+        except Exception:
+            break   # task raised — fall through to result handling
+
+    try:
+        result = task.result()
+    except Exception as e:
+        result = {"error": True, "detail": str(e)}
+
+    yield f"data: {_json.dumps(result)}\n\n"
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -3237,11 +3367,16 @@ async def generate_genzet_book_content(
     )
 
     generator = UltimateLearningGenerator()
-    result = await generator.generate_complete_lesson(
-        topic=full_topic,
-        existing_content=existing_content,
-        include_audit=True,
-        subtopics_list=subtopics_list,
+    # Apply the same global timeout as generate_animation() to prevent
+    # Railway HTTP 499 "client closed request" on book-content generation.
+    result = await asyncio.wait_for(
+        generator.generate_complete_lesson(
+            topic=full_topic,
+            existing_content=existing_content,
+            include_audit=True,
+            subtopics_list=subtopics_list,
+        ),
+        timeout=_GENERATION_GLOBAL_TIMEOUT,
     )
 
     html = result["html"]
