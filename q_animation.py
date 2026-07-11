@@ -414,6 +414,61 @@ class GenerationValidator:
         if open_svgs != close_svgs:
             raise ValidationError(f"Unbalanced <svg> tags: {open_svgs} open, {close_svgs} close")
         QAnimLogger.ok("Validator", f"HTML passed validation ({len(html):,} chars)")
+        cls.check_rect_overlaps(html)
+
+    @classmethod
+    def check_rect_overlaps(cls, html):
+        """
+        Safety-net (warn-only) geometric check for the exact overlap bug seen
+        in the slider-crank 'Governing Law' scene: a row of symbol/definition
+        <rect> cards that visually overlap because the AI didn't compute
+        width/x from the actual card count N. This does not block generation
+        (auto-repositioning is riskier than it's worth), but logs a loud,
+        specific warning per scene so any regression is immediately visible
+        in the deploy logs rather than silently reaching a student.
+        """
+        try:
+            starts = [m.start() for m in re.finditer(r'<g[^>]*\bid="scene-\d+"', html)]
+            scene_blocks = []
+            for i, start in enumerate(starts):
+                end = starts[i + 1] if i + 1 < len(starts) else len(html)
+                scene_blocks.append(html[start:end])
+            for scene_idx, block in enumerate(scene_blocks):
+                rects = re.findall(
+                    r'<rect\s+[^>]*\bx="(-?[\d.]+)"[^>]*\by="(-?[\d.]+)"[^>]*\bwidth="([\d.]+)"[^>]*\bheight="([\d.]+)"',
+                    block
+                )
+                boxes = [(float(x), float(y), float(w), float(h)) for x, y, w, h in rects]
+                # Only flag rects that look like same-row legend/definition
+                # cards (roughly similar height, sitting on a similar y-band),
+                # since unrelated background/panel rects legitimately nest
+                # or sit near each other.
+                for i in range(len(boxes)):
+                    for j in range(i + 1, len(boxes)):
+                        x1, y1, w1, h1 = boxes[i]
+                        x2, y2, w2, h2 = boxes[j]
+                        same_band = abs(y1 - y2) < 6 and abs(h1 - h2) < 6
+                        if not same_band:
+                            continue
+                        # Skip decorative accent stripes / nested background
+                        # rects (e.g. the 5px-wide colour stripe on the left
+                        # edge of an info card) -- those are intentional
+                        # layering, not the legend-row overlap bug.
+                        if min(w1, w2) <= 15:
+                            continue
+                        overlap_x = min(x1 + w1, x2 + w2) - max(x1, x2)
+                        if overlap_x > 4:  # >4px genuine overlap, not float noise
+                            QAnimLogger.warn(
+                                "Validator",
+                                f"Scene {scene_idx}: two same-row cards OVERLAP by "
+                                f"{overlap_x:.0f}px -- rect@x={x1:.0f} w={w1:.0f} vs "
+                                f"rect@x={x2:.0f} w={w2:.0f} (y={y1:.0f}). "
+                                "This is the symbol-legend-row bug -- card width/x "
+                                "was not computed from N. Text is likely unreadable."
+                            )
+        except Exception as _overlap_check_err:
+            # Never let this best-effort diagnostic break real generation.
+            QAnimLogger.warn("Validator", f"Overlap check itself failed (non-fatal): {_overlap_check_err}")
 
 
 # ===========================================================================
@@ -6645,6 +6700,50 @@ text is a FAILED layout, no exceptions.
   every other element's (x, y) + estimated size. If ANY two overlap or sit
   closer than the minimum clearance above, FIX the coordinates before
   returning your answer.
+
+═══ SYMBOL / VARIABLE LEGEND ROWS — MANDATORY MATH (NOT OPTIONAL) ═══
+This is the single most common overlap bug: a row of small cards, one per
+formula symbol (e.g. "v_p = piston velocity", "ω = angular velocity",
+"r = crank radius", "n = l/r ratio", "θ = crank angle"), placed side by
+side under the formula. The NUMBER of symbols is DIFFERENT for every
+question -- some formulas have 2 symbols, others have 4, 5, or more. A
+fixed, memorized card width/spacing (e.g. always 240px wide, always ~110px
+apart) will overlap the moment a question has more symbols than whatever
+example you were shown. You MUST compute layout from N at generation time,
+every time, using this exact procedure:
+
+  1. Let N = the actual number of symbol cards needed for THIS question's
+     formula (count every distinct symbol you plan to define, including θ,
+     n, or any ratio/angle -- do not drop any to make N smaller).
+  2. Usable row width = 920px (canvas x=40 to x=960, inside the 1000-wide
+     viewBox).
+  3. If N <= 4: single row.
+       gap = 16
+       card_width = floor((920 - gap * (N - 1)) / N)
+       card i (0-indexed) x-position = 40 + i * (card_width + gap)
+     Example: N=4 -> card_width = floor((920-48)/4) = 218px, positions
+     x = 40, 274, 508, 742 (NOT the fixed 240px/110px-apart pattern from
+     memory -- recompute every time).
+  4. If N == 5: still fits one row at smaller width:
+       gap = 12
+       card_width = floor((920 - gap * 4) / 5)  → 178px
+  5. If N >= 6: split into two rows of ceil(N/2) and floor(N/2) cards.
+     Compute each row's card_width independently using the formula above
+     with that row's own count. Second row sits at
+     y_row2 = y_row1 + card_height + 26 (never closer).
+  6. card_height stays 48-54px; shrink font-size (down to 11px for the
+     definition line) before you would ever let text overflow a
+     narrower card -- do NOT widen the card back out past its computed
+     card_width, that reintroduces the overlap.
+  7. After computing every card's (x, width), verify numerically that
+     card_i's right edge (x + card_width) is <= card_(i+1)'s left edge (x)
+     minus the gap, for every adjacent pair. If it is not, your arithmetic
+     is wrong -- redo step 3/4/5, do not eyeball it.
+
+  This same N-based procedure applies to ANY row of same-purpose small
+  cards in any scene (given-value chips, step badges, answer-target
+  cards) -- never hardcode a width/spacing that only happens to work for
+  a specific, remembered N.
 """
 
 STRATEGY_TEMPLATES = {
