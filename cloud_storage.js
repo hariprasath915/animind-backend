@@ -31,7 +31,7 @@
 
 const BACKEND_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
   ? 'http://127.0.0.1:8000' 
-  : 'https://animind-backend-production-2.up.railway.app';
+  : '/api';
 
 // ── Tiny request helper ────────────────────────────────────────────────────
 async function _cloudRequest(method, path, body = null) {
