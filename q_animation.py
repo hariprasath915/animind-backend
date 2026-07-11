@@ -171,11 +171,81 @@ except ImportError:
 # and produce bigger responses -- were the most likely to hit a timeout or
 # a one-off transient error and fail, which is exactly the kind of question
 # that was showing "failed to fetch".
-client = anthropic.Anthropic(
-    default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-    timeout=600.0,    # generous timeout so big/tough generations have room to finish
-    max_retries=4,    # auto-retry transient errors (rate limit / overload / network) with backoff
-)
+# ---------------------------------------------------------------------------
+# ROOT-CAUSE FIX -- "Unexpected token 'A', "An error o"... is not valid JSON"
+# ---------------------------------------------------------------------------
+# `anthropic.Anthropic(...)` used to be called directly at module import time
+# with NO api_key argument, relying entirely on the ANTHROPIC_API_KEY
+# environment variable being present in the deployed process. If that
+# variable is missing, unset, or empty on the server (a very common slip
+# when deploying/redeploying a backend), the Anthropic SDK raises
+# immediately:
+#
+#   anthropic.AuthenticationError / ValueError:
+#   "Could not resolve authentication method. Expected either api_key or
+#    auth_token to be set. Or for one of the `X-Api-Key` or `Authorization`
+#    headers to be explicitly omitted."
+#
+# Because this happened at MODULE IMPORT TIME (a bare top-level statement,
+# not inside any function), it was OUTSIDE every try/except in this file --
+# including the safety-net wrapper in generate_question_animation(). The
+# entire module failed to import, so the web server/framework that imports
+# it (Flask/FastAPI/Node-via-subprocess/etc.) crashed before it could ever
+# build a JSON response, and instead sent back its own generic plain-text
+# crash page (e.g. "An error occurred ..."). The frontend then tried to
+# `JSON.parse()` that plain-text page and failed with exactly the error you
+# saw -- for EVERY question, immediately, regardless of what was typed.
+#
+# FIX: initialize the client defensively. Missing/invalid credentials (or
+# any other init-time failure) no longer crash the import. Instead, `client`
+# becomes a stand-in object whose `.messages.create(...)` raises a plain,
+# catchable RuntimeError with a clear diagnostic message the moment code
+# actually tries to call the API -- which is already caught by the
+# try/except blocks around every one of the 9 call sites in this file and
+# converted into a graceful `_build_failure_result(...)` (valid JSON, with
+# a real explanation) instead of a raw server crash.
+_ANTHROPIC_INIT_ERROR = None
+
+
+class _DeadAnthropicClient:
+    """Stand-in used only if the real Anthropic client failed to initialize.
+    Raises a clear, catchable error the first time it is actually used,
+    instead of crashing at import time."""
+
+    class _DeadMessages:
+        def create(self, *args, **kwargs):
+            raise RuntimeError(
+                "Anthropic client is not available: "
+                f"{_ANTHROPIC_INIT_ERROR}. "
+                "Check that ANTHROPIC_API_KEY is set correctly in this "
+                "server's environment and redeploy/restart the process."
+            )
+
+    def __init__(self):
+        self.messages = self._DeadMessages()
+
+
+try:
+    import os as _os_early
+    _anthropic_api_key = _os_early.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not _anthropic_api_key:
+        raise ValueError(
+            "ANTHROPIC_API_KEY environment variable is missing or empty "
+            "in the process running this server."
+        )
+    client = anthropic.Anthropic(
+        api_key=_anthropic_api_key,
+        default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+        timeout=600.0,    # generous timeout so big/tough generations have room to finish
+        max_retries=4,    # auto-retry transient errors (rate limit / overload / network) with backoff
+    )
+    print("[QAnim Anthropic] Client ready.")
+except Exception as _anthropic_init_err:
+    _ANTHROPIC_INIT_ERROR = repr(_anthropic_init_err)
+    print(f"[QAnim Anthropic] CRITICAL: client init failed -- {_ANTHROPIC_INIT_ERROR}")
+    print("[QAnim Anthropic] Every generation request will fail gracefully with a clear "
+          "error message until ANTHROPIC_API_KEY is fixed and the process is restarted.")
+    client = _DeadAnthropicClient()
 
 CONCEPT_MODEL        = "claude-sonnet-4-6"
 SOLUTION_MODEL       = "claude-sonnet-4-6"
