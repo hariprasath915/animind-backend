@@ -37,10 +37,14 @@ import secrets
 from datetime import datetime, timezone
 from typing import List, Optional
 
+import os
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from pydantic import BaseModel, Field
 
 from auth_utils import get_current_user, get_supabase
+
+# ── Main-user identity (set MAIN_USER_EMAIL in Railway env vars) ─────────────
+MAIN_USER_EMAIL = os.getenv("MAIN_USER_EMAIL", "genzet@gmail.com")
 
 router = APIRouter(prefix="/sync", tags=["Cloud Sync"])
 
@@ -1355,3 +1359,106 @@ def legacy_batch_sync(
             failed += 1
             print(f"[SYNC] ⚠ Batch item failed: {e}")
     return {"success": failed == 0, "synced": synced, "failed": failed, "message": f"Synced {synced}. {failed} failed."}
+
+
+# ════════════════════════════════════════════════════════════════
+# GLOBAL ANIMATIONS  (uploaded by main user, visible to ALL users)
+# ════════════════════════════════════════════════════════════════
+
+class GlobalAnimationPayload(BaseModel):
+    id:             str
+    title:          str           = ""
+    prompt:         str           = ""
+    explanation:    str           = ""
+    animation_code: str           = ""
+    playlist:       str           = "Global"
+    created_at:     Optional[str] = None
+
+
+@router.get("/global-animations", status_code=200)
+def get_global_animations(current_user: dict = Depends(get_current_user)):
+    """
+    Returns all animations uploaded by the main user.
+    Accessible to every authenticated user — no user_id filter.
+    """
+    supabase = _sb(current_user)
+    try:
+        resp = supabase.table("global_animations") \
+            .select("id, title, prompt, explanation, animation_code, playlist, uploaded_by, created_at") \
+            .order("created_at", desc=True) \
+            .execute()
+        rows = resp.data or []
+        # Normalise to match the frontend animation object shape
+        animations = [
+            {
+                "id":             r["id"],
+                "title":          r["title"],
+                "prompt":         r["prompt"],
+                "explanation":    r["explanation"],
+                "animation_code": r["animation_code"],
+                "playlist":       r["playlist"],
+                "created_at":     r["created_at"],
+                "is_global":      True,
+            }
+            for r in rows
+        ]
+        return {"count": len(animations), "animations": animations}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch global animations: {e}")
+
+
+@router.post("/global-animations", status_code=200)
+def upload_global_animation(
+    payload: GlobalAnimationPayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Saves an animation to global_animations so it is visible to ALL users.
+    Only the main user (MAIN_USER_EMAIL env var) is allowed to call this.
+    """
+    user_email = (current_user.get("email") or "").strip().lower()
+    if user_email != MAIN_USER_EMAIL.strip().lower():
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the main user ({MAIN_USER_EMAIL}) can upload global animations."
+        )
+
+    supabase = _sb(current_user)
+    row = {
+        "id":             payload.id.strip(),
+        "title":          (payload.title or "Untitled").strip(),
+        "prompt":         payload.prompt or "",
+        "explanation":    payload.explanation or "",
+        "animation_code": payload.animation_code or "",
+        "playlist":       payload.playlist or "Global",
+        "uploaded_by":    user_email,
+        "created_at":     _parse_iso(payload.created_at),
+    }
+
+    try:
+        supabase.table("global_animations").upsert(row, on_conflict="id").execute()
+        print(f"[GLOBAL] ✅ Uploaded global animation '{row['title']}' by {user_email}")
+        return {"success": True, "id": row["id"], "message": "Global animation saved."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save global animation: {e}")
+
+
+@router.delete("/global-animations/{anim_id}", status_code=200)
+def delete_global_animation(
+    anim_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Deletes a global animation. Only the main user can do this.
+    """
+    user_email = (current_user.get("email") or "").strip().lower()
+    if user_email != MAIN_USER_EMAIL.strip().lower():
+        raise HTTPException(status_code=403, detail="Only the main user can delete global animations.")
+
+    supabase = _sb(current_user)
+    try:
+        supabase.table("global_animations").delete().eq("id", anim_id).execute()
+        return {"success": True, "message": f"Deleted global animation {anim_id}."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete global animation: {e}")
+
