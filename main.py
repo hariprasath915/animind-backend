@@ -363,9 +363,106 @@ async def create_question_animation(request: QuestionAnimRequest):
         raise HTTPException(status_code=500, detail=f"Question animation generation failed: {e}")
 
 
-# ── Simulation experiment cache ───────────────────────────────────────────────
-# Path to the folder that stores pre-built experiment HTML files.
+# ── Simulation file store paths ───────────────────────────────────────────────
+# Pre-built experiment HTML files (existing)
 _SIM_EXPERIMENTS_DIR = Path(__file__).parent / "simulation_experiments"
+# Topic-based simulation HTML files (new)
+_SIM_TOPICS_DIR = Path(__file__).parent / "topics_simulations"
+
+# Ensure both directories exist so uploads never fail
+_SIM_EXPERIMENTS_DIR.mkdir(exist_ok=True)
+_SIM_TOPICS_DIR.mkdir(exist_ok=True)
+
+
+def _icon_for_name(name: str) -> str:
+    """Return an emoji icon based on keywords in the simulation filename."""
+    n = name.lower()
+    if any(k in n for k in ["engine", "motor", "turbine", "gear", "piston"]): return "⚙️"
+    if any(k in n for k in ["newton", "force", "motion", "inertia", "momentum"]): return "🍎"
+    if any(k in n for k in ["circuit", "electric", "volt", "current", "ohm"]): return "⚡"
+    if any(k in n for k in ["wave", "sound", "frequency", "oscillat"]): return "〰️"
+    if any(k in n for k in ["optic", "light", "lens", "refract", "reflect"]): return "🔭"
+    if any(k in n for k in ["heat", "thermo", "temperature", "energy"]): return "🌡️"
+    if any(k in n for k in ["acid", "base", "titrat", "pH", "reaction", "chem"]): return "🧪"
+    if any(k in n for k in ["cell", "dna", "bio", "plant", "photo", "osmosis"]): return "🔬"
+    if any(k in n for k in ["planet", "orbit", "gravity", "satellite", "solar"]): return "🪐"
+    if any(k in n for k in ["math", "function", "graph", "matrix", "vector"]): return "📐"
+    if any(k in n for k in ["fluid", "pressure", "flow", "hydraulic"]): return "💧"
+    if any(k in n for k in ["magnet", "field", "flux", "induct"]): return "🧲"
+    return "🧬"
+
+
+def _category_for_name(name: str) -> str:
+    """Return a subject category based on keywords in the simulation filename."""
+    n = name.lower()
+    if any(k in n for k in ["engine", "motor", "turbine", "circuit", "electric", "gear", "piston", "hydraulic", "fluid", "pressure"]): return "Engineering"
+    if any(k in n for k in ["newton", "force", "motion", "wave", "optic", "light", "heat", "thermo", "magnet", "gravity", "planet", "orbit"]): return "Physics"
+    if any(k in n for k in ["acid", "base", "titrat", "pH", "reaction", "chem", "molecule"]): return "Chemistry"
+    if any(k in n for k in ["cell", "dna", "bio", "plant", "photo", "osmosis"]): return "Biology"
+    if any(k in n for k in ["math", "function", "graph", "matrix", "vector"]): return "Mathematics"
+    return "Science"
+
+
+def _list_sim_folder(folder: Path) -> list:
+    """Scan a folder and return metadata for each HTML file found."""
+    if not folder.is_dir():
+        return []
+    results = []
+    for f in sorted(folder.glob("*.html")):
+        raw_name = f.stem.replace("_", " ").replace("-", " ").title()
+        results.append({
+            "filename": f.name,
+            "name":     raw_name,
+            "icon":     _icon_for_name(f.stem),
+            "category": _category_for_name(f.stem),
+        })
+    return results
+
+
+@app.get("/simulations/list")
+async def list_simulations(type: str = "experiments"):
+    """
+    List pre-built simulation HTML files from a specific folder.
+    
+    Query param:
+      type = "topics"      → scans topics_simulations/
+      type = "experiments" → scans simulation_experiments/
+    
+    Returns: [{filename, name, icon, category}]
+    """
+    if type == "topics":
+        items = _list_sim_folder(_SIM_TOPICS_DIR)
+    else:
+        items = _list_sim_folder(_SIM_EXPERIMENTS_DIR)
+    return {"type": type, "count": len(items), "items": items}
+
+
+@app.get("/simulations/file")
+async def get_simulation_file(type: str = "experiments", file: str = ""):
+    """
+    Fetch the HTML content of a specific simulation file.
+    
+    Query params:
+      type = "topics" | "experiments"
+      file = filename (e.g. "si_engine.html")
+    
+    Security: path traversal is blocked — only bare filenames are accepted.
+    """
+    if not file or "/" in file or "\\" in file or ".." in file:
+        raise HTTPException(status_code=400, detail="Invalid filename. Only bare filenames like 'si_engine.html' are allowed.")
+
+    folder = _SIM_TOPICS_DIR if type == "topics" else _SIM_EXPERIMENTS_DIR
+    target = folder / file
+
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail=f"Simulation file '{file}' not found in {type} folder.")
+
+    try:
+        html = target.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not read file: {e}")
+
+    return {"filename": file, "html": html, "source": type}
 
 
 def _normalize_for_match(text: str) -> str:
