@@ -2,7 +2,7 @@
 q_animation.py — Fully Refactored + Backend-Connected
 ======================================================
 Generates premium, step-by-step interactive SVG engineering animations from a
-natural-language question.  Uses **Google Gemini 2.5 Pro** for every AI step.
+natural-language question.  Uses **Google Gemini 3.1 Pro** for every AI step.
 
 Architecture (3-Part Pipeline)
 -------------------------------
@@ -27,10 +27,10 @@ Environment variable:  GEMINI_API_KEY
 
 FIX (2026-07-13)
 ----------------
-Replaced `import google.generativeai as genai` (optional third-party package)
-with direct HTTPS calls to the Gemini REST API using only stdlib `urllib`.
-This eliminates the `ModuleNotFoundError: No module named 'google.generativeai'`
-crash that prevented uvicorn from importing this module.
+• Replaced deprecated model "gemini-2.5-pro" (404 NOT_FOUND) with the
+  official successor "gemini-3.1-pro-preview" per Google's deprecation
+  notice (earliest shutdown date: June 17, 2026).
+• Uses only Python stdlib urllib — no google-generativeai package needed.
 """
 
 import os
@@ -46,7 +46,8 @@ import urllib.error
 # 0.  Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GEMINI_MODEL = "gemini-2.5-pro"          # Gemini model to use
+# ✅ FIXED: Updated from "gemini-2.5-pro" (deprecated/404) to "gemini-3.1-pro-preview"
+GEMINI_MODEL = "gemini-3.1-pro-preview"
 OUTPUT_DIR   = "."                        # Where .html files are written (CLI)
 
 # Gemini REST endpoint (no SDK required)
@@ -1007,7 +1008,7 @@ if __name__ == "__main__":
 
     print("=" * 64)
     print("  q_animation.py  —  Engineering Animation Generator")
-    print("  Powered by Google Gemini 2.5 Pro  (via REST API)")
+    print("  Powered by Google Gemini 3.1 Pro  (via REST API)")
     print("=" * 64)
     print()
     print("Available example questions:")
