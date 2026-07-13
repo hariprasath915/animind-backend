@@ -24,6 +24,13 @@ Usage (standalone CLI)
   python q_animation.py
 
 Environment variable:  GEMINI_API_KEY
+
+FIX (2026-07-13)
+----------------
+Replaced `import google.generativeai as genai` (optional third-party package)
+with direct HTTPS calls to the Gemini REST API using only stdlib `urllib`.
+This eliminates the `ModuleNotFoundError: No module named 'google.generativeai'`
+crash that prevented uvicorn from importing this module.
 """
 
 import os
@@ -32,14 +39,21 @@ import json
 import asyncio
 import tempfile
 import textwrap
-import google.generativeai as genai
+import urllib.request
+import urllib.error
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 0.  Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GEMINI_MODEL = "gemini-3.1-pro"          # Gemini model to use
+GEMINI_MODEL = "gemini-2.5-pro"          # Gemini model to use
 OUTPUT_DIR   = "."                        # Where .html files are written (CLI)
+
+# Gemini REST endpoint (no SDK required)
+_GEMINI_REST_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "{model}:generateContent?key={key}"
+)
 
 # CSS / visual design tokens shared across every generated file
 DESIGN_TOKENS = {
@@ -55,25 +69,66 @@ DESIGN_TOKENS = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1.  Gemini Client Helper
+# 1.  Gemini REST Client Helper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _init_gemini(api_key: str | None = None) -> genai.GenerativeModel:
-    """Configure the Gemini SDK and return a GenerativeModel instance."""
+def _get_api_key(api_key: str | None = None) -> str:
+    """Return the Gemini API key, raising clearly if absent."""
     key = api_key or os.environ.get("GEMINI_API_KEY")
     if not key:
         raise EnvironmentError(
             "Gemini API key not found.  Set the GEMINI_API_KEY environment "
             "variable or pass api_key= to generate_animation()."
         )
-    genai.configure(api_key=key)
-    return genai.GenerativeModel(GEMINI_MODEL)
+    return key
 
 
-def _call_gemini(model: genai.GenerativeModel, prompt: str) -> str:
-    """Send a prompt and return the raw text response."""
-    response = model.generate_content(prompt)
-    return response.text.strip()
+def _call_gemini(prompt: str, api_key: str) -> str:
+    """
+    Send *prompt* to the Gemini REST API and return the raw text response.
+
+    Uses only Python stdlib (urllib) — no google-generativeai package needed.
+    Raises RuntimeError on non-200 responses with the full error body.
+    """
+    url = _GEMINI_REST_URL.format(model=GEMINI_MODEL, key=api_key)
+
+    payload = json.dumps({
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 1.0,
+            "maxOutputTokens": 65536,
+        },
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Gemini API HTTP {exc.code}: {error_body[:500]}"
+        ) from exc
+
+    data = json.loads(body)
+
+    # Extract text from the first candidate's first part
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except (KeyError, IndexError) as exc:
+        raise RuntimeError(
+            f"Unexpected Gemini response structure: {body[:500]}"
+        ) from exc
 
 
 def _extract_json(raw: str) -> dict | list:
@@ -167,10 +222,10 @@ Return ONLY valid JSON — no markdown, no preamble, no trailing text.
 }
 """
 
-def generate_explanation_script(model, question: str) -> dict:
+def generate_explanation_script(api_key: str, question: str) -> dict:
     """Part 1: Ask Gemini to produce a rich, component-aware explanation script."""
     prompt = f"{PART1_SYSTEM}\n\nQuestion:\n{question}"
-    raw = _call_gemini(model, prompt)
+    raw = _call_gemini(prompt, api_key)
     return _extract_json(raw)
 
 
@@ -348,13 +403,13 @@ Return ONLY valid JSON — no markdown, no preamble, no trailing text.
 }
 """
 
-def generate_animation_sequence(model, explanation: dict) -> dict:
+def generate_animation_sequence(api_key: str, explanation: dict) -> dict:
     """Part 2: Ask Gemini to produce the animation sequence."""
     prompt = (
         f"{PART2_SYSTEM}\n\n"
         f"Explanation Script:\n{json.dumps(explanation, indent=2)}"
     )
-    raw = _call_gemini(model, prompt)
+    raw = _call_gemini(prompt, api_key)
     return _extract_json(raw)
 
 
@@ -502,7 +557,7 @@ IMPORTANT RULES:
     from Part 2 "total_scenes".
 """
 
-def generate_svg_body(model, explanation: dict, sequence: dict) -> str:
+def generate_svg_body(api_key: str, explanation: dict, sequence: dict) -> str:
     """Part 3a: Ask Gemini to produce the SVG inner content."""
     components = explanation.get("components", [])
     component_summary = "\n".join(
@@ -528,7 +583,7 @@ def generate_svg_body(model, explanation: dict, sequence: dict) -> str:
         f"=== FULL EXPLANATION SCRIPT ===\n{json.dumps(explanation, indent=2)}\n\n"
         f"=== FULL ANIMATION SEQUENCE ===\n{json.dumps(sequence, indent=2)}"
     )
-    raw = _call_gemini(model, prompt)
+    raw = _call_gemini(prompt, api_key)
     # Strip any accidental outer SVG tags or markdown fences
     raw = re.sub(r"```(?:svg|html|xml)?\s*", "", raw).replace("```", "").strip()
     raw = re.sub(r"^<svg[^>]*>", "", raw, flags=re.IGNORECASE).strip()
@@ -536,7 +591,7 @@ def generate_svg_body(model, explanation: dict, sequence: dict) -> str:
     return raw
 
 
-def generate_js_body(model, explanation: dict, sequence: dict) -> str:
+def generate_js_body(api_key: str, explanation: dict, sequence: dict) -> str:
     """Part 3b: Ask Gemini to produce the JavaScript animation engine."""
     components = explanation.get("components", [])
     component_ids = [c["id"] for c in sorted(components, key=lambda x: x.get("draw_order", 99))]
@@ -549,7 +604,7 @@ def generate_js_body(model, explanation: dict, sequence: dict) -> str:
         f"=== FULL EXPLANATION SCRIPT ===\n{json.dumps(explanation, indent=2)}\n\n"
         f"=== FULL ANIMATION SEQUENCE ===\n{json.dumps(sequence, indent=2)}"
     )
-    raw = _call_gemini(model, prompt)
+    raw = _call_gemini(prompt, api_key)
     raw = re.sub(r"```(?:javascript|js)?\s*", "", raw).replace("```", "").strip()
     return raw
 
@@ -765,31 +820,31 @@ def _run_pipeline(
         if verbose:
             print(f"[q_animation] {msg}")
 
-    # Init Gemini
-    model = _init_gemini(api_key)
+    # Resolve API key once; all helpers receive it explicitly (no global state)
+    key = _get_api_key(api_key)
     log(f"Gemini model: {GEMINI_MODEL}")
 
     # Part 1: Explanation Script
     log("Part 1 → Generating explanation script ...")
-    explanation = generate_explanation_script(model, question)
+    explanation = generate_explanation_script(key, question)
     topic = explanation.get("topic", "animation")
     log(f"  Topic: {topic}")
     log(f"  Solution steps: {len(explanation.get('solution_steps', []))}")
 
     # Part 2: Animation Sequence
     log("Part 2 → Generating animation sequence ...")
-    sequence = generate_animation_sequence(model, explanation)
+    sequence = generate_animation_sequence(key, explanation)
     log(f"  Mechanism type: {sequence.get('mechanism_type', '?')}")
     log(f"  Scenes: {len(sequence.get('scenes', []))}")
 
     # Part 3a: SVG Body
     log("Part 3a → Generating SVG scene content ...")
-    svg_body = generate_svg_body(model, explanation, sequence)
+    svg_body = generate_svg_body(key, explanation, sequence)
     log(f"  SVG content length: {len(svg_body):,} chars")
 
     # Part 3b: JavaScript Engine
     log("Part 3b → Generating JavaScript animation engine ...")
-    js_body = generate_js_body(model, explanation, sequence)
+    js_body = generate_js_body(key, explanation, sequence)
     log(f"  JS content length: {len(js_body):,} chars")
 
     # Assemble HTML
@@ -858,7 +913,7 @@ async def generate_question_animation(question: str) -> dict:
             "explanation":    "<one-sentence plain-English answer>"
         }
 
-    The heavy Gemini work runs in a thread-pool executor so it does not
+    The heavy REST calls run in a thread-pool executor so they do not
     block the FastAPI event loop.
     """
     question = (question or "").strip()
@@ -952,7 +1007,7 @@ if __name__ == "__main__":
 
     print("=" * 64)
     print("  q_animation.py  —  Engineering Animation Generator")
-    print("  Powered by Google Gemini 2.5 Pro")
+    print("  Powered by Google Gemini 2.5 Pro  (via REST API)")
     print("=" * 64)
     print()
     print("Available example questions:")
