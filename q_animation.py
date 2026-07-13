@@ -43,7 +43,7 @@ import google.generativeai as genai
 # 0.  Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GEMINI_MODEL = "gemini-2.5-pro"          # High-level Gemini model
+GEMINI_MODEL = "gemini-3.1-pro"          # High-level Gemini model
 OUTPUT_DIR   = "."                       # Where .html files are written
 
 # CSS / visual design tokens shared across every generated file
