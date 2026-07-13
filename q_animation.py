@@ -5904,141 +5904,62 @@ class GeminiScene1Generator:
     # Reference animation style (from the provided gemini-code HTML file) is
     # embedded as style context so Gemini understands the visual quality bar.
     _SCENE1_SYSTEM = """\
-You are QAnim Scene-0 Engine — a specialist SVG animator whose ONLY job is to
-generate Scene 0 ("Step-by-Step Visual Explanation") of an educational SVG animation.
+You are QAnim Scene-1 Engine — a specialist SVG animator whose ONLY job is to
+generate Scene 0 ("What Are We Looking At?") of an educational SVG animation.
 
 You are NOT an infographic illustrator. You are a motion-graphics teacher in
 the style of 3Blue1Brown, Brilliant.org, and premium Khan Academy visuals.
-Every scene you build is a LIVING ANIMATION that draws each component one by
-one, explains its role, then assembles the full picture — never a diagram that
-simply appears all at once.
+Every scene you build is a LIVING ANIMATION that reveals the concept
+step-by-step, at a pace a student can actually follow — never a diagram that
+simply appears all at once. If a viewer could pause your animation on frame 1
+and already see the whole diagram, you have failed the task.
 
-═══ CORE MISSION: STEP-BY-STEP COMPONENT BUILD-UP ═══
-Scene 0 must first generate a clear EXPLANATION SCRIPT from the question, then
-draw each object/component one by one in order. For every component:
-  1. Draw it into the scene with an appropriate motion (grow, rotate, slide in).
-  2. Show a small animation that demonstrates its role or behaviour.
-  3. Label it with data from the question.
-  4. Apply focus/blur: blur already-drawn background elements while animating
-     the new component, then restore everything to full visibility afterward.
-  5. Repeat for the next component.
+═══ CORE PHILOSOPHY ═══
+The goal is conceptual understanding, not decoration. Before writing anything,
+silently plan a short visual story for this specific topic:
+  1. What is the single core idea the student must "get"?
+  2. What are the 5-9 visual beats that build up to it, in order?
+  3. Which beat is the "aha" moment that deserves the strongest highlight?
+Every animation choice must serve one of these beats. If an effect doesn't
+help understanding, cut it.
 
-═══ SCRIPT GENERATION FIRST ═══
-Before writing any SVG, silently plan:
-  1. What are the physical components of this problem (e.g. ground, crank,
-     connecting rod, slider; or pipe, fluid, thermal boundary; or block, spring,
-     wall; or circuit elements, etc.)?
-  2. In what logical order should they be introduced to build understanding?
-  3. What data values from the question should annotate each component?
-  4. What motion/animation best demonstrates each component's role?
-This script drives every animation beat. Each beat = one new component.
-
-═══ FOCUS AND BLUR CHOREOGRAPHY ═══
-This is the key differentiator of Scene 0. Follow this pattern strictly:
-
-  STEP 1 — BACKGROUND/FRAME:
-    Draw the base environment first (ground hatch, reference axes, fixed frame,
-    wall, pipe cross-section, coordinate system — whatever the problem needs).
-    Show all given data related to the base with labels. Fully visible at normal
-    opacity. No blur yet.
-
-  STEP 2 — FIRST COMPONENT (e.g. crank, first link, source node):
-    • BLUR the background: apply filter="url(#s0-blur)" to the background
-      group (set its filter attribute via JS).
-    • Draw/animate the new component: grow/rotate/slide it into position.
-    • Show its characteristic motion (e.g. crank rotating, spring compressing,
-      particle moving along a path).
-    • Display its label and data value prominently.
-    • UN-BLUR: remove the blur filter from the background group.
-    • Brief pause (300-500ms) to let the full scene register.
-
-  STEP 3 — SECOND COMPONENT (e.g. connecting rod, second link, intermediate node):
-    • BLUR all previously drawn elements (background + first component together).
-    • Draw/animate the second component.
-    • Show its motion and attach it to the first component visually.
-    • Display its label and data value.
-    • UN-BLUR: restore full visibility.
-    • Brief pause.
-
-  (Repeat this pattern for each subsequent component.)
-
-  FINAL STEP — FULL ASSEMBLY:
-    • All components visible at full opacity, no blur anywhere.
-    • Show 1-2 elements with subtle continuous motion (e.g. a rotating crank,
-      a flowing arrow) so the scene feels alive.
-    • The complete diagram is now fully visible and annotated.
-
-═══ BLUR IMPLEMENTATION ═══
-Define this filter INSIDE the <g id="scene-0"> group, before any shapes:
-  <defs>
-    <filter id="s0-blur" x="-10%" y="-10%" width="120%" height="120%">
-      <feGaussianBlur stdDeviation="3"/>
-    </filter>
-  </defs>
-
-Blur a group by setting its filter attribute in JS:
-  document.getElementById('s0-bg').setAttribute('filter','url(#s0-blur)');
-Un-blur it by removing the filter:
-  document.getElementById('s0-bg').setAttribute('filter','none');
-  document.getElementById('s0-bg').style.transition = 'filter 0.4s ease';
-
-Use separate group IDs for:
-  s0-bg       — background / frame / ground (blurred while animating new parts)
-  s0-comp1    — first main component group
-  s0-comp2    — second main component group
-  s0-comp3    — third main component group (if needed)
-  s0-labels   — labels and data annotations
-
-═══ UNIVERSAL COMPONENT MAPPING ═══
-Analyse the question and map it to appropriate visual components:
-
-  MECHANICS (slider-crank, linkage, cam, gear):
-    Components: ground/frame → crank → connecting rod → slider/piston
-    Motions: rotation (crank), oscillation (rod), translation (slider)
-
-  THERMAL / PIPE (heat transfer, fluid flow):
-    Components: pipe/wall cross-section → thermal boundary layers → heat flux
-    arrows → temperature labels
-    Motions: heat arrows flowing, temperature gradient color sweep
-
-  ELECTRICAL (circuit, RC, RL, resonance):
-    Components: source → resistor/inductor/capacitor → connections → labels
-    Motions: current flow arrows animated along wire paths
-
-  MECHANICS (block, spring, pendulum, pulley):
-    Components: fixed support → spring/rope → mass block
-    Motions: spring compression, block sliding, pendulum swing arc
-
-  FLUID (pipe flow, Bernoulli, pump):
-    Components: pipe cross-section → fluid particles → velocity arrows
-    Motions: particle flow animation, pressure labels
-
-  MATHEMATICAL / ABSTRACT:
-    Components: coordinate axes → primary curve/function → key points → labels
-    Motions: curve tracing itself, points appearing on the curve
-
-  BIOLOGICAL / PROCESS:
-    Components: environment/cell → first mechanism → pathway → output
-    Motions: molecule moving, signal propagating, pathway arrows drawing
-
-For ANY question type: identify 3-5 distinct visual components, draw each one
-by one with focus/blur, and annotate with actual numbers from the question.
-
-═══ DATA ANNOTATION RULES ═══
-  - Extract ALL numeric values from the question (lengths, speeds, angles,
-    temperatures, pressures, etc.).
-  - Display each value as a label NEXT TO the component it belongs to.
-  - Format: symbol = value unit  (e.g. "r = 50 mm", "ω = 300 rpm", "θ = 60°")
-  - Labels appear when their component is introduced (not all at once).
-  - Use arrows or lines from label to the relevant part of the component.
+═══ CHOREOGRAPHY RULES ═══
+  1. PROGRESSIVE REVEAL — build the scene in ordered beats, e.g.
+     background → axes/setup → objects → connections/vectors → labels →
+     the key relationship → highlight → (optional) final equation/callout.
+     Never reveal more than one new idea per beat.
+  2. ONE OBJECT AT A TIME — when several objects exist (block, rope, pulley,
+     field lines, particles…), introduce each separately with its own timed
+     step, not as a single simultaneous fade-in group.
+  3. MOTION WITH PURPOSE — objects should animate the way they behave
+     physically: lines/vectors grow from a start point, curves and graphs
+     trace themselves left-to-right, rotating parts rotate, orbits sweep,
+     waves propagate, particles drift, springs compress, charges move along
+     field lines. Prefer "growing/tracing/moving into place" over "just
+     fading in" wherever the object's real behaviour supports it.
+  4. UNHURRIED PACING — space beats out with clear pauses between them
+     (roughly 500-900ms apart) so each idea lands before the next appears.
+     Do not cram everything into the first second.
+  5. GUIDE THE EYE — when a beat introduces the most important element,
+     make it visually louder than what came before: a brief glow/scale pulse
+     via a couple of quick setAttribute/style steps, a stronger stroke, or a
+     highlight color, so the student's attention is pulled to exactly the
+     right place at exactly the right time.
+  6. CAUSE BEFORE EFFECT — if the topic has a causal chain (force → motion,
+     current → field, input → output), reveal the cause, let it settle, THEN
+     reveal the effect it produces — never both at once.
+  7. MICRO-LIFE — once the main reveal finishes, 1-2 elements can keep a
+     subtle continuous motion (e.g. a flowing dashed line, a gently
+     oscillating arrow) so the final frame doesn't feel frozen. Keep this
+     minimal and non-distracting.
 
 ═══ VISUAL QUALITY BAR ═══
   - Clean, modern, minimal composition on a LIGHT (#f8fafc) background.
   - Consistent accent colour #3b5bdb (deep blue) for emphasis/highlights.
   - Linear/radial gradients for depth on physical objects.
-  - feGaussianBlur glow filter on focused component's "aha" beat.
-  - Generous spacing, rounded shapes, professional typography.
-  - ZERO text overlaps. ZERO clutter. Labels never obscure components.
+  - feGaussianBlur glow filters used sparingly, only on the highlighted beat.
+  - Generous spacing, rounded shapes, professional typography — ZERO clutter,
+    ZERO overlapping labels, ever.
   - Info card at the bottom of the SVG (y=490, inside the <g> group).
 
 ═══ OUTPUT FORMAT (strict) ═══
@@ -6052,43 +5973,41 @@ scene0_svg_group rules:
   - Must start with <g id="scene-0" class="scene"> (NO display attribute).
   - Must end with </g>.
   - The group assumes it will be placed inside an SVG with viewBox="0 0 1000 600".
-  - All child elements start with opacity="0" (except the background rect and defs).
-  - Include <defs> with the s0-blur filter as first child of the group.
-  - Organise elements into logical sub-groups: s0-bg, s0-comp1, s0-comp2, etc.
-  - Any element that should "draw itself" (a line, path, vector) must set
-    pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" as starting state.
+  - All child elements start with opacity="0" (except the background rect).
+  - Any element that should "draw itself" (a line, path, vector, curve, graph
+    trace) must set pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"
+    as its starting state, so animate_scene0_js can animate the dashoffset
+    down to 0 to make it draw progressively.
   - You MAY embed native SMIL child tags (<animate>, <animateTransform>,
     <animateMotion>) inside shapes for growing/rotating/moving effects, but
     every one of them MUST include begin="indefinite" and a unique id — they
-    are only allowed to start when triggered from animate_scene0_js.
+    are only allowed to start when triggered from animate_scene0_js via
+    getElementById(id).beginElement(), never automatically on page load.
   - Include a bottom info card at y=490:
       <rect x="60" y="490" width="880" height="90" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
       <rect x="60" y="490" width="5" height="90" rx="3" fill="#3b5bdb"/>
       <text x="85" y="516" font-size="14" fill="#1e293b" font-weight="700">Scene 1 — What Are We Looking At?</text>
-      <text x="85" y="540" font-size="13" fill="#475569">First simple description line about the setup.</text>
-      <text x="85" y="560" font-size="13" fill="#475569">Second line: key given values and what we must find.</text>
+      <text x="85" y="540" font-size="13" fill="#475569">First simple description line.</text>
+      <text x="85" y="560" font-size="13" fill="#475569">Second simple description line.</text>
   - Use SIMPLE English in description lines (short sentences, friendly teacher tone).
   - ZERO text overlaps anywhere in the group.
   - NO dark backgrounds.
 
 animate_scene0_js rules:
   - Must be a complete function declaration: function animateScene0() { ... }
-  - Implements the FULL step-by-step build-up with focus/blur pattern:
-      Phase 1: Reveal background/frame (fade in s0-bg group).
-      Phase 2: Blur background → animate comp1 → un-blur → pause.
-      Phase 3: Blur background+comp1 → animate comp2 → un-blur → pause.
-      Phase 4+ (if needed): same pattern for comp3, etc.
-      Final: all visible, subtle continuous motion on 1-2 elements.
-  - Blur by: document.getElementById('s0-bg').setAttribute('filter','url(#s0-blur)');
-  - Un-blur by: document.getElementById('s0-bg').setAttribute('filter','none');
-  - Use transition for smooth blur: element.style.transition='opacity 0.3s ease';
   - Drives every beat via chained setTimeout calls only (no CSS keyframes,
-    no CSS classes, no setInterval for animation phases).
-  - Stagger component beats roughly 1000-1500ms apart (longer than normal
-    because each component gets its own focus → animate → label → unfocus cycle).
-  - Stagger individual element reveals within a component 150-300ms apart.
-  - The single most important component should get an extra emphasis step
-    (brief scale-up-then-settle or glow toggle) before unfocusing.
+    no CSS classes, no setInterval).
+  - Allowed per-beat actions inside each setTimeout callback:
+      • getElementById(id).setAttribute("opacity", "1")               (reveal)
+      • getElementById(id).setAttribute("transform", "...")           (move/rotate/scale into place)
+      • getElementById(id).setAttribute("stroke-dashoffset", "0")     (draw a line/path/graph)
+      • getElementById(id).beginElement()                             (fire an indefinite SMIL animation defined in the SVG)
+      • getElementById(id).style.transition = "..."; then setAttribute a new value (smooth eased motion)
+  - Stagger beats generously (roughly every 500-900ms) so each idea has time
+    to register — do not fire everything in the first 300ms.
+  - The single most important beat should get one extra emphasis step
+    shortly after it appears (e.g. a brief scale-up-then-settle or a
+    stroke/glow toggle) before moving on.
   - MUST NOT define or call showScene, buildDots, nextStep, prevStep.
   - MUST NOT define window.totalSteps or window.currentStep.
   - MUST NOT use const, let, backtick template literals, or arrow functions.
@@ -6138,44 +6057,28 @@ animate_scene0_js rules:
             f"category={category} n_scenes={n_scenes}..."
         )
         user_prompt = (
-            f"Generate Scene 0 (\"Step-by-Step Visual Explanation\") for this educational animation.\n\n"
+            f"Generate ONLY Scene 0 (\"What Are We Looking At?\") for this educational animation.\n\n"
             f"QUESTION: {question}\n"
             f"CATEGORY: {category}\n"
             f"TOTAL SCENES IN ANIMATION: {n_scenes}\n\n"
-            f"═══ YOUR TASK: STEP-BY-STEP COMPONENT BUILD-UP WITH FOCUS/BLUR ═══\n\n"
-            f"STEP 1 — ANALYSE THE QUESTION:\n"
-            f"  Identify: (a) the physical setup/background, (b) each distinct component,\n"
-            f"  (c) all numeric values and which component each belongs to,\n"
-            f"  (d) the characteristic motion each component exhibits.\n\n"
-            f"STEP 2 — PLAN THE ANIMATION SCRIPT (in your head, before writing SVG):\n"
-            f"  Map each component to a draw phase:\n"
-            f"  Phase 0: Draw background/frame/ground with its data labels. Full opacity.\n"
-            f"  Phase 1: Blur background → draw component 1 with its motion → label it → un-blur.\n"
-            f"  Phase 2: Blur all drawn elements → draw component 2 → animate → label → un-blur.\n"
-            f"  Phase 3+ : Same pattern for each additional component.\n"
-            f"  Final: All components visible, 1-2 in subtle continuous motion.\n\n"
-            f"STEP 3 — IMPLEMENT THE SVG + JS:\n"
-            f"  - Include <defs><filter id='s0-blur'><feGaussianBlur stdDeviation='3'/></filter></defs>\n"
-            f"  - Organise SVG into groups: s0-bg (background), s0-comp1, s0-comp2, etc.\n"
-            f"  - Each component group starts opacity='0', revealed in animate_scene0_js.\n"
-            f"  - In animate_scene0_js, implement blur/un-blur between each component:\n"
-            f"      • Blur: document.getElementById('s0-bg').setAttribute('filter','url(#s0-blur)');\n"
-            f"      • Un-blur: document.getElementById('s0-bg').setAttribute('filter','none');\n"
-            f"  - Each component gets its own motion animation (rotate, grow, slide, trace).\n"
-            f"  - Data labels appear alongside the component they describe.\n"
-            f"  - Pace component phases 1000-1500ms apart; element reveals within 150-300ms apart.\n\n"
-            f"EXAMPLE for a slider-crank question:\n"
-            f"  Phase 0: Ground hatch marks + fixed pivot point. Labels: fixed support.\n"
-            f"  Phase 1: [blur bg] → crank arm rotates into position → label 'r = 50 mm' → [un-blur]\n"
-            f"  Phase 2: [blur bg+crank] → connecting rod draws from crank pin → label 'L = 200 mm' → [un-blur]\n"
-            f"  Phase 3: [blur bg+crank+rod] → slider block slides in → label 'ω = 300 rpm, θ = 60°' → [un-blur]\n"
-            f"  Final: Full assembly visible, crank slowly rotates as continuous motion.\n\n"
-            f"INFO CARD: Include bottom card showing\n"
-            f"  'Scene 1 of {n_scenes} — What Are We Looking At?'\n"
-            f"  with two description lines: first line = what the setup is,\n"
-            f"  second line = key given values and what must be found.\n\n"
-            f"Return ONLY raw JSON with keys 'scene0_svg_group' and 'animate_scene0_js'.\n"
-            f"No markdown, no fences, no extra keys."
+            f"Before writing SVG, plan 5-9 visual beats that build this concept up\n"
+            f"step-by-step for a student seeing it for the first time (background \u2192\n"
+            f"setup \u2192 objects introduced one at a time \u2192 how they interact/connect \u2192\n"
+            f"the key relationship \u2192 the \"aha\" highlight). Then implement that plan:\n"
+            f"- Reveal ONE new idea per beat \u2014 never the whole diagram at once.\n"
+            f"- Animate objects the way they actually behave: lines/vectors grow,\n"
+            f"  curves and graphs trace themselves, rotating parts rotate, things\n"
+            f"  move into place \u2014 not just plain fade-ins.\n"
+            f"- Pace beats roughly 500-900ms apart so each one has time to register.\n"
+            f"- Give the single most important beat (the \"aha\" moment) an extra\n"
+            f"  emphasis pulse/highlight so the student's eye is pulled to it.\n"
+            f"- Use accent colour #3b5bdb for highlights.\n"
+            f"- Include the bottom info card showing 'Scene 1 of {n_scenes} \u2014 What Are We Looking At?' "
+            f"with two simple, friendly description lines.\n"
+            f"- This must feel like a teacher building the idea on a board in real time, "
+            f"not a static diagram that appears instantly \u2014 hook the student visually "
+            f"before the detailed explanation begins.\n\n"
+            f"Return ONLY raw JSON with keys 'scene0_svg_group' and 'animate_scene0_js'."
         )
 
         raw = None
@@ -6417,19 +6320,9 @@ def _build_system_prompt(n_scenes: int, gemini_scene0_svg: str = "") -> str:
     ALL_SCENES = [
         # (title, accent_color, description)
         ("What Are We Looking At?",     "#3b5bdb",
-         "STEP-BY-STEP COMPONENT BUILD-UP WITH FOCUS/BLUR: "
-         "Draw the physical setup by introducing each component one at a time. "
-         "Phase 0: Draw background/frame/ground with data labels. "
-         "Phase 1: Blur background, draw first component (e.g. crank/source/first link) "
-         "with its characteristic motion, label it with data from the question, then un-blur. "
-         "Phase 2: Blur all drawn elements, draw second component (e.g. connecting rod/next link), "
-         "animate its motion, label it, un-blur. "
-         "Phase 3+: Repeat for each additional component. "
-         "Final: All components visible; 1-2 with subtle continuous motion. "
-         "Blur via feGaussianBlur filter on a group element (stdDeviation=3). "
-         "NEVER show all parts at once -- the step-by-step reveal IS the teaching. "
-         "Card text: \"Scene 1 of N — What Are We Looking At?\" + two simple description lines "
-         "(first: what the setup is; second: key given values and what must be found)."),
+         "Draw the physical setup as a simple, friendly picture. "
+         "Animate parts appearing one by one. "
+         "Card text: \"Scene 1 of N — What Are We Looking At?\" + two simple description lines."),
         ("The Governing Law",           "#0ea5e9",
          "Identify the GOVERNING LAW / PRINCIPLE for this problem exactly as an Anna "
          "University textbook would (e.g. Newton's Second Law, Fourier's Law, Nodal "
@@ -6508,53 +6401,12 @@ In your JS, define animateScene0() as an empty stub:
 """
     else:
         scene0_instruction = """
-═══ SCENE 0 — STEP-BY-STEP COMPONENT BUILD-UP WITH FOCUS/BLUR ═══
-CRITICAL: Scene 0 MUST implement a step-by-step animated explanation that draws
-each component one by one, showing its role, with focus/blur between components.
-
-REQUIRED PATTERN:
-  1. Analyse the question → identify physical components + their data values.
-  2. Draw the background/frame first (ground, axes, fixed support, pipe cross-section).
-  3. For EACH component (crank, rod, slider; or resistor, capacitor; etc.):
-     a. Blur the already-drawn background using a feGaussianBlur filter.
-     b. Draw/animate the new component (grow, rotate, slide, trace into position).
-     c. Show its characteristic motion/behaviour.
-     d. Display its data label (from the question) next to it.
-     e. Un-blur — restore full visibility. Pause ~400ms.
-  4. Final frame: all components fully visible, 1-2 with subtle continuous motion.
-
-SVG STRUCTURE REQUIRED:
-  - <defs><filter id="s0-blur" x="-10%" y="-10%" width="120%" height="120%">
-      <feGaussianBlur stdDeviation="3"/></filter></defs>
-  - Group elements as: s0-bg (background), s0-comp1, s0-comp2, s0-comp3 (as needed)
-  - All groups start opacity="0" except the background rect
-  - Every element has a unique ID (prefix s0-)
-
-animateScene0() MUST:
-  - Phase 0: Reveal s0-bg (fade in background/frame + its labels).
-  - Phase 1 (~1000ms): blur s0-bg → reveal s0-comp1 with characteristic motion
-      → show s0-comp1 labels → un-blur s0-bg → pause 400ms.
-  - Phase 2 (~2500ms): blur s0-bg + s0-comp1 → reveal s0-comp2 → motion → labels
-      → un-blur → pause.
-  - Phase 3+ (~4000ms+): repeat for each additional component.
-  - Final (~last phase): all groups fully visible, apply subtle continuous animation
-      to 1-2 elements (setInterval for gentle oscillation is OK only at this stage).
-
-BLUR IMPLEMENTATION in JS (use these exact patterns):
-  // Apply blur:
-  document.getElementById('s0-bg').setAttribute('filter', 'url(#s0-blur)');
-  // Remove blur:
-  document.getElementById('s0-bg').setAttribute('filter', 'none');
-  // Transition hint (optional):
-  document.getElementById('s0-bg').style.opacity = '0.35';   // dim while blurred
-  document.getElementById('s0-bg').style.opacity = '1';      // restore after
-
-DATA LABELS: Extract ALL numeric values from the question and display each one
-next to the component it belongs to, as: "symbol = value unit" (e.g. r = 50 mm).
-Labels appear together with their component, not all at once.
-
+═══ SCENE 0 — YOU MUST GENERATE THIS ═══
+CRITICAL: Scene 0 MUST contain a FULL visual diagram of the problem setup with
+real SVG elements (rects, circles, text, lines, arrows). Give every element a
+unique id (e.g. s0-title, s0-obj1, s0-label1) and start them with opacity="0".
+The animateScene0() function MUST fade them in using those IDs with staggered delays.
 NEVER generate scene-0 as an empty group or with only placeholder text.
-NEVER show all components at once — the focus/blur step-by-step reveal IS the point.
 """
 
     return f"""You are QAnim v0.2 -- a cinematic SVG motion designer and educational animation engineer.
@@ -7656,6 +7508,76 @@ def generate_question_animation_sync(question):
 # ---------------------------------------------------------------------------
 generate_animation       = generate_question_animation
 generate_animation_sync  = generate_question_animation_sync
+
+
+# ===========================================================================
+#  FASTAPI ENDPOINT HELPER
+#  This function is imported by admin_router.py and registered as the route
+#  handler for POST /generate-question-animation.
+#
+#  WHY NOT USE A PYDANTIC MODEL:
+#  When the request Content-Type is anything other than application/json
+#  (e.g. text/plain from a CORS simple-request fallback), FastAPI's Pydantic
+#  validation raises a 422 error whose 'input' field contains the raw bytes
+#  body.  The _validation_error_handler in admin_router.py then tries to call
+#  json.dumps() on that error dict, which crashes with:
+#    TypeError: Object of type bytes is not JSON serializable
+#  By reading the body manually via request.body() we completely bypass
+#  Pydantic validation and accept any Content-Type the browser sends.
+# ===========================================================================
+try:
+    from fastapi import Request as _FastAPIRequest
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    async def qanim_fastapi_endpoint(request: _FastAPIRequest):
+        """
+        FastAPI route handler for POST /generate-question-animation.
+
+        Accepts both application/json and text/plain bodies so that the
+        browser's CORS simple-request fallback (Content-Type: text/plain)
+        works without triggering a Pydantic validation error.
+        """
+        # --- Parse body regardless of Content-Type ---
+        try:
+            raw_body = await request.body()          # always bytes
+            if not raw_body:
+                return _JSONResponse(
+                    {"error": True, "detail": "Request body is empty"},
+                    status_code=400,
+                )
+            import json as _json
+            try:
+                payload = _json.loads(raw_body)      # works for both application/json and text/plain
+            except _json.JSONDecodeError:
+                return _JSONResponse(
+                    {"error": True, "detail": "Request body is not valid JSON"},
+                    status_code=400,
+                )
+            question = (payload.get("question") or "").strip()
+            if not question:
+                return _JSONResponse(
+                    {"error": True, "detail": "Field 'question' is required and must not be empty"},
+                    status_code=400,
+                )
+        except Exception as _parse_err:
+            return _JSONResponse(
+                {"error": True, "detail": f"Failed to read request body: {_parse_err}"},
+                status_code=400,
+            )
+
+        # --- Run the pipeline ---
+        try:
+            result = await generate_question_animation(question)
+            return _JSONResponse(result)
+        except Exception as _pipeline_err:
+            return _JSONResponse(
+                {"error": True, "detail": str(_pipeline_err)},
+                status_code=500,
+            )
+
+except ImportError:
+    # FastAPI not installed — endpoint helper unavailable (CLI-only usage is fine)
+    qanim_fastapi_endpoint = None
 
 
 # ===========================================================================
