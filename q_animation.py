@@ -1,9 +1,8 @@
 """
-q_animation.py — Fully Refactored
-===================================
+q_animation.py — Fully Refactored + Backend-Connected
+======================================================
 Generates premium, step-by-step interactive SVG engineering animations from a
-natural-language question.  Uses **Google Gemini 2.5 Pro** for every AI step;
-no Anthropic API calls remain.
+natural-language question.  Uses **Google Gemini 2.5 Pro** for every AI step.
 
 Architecture (3-Part Pipeline)
 -------------------------------
@@ -11,31 +10,27 @@ Part 1  → Gemini produces a structured *Explanation Script*
            (problem statement + full mathematical solution).
 Part 2  → Gemini produces a structured *Step-by-Step Animation Sequence*
            (scene descriptions, focus/blur notes, visual overlays, badge data).
-Part 3  → Gemini (or a deterministic builder guided by Parts 1 & 2) produces
-           the final single-file *High-Rich Interactive SVG HTML* document.
+Part 3  → Gemini produces the final single-file *High-Rich Interactive SVG HTML*
+           document (SVG body + JavaScript animation engine).
 
-The output style matches the reference slider-crank example:
-  • Dark dashboard shell  (#0b0c10 / #1f2833 palette)
-  • 850 × 450 SVG stage with grid, metallic gradients, drop-shadows
-  • Layered SVG groups with opacity transitions
-  • Blur-shield overlay for focus/defocus effects
-  • Step-dot progress indicator + info card with badges
-  • Physics / geometry engine in pure JS (requestAnimationFrame loop)
-  • "Next Step ▶ / Restart" control buttons
-  • Optional question-banner at the top
+Backend Integration
+-------------------
+  • generate_question_animation(question) → async function called by main.py
+    via POST /generate-question-animation.
+  • Returns { animation_code, title, explanation } as expected by index.html.
 
-Usage
------
+Usage (standalone CLI)
+-----------------------
   python q_animation.py
-  # (or import and call generate_animation(question, api_key))
 
 Environment variable:  GEMINI_API_KEY
-                   or  pass api_key= argument to generate_animation().
 """
 
 import os
 import re
 import json
+import asyncio
+import tempfile
 import textwrap
 import google.generativeai as genai
 
@@ -43,8 +38,8 @@ import google.generativeai as genai
 # 0.  Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GEMINI_MODEL = "gemini-3.1-pro"          # High-level Gemini model
-OUTPUT_DIR   = "."                       # Where .html files are written
+GEMINI_MODEL = "gemini-3.1-pro"          # Gemini model to use
+OUTPUT_DIR   = "."                        # Where .html files are written (CLI)
 
 # CSS / visual design tokens shared across every generated file
 DESIGN_TOKENS = {
@@ -86,9 +81,7 @@ def _extract_json(raw: str) -> dict | list:
     Extract and parse the first JSON object/array from a Gemini response,
     tolerating markdown code-fences.
     """
-    # Strip ```json ... ``` or ``` ... ```
     cleaned = re.sub(r"```(?:json)?\s*", "", raw).replace("```", "").strip()
-    # Find the first { or [ and pair it
     start = next((i for i, c in enumerate(cleaned) if c in "{["), None)
     if start is None:
         raise ValueError(f"No JSON found in Gemini response:\n{raw[:300]}")
@@ -143,11 +136,11 @@ Return ONLY valid JSON — no markdown, no preamble, no trailing text.
       "draw_order": 1,
       "label": "<human label, e.g. 'Driving Gear (20 teeth)'>",
       "shape": "<e.g. 'circle' | 'rectangle' | 'line' | 'gear' | 'pulley' | 'arrow' | 'beam' | 'custom'>",
-      "approx_cx": "<0-850 pixel x centre on 850×450 canvas>",
+      "approx_cx": "<0-850 pixel x centre on 850x450 canvas>",
       "approx_cy": "<0-450 pixel y centre>",
       "approx_size": "<radius or width in pixels>",
       "color_hint": "<fill color hex>",
-      "role_animation": "<one sentence: what motion/animation shows its role, e.g. 'Rotates clockwise at 900 RPM; show teeth moving'>",
+      "role_animation": "<one sentence: what motion/animation shows its role>",
       "label_position": "<'top' | 'bottom' | 'left' | 'right'>",
       "arrow_hints": ["<optional arrows to draw, e.g. 'rotation arrow CW'>"]
     }
@@ -205,21 +198,19 @@ CRITICAL RULES — read carefully:
      d) One FINAL scene: show the complete scene with all components animated
         simultaneously, display the final answer prominently.
    - Total scenes = 1 + len(components) + len(solution_steps) + 1.
-   - Index them 0, 1, 2, … continuously.
+   - Index them 0, 1, 2, ... continuously.
 
 2. BLUR / FOCUS EFFECT:
    - When introducing a NEW component: set blur_shield_opacity to 0.55 on
      all PREVIOUSLY drawn layers, making the new component the focal point.
-   - After the role animation finishes: set blur_shield_opacity to 0.0
-     (full scene visible).
+   - After the role animation finishes: set blur_shield_opacity to 0.0.
    - During SOLUTION scenes: blur everything EXCEPT the focused component(s).
 
 3. ANIMATIONS:
    - Each component draw scene must have a "draw_animation" field describing
      how the component appears (fade-in, scale-up, slide-in, etc.).
    - Each component draw scene must have a "role_animation" field with the
-     motion that demonstrates its function (rotation, translation, oscillation,
-     flow, etc.).
+     motion that demonstrates its function.
    - Use "motion_type": "rotate" | "translate" | "oscillate" | "pulse" |
      "flow" | "static" to help the JS engine know what animation to run.
 
@@ -358,13 +349,7 @@ Return ONLY valid JSON — no markdown, no preamble, no trailing text.
 """
 
 def generate_animation_sequence(model, explanation: dict) -> dict:
-    """
-    Part 2: Ask Gemini to produce the animation sequence.
-
-    The new sequence always follows:
-      Intro → (one scene per component, draw + role anim) →
-      (one scene per solution step, formula + focus) → Final answer scene.
-    """
+    """Part 2: Ask Gemini to produce the animation sequence."""
     prompt = (
         f"{PART2_SYSTEM}\n\n"
         f"Explanation Script:\n{json.dumps(explanation, indent=2)}"
@@ -374,7 +359,7 @@ def generate_animation_sequence(model, explanation: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4.  Part 3 — HTML Builder  (Gemini-guided + deterministic shell)
+# 4.  Part 3 — HTML Builder  (SVG body + JavaScript engine)
 # ─────────────────────────────────────────────────────────────────────────────
 
 PART3_SYSTEM = """
@@ -384,7 +369,7 @@ Given:
   • An Animation Sequence (Part 2 JSON)  — defines scenes, overlays, draw order
 
 Produce the COMPLETE BODY of an SVG scene — specifically the content that goes
-INSIDE <svg id="stage" viewBox="0 0 850 450"> … </svg>.
+INSIDE <svg id="stage" viewBox="0 0 850 450"> ... </svg>.
 
 STRUCTURE REQUIREMENTS:
   1. <defs> block — gradients, filters, markers, patterns tuned to the
@@ -393,8 +378,7 @@ STRUCTURE REQUIREMENTS:
   3. One <g class="svg-layer" id="layer-{component.id}" style="opacity:0;"> per
      component listed in Part 1 "components", in draw_order order.
      Each layer contains:
-       - The drawn shape (gear, rectangle, circle, line, etc.) sized and
-         positioned according to approx_cx/cy/size in Part 1.
+       - The drawn shape sized and positioned according to approx_cx/cy/size.
        - An id on each animated sub-element that matches what the JS will target.
        - A static label text element (hidden by default, shown by JS).
   4. A blur-shield element:
@@ -409,7 +393,6 @@ STRUCTURE REQUIREMENTS:
        - rotation_arrow: arc with curved arrowhead (CW or CCW)
        - formula_box:   dark rect + coloured border + formula / result rows
        - final_answer_box: prominent centred box with large value text
-     All text is legible on the dark background.
 
 STYLE CONVENTIONS:
   • Adapt the colour palette to visual_theme.palette from Part 1:
@@ -422,14 +405,13 @@ STYLE CONVENTIONS:
   • Glow filter using the accent color: id="glowAccent"
   • Arrow markers: id="arrowAccent" and id="arrowAccent2"
   • All component SVG elements that will be animated by JS MUST have id attributes.
-  • Label text: fill="#fff" or accent color; font-size 12–14; font-family monospace.
-  • Formula boxes: dark rect (fill="#0a0a0f") + accent-color border (stroke-width 1.5)
-    + header text in accent color + formula rows in white monospace.
+  • Label text: fill="#fff" or accent color; font-size 12-14; font-family monospace.
+  • Formula boxes: dark rect + accent-color border + header text + formula rows.
   • Final answer box: larger rect, bold text, accent2_color border + glow.
 
 Return ONLY the raw SVG inner content (starting with <defs>, ending with the
-last </g> before </svg>).  Do NOT include DOCTYPE, <html>, <head>, <body>,
-<style>, <script>, or the outer <svg> tag itself.
+last </g> before </svg>).  Do NOT include DOCTYPE, html, head, body,
+style, script, or the outer <svg> tag itself.
 """
 
 PART3_JS_SYSTEM = """
@@ -497,7 +479,7 @@ REQUIRED CODE STRUCTURE:
    • Starts/stops animation loop based on startAnim.
    • Updates dot indicators: removes 'active' from all, adds to current.
    • Updates #info-title, #info-badges, #info-desc, #step-label.
-   • Disables #btn-next on last scene, changes text to "✓ Done".
+   • Disables #btn-next on last scene, changes text to "Done".
 
 7. nextStep() — advances currentStep, calls applyStep().
 
@@ -514,19 +496,18 @@ IMPORTANT RULES:
   • Badge HTML: <span class="badge badge-cyan|badge-orange|badge-green|badge-red">
   • SVG Y-axis is INVERTED (y increases downward). For angles: use -sin for up.
   • For gear meshes: driven gear rotates opposite direction at speed ratio.
-  • For slider-crank: piston x = cx + r·cos(θ) + √(L²−r²·sin²(θ)).
-  • All transitions should be smooth (0.4–0.6s CSS or rAF easing).
+  • For slider-crank: piston x = cx + r*cos(theta) + sqrt(L^2 - r^2*sin^2(theta)).
+  • All transitions should be smooth (0.4-0.6s CSS or rAF easing).
   • Do NOT hardcode scene count to 4. Use the actual scenes array length
     from Part 2 "total_scenes".
 """
 
 def generate_svg_body(model, explanation: dict, sequence: dict) -> str:
     """Part 3a: Ask Gemini to produce the SVG inner content."""
-    # Build a concise component summary to guide SVG generation
     components = explanation.get("components", [])
     component_summary = "\n".join(
         f"  - id='{c['id']}' | label='{c['label']}' | shape='{c['shape']}' "
-        f"| cx≈{c['approx_cx']} cy≈{c['approx_cy']} size≈{c['approx_size']} "
+        f"| cx~{c['approx_cx']} cy~{c['approx_cy']} size~{c['approx_size']} "
         f"| color={c['color_hint']} | role='{c['role_animation']}'"
         for c in sorted(components, key=lambda x: x.get("draw_order", 99))
     )
@@ -543,14 +524,13 @@ def generate_svg_body(model, explanation: dict, sequence: dict) -> str:
         f"Feel: {theme.get('note','')}\n\n"
         f"=== COMPONENTS (draw in this order) ===\n{component_summary}\n\n"
         f"=== SCENE COUNT ===\n{scene_count} scenes total "
-        f"(overlay-scene0 … overlay-scene{scene_count-1})\n\n"
+        f"(overlay-scene0 ... overlay-scene{scene_count-1})\n\n"
         f"=== FULL EXPLANATION SCRIPT ===\n{json.dumps(explanation, indent=2)}\n\n"
         f"=== FULL ANIMATION SEQUENCE ===\n{json.dumps(sequence, indent=2)}"
     )
     raw = _call_gemini(model, prompt)
     # Strip any accidental outer SVG tags or markdown fences
     raw = re.sub(r"```(?:svg|html|xml)?\s*", "", raw).replace("```", "").strip()
-    # Remove outer <svg …> … </svg> wrapper if Gemini added one
     raw = re.sub(r"^<svg[^>]*>", "", raw, flags=re.IGNORECASE).strip()
     raw = re.sub(r"</svg>\s*$", "", raw, flags=re.IGNORECASE).strip()
     return raw
@@ -570,7 +550,6 @@ def generate_js_body(model, explanation: dict, sequence: dict) -> str:
         f"=== FULL ANIMATION SEQUENCE ===\n{json.dumps(sequence, indent=2)}"
     )
     raw = _call_gemini(model, prompt)
-    # Strip markdown fences
     raw = re.sub(r"```(?:javascript|js)?\s*", "", raw).replace("```", "").strip()
     return raw
 
@@ -602,7 +581,6 @@ body {
     border-radius: var(--border-radius); box-shadow: 0 15px 35px rgba(0,0,0,0.5);
     overflow: hidden; border: 1px solid #333;
 }
-/* Question Banner */
 .question-banner {
     padding: 18px 24px;
     background: linear-gradient(135deg, #1f2833 0%, #141a21 100%);
@@ -613,10 +591,9 @@ body {
     text-transform: uppercase; letter-spacing: 1px;
     display: flex; align-items: center; gap: 6px;
 }
-.q-label::before { content: "❓"; font-size: 14px; }
+.q-label::before { content: "?"; font-size: 14px; }
 .q-text { font-size: 15px; color: #fff; line-height: 1.4; font-weight: 400; }
 .q-text strong { color: var(--accent-orange); font-weight: 600; }
-/* SVG Stage */
 .svg-container {
     width: 100%; aspect-ratio: 16/9;
     background: radial-gradient(circle at center, #1a1a24 0%, #050508 100%);
@@ -624,7 +601,6 @@ body {
 }
 svg { display: block; width: 100%; height: 100%; }
 .svg-layer { transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
-/* Control Panel */
 .control-panel {
     padding: 24px;
     background: linear-gradient(180deg, #1f2833 0%, #151b22 100%);
@@ -656,6 +632,7 @@ svg { display: block; width: 100%; height: 100%; }
 .badge-cyan   { background: rgba(102,252,241,0.1); border: 1px solid var(--accent-cyan-dim); color: var(--accent-cyan); }
 .badge-orange { background: rgba(252,163,17,0.1);  border: 1px solid #b3730b; color: var(--accent-orange); }
 .badge-green  { background: rgba(151,196,89,0.1);  border: 1px solid #6b933a; color: var(--accent-green); }
+.badge-red    { background: rgba(255,51,102,0.1);  border: 1px solid #cc0033; color: #ff3366; }
 .info-desc { font-size: 14px; line-height: 1.5; color: #a0a0a0; }
 .actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
 button {
@@ -669,6 +646,10 @@ button {
 .btn-primary:hover {
     background: var(--accent-cyan); color: #000;
     box-shadow: 0 6px 15px rgba(102,252,241,0.4);
+}
+.btn-primary:disabled {
+    background: #2a5a55; color: #4a8a85; cursor: not-allowed;
+    box-shadow: none;
 }
 .btn-secondary { background: transparent; color: var(--text-main); border: 1px solid #555; }
 .btn-secondary:hover { background: rgba(255,255,255,0.05); color: #fff; }
@@ -702,7 +683,6 @@ def assemble_html(
         scenes = [{"label": f"S{i}"} for i in range(4)]
     dots_html = _build_dots_html(scenes)
 
-    # Inject visual theme colours into CSS if available
     theme = explanation.get("visual_theme", {})
     stage_bg  = theme.get("stage_bg_color", "#050508")
     accent1   = theme.get("accent_color",   "#66fcf1")
@@ -745,13 +725,13 @@ def assemble_html(
                 <h3 id="info-title">{topic}</h3>
                 <div class="badges" id="info-badges"></div>
                 <div class="info-desc" id="info-desc">
-                    Click "Next Step ▶" to begin the kinematic analysis.
+                    Click "Next Step" to begin the step-by-step animation.
                 </div>
             </div>
 
             <div class="actions">
-                <button class="btn-secondary" onclick="resetAnim()">↺ Restart</button>
-                <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step ▶</button>
+                <button class="btn-secondary" onclick="resetAnim()">Restart</button>
+                <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step</button>
             </div>
         </div>
     </div>
@@ -765,7 +745,70 @@ def assemble_html(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6.  Public API
+# 6.  Core Synchronous Pipeline
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_pipeline(
+    question: str,
+    api_key: str | None = None,
+    output_path: str | None = None,
+    verbose: bool = True,
+) -> tuple[str, str, dict]:
+    """
+    Run the full 3-part pipeline synchronously.
+
+    Returns
+    -------
+    tuple of (html_string, output_path_written, explanation_dict)
+    """
+    def log(msg):
+        if verbose:
+            print(f"[q_animation] {msg}")
+
+    # Init Gemini
+    model = _init_gemini(api_key)
+    log(f"Gemini model: {GEMINI_MODEL}")
+
+    # Part 1: Explanation Script
+    log("Part 1 → Generating explanation script ...")
+    explanation = generate_explanation_script(model, question)
+    topic = explanation.get("topic", "animation")
+    log(f"  Topic: {topic}")
+    log(f"  Solution steps: {len(explanation.get('solution_steps', []))}")
+
+    # Part 2: Animation Sequence
+    log("Part 2 → Generating animation sequence ...")
+    sequence = generate_animation_sequence(model, explanation)
+    log(f"  Mechanism type: {sequence.get('mechanism_type', '?')}")
+    log(f"  Scenes: {len(sequence.get('scenes', []))}")
+
+    # Part 3a: SVG Body
+    log("Part 3a → Generating SVG scene content ...")
+    svg_body = generate_svg_body(model, explanation, sequence)
+    log(f"  SVG content length: {len(svg_body):,} chars")
+
+    # Part 3b: JavaScript Engine
+    log("Part 3b → Generating JavaScript animation engine ...")
+    js_body = generate_js_body(model, explanation, sequence)
+    log(f"  JS content length: {len(js_body):,} chars")
+
+    # Assemble HTML
+    log("Assembling final HTML document ...")
+    html = assemble_html(question, explanation, sequence, svg_body, js_body)
+
+    # Write to disk
+    if output_path is None:
+        safe_name = re.sub(r"[^\w]+", "_", topic.lower())[:40]
+        output_path = os.path.join(OUTPUT_DIR, f"{safe_name}_animation.html")
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    log(f"  Written to: {output_path}  ({len(html):,} bytes)")
+
+    return html, output_path, explanation
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7.  Public API — CLI / direct import
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_animation(
@@ -775,7 +818,7 @@ def generate_animation(
     verbose: bool = True,
 ) -> str:
     """
-    Full pipeline: question → premium interactive SVG HTML.
+    Full pipeline: question → premium interactive SVG HTML file.
 
     Parameters
     ----------
@@ -788,101 +831,120 @@ def generate_animation(
     -------
     str : Path to the generated HTML file.
     """
-    def log(msg):
-        if verbose:
-            print(f"[q_animation] {msg}")
-
-    # ── Init ──────────────────────────────────────────────────────────────────
-    model = _init_gemini(api_key)
-    log(f"Gemini model: {GEMINI_MODEL}")
-
-    # ── Part 1: Explanation Script ────────────────────────────────────────────
-    log("Part 1 → Generating explanation script …")
-    explanation = generate_explanation_script(model, question)
-    topic = explanation.get("topic", "animation")
-    log(f"  Topic: {topic}")
-    log(f"  Solution steps: {len(explanation.get('solution_steps', []))}")
-
-    # ── Part 2: Animation Sequence ────────────────────────────────────────────
-    log("Part 2 → Generating animation sequence …")
-    sequence = generate_animation_sequence(model, explanation)
-    log(f"  Mechanism type: {sequence.get('mechanism_type', '?')}")
-    log(f"  Scenes: {len(sequence.get('scenes', []))}")
-
-    # ── Part 3a: SVG Body ─────────────────────────────────────────────────────
-    log("Part 3a → Generating SVG scene content …")
-    svg_body = generate_svg_body(model, explanation, sequence)
-    log(f"  SVG content length: {len(svg_body):,} chars")
-
-    # ── Part 3b: JavaScript Engine ────────────────────────────────────────────
-    log("Part 3b → Generating JavaScript animation engine …")
-    js_body = generate_js_body(model, explanation, sequence)
-    log(f"  JS content length: {len(js_body):,} chars")
-
-    # ── Assemble ──────────────────────────────────────────────────────────────
-    log("Assembling final HTML document …")
-    html = assemble_html(question, explanation, sequence, svg_body, js_body)
-
-    # ── Write ─────────────────────────────────────────────────────────────────
-    if output_path is None:
-        safe_name = re.sub(r"[^\w]+", "_", topic.lower())[:40]
-        output_path = os.path.join(OUTPUT_DIR, f"{safe_name}_animation.html")
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    log(f"✓ Written to: {output_path}  ({len(html):,} bytes)")
-    return output_path
+    _, written_path, _ = _run_pipeline(
+        question=question,
+        api_key=api_key,
+        output_path=output_path,
+        verbose=verbose,
+    )
+    return written_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7.  Example Questions  (run directly to test)
+# 8.  Backend API — called by main.py via POST /generate-question-animation
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def generate_question_animation(question: str) -> dict:
+    """
+    Async entry point for the FastAPI backend (main.py).
+
+    Called by:
+        POST /generate-question-animation  →  { question: "..." }
+
+    Returns a dict that index.html expects:
+        {
+            "animation_code": "<full <!DOCTYPE html>...>",
+            "title":          "<topic name>",
+            "explanation":    "<one-sentence plain-English answer>"
+        }
+
+    The heavy Gemini work runs in a thread-pool executor so it does not
+    block the FastAPI event loop.
+    """
+    question = (question or "").strip()
+    if not question:
+        raise ValueError("'question' field cannot be empty.")
+
+    # Use a temporary file so the sync pipeline can write normally,
+    # then we read it back and delete it.
+    with tempfile.NamedTemporaryFile(
+        suffix=".html", delete=False, mode="w", encoding="utf-8"
+    ) as tmp:
+        tmp_path = tmp.name
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        # Run the blocking pipeline in a thread so FastAPI stays responsive
+        html_content, _, explanation = await loop.run_in_executor(
+            None,
+            lambda: _run_pipeline(
+                question=question,
+                output_path=tmp_path,
+                verbose=True,
+            ),
+        )
+    finally:
+        # Always clean up the temp file, even on error
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    # Build the plain-English explanation from Part 1 data
+    final = explanation.get("final_answer", {})
+    explanation_text = (
+        final.get("statement")
+        or f"Topic: {explanation.get('topic', question[:80])}"
+    )
+
+    return {
+        "animation_code": html_content,
+        "title":          explanation.get("topic", question[:80]),
+        "explanation":    explanation_text,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9.  Example Questions  (for CLI testing)
 # ─────────────────────────────────────────────────────────────────────────────
 
 EXAMPLE_QUESTIONS = {
-
-    # ── Slider-Crank ──────────────────────────────────────────────────────────
     "slider_crank": (
         "In a slider-crank mechanism, the crank length is 50 mm and the "
         "connecting rod is 200 mm. The crank rotates at 300 RPM. "
         "Determine the linear velocity of the piston when the crank angle "
-        "is 60° from inner dead centre."
+        "is 60 degrees from inner dead centre."
     ),
-
-    # ── Spur Gear Train ───────────────────────────────────────────────────────
     "spur_gear": (
         "A spur gear train consists of a driving pinion with 20 teeth "
         "rotating at 900 RPM (clockwise) meshing with a driven gear of "
         "60 teeth. Calculate the speed and direction of rotation of the "
         "driven gear."
     ),
-
-    # ── Four-Bar Linkage ──────────────────────────────────────────────────────
     "four_bar": (
         "In a four-bar linkage, the fixed link (frame) is 120 mm, the "
         "crank is 40 mm rotating at 200 RPM, the coupler is 160 mm, and "
         "the follower (rocker) is 80 mm. Determine the angular velocity "
-        "of the rocker when the crank is at 45° from the fixed link."
+        "of the rocker when the crank is at 45 degrees from the fixed link."
     ),
-
-    # ── Belt & Pulley ─────────────────────────────────────────────────────────
     "belt_pulley": (
         "A belt drive system has a driver pulley of diameter 250 mm "
         "rotating at 720 RPM. It is connected to a driven pulley of "
         "diameter 600 mm. Calculate the speed of the driven pulley and "
         "the velocity of the belt."
     ),
-
-    # ── Cam & Follower ────────────────────────────────────────────────────────
     "cam_follower": (
         "A circular disc cam of base circle radius 30 mm and lift 20 mm "
         "rotates at 150 RPM. The knife-edge follower rises with simple "
-        "harmonic motion during 120° of cam rotation. Find the maximum "
-        "velocity and maximum acceleration of the follower."
+        "harmonic motion during 120 degrees of cam rotation. Find the "
+        "maximum velocity and maximum acceleration of the follower."
     ),
 }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8.  CLI Entry Point
+# 10.  CLI Entry Point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -896,8 +958,8 @@ if __name__ == "__main__":
     print("Available example questions:")
     for i, (key, q) in enumerate(EXAMPLE_QUESTIONS.items(), 1):
         preview = q[:80].replace("\n", " ")
-        print(f"  [{i}] {key}: {preview}…")
-    print(f"  [{len(EXAMPLE_QUESTIONS)+1}] Enter a custom question")
+        print(f"  [{i}] {key}: {preview}...")
+    print(f"  [{len(EXAMPLE_QUESTIONS) + 1}] Enter a custom question")
     print()
 
     choice_raw = input("Select an option [1]: ").strip() or "1"
@@ -926,4 +988,4 @@ if __name__ == "__main__":
         api_key=os.environ.get("GEMINI_API_KEY"),
         verbose=True,
     )
-    print(f"\n✓ Open in browser:  {out}")
+    print(f"\nDone! Open in browser:  {out}")
