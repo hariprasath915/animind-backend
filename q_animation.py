@@ -2,20 +2,15 @@
 q_animation.py — Fully Refactored + Backend-Connected
 ======================================================
 Generates premium, step-by-step interactive SVG engineering animations from a
-natural-language question.  Uses **Claude (Anthropic)** for every AI step —
-matching the architecture in claude_client.py.
+natural-language question.  Uses **Google Gemini 3.1 Flash-Lite** (via the official
+google-genai SDK) for every AI step.
 
 Architecture (2-Part Pipeline)
 -------------------------------
-Part 1  → Claude produces a structured *Explanation + Animation Plan*
+Part 1  → Gemini produces a structured *Explanation + Animation Plan*
            (problem statement + full mathematical solution + scene design).
-Part 2  → Claude produces the final single-file *High-Rich Interactive SVG HTML*
+Part 2  → Gemini produces the final single-file *High-Rich Interactive SVG HTML*
            document (SVG body + JavaScript animation engine).
-
-Why 2 parts instead of 4?
-  The original 4-call Gemini pipeline (Part1→2→3a→3b) easily exceeded
-  Railway's router timeout (30s), causing the 502 errors you saw.
-  Collapsing to 2 Claude calls keeps each well under the limit.
 
 Backend Integration
 -------------------
@@ -23,21 +18,28 @@ Backend Integration
     via POST /generate-question-animation.
   • Returns { animation_code, title, explanation } as expected by index.html.
 
-FIX LOG (2026-07-13 → 2026-07-14)
------------------------------------
-• ROOT CAUSE:  "gemini-3.1-pro-preview" does not exist → API returns 404
-  on every call → FastAPI backend raises unhandled RuntimeError → Railway
-  converts that to a 502 Bad Gateway.
-• FIX 1:  Replaced all Gemini REST calls with Anthropic Claude API calls,
-  matching the existing claude_client.py architecture (same SDK, same model
-  constants MODEL_SONNET / MODEL_HAIKU).
-• FIX 2:  Collapsed 4-call pipeline (Part1+2+3a+3b) into 2-call pipeline
-  to avoid Railway's ~30 s router timeout.
-• FIX 3:  Added exponential-backoff retry (up to 3 attempts) on transient
-  Anthropic API errors (overload / 529 / network blip).
-• FIX 4:  generate_question_animation() now properly awaits the async
-  Claude client instead of wrapping sync urllib in run_in_executor.
-• FIX 5:  _extract_json() made more robust (handles extra trailing text).
+FIX LOG (2026-07-14)
+---------------------
+• ROOT CAUSE (502):  The original file used raw urllib + a non-existent model
+  name ("gemini-3.1-pro" bare string doesn't exist).  The correct API model
+  string is "gemini-3.1-pro-preview".  Every call returned 404 → unhandled
+  RuntimeError → Railway 502 Bad Gateway.
+• FIX 1:  Switched from raw urllib to the official google-genai SDK
+          (google.generativeai is deprecated as of 2026; use google.genai).
+• FIX 2:  Correct model string: "gemini-3.1-pro-preview".
+• FIX 3:  Collapsed 4-call pipeline → 2-call pipeline to stay well under
+          Railway's ~30 s router timeout.
+• FIX 4:  generate_question_animation() runs blocking SDK calls in
+          asyncio's thread-pool executor so FastAPI is never blocked.
+• FIX 5:  Exponential-backoff retry (3 attempts) on 429/503/quota errors.
+• FIX 7:  Switched model from "gemini-3.1-pro-preview" ($2/$12 per 1M)
+          to "gemini-3.1-flash-lite" ($0.25/$1.50 per 1M) — 8x cheaper on
+          output tokens.  Quality is sufficient for SVG/HTML code generation.
+• FIX 6:  _extract_json() uses bracket-depth counting — robust against
+          trailing commentary that breaks json.loads.
+
+Requirements (add to requirements.txt if not already present):
+  google-genai>=2.0.0
 """
 
 from __future__ import annotations
@@ -46,167 +48,101 @@ import os
 import re
 import json
 import asyncio
-import textwrap
 import logging
 import time
-from typing import Any
 
-import anthropic
+from google import genai
+from google.genai import types as genai_types
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 0.  Configuration  (mirrors claude_client.py constants)
+# 0.  Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-MODEL_SONNET = "claude-sonnet-4-6"   # heavy reasoning — Part 1 plan
-MODEL_HAIKU  = "claude-haiku-4-5-20251001"  # fast codegen — Part 2 HTML
-
-OUTPUT_DIR   = "."                    # Where .html files are written (CLI)
-MAX_RETRIES  = 3                      # exponential-backoff retry count
+GEMINI_MODEL = "gemini-3.1-flash-lite"   # ✅ correct API model string
+OUTPUT_DIR   = "."
+MAX_RETRIES  = 3
 
 log = logging.getLogger(__name__)
 
-# CSS / visual design tokens shared across every generated file
+# CSS / visual design tokens
 DESIGN_TOKENS = {
-    "bg":         "#0b0c10",
-    "panel_bg":   "#1f2833",
-    "text_main":  "#c5c6c7",
-    "cyan":       "#66fcf1",
-    "cyan_dim":   "#45a29e",
-    "orange":     "#fca311",
-    "green":      "#97c459",
-    "red":        "#ff3366",
+    "bg":        "#0b0c10",
+    "panel_bg":  "#1f2833",
+    "text_main": "#c5c6c7",
+    "cyan":      "#66fcf1",
+    "cyan_dim":  "#45a29e",
+    "orange":    "#fca311",
+    "green":     "#97c459",
+    "red":       "#ff3366",
 }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1.  Anthropic Client Helper  (replaces broken Gemini REST helper)
+# 1.  Gemini SDK Helper  (google-genai ≥ 2.0)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_anthropic_client(async_mode: bool = False):
-    """Return a (sync or async) Anthropic client, raising clearly if key absent."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
+def _get_client(api_key: str | None = None) -> genai.Client:
+    """Return a configured google-genai Client."""
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not key:
         raise EnvironmentError(
-            "ANTHROPIC_API_KEY environment variable not set. "
+            "GEMINI_API_KEY environment variable not set. "
             "Add it to your Railway service variables."
         )
-    if async_mode:
-        return anthropic.AsyncAnthropic(api_key=api_key)
-    return anthropic.Anthropic(api_key=api_key)
+    return genai.Client(api_key=key)
 
 
-def _call_claude_sync(
+def _call_gemini(
     prompt: str,
-    model: str = MODEL_SONNET,
-    max_tokens: int = 8192,
-    system: str | None = None,
+    api_key: str | None = None,
+    max_tokens: int = 16384,
 ) -> str:
     """
-    Synchronous Claude call with exponential-backoff retry.
-    Returns the first text block content.
+    Call Gemini with exponential-backoff retry.
+    Returns the response text.
     """
-    client = _get_anthropic_client(async_mode=False)
-    kwargs: dict[str, Any] = {
-        "model":      model,
-        "max_tokens": max_tokens,
-        "messages":   [{"role": "user", "content": prompt}],
-    }
-    if system:
-        kwargs["system"] = system
+    client = _get_client(api_key)
+    config = genai_types.GenerateContentConfig(
+        temperature=1.0,
+        max_output_tokens=max_tokens,
+    )
 
     last_err: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = client.messages.create(**kwargs)
-            # Extract text from first content block
-            for block in response.content:
-                if block.type == "text":
-                    return block.text.strip()
-            raise RuntimeError("Claude returned no text block in response.")
-        except anthropic.APIStatusError as exc:
-            # 529 = overloaded; retry with backoff
-            if exc.status_code in (429, 529) and attempt < MAX_RETRIES:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=config,
+            )
+            return response.text.strip()
+        except Exception as exc:
+            err_str = str(exc).lower()
+            is_transient = any(k in err_str for k in ("429", "503", "quota", "resource exhausted", "unavailable"))
+            if is_transient and attempt < MAX_RETRIES:
                 wait = 2 ** attempt
-                log.warning(f"[q_animation] Claude {exc.status_code}, retrying in {wait}s (attempt {attempt})")
+                log.warning(f"[q_animation] Gemini transient error, retrying in {wait}s (attempt {attempt}): {exc}")
                 time.sleep(wait)
                 last_err = exc
-                continue
-            raise RuntimeError(f"Claude API error {exc.status_code}: {exc.message}") from exc
-        except Exception as exc:
-            if attempt < MAX_RETRIES:
-                wait = 2 ** attempt
-                log.warning(f"[q_animation] Transient error, retrying in {wait}s: {exc}")
-                time.sleep(wait)
-                last_err = exc
-                continue
-            raise
-
-    raise last_err  # type: ignore[misc]
-
-
-async def _call_claude_async(
-    prompt: str,
-    model: str = MODEL_SONNET,
-    max_tokens: int = 8192,
-    system: str | None = None,
-) -> str:
-    """
-    Async Claude call with exponential-backoff retry.
-    Returns the first text block content.
-    """
-    client = _get_anthropic_client(async_mode=True)
-    kwargs: dict[str, Any] = {
-        "model":      model,
-        "max_tokens": max_tokens,
-        "messages":   [{"role": "user", "content": prompt}],
-    }
-    if system:
-        kwargs["system"] = system
-
-    last_err: Exception | None = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            response = await client.messages.create(**kwargs)
-            for block in response.content:
-                if block.type == "text":
-                    return block.text.strip()
-            raise RuntimeError("Claude returned no text block in response.")
-        except anthropic.APIStatusError as exc:
-            if exc.status_code in (429, 529) and attempt < MAX_RETRIES:
-                wait = 2 ** attempt
-                log.warning(f"[q_animation] Claude {exc.status_code}, retrying in {wait}s (attempt {attempt})")
-                await asyncio.sleep(wait)
-                last_err = exc
-                continue
-            raise RuntimeError(f"Claude API error {exc.status_code}: {exc.message}") from exc
-        except Exception as exc:
-            if attempt < MAX_RETRIES:
-                wait = 2 ** attempt
-                log.warning(f"[q_animation] Transient error, retrying in {wait}s: {exc}")
-                await asyncio.sleep(wait)
-                last_err = exc
-                continue
-            raise
+            else:
+                raise RuntimeError(f"Gemini API error: {exc}") from exc
 
     raise last_err  # type: ignore[misc]
 
 
 def _extract_json(raw: str) -> dict | list:
     """
-    Extract and parse the first JSON object/array from a Claude response,
-    tolerating markdown code-fences and trailing commentary.
+    Extract and parse the first JSON object/array from a Gemini response,
+    tolerating markdown fences and trailing commentary.
+    Uses bracket-depth counting to find the true end of the JSON.
     """
-    # Strip markdown fences
     cleaned = re.sub(r"```(?:json)?\s*", "", raw).replace("```", "").strip()
-    # Find first { or [
     start = next((i for i, c in enumerate(cleaned) if c in "{["), None)
     if start is None:
-        raise ValueError(f"No JSON found in Claude response:\n{raw[:400]}")
-    # Find matching closing bracket by scanning for balanced end
+        raise ValueError(f"No JSON found in Gemini response:\n{raw[:400]}")
     opener = cleaned[start]
     closer = "}" if opener == "{" else "]"
-    depth = 0
-    end = start
+    depth, end = 0, start
     for i, ch in enumerate(cleaned[start:], start):
         if ch == opener:
             depth += 1
@@ -218,12 +154,11 @@ def _extract_json(raw: str) -> dict | list:
     try:
         return json.loads(cleaned[start:end + 1])
     except json.JSONDecodeError:
-        # Fallback: try parsing from start to end of string
         return json.loads(cleaned[start:])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2.  Part 1 — Explanation + Animation Plan  (Sonnet, structured JSON)
+# 2.  Part 1 — Explanation + Animation Plan
 # ─────────────────────────────────────────────────────────────────────────────
 
 PART1_SYSTEM = """\
@@ -255,9 +190,9 @@ Return ONLY valid JSON — no markdown fences, no preamble, no trailing text.
       "draw_order": 1,
       "label": "<human label>",
       "shape": "<'circle' | 'rectangle' | 'line' | 'gear' | 'arrow' | 'beam' | 'custom'>",
-      "approx_cx": <0-850>,
-      "approx_cy": <0-450>,
-      "approx_size": <pixels>,
+      "approx_cx": "<0-850>",
+      "approx_cy": "<0-450>",
+      "approx_size": "<pixels>",
       "color_hint": "<hex>",
       "role_animation": "<one sentence: what motion shows its role>",
       "label_position": "<'top' | 'bottom' | 'left' | 'right'>",
@@ -312,22 +247,15 @@ Scene ordering rules:
 """
 
 
-def _generate_plan_sync(question: str) -> dict:
-    """Part 1 (sync): produce the structured explanation + animation plan."""
-    prompt = f"Question:\n{question}"
-    raw = _call_claude_sync(prompt, model=MODEL_SONNET, max_tokens=8192, system=PART1_SYSTEM)
-    return _extract_json(raw)
-
-
-async def _generate_plan_async(question: str) -> dict:
-    """Part 1 (async): produce the structured explanation + animation plan."""
-    prompt = f"Question:\n{question}"
-    raw = await _call_claude_async(prompt, model=MODEL_SONNET, max_tokens=8192, system=PART1_SYSTEM)
+def _generate_plan(question: str, api_key: str | None = None) -> dict:
+    """Part 1: produce the structured explanation + animation plan."""
+    prompt = f"{PART1_SYSTEM}\n\nQuestion:\n{question}"
+    raw = _call_gemini(prompt, api_key=api_key, max_tokens=8192)
     return _extract_json(raw)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3.  Part 2 — Full HTML Generator  (Haiku, raw HTML output)
+# 3.  Part 2 — Full HTML Generator
 # ─────────────────────────────────────────────────────────────────────────────
 
 PART2_SYSTEM = """\
@@ -374,29 +302,21 @@ No markdown fences, no preamble, no trailing text.
 """
 
 
-def _generate_html_sync(plan: dict) -> str:
-    """Part 2 (sync): produce the full interactive HTML from the plan."""
-    prompt = f"Animation Plan (JSON):\n{json.dumps(plan, indent=2)}"
-    raw = _call_claude_sync(prompt, model=MODEL_HAIKU, max_tokens=16000, system=PART2_SYSTEM)
-    # Strip any accidental markdown fences
-    raw = re.sub(r"```(?:html)?\s*", "", raw).replace("```", "").strip()
-    return raw
-
-
-async def _generate_html_async(plan: dict) -> str:
-    """Part 2 (async): produce the full interactive HTML from the plan."""
-    prompt = f"Animation Plan (JSON):\n{json.dumps(plan, indent=2)}"
-    raw = await _call_claude_async(prompt, model=MODEL_HAIKU, max_tokens=16000, system=PART2_SYSTEM)
+def _generate_html(plan: dict, api_key: str | None = None) -> str:
+    """Part 2: produce the full interactive HTML from the plan."""
+    prompt = f"{PART2_SYSTEM}\n\nAnimation Plan (JSON):\n{json.dumps(plan, indent=2)}"
+    raw = _call_gemini(prompt, api_key=api_key, max_tokens=16384)
     raw = re.sub(r"```(?:html)?\s*", "", raw).replace("```", "").strip()
     return raw
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4.  Core Pipelines
+# 4.  Core Synchronous Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_pipeline_sync(
+def _run_pipeline(
     question: str,
+    api_key: str | None = None,
     output_path: str | None = None,
     verbose: bool = True,
 ) -> tuple[str, str, dict]:
@@ -412,24 +332,23 @@ def _run_pipeline_sync(
             print(f"[q_animation] {msg}")
         log.info(f"[q_animation] {msg}")
 
-    log_msg(f"Model (Part 1): {MODEL_SONNET}")
-    log_msg(f"Model (Part 2): {MODEL_HAIKU}")
+    log_msg(f"Gemini model: {GEMINI_MODEL}")
 
-    # ── Part 1: Explanation + Animation Plan ──────────────────────────────
+    # Part 1
     log_msg("Part 1 → Generating explanation + animation plan ...")
-    plan = _generate_plan_sync(question)
+    plan = _generate_plan(question, api_key=api_key)
     topic = plan.get("topic", "animation")
     log_msg(f"  Topic: {topic}")
     log_msg(f"  Components: {len(plan.get('components', []))}")
     log_msg(f"  Solution steps: {len(plan.get('solution_steps', []))}")
     log_msg(f"  Scenes: {len(plan.get('scenes', []))}")
 
-    # ── Part 2: Full HTML ─────────────────────────────────────────────────
+    # Part 2
     log_msg("Part 2 → Generating interactive HTML animation ...")
-    html = _generate_html_sync(plan)
+    html = _generate_html(plan, api_key=api_key)
     log_msg(f"  HTML length: {len(html):,} chars")
 
-    # ── Write to disk ─────────────────────────────────────────────────────
+    # Write to disk
     if output_path is None:
         safe_name = re.sub(r"[^\w]+", "_", topic.lower())[:40]
         output_path = os.path.join(OUTPUT_DIR, f"{safe_name}_animation.html")
@@ -440,35 +359,13 @@ def _run_pipeline_sync(
     return html, output_path, plan
 
 
-async def _run_pipeline_async(question: str, verbose: bool = True) -> tuple[str, dict]:
-    """
-    Async 2-part pipeline: question → (html_string, plan_dict).
-    Designed for use inside FastAPI without blocking the event loop.
-    """
-    def log_msg(msg: str) -> None:
-        if verbose:
-            print(f"[q_animation] {msg}")
-        log.info(f"[q_animation] {msg}")
-
-    log_msg("Part 1 → Generating explanation + animation plan ...")
-    plan = await _generate_plan_async(question)
-    topic = plan.get("topic", "animation")
-    log_msg(f"  Topic: {topic}")
-    log_msg(f"  Scenes: {len(plan.get('scenes', []))}")
-
-    log_msg("Part 2 → Generating interactive HTML animation ...")
-    html = await _generate_html_async(plan)
-    log_msg(f"  HTML length: {len(html):,} chars")
-
-    return html, plan
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 5.  Public API — CLI / direct import
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_animation(
     question: str,
+    api_key: str | None = None,
     output_path: str | None = None,
     verbose: bool = True,
 ) -> str:
@@ -478,6 +375,7 @@ def generate_animation(
     Parameters
     ----------
     question    : Natural-language engineering question.
+    api_key     : Gemini API key (falls back to GEMINI_API_KEY env var).
     output_path : Where to write the .html file.  Auto-generated if None.
     verbose     : Print progress messages.
 
@@ -485,8 +383,9 @@ def generate_animation(
     -------
     str : Path to the generated HTML file.
     """
-    _, written_path, _ = _run_pipeline_sync(
+    _, written_path, _ = _run_pipeline(
         question=question,
+        api_key=api_key,
         output_path=output_path,
         verbose=verbose,
     )
@@ -511,16 +410,20 @@ async def generate_question_animation(question: str) -> dict:
             "explanation":    "<one-sentence plain-English answer>"
         }
 
-    FIX: Now uses native async Claude calls instead of wrapping sync
-    urllib/Gemini calls in run_in_executor. No more Railway 502 timeouts.
+    The blocking google-genai SDK calls run in asyncio's default thread-pool
+    executor so they never block the FastAPI event loop.
     """
     question = (question or "").strip()
     if not question:
         raise ValueError("'question' field cannot be empty.")
 
-    html, plan = await _run_pipeline_async(question, verbose=True)
+    loop = asyncio.get_event_loop()
 
-    # Build the plain-English explanation from Part 1 data
+    html, _, plan = await loop.run_in_executor(
+        None,
+        lambda: _run_pipeline(question=question, verbose=True),
+    )
+
     final = plan.get("final_answer", {})
     explanation_text = (
         final.get("statement")
@@ -581,7 +484,7 @@ if __name__ == "__main__":
 
     print("=" * 64)
     print("  q_animation.py  —  Engineering Animation Generator")
-    print("  Powered by Claude (Anthropic)  — claude-sonnet-4-6")
+    print(f"  Powered by Google Gemini  ({GEMINI_MODEL})")
     print("=" * 64)
     print()
     print("Available example questions:")
@@ -614,6 +517,7 @@ if __name__ == "__main__":
 
     out = generate_animation(
         question=user_question,
+        api_key=os.environ.get("GEMINI_API_KEY"),
         verbose=True,
     )
     print(f"\nDone! Open in browser:  {out}")
