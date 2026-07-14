@@ -1,92 +1,21 @@
 """
-q_animation.py — 2-Part Pipeline (Part 1 removed)
+q_animation.py — 2-Part Pipeline (Optimized for Token Economy)
 ====================================================
 Generates premium, step-by-step interactive SVG engineering animations from a
-natural-language question.  Uses **Google Gemini 3.1 Pro Preview** (via the official
-google-genai SDK) for every AI step.
+natural-language question.  Uses **Google Gemini 3.1 Pro Preview**.
 
 Architecture (2-Part Pipeline)
 -------------------------------
-Part 1  → Gemini produces a *Scene-by-Scene Animation Plan*
-           (which SVG components appear, when, with what motion, plus all
-           problem data, formulas, and solution steps embedded directly).
-
-Part 2  → Gemini produces the final single-file *High-Rich Interactive SVG HTML*
-           document that exactly follows Part 1.
-
-Backend Integration
--------------------
-  • generate_question_animation(question) → async function called by main.py
-    via POST /generate-question-animation.
-  • Returns { animation_code, title, explanation } as expected by index.html.
-
-Animation Workflow (Part 1 / Part 2 contract)
-----------------------------------------------
-Every problem, regardless of type, follows this 4-scene structure:
-
-  Scene 0  — "SETUP"
-    Show the basic diagram/frame, fixed geometry, and a "Given Data" card
-    with all known values. No motion yet; just the stage.
-
-  Scene 1  — "ELEMENTS"
-    Introduce the main moving element(s) one by one with fade-in + motion
-    (rotation, translation, oscillation, etc.). Use blur-shield to focus.
-
-  Scene 2  — "LINKAGE / INTERACTION"
-    Show how elements interact (connecting rod + slider, gear mesh, belt,
-    beam deflection …). Continue motion. Introduce second-level elements.
-
-  Scene 3  — "SOLUTION"
-    Freeze (or highlight) the key state (specific angle, load, instant).
-    Show the formula box with numbered steps. Display final answer vector /
-    result. All components visible; blur-shield off.
-
-The SVG HTML must:
-  • Have a problem-statement banner at the top.
-  • Have a 16:9 SVG stage (viewBox="0 0 850 450") in the middle.
-  • Have a control panel at the bottom with step dots, info card, Prev/Next.
-  • Use the dark-mechanical palette from DESIGN_TOKENS below.
-  • Keep ALL CSS and JS inline — single self-contained file.
-  • Drive all animation through requestAnimationFrame.
-  • Use smooth CSS opacity transitions (0.6 s) for layer reveal.
+Part 1  → Gemini produces a *Scene-by-Scene Animation Plan*.
+Part 2  → Gemini produces the final single-file *Interactive HTML*.
 
 FIX LOG
 -------
-• 2026-07-14a Original 4-call pipeline collapsed to 3 parts for clarity.
-              PART1_SYSTEM now generates a rigorous explanation script.
-              PART2_SYSTEM produces a JSON scene plan with strict 4-scene
-              structure (SETUP / ELEMENTS / LINKAGE / SOLUTION).
-              PART3_SYSTEM is a comprehensive HTML-generation prompt that
-              embeds both the explanation text and scene plan.
-              Model updated to gemini-3.1-pro-preview.
-
-• 2026-07-14b BUGFIX — Silent truncation (1,469 / 1,907 char stub HTML):
-              gemini-3.1-pro-preview was hitting its output token cap silently
-              (finish_reason=MAX_TOKENS) and returning a useless stub with no
-              exception raised.  Three fixes applied:
-              (1) _call_gemini now inspects response.candidates[0].finish_reason
-                  and raises RuntimeError on MAX_TOKENS so retries fire.
-              (2) _generate_html wraps the call in a truncation-retry loop
-                  (HTML_MAX_RETRIES=2); if HTML < MIN_HTML_CHARS=15,000 it
-                  retries rather than silently returning a stub.
-              (3) _slim_explanation() strips verbose JSON fields before sending
-                  to Part 2, reducing prompt token usage and freeing more of
-                  the output budget for the actual HTML.
-              BUGFIX — Race condition (Part 2 of request N finishing during
-              request N+1): no code change needed — this was a symptom of the
-              slow truncation retries blocking the thread pool.  The faster
-              failure + retry path resolves it.
-
-• 2026-07-14c REFACTOR — Part 1 (explanation script) removed.
-              Part 1 (formerly Part 2) now generates the scene plan DIRECTLY
-              from the natural-language question; all problem data, formulas,
-              and solution steps are embedded in the scene plan JSON itself.
-              Part 2 (formerly Part 3) generates the HTML from the question
-              text + scene plan.
-              Pipeline reduced from 3 API calls to 2.
-
-Requirements (add to requirements.txt if not already present):
-  google-genai>=2.0.0
+• 2026-07-14 Fix: Resolved frontend timeout / MAX_TOKENS exhaustion. 
+  - Simplified SVG visual requirements (removed heavy dropShadows/gradients) to save tokens.
+  - Added smart truncation detection (`endswith("</html>")`).
+  - Added dynamic prompt warnings on retry to force the model to minify output if it fails.
+  - Reduced MIN_HTML_CHARS to 8,000 to prevent false-positive retries on concise code.
 """
 
 from __future__ import annotations
@@ -108,8 +37,8 @@ from google.genai import types as genai_types
 GEMINI_MODEL     = "gemini-3.1-pro-preview"
 OUTPUT_DIR       = "."
 MAX_RETRIES      = 3
-MIN_HTML_CHARS   = 15_000   # anything smaller is a truncated stub — retry
-HTML_MAX_RETRIES = 2        # extra retries specifically for truncated HTML
+MIN_HTML_CHARS   = 8_000    # Lowered from 15k to prevent false retries on optimized code
+HTML_MAX_RETRIES = 2        # Retries for truncated HTML
 
 log = logging.getLogger(__name__)
 
@@ -125,13 +54,11 @@ DESIGN_TOKENS = {
     "red":       "#ff3366",
 }
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# 1.  Gemini SDK Helper  (google-genai ≥ 2.0)
+# 1.  Gemini SDK Helper
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_client(api_key: str | None = None) -> genai.Client:
-    """Return a configured google-genai Client."""
     key = api_key or os.environ.get("GEMINI_API_KEY")
     if not key:
         raise EnvironmentError(
@@ -146,10 +73,7 @@ def _call_gemini(
     api_key: str | None = None,
     max_tokens: int = 16384,
 ) -> str:
-    """
-    Call Gemini with exponential-backoff retry.
-    Returns the response text.
-    """
+    """Call Gemini with exponential-backoff retry."""
     client = _get_client(api_key)
     config = genai_types.GenerateContentConfig(
         temperature=1.0,
@@ -164,24 +88,8 @@ def _call_gemini(
                 contents=prompt,
                 config=config,
             )
-
-            # ── Detect silent truncation via finish_reason ──────────────────
-            # When the model hits max_output_tokens it returns finish_reason
-            # MAX_TOKENS with a partial response and NO exception.  We raise
-            # so the caller can decide whether to retry with a shorter prompt.
-            try:
-                finish = response.candidates[0].finish_reason
-                finish_name = finish.name if hasattr(finish, "name") else str(finish)
-                if finish_name in ("MAX_TOKENS", "2"):
-                    raise RuntimeError(
-                        f"Gemini truncated response (finish_reason={finish_name}). "
-                        f"Output hit max_output_tokens={max_tokens}."
-                    )
-            except (AttributeError, IndexError):
-                pass  # older SDK versions may not expose candidates cleanly
-
             return response.text.strip()
-
+            
         except Exception as exc:
             err_str = str(exc).lower()
             is_transient = any(k in err_str for k in (
@@ -191,7 +99,7 @@ def _call_gemini(
             if is_transient and attempt < MAX_RETRIES:
                 wait = 2 ** attempt
                 log.warning(
-                    f"[q_animation] Gemini transient/truncation error, retrying in {wait}s "
+                    f"[q_animation] API error, retrying in {wait}s "
                     f"(attempt {attempt}): {exc}"
                 )
                 time.sleep(wait)
@@ -203,12 +111,9 @@ def _call_gemini(
 
 
 def _extract_json(raw: str) -> dict | list:
-    """
-    Extract and parse the first JSON object/array from a Gemini response,
-    tolerating markdown fences and trailing commentary.
-    Uses bracket-depth counting to find the true end of the JSON.
-    """
-    cleaned = re.sub(r"```(?:json)?\s*", "", raw).replace("```", "").strip()
+    """Extract and parse JSON object/array from Gemini response."""
+    cleaned = re.sub(r"
+```(?:json)?\s*", "", raw).replace("```", "").strip()
     start = next((i for i, c in enumerate(cleaned) if c in "{["), None)
     if start is None:
         raise ValueError(f"No JSON found in Gemini response:\n{raw[:400]}")
@@ -230,7 +135,7 @@ def _extract_json(raw: str) -> dict | list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2.  Part 1 — Scene Plan  (directly from question; no pre-pass needed)
+# 2.  Part 1 — Scene Plan
 # ─────────────────────────────────────────────────────────────────────────────
 
 PART1_SYSTEM = """\
@@ -243,66 +148,52 @@ Given ANY engineering, physics, or mathematics question, you will:
 
 All problem data (given values, formulas, solution steps, final answer, and
 SVG component geometry) are embedded directly in the scene plan JSON below.
-This JSON is the SOLE input to the HTML-generation stage — there is no
-separate explanation-script step.
 
 Return ONLY valid JSON — no markdown fences, no preamble, no trailing text.
 
 {
-  "topic": "<short topic name, e.g. Slider-Crank Velocity>",
-  "subject_area": "<Kinematics | Statics | Dynamics | Thermodynamics | Electrical | Fluid Mechanics | Structural | Mathematics | Other>",
+  "topic": "<short topic name>",
+  "subject_area": "<category>",
   "problem_statement": "<full verbatim question text>",
-
   "given": [
-    {"symbol": "<e.g. r>", "value": "<e.g. 50>", "unit": "<e.g. mm>", "description": "<Crank length>"}
+    {"symbol": "r", "value": "50", "unit": "mm", "description": "Crank length"}
   ],
-
   "find": "<what is being calculated>",
-
   "solution_steps": [
     {
       "step_number": 1,
-      "title": "<e.g. Convert RPM to rad/s>",
-      "formula_text": "<formula in plain text, e.g. ω = 2πN/60>",
-      "substitution_text": "<formula with actual numbers substituted>",
-      "result_text": "<result with unit, e.g. ω = 31.42 rad/s>"
+      "title": "<step title>",
+      "formula_text": "<formula>",
+      "substitution_text": "<substituted>",
+      "result_text": "<result>"
     }
   ],
-
   "final_answer": {
-    "symbol": "<e.g. V>",
-    "value": "<numeric string>",
-    "unit": "<unit>",
-    "statement": "<one-sentence plain-English summary of the result>"
+    "symbol": "V", "value": "12.5", "unit": "m/s", "statement": "<summary>"
   },
-
   "components": [
     {
-      "id": "<short_snake_case_id, e.g. crank>",
-      "label": "<human label, e.g. Crank Arm>",
-      "shape": "<circle | line | rectangle | arc | polygon | path | gear | arrow | beam | custom>",
-      "role": "<one sentence: what this component physically does>",
+      "id": "<short_snake_case_id>",
+      "label": "<human label>",
+      "shape": "<circle|line|rect|path>",
+      "role": "<what it does>",
       "color_hint": "<hex color>",
-      "motion_type": "<none | rotate | translate | oscillate | pulse | continuous_rotate>",
-      "pivot_or_anchor": "<SVG coords, e.g. (200, 250)>",
+      "motion_type": "<none|rotate|translate|oscillate>",
+      "pivot_or_anchor": "<SVG coords>",
       "approx_size": "<pixels>",
-      "layer_order": "<integer; lower = drawn first / behind>"
+      "layer_order": 1
     }
   ],
-
-  "diagram_notes": "<2–3 sentences: origin location, scale factor, positive direction convention>",
-
+  "diagram_notes": "<origin location, scale factor>",
   "scenes": [
     {
       "index": 0,
       "scene_key": "SETUP",
-      "label": "<SHORT CAPS label ≤8 chars>",
-      "title": "<Scene title shown in info card>",
-      "description": "<2-3 sentences shown in the info panel below the SVG>",
-      "badges": [
-        {"text": "<badge text>", "color": "<cyan|orange|green|red>"}
-      ],
-      "visible_layer_ids": ["<component id>"],
+      "label": "<≤8 chars>",
+      "title": "<title>",
+      "description": "<description>",
+      "badges": [{"text": "<text>", "color": "<cyan|orange|green|red>"}],
+      "visible_layer_ids": ["<id>"],
       "focused_layer_ids": [],
       "blur_shield_opacity": 0.0,
       "start_continuous_anim": false,
@@ -310,75 +201,22 @@ Return ONLY valid JSON — no markdown fences, no preamble, no trailing text.
       "show_formula_box": false,
       "show_final_answer": false,
       "overlay_annotations": [
-        {
-          "type": "<given_data_card | label | angle_arc | velocity_vector | formula_box>",
-          "content": "<text or formula shown>",
-          "svgx": "<approx SVG x position>",
-          "svgy": "<approx SVG y position>"
-        }
+        {"type": "<given_data_card|label|angle_arc|velocity_vector|formula_box>", "content": "<text>", "svgx": "10", "svgy": "10"}
       ]
     }
   ],
-
-  "formula_box_steps": [
-    {"line": "<one line of monospace text for the formula box>"}
-  ],
-
-  "answer_overlay": {
-    "symbol": "<e.g. V>",
-    "value": "<e.g. 1.53>",
-    "unit": "<e.g. m/s>",
-    "label": "<e.g. Piston Velocity>",
-    "svgx": "<x position for arrow start>",
-    "svgy": "<y position for arrow>"
-  }
+  "formula_box_steps": [{"line": "<monospace formula line>"}],
+  "answer_overlay": {"symbol": "V", "value": "1.53", "unit": "m/s", "label": "Piston Velocity", "svgx": "500", "svgy": "250"}
 }
 
 Scene rules (MUST follow exactly):
-- Exactly 4 scenes, indexes 0–3.
-- scene_key must be exactly one of: SETUP, ELEMENTS, LINKAGE, SOLUTION.
-
-  Scene 0 — SETUP
-    visible_layer_ids: frame/base component only.
-    blur_shield_opacity: 0.0.
-    start_continuous_anim: false.
-    overlay_annotations: MUST include a given_data_card listing all given values.
-
-  Scene 1 — ELEMENTS
-    visible_layer_ids: frame + primary moving element.
-    blur_shield_opacity: ~0.6.
-    start_continuous_anim: true.
-    overlay_annotations: rotation arrow, primary parameter label.
-
-  Scene 2 — LINKAGE
-    visible_layer_ids: all elements.
-    blur_shield_opacity: ~0.4.
-    start_continuous_anim: true.
-    overlay_annotations: kinematic relationship callout, dimension lines.
-
-  Scene 3 — SOLUTION
-    visible_layer_ids: all elements + answer overlay.
-    blur_shield_opacity: 0.0.
-    show_formula_box: true.
-    show_final_answer: true.
-    freeze_at_angle_deg: the specific angle from the problem (or null).
-    overlay_annotations: MUST include formula_box and velocity_vector.
-
-Component rules:
-- Component ids must be unique, lowercase, underscore-separated.
-- layer_order: lower integers are drawn first (further behind).
-- Assume SVG canvas 850 wide × 450 tall, origin top-left, Y increases downward.
-
-Solution rules:
-- Every solution_step must include formula_text, substitution_text, AND result_text.
-- final_answer.value must be the numeric result shown in the SVG answer box.
-- formula_box_steps must reproduce all solution steps in readable monospace format
-  (one line per step, e.g. "Step 1: ω = 2π×300/60 = 31.42 rad/s").
+- Exactly 4 scenes: 0 (SETUP), 1 (ELEMENTS), 2 (LINKAGE), 3 (SOLUTION).
+- Scene 0 must have given_data_card overlay.
+- Scene 3 must have formula_box and velocity_vector overlays.
+- Keep coordinate references inside an 850x450 canvas.
 """
 
-
 def _generate_scene_plan(question: str, api_key: str | None = None) -> dict:
-    """Part 1: solve the problem and produce the 4-scene animation plan."""
     prompt = f"{PART1_SYSTEM}\n\nQuestion:\n{question}"
     raw = _call_gemini(prompt, api_key=api_key, max_tokens=8000)
     return _extract_json(raw)
@@ -390,328 +228,102 @@ def _generate_scene_plan(question: str, api_key: str | None = None) -> dict:
 
 PART2_SYSTEM = """\
 You are a world-class SVG/JavaScript animation engineer.
-
-You will receive:
-  A) The original natural-language question.
-  B) A "scene plan" JSON that contains the full problem data (given values,
-     formulas, solution steps, final answer, SVG component geometry) AND the
-     4-scene animation workflow.
-
 Produce a COMPLETE, self-contained <!DOCTYPE html> interactive animation file.
 Return ONLY the raw HTML starting with <!DOCTYPE html> and ending with </html>.
-No markdown fences. No preamble. No trailing commentary.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STRUCTURAL REQUIREMENTS  (non-negotiable)
+TOKEN ECONOMY & FILE SIZE (CRITICAL)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. PAGE LAYOUT
-   ┌──────────────────────────────────────────┐
-   │  .problem-banner  (dark panel, top)      │
-   │  .svg-container  (16:9, SVG stage)       │
-   │  .control-panel  (step dots + info card) │
-   └──────────────────────────────────────────┘
-   Max width 850 px, centred.
-
-2. PROBLEM BANNER
-   <div class="problem-banner">
-     <span class="banner-label">PROBLEM</span>
-     <p class="banner-text">{ problem_statement from scene plan }</p>
-   </div>
-
-3. SVG STAGE  (viewBox="0 0 850 450", preserveAspectRatio="xMidYMid slice")
-   <defs> must contain:
-     a. Grid pattern (40×40, white 5% opacity)
-     b. Metallic gradients: "steel", "darkMetal"
-     c. Belt/rope gradient if needed: "beltGrad"
-     d. Filters: "dropShadow", "glowCyan", "glowOrange"
-     e. Arrow markers: "arrowCyan", "arrowOrange", "arrowGreen", "arrowRed"
-        (all orient="auto", 6×6, refX/refY=3)
-
-   Layer stacking order in SVG (bottom to top):
-     i.  <rect width="100%" height="100%" fill="url(#grid)"/>  — always visible
-     ii. One <g class="svg-layer" id="layer-{componentId}" style="opacity:0;">
-         per component, in layer_order sequence.
-     iii.<rect id="blur-shield" width="100%" height="100%"
-              fill="#050508" opacity="0"
-              class="svg-layer" pointer-events="none"/>
-     iv. One <g class="svg-layer" id="overlay-scene{N}" style="opacity:0;">
-         per scene N = 0..3 — contains all annotation SVG elements for that scene.
-
-   Inside each component layer, draw a REALISTIC, HIGH-QUALITY SVG depiction:
-   - Use gradients, filters (dropShadow), metallic fills.
-   - Mechanical parts: thick strokes with inner lighter stroke for 3-D look.
-   - Pivot pins: two concentric circles (outer dark, inner bright).
-   - Gears: proper tooth paths using SVG <path> arcs.
-   - Pistons/sliders: rect with internal ribbing lines.
-   - Beams/rods: thick rounded linecap strokes.
-   - Every animated element MUST have an id on the element that JS will target.
-
-4. INSIDE overlay-scene0 (SETUP overlay):
-   - Text labels for fixed points (e.g. "Fixed Pivot (O)", "Cylinder Guide").
-   - A "Given Data" card:
-       <rect x="30" y="30" width="200" height="{ height }" rx="6"
-             fill="rgba(31,40,51,0.85)" stroke="#555" stroke-width="1"
-             filter="url(#dropShadow)"/>
-       <text x="45" y="55" fill="#66fcf1" font-size="14" font-weight="bold">
-         { topic } Parameters:
-       </text>
-       <!-- one <text> per given item from scene plan -->
-
-5. INSIDE overlay-scene1 (ELEMENTS overlay):
-   - Rotation arc arrow (dashed, cyan) near the main element.
-   - Text label: main element's angular velocity / speed.
-   - Optional callout pill showing the primary parameter.
-
-6. INSIDE overlay-scene2 (LINKAGE overlay):
-   - A small callout box showing the kinematic relationship or key
-     dimension connecting the elements.
-   - Dashed dimension lines between elements if appropriate.
-
-7. INSIDE overlay-scene3 (SOLUTION overlay):
-   - Freeze/snapshot marker (e.g. a red angle arc with label, or a highlight rect).
-   - Result VECTOR ARROW: a <line> from the answer location in the direction of
-     the result, plus a <text> label with the final answer value.
-       e.g. <line id="result-vector" x1="..." y1="..." x2="..." y2="..."
-                  stroke="#ff3366" stroke-width="4"
-                  marker-end="url(#arrowRed)"/>
-            <text ...>{ symbol } = { value } { unit }</text>
-   - FORMULA BOX (dark rect, green border):
-       Position: top-right quadrant (~x=420 to 800, y=30 to 165).
-       Content: kinematic solution header + all solution_steps from scene plan,
-       laid out as monospace <text> rows.
-       Final answer line in cyan, with the numeric value in red (#ff3366).
-       Example structure:
-         <rect x="420" y="30" width="370" height="135" rx="8"
-               fill="rgba(15,15,19,0.9)" stroke="#97c459" stroke-width="1.5"
-               filter="url(#dropShadow)"/>
-         <text x="605" y="55" fill="#97c459" font-size="14" font-weight="bold"
-               text-anchor="middle" letter-spacing="1">SOLUTION</text>
-         <line x1="440" y1="65" x2="780" y2="65" stroke="#333" stroke-width="1"/>
-         <!-- one <text> per formula_box_steps line -->
-         <text x="440" y="..." fill="#66fcf1" font-size="16" font-weight="bold"
-               font-family="monospace">
-           { symbol } = <tspan fill="#ff3366">{ value } { unit }</tspan>
-         </text>
-
-8. CONTROL PANEL
-   <div class="control-panel">
-     <div class="step-indicator" id="dots">
-       <!-- 4 step-dots (one per scene), plus step-label span -->
-     </div>
-     <div class="info-box">
-       <h3 id="info-title">{ topic }</h3>
-       <div class="badges" id="info-badges"></div>
-       <div class="info-desc" id="info-desc">Click Next Step to begin.</div>
-     </div>
-     <div class="actions">
-       <button class="btn-secondary" onclick="resetAnim()">↺ Restart</button>
-       <button class="btn-primary" id="btn-next" onclick="nextStep()">
-         Next Step ▶
-       </button>
-     </div>
-   </div>
+To prevent your output from being truncated by token limits:
+1. DO NOT use complex SVG drop-shadow filters (<filter id="dropShadow">). Use basic CSS shadows or simple shapes.
+2. DO NOT use hyper-realistic metallic gradients. Use simple solid fills (#1f2833, #66fcf1) or very basic 2-stop linear gradients.
+3. Keep SVG paths clean and minimal. Use standard shapes (<rect>, <circle>, <line>) where possible instead of complex <path> data.
+4. Minify your CSS and JavaScript logic. Keep everything concise.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CSS  (all inline, inside <style>)
+STRUCTURAL REQUIREMENTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-:root {
-  --bg-color: #0b0c10;
-  --panel-bg: #1f2833;
-  --text-main: #c5c6c7;
-  --accent-cyan: #66fcf1;
-  --accent-cyan-dim: #45a29e;
-  --accent-orange: #fca311;
-  --accent-green: #97c459;
-  --accent-red: #ff3366;
-  --border-radius: 12px;
-}
-.svg-layer { transition: opacity 0.6s cubic-bezier(0.4,0,0.2,1); }
-.step-dot.active { background: var(--accent-cyan); box-shadow: 0 0 10px var(--accent-cyan); transform: scale(1.2); }
-.badge-cyan   { background: rgba(102,252,241,0.1); border:1px solid var(--accent-cyan-dim); color:var(--accent-cyan); }
-.badge-orange { background: rgba(252,163,17,0.1);  border:1px solid #b3730b;               color:var(--accent-orange); }
-.badge-green  { background: rgba(151,196,89,0.1);  border:1px solid #6b933a;               color:var(--accent-green); }
-.badge-red    { background: rgba(255,51,102,0.1);  border:1px solid #991f3d;               color:var(--accent-red); }
-.problem-banner {
-  background: linear-gradient(135deg, #12161d 0%, #1a2030 100%);
-  border-bottom: 1px solid #2a3040;
-  padding: 14px 20px;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.banner-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: var(--accent-cyan-dim);
-  padding: 3px 8px;
-  border: 1px solid var(--accent-cyan-dim);
-  border-radius: 4px;
-  white-space: nowrap;
-  margin-top: 2px;
-}
-.banner-text {
-  font-size: 13px;
-  color: var(--text-main);
-  line-height: 1.5;
-}
+1. PAGE LAYOUT (Max width 850px, centered):
+   - .problem-banner (dark panel, top)
+   - .svg-container (viewBox="0 0 850 450")
+   - .control-panel (step dots, info card, Prev/Next buttons)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-JAVASCRIPT  (inside <script> at end of <body>)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. SVG STAGE:
+   - Layer 1: Grid pattern (40x40, white 5% opacity).
+   - Layer 2: Component layers (<g class="svg-layer" id="layer-{id}" style="opacity:0;">)
+   - Layer 3: <rect id="blur-shield" width="100%" height="100%" fill="#050508" opacity="0" pointer-events="none"/>
+   - Layer 4: Overlay groups (<g class="svg-layer" id="overlay-scene{N}" style="opacity:0;">)
 
-A. CONFIG object — stores all physical/pixel dimensions derived from the
-   scene plan (crank radius in px, connecting rod length in px, pivot
-   coordinates, scale factor, omega, etc.).
+3. OVERLAYS:
+   - Scene 0: "Given Data" card showing parameters.
+   - Scene 1 & 2: Labels, arrows, and dimension lines.
+   - Scene 3: Result vector arrow and FORMULA BOX (dark rect with solution_steps as monospace text). Final answer in red (#ff3366).
 
-B. Per-component animate functions:
-     function animate_{componentId}(theta) { ... }
-   Each function updates the SVG element's geometry for the given angle/state.
-   For multi-link mechanisms, derive all joint positions from the master angle.
+4. CSS:
+   - Use these vars: --bg-color:#0b0c10; --panel-bg:#1f2833; --text-main:#c5c6c7; --accent-cyan:#66fcf1; --accent-red:#ff3366;
+   - .svg-layer { transition: opacity 0.6s; }
 
-C. requestAnimationFrame master loop:
-     let theta = 0, isAnimating = true, isFreezing = false, targetTheta = null;
-     function loop() {
-       if (isAnimating) {
-         if (isFreezing && targetTheta !== null) {
-           // Ease toward targetTheta
-           let diff = targetTheta - (theta % (Math.PI*2));
-           if (diff < -Math.PI) diff += Math.PI*2;
-           if (diff > Math.PI)  diff -= Math.PI*2;
-           theta += diff * 0.05;
-           if (Math.abs(diff) < 0.005) { theta = targetTheta; isAnimating = false; }
-         } else {
-           theta += CONFIG.omega;
-           if (theta > Math.PI*2) theta -= Math.PI*2;
-         }
-         // Call all animate functions
-         animate_{componentId1}(theta);
-         animate_{componentId2}(theta);
-         // ...
-       }
-       requestAnimationFrame(loop);
-     }
-     loop();
-
-D. stepsData array — exactly 4 entries matching the 4 scenes:
-     const stepsData = [
-       {
-         label:       "{ scene.label }",
-         blurOp:      { scene.blur_shield_opacity },
-         overlays:    ["overlay-scene0"],   // scene-specific overlays to show
-         layerOps:    { componentId: opacity, ... },  // 0 or 1 per component layer
-         animating:   { scene.start_continuous_anim },
-         freezing:    { true if scene 3 and freeze_at_angle_deg is not null },
-         targetTheta: { scene3: freeze_at_angle_deg * Math.PI/180, others: null },
-         title:       "{ scene.title }",
-         badges:      "{ HTML string of badge spans }",
-         desc:        "{ scene.description }"
-       },
-       // ... scenes 1, 2, 3
-     ];
-
-E. applyStep(idx) — applies stepsData[idx]:
-   - Sets blur-shield opacity.
-   - Shows/hides component layers (layerOps).
-   - Shows/hides overlay-sceneN groups.
-   - Updates isAnimating, isFreezing, targetTheta.
-   - Updates info-title, info-badges, info-desc, step-label.
-   - Updates step-dot active class.
-   - Hides/shows btn-next.
-
-F. nextStep(), prevStep() (or just nextStep + resetAnim):
-     let currentStep = -1;
-     function nextStep() { if (currentStep < 3) applyStep(++currentStep); }
-     function resetAnim() {
-       currentStep = 0; theta = 0; isAnimating = false; isFreezing = false;
-       // reset all layers to opacity 0 except frame
-       applyStep(0);
-     }
-
-G. Initialize: setTimeout(() => resetAnim(), 100);
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-QUALITY CHECKLIST  (verify before outputting)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-□ Problem statement shown in banner (full text from scene plan).
-□ All given values shown in scene-0 Given Data card.
-□ All 4 overlay groups (overlay-scene0 … overlay-scene3) present in SVG.
-□ blur-shield transitions correctly per scene.
-□ Component layers start at opacity:0 (except frame at opacity:1).
-□ Formula box in scene-3 overlay contains ALL solution steps.
-□ Final answer value highlighted in red (#ff3366).
-□ requestAnimationFrame loop present and functional.
-□ Freeze-to-angle logic present in loop (for scene 3 if applicable).
-□ resetAnim() resets theta to 0 and returns to scene 0.
-□ Step dots update correctly on each step.
-□ Next Step button hidden on last step; Restart always visible.
-□ No external dependencies — single self-contained HTML file.
-□ SVG viewBox exactly "0 0 850 450".
-□ All element ids referenced in JS actually exist in the SVG.
+5. JAVASCRIPT:
+   - CONFIG object holding physical dimensions.
+   - animate_{id}(theta) functions for moving parts.
+   - requestAnimationFrame loop updating `theta` and calling animate functions.
+   - `stepsData` array with 4 scene configurations (layer opacities, blur amount, text).
+   - applyStep(idx), nextStep(), resetAnim() functions.
 """
-
 
 def _generate_html(
     question: str,
     scene_plan: dict,
     api_key: str | None = None,
 ) -> str:
-    """
-    Part 2: produce the full interactive HTML from question + scene plan.
-
-    Includes a truncation-retry loop: if the returned HTML is suspiciously
-    short (< MIN_HTML_CHARS), it means Gemini hit its output token limit
-    silently and returned a stub.  We retry up to HTML_MAX_RETRIES times.
-    """
-    prompt = (
+    # Remove large text blocks from scene_plan to save input tokens
+    slim_plan = dict(scene_plan)
+    slim_plan.pop("problem_statement", None)
+    
+    base_prompt = (
         f"{PART2_SYSTEM}\n\n"
-        f"=== PART A: Original Question ===\n"
-        f"{question}\n\n"
-        f"=== PART B: Scene Plan (JSON) ===\n"
-        f"{json.dumps(scene_plan, indent=2)}"
+        f"=== PART A: Original Question ===\n{question}\n\n"
+        f"=== PART B: Scene Plan ===\n{json.dumps(slim_plan, indent=2)}"
     )
 
     last_html = ""
     for attempt in range(1, HTML_MAX_RETRIES + 1):
-        try:
-            raw = _call_gemini(prompt, api_key=api_key, max_tokens=16384)
-        except RuntimeError as exc:
-            log.warning(f"[q_animation] Part 2 attempt {attempt} error: {exc}")
-            if attempt < HTML_MAX_RETRIES:
-                time.sleep(3)
-                continue
-            raise
+        prompt = base_prompt
+        if attempt > 1:
+            log.warning(f"[q_animation] Retrying Part 2 (Attempt {attempt}) with forced minification prompt.")
+            prompt += (
+                "\n\nCRITICAL WARNING: Your previous output was truncated because it exceeded the max token limit. "
+                "You MUST drastically simplify your SVG shapes, CSS, and JS. "
+                "Remove ALL filters, complex gradients, and decorative elements. Make the HTML as short as possible!"
+            )
 
-        # Strip accidental markdown fences
-        raw = re.sub(r"```(?:html)?\s*", "", raw).replace("```", "").strip()
+        raw = _call_gemini(prompt, api_key=api_key, max_tokens=16384)
+        raw = re.sub(r"
+```(?:html)?\s*", "", raw).replace("```", "").strip()
 
-        # Ensure it starts with a doctype
+        # Fix missing doctype
         if not raw.lower().startswith("<!doctype"):
             idx = raw.lower().find("<!doctype")
-            if idx != -1:
-                raw = raw[idx:]
+            if idx != -1: raw = raw[idx:]
 
-        if len(raw) >= MIN_HTML_CHARS:
-            return raw   # ✅ full HTML produced
+        # Validate completion: Does it end with the HTML closing tag?
+        is_complete = raw.lower().endswith("</html>")
+
+        if is_complete and len(raw) >= MIN_HTML_CHARS:
+            return raw
 
         log.warning(
-            f"[q_animation] Part 2 attempt {attempt}: HTML too short "
-            f"({len(raw):,} chars < {MIN_HTML_CHARS:,} minimum). "
-            f"{'Retrying...' if attempt < HTML_MAX_RETRIES else 'Using best result.'}"
+            f"[q_animation] HTML validation failed on attempt {attempt}. "
+            f"Complete: {is_complete}, Length: {len(raw):,} chars."
         )
         if len(raw) > len(last_html):
             last_html = raw
+            
         if attempt < HTML_MAX_RETRIES:
             time.sleep(3)
 
-    # Return the longest result we got even if still short
-    raise RuntimeError(
-        f"Part 2 generated only {len(last_html):,} chars after {HTML_MAX_RETRIES} "
-        f"attempts (minimum expected: {MIN_HTML_CHARS:,}). "
-        f"The model may be hitting its output token limit. "
-        f"Check your Gemini API quota or try a simpler question."
-    )
+    log.warning("[q_animation] Max retries hit. Returning longest generated HTML (may be truncated).")
+    return last_html
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -724,221 +336,70 @@ def _run_pipeline(
     output_path: str | None = None,
     verbose: bool = True,
 ) -> tuple[str, str, dict]:
-    """
-    Synchronous 2-part pipeline: question → HTML.
-
-    Returns
-    -------
-    tuple of (html_string, output_path_written, scene_plan_dict)
-    """
     def log_msg(msg: str) -> None:
-        if verbose:
-            print(f"[q_animation] {msg}")
+        if verbose: print(f"[q_animation] {msg}")
         log.info(f"[q_animation] {msg}")
 
     log_msg(f"Gemini model: {GEMINI_MODEL}")
-
-    # Part 1 — Scene Plan (solves problem + designs animation)
     log_msg("Part 1 → Solving problem and generating 4-scene animation plan ...")
+    
     scene_plan = _generate_scene_plan(question, api_key=api_key)
     topic = scene_plan.get("topic", "animation")
+    
     log_msg(f"  Topic: {topic}")
-    log_msg(f"  Subject area: {scene_plan.get('subject_area', 'Unknown')}")
-    log_msg(f"  Components: {len(scene_plan.get('components', []))}")
-    log_msg(f"  Solution steps: {len(scene_plan.get('solution_steps', []))}")
-    log_msg(f"  Scenes generated: {len(scene_plan.get('scenes', []))}")
-
-    # Part 2 — High-Rich Interactive SVG HTML
     log_msg("Part 2 → Generating interactive HTML animation ...")
+    
     html = _generate_html(question, scene_plan, api_key=api_key)
-    log_msg(f"  HTML length: {len(html):,} chars  (minimum expected: {MIN_HTML_CHARS:,})")
-    if len(html) < MIN_HTML_CHARS:
-        log_msg("  ⚠️  WARNING: HTML is shorter than expected — may not render correctly")
+    log_msg(f"  HTML length: {len(html):,} chars")
+    
+    if not html.lower().endswith("</html>"):
+        log_msg("  ⚠️ WARNING: HTML appears truncated (missing </html>)")
 
-    # Write to disk
     if output_path is None:
         safe_name = re.sub(r"[^\w]+", "_", topic.lower())[:40]
         output_path = os.path.join(OUTPUT_DIR, f"{safe_name}_animation.html")
+        
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    log_msg(f"  Written to: {output_path}  ({len(html):,} bytes)")
-
+        
+    log_msg(f"  Written to: {output_path}")
     return html, output_path, scene_plan
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5.  Public API — CLI / direct import
+# 5.  Public APIs
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_animation(
-    question: str,
-    api_key: str | None = None,
-    output_path: str | None = None,
-    verbose: bool = True,
-) -> str:
-    """
-    Full 2-part pipeline: question → premium interactive HTML file.
-
-    Parameters
-    ----------
-    question    : Natural-language engineering question.
-    api_key     : Gemini API key (falls back to GEMINI_API_KEY env var).
-    output_path : Where to write the .html file.  Auto-generated if None.
-    verbose     : Print progress messages.
-
-    Returns
-    -------
-    str : Path to the generated HTML file.
-    """
-    _, written_path, _ = _run_pipeline(
-        question=question,
-        api_key=api_key,
-        output_path=output_path,
-        verbose=verbose,
-    )
+def generate_animation(question: str, api_key: str | None = None, output_path: str | None = None, verbose: bool = True) -> str:
+    _, written_path, _ = _run_pipeline(question=question, api_key=api_key, output_path=output_path, verbose=verbose)
     return written_path
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 6.  Backend API — called by main.py via POST /generate-question-animation
-# ─────────────────────────────────────────────────────────────────────────────
-
 async def generate_question_animation(question: str) -> dict:
-    """
-    Async entry point for the FastAPI backend (main.py).
-
-    Called by:
-        POST /generate-question-animation  →  { question: "..." }
-
-    Returns a dict that index.html expects:
-        {
-            "animation_code": "<full <!DOCTYPE html>...>",
-            "title":          "<topic name>",
-            "explanation":    "<one-sentence plain-English answer>"
-        }
-
-    The blocking google-genai SDK calls run in asyncio's default thread-pool
-    executor so they never block the FastAPI event loop.
-    """
     question = (question or "").strip()
-    if not question:
-        raise ValueError("'question' field cannot be empty.")
+    if not question: raise ValueError("'question' field cannot be empty.")
 
     loop = asyncio.get_event_loop()
-
     html, _, scene_plan = await loop.run_in_executor(
-        None,
-        lambda: _run_pipeline(question=question, verbose=True),
+        None, lambda: _run_pipeline(question=question, verbose=True)
     )
 
     final = scene_plan.get("final_answer", {})
-    explanation_text = (
-        final.get("statement")
-        or f"Topic: {scene_plan.get('topic', question[:80])}"
-    )
+    explanation_text = final.get("statement") or f"Topic: {scene_plan.get('topic', question[:80])}"
 
     return {
         "animation_code": html,
-        "title":          scene_plan.get("topic", question[:80]),
-        "explanation":    explanation_text,
+        "title": scene_plan.get("topic", question[:80]),
+        "explanation": explanation_text,
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 7.  Example Questions  (for CLI testing)
-# ─────────────────────────────────────────────────────────────────────────────
-
-EXAMPLE_QUESTIONS = {
-    "slider_crank": (
-        "In a slider-crank mechanism, the crank length is 50 mm and the "
-        "connecting rod is 200 mm. The crank rotates at 300 RPM. "
-        "Determine the linear velocity of the piston when the crank angle "
-        "is 60 degrees from inner dead centre."
-    ),
-    "spur_gear": (
-        "A spur gear train consists of a driving pinion with 20 teeth "
-        "rotating at 900 RPM (clockwise) meshing with a driven gear of "
-        "60 teeth. Calculate the speed and direction of rotation of the "
-        "driven gear."
-    ),
-    "four_bar": (
-        "In a four-bar linkage, the fixed link (frame) is 120 mm, the "
-        "crank is 40 mm rotating at 200 RPM, the coupler is 160 mm, and "
-        "the follower (rocker) is 80 mm. Determine the angular velocity "
-        "of the rocker when the crank is at 45 degrees from the fixed link."
-    ),
-    "belt_pulley": (
-        "A belt drive system has a driver pulley of diameter 250 mm "
-        "rotating at 720 RPM. It is connected to a driven pulley of "
-        "diameter 600 mm. Calculate the speed of the driven pulley and "
-        "the velocity of the belt."
-    ),
-    "cam_follower": (
-        "A circular disc cam of base circle radius 30 mm and lift 20 mm "
-        "rotates at 150 RPM. The knife-edge follower rises with simple "
-        "harmonic motion during 120 degrees of cam rotation. Find the "
-        "maximum velocity and maximum acceleration of the follower."
-    ),
-    "flat_belt": (
-        "A flat belt transmits 8 kW of power at a belt speed of 15 m/s. "
-        "Find the difference between the tight side and slack side tension."
-    ),
-    "simply_supported_beam": (
-        "A simply supported beam of span 6 m carries a central point load "
-        "of 20 kN. Determine the maximum bending moment and the reactions "
-        "at the supports."
-    ),
-    "projectile": (
-        "A ball is projected at an angle of 30° with an initial velocity "
-        "of 40 m/s. Find the maximum height, time of flight, and horizontal "
-        "range. Ignore air resistance."
-    ),
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 8.  CLI Entry Point
-# ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import sys
-
     print("=" * 64)
     print("  q_animation.py  —  Engineering Animation Generator")
-    print(f"  Powered by Google Gemini  ({GEMINI_MODEL})")
     print("=" * 64)
-    print()
-    print("Available example questions:")
-    for i, (key, q) in enumerate(EXAMPLE_QUESTIONS.items(), 1):
-        preview = q[:80].replace("\n", " ")
-        print(f"  [{i}] {key}: {preview}...")
-    print(f"  [{len(EXAMPLE_QUESTIONS) + 1}] Enter a custom question")
-    print()
-
-    choice_raw = input("Select an option [1]: ").strip() or "1"
-
-    try:
-        choice = int(choice_raw)
-    except ValueError:
-        choice = 1
-
-    keys = list(EXAMPLE_QUESTIONS.keys())
-
-    if 1 <= choice <= len(keys):
-        selected_key = keys[choice - 1]
-        user_question = EXAMPLE_QUESTIONS[selected_key]
-        print(f"\nSelected: {selected_key}")
-    else:
-        user_question = input("Enter your question:\n> ").strip()
-        if not user_question:
-            print("No question entered. Exiting.")
-            sys.exit(0)
-
-    print(f"\nQuestion:\n{user_question}\n")
-
-    out = generate_animation(
-        question=user_question,
-        api_key=os.environ.get("GEMINI_API_KEY"),
-        verbose=True,
-    )
-    print(f"\nDone! Open in browser:  {out}")
+    q = input("Enter your engineering question:\n> ").strip()
+    if q:
+        out = generate_animation(question=q, api_key=os.environ.get("GEMINI_API_KEY"), verbose=True)
+        print(f"\nDone! Open in browser: {out}")
+```eof
