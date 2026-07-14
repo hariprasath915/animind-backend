@@ -1287,13 +1287,13 @@ def inject_answer_box_panel(html, answer_targets=None):
 
 _NOTES_CSS = """
 <style id="qanim-notes-styles">
-#qanim-notes-btn { position:fixed; top:14px; right:16px; z-index:6900;
+#qanim-notes-btn { position:fixed; bottom:80px; right:20px; z-index:6900;
   display:flex; align-items:center; gap:7px; padding:10px 18px 10px 13px; border-radius:11px;
   border:1.5px solid #d1d5db; background:#fff; color:#475569;
   font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:700;
   cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,.11); transition:background .15s,border-color .15s,color .15s; }
 #qanim-notes-btn:hover { background:#fefce8; border-color:#ca8a04; color:#92400e; }
-#qanim-notes-panel { position:fixed; top:50px; right:16px; z-index:7200; width:340px; max-height:80vh;
+#qanim-notes-panel { position:fixed; bottom:140px; right:20px; z-index:7200; width:clamp(300px,28vw,420px); max-height:72vh;
   border-radius:14px; background:#fff; border:1px solid #e2e8f0; box-shadow:0 8px 32px rgba(0,0,0,.10);
   display:flex; flex-direction:column; overflow:hidden; opacity:0; transform:translateY(-8px) scale(.97);
   pointer-events:none; transition:opacity .22s ease,transform .22s ease; }
@@ -1455,23 +1455,24 @@ def inject_notes_system(html):
 _CONTROLS_BAR_CSS = """
 <style id="qanim-controls-bar-styles">
 #qanim-controls-bar { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:7000;
-  display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.98);
+  display:flex; align-items:center; gap:clamp(4px,0.5vw,10px); background:rgba(255,255,255,.98);
   backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
-  border:1.5px solid transparent; border-radius:16px; padding:10px 14px;
+  border:1.5px solid transparent; border-radius:18px; padding:clamp(8px,0.8vw,14px) clamp(12px,1.2vw,22px);
   box-shadow:0 6px 36px rgba(124,58,237,.18),0 2px 8px rgba(0,0,0,.08); white-space:nowrap; }
-#qanim-controls-bar::before { content:''; position:absolute; inset:-2px; border-radius:18px;
+#qanim-controls-bar::before { content:''; position:absolute; inset:-2px; border-radius:20px;
   background:linear-gradient(90deg,#7c3aed,#db2777,#f59e0b,#7c3aed); background-size:200% 100%;
   animation:qanim-bar-glow 4s linear infinite; z-index:-1; }
 @keyframes qanim-bar-glow { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
-.qanim-ctrl-btn { display:flex; align-items:center; gap:5px; padding:8px 15px; border-radius:10px;
+.qanim-ctrl-btn { display:flex; align-items:center; gap:clamp(4px,0.4vw,8px); padding:clamp(7px,0.65vw,12px) clamp(12px,1.1vw,20px); border-radius:10px;
   border:1.5px solid #e2e8f0; background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%); color:#334155;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700; cursor:pointer;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:clamp(11px,0.85vw,14px); font-weight:700; cursor:pointer;
   transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s;
   user-select:none; letter-spacing:.2px; }
 .qanim-ctrl-btn:hover { background:linear-gradient(135deg,#ede9fe 0%,#fdf4ff 100%); border-color:#7c3aed;
   color:#6d28d9; transform:translateY(-2px); box-shadow:0 4px 14px rgba(124,58,237,.22); }
 .qanim-ctrl-btn:active { transform:translateY(0); box-shadow:none; }
-.qanim-ctrl-sep { width:1px; height:22px; background:linear-gradient(to bottom,transparent,#c4b5fd,transparent); flex-shrink:0; }
+.ctrl-label { font-size:clamp(11px,0.85vw,14px); }
+.qanim-ctrl-sep { width:1px; height:clamp(18px,1.6vw,26px); background:linear-gradient(to bottom,transparent,#c4b5fd,transparent); flex-shrink:0; }
 </style>
 """
 
@@ -2125,7 +2126,61 @@ The output must match this exact structure:
       --accent-green: #97c459;
       --border-radius: 12px;
     }
-    /* ... full dark-theme styles ... */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: clamp(12px, 2vw, 32px);
+    }
+    .dashboard {
+      background-color: var(--panel-bg);
+      border-radius: var(--border-radius);
+      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+      width: 100%;
+      max-width: min(1400px, 96vw);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      margin: auto;
+    }
+    .question-banner {
+      padding: clamp(14px,1.5vw,22px) clamp(18px,2vw,32px);
+      background: linear-gradient(135deg, #1f2833 0%, #141a21 100%);
+      border-bottom: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .q-label { font-size: clamp(11px,0.85vw,14px); font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:1px; }
+    .q-text  { font-size: clamp(14px,1.1vw,18px);  color:#fff; line-height:1.4; }
+    .svg-container { width:100%; aspect-ratio:16/9; background:radial-gradient(circle at center,#1a1a24 0%,#050508 100%); position:relative; overflow:hidden; }
+    svg { display:block; width:100%; height:100%; }
+    .svg-layer { transition: opacity 0.5s ease; }
+    #blur-shield { transition: opacity 0.5s ease; }
+    .control-panel { padding: clamp(16px,2vw,32px) clamp(18px,2.5vw,40px); background:linear-gradient(180deg,#1f2833 0%,#151b22 100%); border-top:1px solid #333; }
+    .step-indicator { display:flex; gap:clamp(6px,0.8vw,14px); justify-content:center; margin-bottom:clamp(12px,1.2vw,20px); }
+    .step-dot { width:clamp(10px,0.8vw,14px); height:clamp(10px,0.8vw,14px); border-radius:50%; background:rgba(255,255,255,0.2); cursor:pointer; transition:all 0.3s ease; }
+    .step-dot.active { background:var(--accent-cyan); box-shadow:0 0 8px var(--accent-cyan); transform:scale(1.2); }
+    .info-box { background:rgba(0,0,0,0.2); padding:clamp(12px,1.3vw,22px); border-radius:8px; border-left:4px solid var(--accent-cyan); min-height:clamp(90px,9vw,140px); }
+    .info-box h3 { color:#fff; margin-bottom:clamp(6px,0.7vw,12px); font-size:clamp(15px,1.2vw,22px); }
+    .badges { display:flex; gap:clamp(6px,0.7vw,12px); margin-bottom:10px; flex-wrap:wrap; }
+    .badge { padding:clamp(3px,0.3vw,5px) clamp(8px,0.8vw,14px); border-radius:12px; font-size:clamp(11px,0.85vw,14px); font-weight:bold; color:#000; }
+    .badge-cyan { background:var(--accent-cyan); }
+    .badge-orange { background:var(--accent-orange); }
+    .badge-green { background:var(--accent-green); }
+    .info-desc { font-size:clamp(13px,1vw,17px); line-height:1.6; }
+    .actions { display:flex; justify-content:center; margin-top:clamp(14px,1.5vw,24px); gap:clamp(10px,1vw,20px); }
+    button { padding:clamp(9px,0.8vw,14px) clamp(18px,1.8vw,30px); border:none; border-radius:8px; font-weight:bold; cursor:pointer; transition:all 0.2s ease; font-size:clamp(13px,1vw,17px); }
+    .btn-primary { background:var(--accent-cyan); color:#000; }
+    .btn-primary:hover { background:#fff; box-shadow:0 0 10px var(--accent-cyan); }
+    .btn-secondary { background:transparent; color:var(--text-main); border:1px solid var(--text-main); }
+    .btn-secondary:hover { background:rgba(255,255,255,0.1); color:#fff; }
+    .math-box { font-family:'Courier New',Courier,monospace; background:rgba(0,0,0,0.8); border:1px solid var(--accent-orange); border-radius:6px; padding:clamp(12px,1.2vw,20px); font-size:clamp(12px,0.95vw,16px); }
   </style>
 </head>
 <body>
@@ -2224,6 +2279,16 @@ nextStep() / resetAnim() manage currentStep.
 - freezing mechanism: smoothly interpolate angle to solution angle, then pause
 - Math box (last step): show actual formula, substitution, and final answer
 
+═══ LAYOUT & RESPONSIVENESS (MANDATORY) ═══
+- body: display:flex; justify-content:center; align-items:center; min-height:100vh — dashboard MUST be centred on screen
+- .dashboard: max-width:min(1400px,96vw) — fills large displays (smartboards, 4K monitors) and laptops
+- ALL font-size values MUST use clamp(): e.g. clamp(13px,1vw,18px) — never fixed px alone
+- ALL padding values MUST use clamp(): e.g. clamp(14px,1.5vw,28px)
+- .actions: justify-content:center — Next/Restart buttons centred, not right-aligned
+- .info-box h3: font-size clamp(15px,1.2vw,22px) — readable on a 75" smartboard at distance
+- .info-desc: font-size clamp(13px,1vw,17px); line-height:1.6
+- .step-dot: width and height use clamp(10px,0.8vw,14px)
+
 ═══ OUTPUT ═══
 Return ONLY the complete <!DOCTYPE html>...</html> page as raw text.
 No JSON wrapper. No markdown. No fences. Just the pure HTML."""
@@ -2246,6 +2311,7 @@ CRITICAL REMINDERS:
 8. Use the accent colors from the scene script for each component.
 9. Do NOT use const/let/arrow functions/backtick template literals.
 10. The math box in the last step MUST show the actual numerical calculation from final_answer.
+11. LAYOUT: body must use display:flex; justify-content:center; align-items:center so the dashboard is CENTRED on screen. dashboard max-width MUST be min(1400px,96vw). All font-size and padding must use clamp() for responsiveness on large screens (smartboards, laptops). Buttons (.actions) must be centred with justify-content:center.
 
 Return the complete HTML page — nothing else."""
 
@@ -2448,29 +2514,29 @@ class GeminiAnimationBuilder:
             --border-radius: 12px;
         }}
         * {{ box-sizing:border-box; margin:0; padding:0; font-family:'Segoe UI',system-ui,-apple-system,sans-serif; }}
-        body {{ background-color:var(--bg-color); color:var(--text-main); display:flex; flex-direction:column; align-items:center; min-height:100vh; padding:20px; }}
-        .dashboard {{ width:100%; max-width:850px; background:var(--panel-bg); border-radius:var(--border-radius); box-shadow:0 15px 35px rgba(0,0,0,0.5); overflow:hidden; border:1px solid #333; }}
-        .question-banner {{ padding:18px 24px; background:linear-gradient(135deg,#1f2833 0%,#141a21 100%); border-bottom:1px solid #333; display:flex; flex-direction:column; gap:6px; }}
-        .q-label {{ font-size:12px; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:1px; }}
-        .q-text {{ font-size:15px; color:#fff; line-height:1.4; }}
+        body {{ background-color:var(--bg-color); color:var(--text-main); display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:clamp(12px,2vw,32px); }}
+        .dashboard {{ width:100%; max-width:min(1400px,96vw); background:var(--panel-bg); border-radius:var(--border-radius); box-shadow:0 15px 35px rgba(0,0,0,0.5); overflow:hidden; border:1px solid #333; margin:auto; }}
+        .question-banner {{ padding:clamp(14px,1.5vw,22px) clamp(18px,2vw,32px); background:linear-gradient(135deg,#1f2833 0%,#141a21 100%); border-bottom:1px solid #333; display:flex; flex-direction:column; gap:6px; }}
+        .q-label {{ font-size:clamp(11px,0.85vw,14px); font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:1px; }}
+        .q-text {{ font-size:clamp(14px,1.1vw,18px); color:#fff; line-height:1.4; }}
         .svg-container {{ width:100%; aspect-ratio:16/9; background:radial-gradient(circle at center,#1a1a24 0%,#050508 100%); position:relative; overflow:hidden; }}
         svg {{ display:block; width:100%; height:100%; }}
         .svg-layer {{ transition:opacity 0.6s cubic-bezier(0.4,0,0.2,1); }}
-        .control-panel {{ padding:24px; background:linear-gradient(180deg,#1f2833 0%,#151b22 100%); border-top:1px solid #333; }}
-        .step-indicator {{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }}
-        .step-dot {{ width:10px; height:10px; border-radius:50%; background:#444; transition:background 0.4s,transform 0.4s; }}
+        .control-panel {{ padding:clamp(16px,2vw,32px) clamp(18px,2.5vw,40px); background:linear-gradient(180deg,#1f2833 0%,#151b22 100%); border-top:1px solid #333; }}
+        .step-indicator {{ display:flex; align-items:center; gap:clamp(8px,1vw,16px); margin-bottom:clamp(12px,1.2vw,20px); }}
+        .step-dot {{ width:clamp(9px,0.7vw,14px); height:clamp(9px,0.7vw,14px); border-radius:50%; background:#444; transition:background 0.4s,transform 0.4s; }}
         .step-dot.active {{ background:var(--accent-cyan); box-shadow:0 0 10px var(--accent-cyan); transform:scale(1.2); }}
-        .step-label {{ font-size:14px; color:#888; font-weight:500; letter-spacing:0.5px; text-transform:uppercase; }}
-        .info-box {{ background:#0b0c10; border:1px solid #333; border-radius:8px; padding:16px; min-height:120px; display:flex; flex-direction:column; justify-content:center; }}
-        .info-box h3 {{ color:#fff; margin-bottom:12px; font-size:16px; display:flex; align-items:center; gap:8px; }}
-        .badges {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px; }}
-        .badge {{ padding:4px 12px; border-radius:20px; font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px; }}
+        .step-label {{ font-size:clamp(12px,0.9vw,16px); color:#888; font-weight:500; letter-spacing:0.5px; text-transform:uppercase; }}
+        .info-box {{ background:#0b0c10; border:1px solid #333; border-radius:8px; padding:clamp(14px,1.5vw,24px); min-height:clamp(100px,10vw,160px); display:flex; flex-direction:column; justify-content:center; }}
+        .info-box h3 {{ color:#fff; margin-bottom:clamp(8px,0.8vw,14px); font-size:clamp(15px,1.2vw,22px); display:flex; align-items:center; gap:8px; }}
+        .badges {{ display:flex; gap:clamp(8px,0.8vw,14px); flex-wrap:wrap; margin-bottom:10px; }}
+        .badge {{ padding:clamp(3px,0.3vw,6px) clamp(10px,0.9vw,16px); border-radius:20px; font-size:clamp(11px,0.85vw,14px); font-weight:600; display:flex; align-items:center; gap:6px; }}
         .badge-cyan {{ background:rgba(102,252,241,0.1); border:1px solid var(--accent-cyan-dim); color:var(--accent-cyan); }}
         .badge-orange {{ background:rgba(252,163,17,0.1); border:1px solid #b3730b; color:var(--accent-orange); }}
         .badge-green {{ background:rgba(151,196,89,0.1); border:1px solid #6b933a; color:var(--accent-green); }}
-        .info-desc {{ font-size:14px; line-height:1.5; color:#a0a0a0; }}
-        .actions {{ display:flex; justify-content:flex-end; gap:12px; margin-top:20px; }}
-        button {{ padding:10px 20px; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.2s; border:none; outline:none; }}
+        .info-desc {{ font-size:clamp(13px,1vw,17px); line-height:1.6; color:#a0a0a0; }}
+        .actions {{ display:flex; justify-content:center; gap:clamp(10px,1vw,20px); margin-top:clamp(16px,1.5vw,28px); }}
+        button {{ padding:clamp(9px,0.8vw,14px) clamp(18px,1.8vw,32px); border-radius:8px; font-size:clamp(13px,1vw,17px); font-weight:600; cursor:pointer; transition:all 0.2s; border:none; outline:none; }}
         .btn-primary {{ background:var(--accent-cyan-dim); color:#fff; box-shadow:0 4px 10px rgba(69,162,158,0.3); }}
         .btn-primary:hover {{ background:var(--accent-cyan); color:#000; box-shadow:0 6px 15px rgba(102,252,241,0.4); }}
         .btn-secondary {{ background:transparent; color:var(--text-main); border:1px solid #555; }}
