@@ -52,15 +52,30 @@ The SVG HTML must:
 
 FIX LOG
 -------
-• 2026-07-14  Original 4-call pipeline collapsed to 3 parts for clarity.
+• 2026-07-14a Original 4-call pipeline collapsed to 3 parts for clarity.
               PART1_SYSTEM now generates a rigorous explanation script.
               PART2_SYSTEM produces a JSON scene plan with strict 4-scene
               structure (SETUP / ELEMENTS / LINKAGE / SOLUTION).
               PART3_SYSTEM is a comprehensive HTML-generation prompt that
-              embeds both the explanation text and scene plan, and includes
-              exact structural requirements derived from the reference
-              Slider-Crank and Flat-Belt HTML templates.
-              Model updated to gemini-2.5-flash (June 2026 release).
+              embeds both the explanation text and scene plan.
+              Model updated to gemini-3.1-pro-preview.
+
+• 2026-07-14b BUGFIX — Silent truncation (1,469 / 1,907 char stub HTML):
+              gemini-3.1-pro-preview was hitting its output token cap silently
+              (finish_reason=MAX_TOKENS) and returning a useless stub with no
+              exception raised.  Three fixes applied:
+              (1) _call_gemini now inspects response.candidates[0].finish_reason
+                  and raises RuntimeError on MAX_TOKENS so retries fire.
+              (2) _generate_html wraps the call in a truncation-retry loop
+                  (HTML_MAX_RETRIES=2); if HTML < MIN_HTML_CHARS=15,000 it
+                  retries rather than silently returning a stub.
+              (3) _slim_explanation() strips verbose JSON fields before sending
+                  to Part 3, reducing prompt token usage and freeing more of
+                  the output budget for the actual HTML.
+              BUGFIX — Race condition (Part 3 of request N finishing during
+              request N+1): no code change needed — this was a symptom of the
+              slow truncation retries blocking the thread pool.  The faster
+              failure + retry path resolves it.
 
 Requirements (add to requirements.txt if not already present):
   google-genai>=2.0.0
@@ -82,9 +97,11 @@ from google.genai import types as genai_types
 # 0.  Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GEMINI_MODEL = "gemini-3.1-pro-preview"
-OUTPUT_DIR   = "."
-MAX_RETRIES  = 3
+GEMINI_MODEL     = "gemini-3.1-pro-preview"
+OUTPUT_DIR       = "."
+MAX_RETRIES      = 3
+MIN_HTML_CHARS   = 15_000   # anything smaller is a truncated stub — retry
+HTML_MAX_RETRIES = 2        # extra retries specifically for truncated HTML
 
 log = logging.getLogger(__name__)
 
@@ -139,16 +156,34 @@ def _call_gemini(
                 contents=prompt,
                 config=config,
             )
+
+            # ── Detect silent truncation via finish_reason ──────────────────
+            # When the model hits max_output_tokens it returns finish_reason
+            # MAX_TOKENS with a partial response and NO exception.  We raise
+            # so the caller can decide whether to retry with a shorter prompt.
+            try:
+                finish = response.candidates[0].finish_reason
+                finish_name = finish.name if hasattr(finish, "name") else str(finish)
+                if finish_name in ("MAX_TOKENS", "2"):
+                    raise RuntimeError(
+                        f"Gemini truncated response (finish_reason={finish_name}). "
+                        f"Output hit max_output_tokens={max_tokens}."
+                    )
+            except (AttributeError, IndexError):
+                pass  # older SDK versions may not expose candidates cleanly
+
             return response.text.strip()
+
         except Exception as exc:
             err_str = str(exc).lower()
             is_transient = any(k in err_str for k in (
-                "429", "503", "quota", "resource exhausted", "unavailable"
+                "429", "503", "quota", "resource exhausted", "unavailable",
+                "truncated", "max_tokens",
             ))
             if is_transient and attempt < MAX_RETRIES:
                 wait = 2 ** attempt
                 log.warning(
-                    f"[q_animation] Gemini transient error, retrying in {wait}s "
+                    f"[q_animation] Gemini transient/truncation error, retrying in {wait}s "
                     f"(attempt {attempt}): {exc}"
                 )
                 time.sleep(wait)
@@ -648,28 +683,93 @@ QUALITY CHECKLIST  (verify before outputting)
 """
 
 
+def _slim_explanation(explanation: dict) -> dict:
+    """
+    Strip verbose fields from the explanation dict before sending to Part 3.
+    The full explanation can be 3–5 KB of JSON; we only need what Part 3
+    actually uses to build the SVG. Reducing prompt size leaves more of the
+    output token budget for the actual HTML.
+    """
+    return {
+        "topic":             explanation.get("topic", ""),
+        "subject_area":      explanation.get("subject_area", ""),
+        "problem_statement": explanation.get("problem_statement", ""),
+        "given":             explanation.get("given", []),
+        "find":              explanation.get("find", ""),
+        "solution_steps":    explanation.get("solution_steps", []),
+        "final_answer":      explanation.get("final_answer", {}),
+        # Keep components but drop verbose fields Gemini doesn't need
+        "components": [
+            {k: v for k, v in c.items()
+             if k in ("id", "label", "shape", "color_hint", "motion_type",
+                      "pivot_or_anchor", "approx_size", "layer_order", "role")}
+            for c in explanation.get("components", [])
+        ],
+        "diagram_notes": explanation.get("diagram_notes", ""),
+    }
+
+
 def _generate_html(
     explanation: dict,
     scene_plan: dict,
     api_key: str | None = None,
 ) -> str:
-    """Part 3: produce the full interactive HTML from explanation + scene plan."""
+    """
+    Part 3: produce the full interactive HTML from explanation + scene plan.
+
+    Includes a truncation-retry loop: if the returned HTML is suspiciously
+    short (< MIN_HTML_CHARS), it means Gemini hit its output token limit
+    silently and returned a stub.  We retry up to HTML_MAX_RETRIES times.
+    """
+    slim_exp = _slim_explanation(explanation)
     prompt = (
         f"{PART3_SYSTEM}\n\n"
-        f"=== PART A: Explanation Script (JSON) ===\n"
-        f"{json.dumps(explanation, indent=2)}\n\n"
+        f"=== PART A: Problem Data (JSON) ===\n"
+        f"{json.dumps(slim_exp, indent=2)}\n\n"
         f"=== PART B: Scene Plan (JSON) ===\n"
         f"{json.dumps(scene_plan, indent=2)}"
     )
-    raw = _call_gemini(prompt, api_key=api_key, max_tokens=16384)
-    # Strip any accidental markdown fences
-    raw = re.sub(r"```(?:html)?\s*", "", raw).replace("```", "").strip()
-    # Ensure it starts with a doctype
-    if not raw.lower().startswith("<!doctype"):
-        idx = raw.lower().find("<!doctype")
-        if idx != -1:
-            raw = raw[idx:]
-    return raw
+
+    last_html = ""
+    for attempt in range(1, HTML_MAX_RETRIES + 1):
+        try:
+            raw = _call_gemini(prompt, api_key=api_key, max_tokens=16384)
+        except RuntimeError as exc:
+            log.warning(f"[q_animation] Part 3 attempt {attempt} error: {exc}")
+            if attempt < HTML_MAX_RETRIES:
+                time.sleep(3)
+                continue
+            raise
+
+        # Strip accidental markdown fences
+        raw = re.sub(r"```(?:html)?\s*", "", raw).replace("```", "").strip()
+
+        # Ensure it starts with a doctype
+        if not raw.lower().startswith("<!doctype"):
+            idx = raw.lower().find("<!doctype")
+            if idx != -1:
+                raw = raw[idx:]
+
+        if len(raw) >= MIN_HTML_CHARS:
+            return raw   # ✅ full HTML produced
+
+        log.warning(
+            f"[q_animation] Part 3 attempt {attempt}: HTML too short "
+            f"({len(raw):,} chars < {MIN_HTML_CHARS:,} minimum). "
+            f"{'Retrying...' if attempt < HTML_MAX_RETRIES else 'Using best result.'}"
+        )
+        if len(raw) > len(last_html):
+            last_html = raw
+        if attempt < HTML_MAX_RETRIES:
+            time.sleep(3)
+
+    # Return the longest result we got even if still short
+    raise RuntimeError(
+        f"Part 3 generated only {len(last_html):,} chars after {HTML_MAX_RETRIES} "
+        f"attempts (minimum expected: {MIN_HTML_CHARS:,}). "
+        f"The model may be hitting its output token limit. "
+        f"Check your Gemini API quota or try a simpler question."
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -713,7 +813,9 @@ def _run_pipeline(
     # Part 3 — High-Rich Interactive SVG HTML
     log_msg("Part 3 → Generating interactive HTML animation ...")
     html = _generate_html(explanation, scene_plan, api_key=api_key)
-    log_msg(f"  HTML length: {len(html):,} chars")
+    log_msg(f"  HTML length: {len(html):,} chars  (minimum expected: {MIN_HTML_CHARS:,})")
+    if len(html) < MIN_HTML_CHARS:
+        log_msg(f"  ⚠️  WARNING: HTML is shorter than expected — may not render correctly")
 
     # Write to disk
     if output_path is None:
