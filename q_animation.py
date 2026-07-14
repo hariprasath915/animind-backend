@@ -1,18 +1,18 @@
 """
-q_animation.py — Fully Refactored + Backend-Connected
-======================================================
+q_animation.py — 2-Part Pipeline (Part 1 removed)
+====================================================
 Generates premium, step-by-step interactive SVG engineering animations from a
 natural-language question.  Uses **Google Gemini 3.1 Pro Preview** (via the official
 google-genai SDK) for every AI step.
 
-Architecture (3-Part Pipeline)
+Architecture (2-Part Pipeline)
 -------------------------------
-Part 1  → Gemini produces a structured *Explanation Script*
-           (given data, formulas, step-by-step calculations, final answer).
-Part 2  → Gemini produces a *Scene-by-Scene Animation Plan*
-           (which SVG components appear, when, with what motion).
-Part 3  → Gemini produces the final single-file *High-Rich Interactive SVG HTML*
-           document that exactly follows Parts 1 & 2.
+Part 1  → Gemini produces a *Scene-by-Scene Animation Plan*
+           (which SVG components appear, when, with what motion, plus all
+           problem data, formulas, and solution steps embedded directly).
+
+Part 2  → Gemini produces the final single-file *High-Rich Interactive SVG HTML*
+           document that exactly follows Part 1.
 
 Backend Integration
 -------------------
@@ -20,7 +20,7 @@ Backend Integration
     via POST /generate-question-animation.
   • Returns { animation_code, title, explanation } as expected by index.html.
 
-Animation Workflow (Part 2 / Part 3 contract)
+Animation Workflow (Part 1 / Part 2 contract)
 ----------------------------------------------
 Every problem, regardless of type, follows this 4-scene structure:
 
@@ -70,12 +70,20 @@ FIX LOG
                   (HTML_MAX_RETRIES=2); if HTML < MIN_HTML_CHARS=15,000 it
                   retries rather than silently returning a stub.
               (3) _slim_explanation() strips verbose JSON fields before sending
-                  to Part 3, reducing prompt token usage and freeing more of
+                  to Part 2, reducing prompt token usage and freeing more of
                   the output budget for the actual HTML.
-              BUGFIX — Race condition (Part 3 of request N finishing during
+              BUGFIX — Race condition (Part 2 of request N finishing during
               request N+1): no code change needed — this was a symptom of the
               slow truncation retries blocking the thread pool.  The faster
               failure + retry path resolves it.
+
+• 2026-07-14c REFACTOR — Part 1 (explanation script) removed.
+              Part 1 (formerly Part 2) now generates the scene plan DIRECTLY
+              from the natural-language question; all problem data, formulas,
+              and solution steps are embedded in the scene plan JSON itself.
+              Part 2 (formerly Part 3) generates the HTML from the question
+              text + scene plan.
+              Pipeline reduced from 3 API calls to 2.
 
 Requirements (add to requirements.txt if not already present):
   google-genai>=2.0.0
@@ -222,21 +230,26 @@ def _extract_json(raw: str) -> dict | list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2.  Part 1 — Explanation Script (backend-only; drives the animation)
+# 2.  Part 1 — Scene Plan  (directly from question; no pre-pass needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
 PART1_SYSTEM = """\
-You are an expert engineering educator.
+You are an expert engineering educator AND SVG animation director.
 
-Given ANY engineering, physics, or mathematics question, produce a COMPLETE
-structured JSON "explanation script" that will drive an interactive SVG
-animation.  This script is BACKEND ONLY — it is never shown raw to the user,
-but its data, formulas, and results populate SVG labels and formula boxes.
+Given ANY engineering, physics, or mathematics question, you will:
+  1. Fully solve the problem (all formulas, substitutions, and numeric results).
+  2. Design a 4-scene interactive SVG animation plan that communicates the
+     solution visually.
+
+All problem data (given values, formulas, solution steps, final answer, and
+SVG component geometry) are embedded directly in the scene plan JSON below.
+This JSON is the SOLE input to the HTML-generation stage — there is no
+separate explanation-script step.
 
 Return ONLY valid JSON — no markdown fences, no preamble, no trailing text.
 
 {
-  "topic": "<short topic name>",
+  "topic": "<short topic name, e.g. Slider-Crank Velocity>",
   "subject_area": "<Kinematics | Statics | Dynamics | Thermodynamics | Electrical | Fluid Mechanics | Structural | Mathematics | Other>",
   "problem_statement": "<full verbatim question text>",
 
@@ -244,31 +257,21 @@ Return ONLY valid JSON — no markdown fences, no preamble, no trailing text.
     {"symbol": "<e.g. r>", "value": "<e.g. 50>", "unit": "<e.g. mm>", "description": "<Crank length>"}
   ],
 
-  "find": "<what is being calculated, e.g. 'Linear velocity of piston at θ=60°'>",
-
-  "formulas": [
-    {
-      "name": "<formula name, e.g. Angular Velocity>",
-      "expression": "<plain-text formula, e.g. ω = 2πN/60>",
-      "purpose": "<one sentence: what this formula does>"
-    }
-  ],
+  "find": "<what is being calculated>",
 
   "solution_steps": [
     {
       "step_number": 1,
       "title": "<e.g. Convert RPM to rad/s>",
-      "formula_used": "<formula name from formulas list>",
-      "formula_text": "<formula in plain text>",
+      "formula_text": "<formula in plain text, e.g. ω = 2πN/60>",
       "substitution_text": "<formula with actual numbers substituted>",
-      "result_text": "<result with unit>",
-      "result_numeric": "<just the number + unit, e.g. 31.42 rad/s>"
+      "result_text": "<result with unit, e.g. ω = 31.42 rad/s>"
     }
   ],
 
   "final_answer": {
     "symbol": "<e.g. V>",
-    "value": "<numeric>",
+    "value": "<numeric string>",
     "unit": "<unit>",
     "statement": "<one-sentence plain-English summary of the result>"
   },
@@ -278,90 +281,28 @@ Return ONLY valid JSON — no markdown fences, no preamble, no trailing text.
       "id": "<short_snake_case_id, e.g. crank>",
       "label": "<human label, e.g. Crank Arm>",
       "shape": "<circle | line | rectangle | arc | polygon | path | gear | arrow | beam | custom>",
-      "role": "<one sentence: what this component physically does in the problem>",
-      "color_hint": "<hex, e.g. #66fcf1>",
+      "role": "<one sentence: what this component physically does>",
+      "color_hint": "<hex color>",
       "motion_type": "<none | rotate | translate | oscillate | pulse | continuous_rotate>",
-      "pivot_or_anchor": "<e.g. (200, 250) — SVG coordinates in an 850×450 canvas>",
+      "pivot_or_anchor": "<SVG coords, e.g. (200, 250)>",
       "approx_size": "<pixels>",
       "layer_order": "<integer; lower = drawn first / behind>"
     }
   ],
 
-  "diagram_notes": "<2–3 sentences describing the overall geometry of the diagram: where the origin is, what scale factor maps physical units to pixels, and which direction is positive.>"
-}
+  "diagram_notes": "<2–3 sentences: origin location, scale factor, positive direction convention>",
 
-Rules:
-- Every solution_step must have a formula_text, substitution_text, AND result_text.
-- final_answer.value must be the number that will be shown in the SVG answer box.
-- component ids must be unique, lowercase, underscored.
-- Assume SVG canvas 850 wide × 450 tall, origin top-left, Y increases downward.
-"""
-
-
-def _generate_explanation(question: str, api_key: str | None = None) -> dict:
-    """Part 1: produce the structured explanation script."""
-    prompt = f"{PART1_SYSTEM}\n\nQuestion:\n{question}"
-    raw = _call_gemini(prompt, api_key=api_key, max_tokens=6000)
-    return _extract_json(raw)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3.  Part 2 — Scene Plan  (4-scene animation workflow)
-# ─────────────────────────────────────────────────────────────────────────────
-
-PART2_SYSTEM = """\
-You are an SVG animation director.
-
-You will receive a JSON "explanation script" for an engineering/physics/maths
-problem.  Produce a JSON "scene plan" that describes EXACTLY 4 scenes for the
-interactive SVG animation.
-
-The 4 scenes MUST follow this generic workflow (adapt the content to the
-specific problem — do NOT hardcode Slider-Crank details):
-
-  Scene 0 — "SETUP"
-    • Show the fixed frame / base geometry only.
-    • Reveal a "Given Data" card top-left with 2–4 key parameter values from
-      the explanation script.
-    • No motion; blur_shield = 0.
-    • visible_layer_ids: the frame/base component only.
-
-  Scene 1 — "ELEMENTS"
-    • Introduce the first/main moving element (first component by layer_order).
-    • Apply blur_shield ~ 0.6 to focus on it.
-    • Show its angular velocity, speed, or primary parameter in an overlay label.
-    • Start continuous animation for this element (rotate, oscillate, etc.).
-    • visible_layer_ids: frame + this element.
-
-  Scene 2 — "LINKAGE"
-    • Reveal all remaining elements one by one.
-    • Reduce blur_shield to ~ 0.4.
-    • Show the kinematic relationship or interaction between elements.
-    • Continue motion for all revealed elements.
-    • visible_layer_ids: all elements.
-
-  Scene 3 — "SOLUTION"
-    • Freeze or highlight the key state (specific angle, load case, instant).
-    • blur_shield = 0 (all visible).
-    • Show a formula box (dark rect with green border) with all solution_steps.
-    • Show the final answer with a red-highlighted value and cyan glow.
-    • Show a result vector / arrow on the diagram at the answer location.
-    • visible_layer_ids: all elements + answer overlay.
-
-Return ONLY valid JSON, no markdown, no preamble:
-
-{
   "scenes": [
     {
       "index": 0,
       "scene_key": "SETUP",
-      "label": "<SHORT CAPS label ≤8 chars, e.g. SETUP>",
+      "label": "<SHORT CAPS label ≤8 chars>",
       "title": "<Scene title shown in info card>",
       "description": "<2-3 sentences shown in the info panel below the SVG>",
       "badges": [
         {"text": "<badge text>", "color": "<cyan|orange|green|red>"}
       ],
-      "visible_layer_ids": ["<component id from explanation script>"],
+      "visible_layer_ids": ["<component id>"],
       "focused_layer_ids": [],
       "blur_shield_opacity": 0.0,
       "start_continuous_anim": false,
@@ -378,11 +319,11 @@ Return ONLY valid JSON, no markdown, no preamble:
       ]
     }
   ],
+
   "formula_box_steps": [
-    {
-      "line": "<line of text for the formula box, e.g. V = ωr(sinθ + sin2θ/2n)>"
-    }
+    {"line": "<one line of monospace text for the formula box>"}
   ],
+
   "answer_overlay": {
     "symbol": "<e.g. V>",
     "value": "<e.g. 1.53>",
@@ -393,40 +334,68 @@ Return ONLY valid JSON, no markdown, no preamble:
   }
 }
 
-Important rules:
+Scene rules (MUST follow exactly):
 - Exactly 4 scenes, indexes 0–3.
 - scene_key must be exactly one of: SETUP, ELEMENTS, LINKAGE, SOLUTION.
-- visible_layer_ids must use component ids from the explanation script.
-- freeze_at_angle_deg: null for scenes 0–2; the key angle (e.g. 60) for scene 3
-  if the problem has a specific angle; otherwise null.
-- overlay_annotations for scene 0 MUST include a given_data_card.
-- overlay_annotations for scene 3 MUST include a formula_box and a
-  velocity_vector (or result arrow).
-- formula_box_steps must show all solution steps in readable mono format.
+
+  Scene 0 — SETUP
+    visible_layer_ids: frame/base component only.
+    blur_shield_opacity: 0.0.
+    start_continuous_anim: false.
+    overlay_annotations: MUST include a given_data_card listing all given values.
+
+  Scene 1 — ELEMENTS
+    visible_layer_ids: frame + primary moving element.
+    blur_shield_opacity: ~0.6.
+    start_continuous_anim: true.
+    overlay_annotations: rotation arrow, primary parameter label.
+
+  Scene 2 — LINKAGE
+    visible_layer_ids: all elements.
+    blur_shield_opacity: ~0.4.
+    start_continuous_anim: true.
+    overlay_annotations: kinematic relationship callout, dimension lines.
+
+  Scene 3 — SOLUTION
+    visible_layer_ids: all elements + answer overlay.
+    blur_shield_opacity: 0.0.
+    show_formula_box: true.
+    show_final_answer: true.
+    freeze_at_angle_deg: the specific angle from the problem (or null).
+    overlay_annotations: MUST include formula_box and velocity_vector.
+
+Component rules:
+- Component ids must be unique, lowercase, underscore-separated.
+- layer_order: lower integers are drawn first (further behind).
+- Assume SVG canvas 850 wide × 450 tall, origin top-left, Y increases downward.
+
+Solution rules:
+- Every solution_step must include formula_text, substitution_text, AND result_text.
+- final_answer.value must be the numeric result shown in the SVG answer box.
+- formula_box_steps must reproduce all solution steps in readable monospace format
+  (one line per step, e.g. "Step 1: ω = 2π×300/60 = 31.42 rad/s").
 """
 
 
-def _generate_scene_plan(explanation: dict, api_key: str | None = None) -> dict:
-    """Part 2: produce the 4-scene animation plan from the explanation script."""
-    prompt = (
-        f"{PART2_SYSTEM}\n\n"
-        f"Explanation Script (JSON):\n{json.dumps(explanation, indent=2)}"
-    )
-    raw = _call_gemini(prompt, api_key=api_key, max_tokens=6000)
+def _generate_scene_plan(question: str, api_key: str | None = None) -> dict:
+    """Part 1: solve the problem and produce the 4-scene animation plan."""
+    prompt = f"{PART1_SYSTEM}\n\nQuestion:\n{question}"
+    raw = _call_gemini(prompt, api_key=api_key, max_tokens=8000)
     return _extract_json(raw)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4.  Part 3 — High-Rich Interactive SVG HTML
+# 3.  Part 2 — High-Rich Interactive SVG HTML
 # ─────────────────────────────────────────────────────────────────────────────
 
-PART3_SYSTEM = """\
+PART2_SYSTEM = """\
 You are a world-class SVG/JavaScript animation engineer.
 
 You will receive:
-  A) An "explanation script" (Part 1 JSON) — problem data, formulas, solution steps.
-  B) A "scene plan" (Part 2 JSON) — 4-scene animation workflow with component ids,
-     blur values, overlays, freeze angles, formula box content.
+  A) The original natural-language question.
+  B) A "scene plan" JSON that contains the full problem data (given values,
+     formulas, solution steps, final answer, SVG component geometry) AND the
+     4-scene animation workflow.
 
 Produce a COMPLETE, self-contained <!DOCTYPE html> interactive animation file.
 Return ONLY the raw HTML starting with <!DOCTYPE html> and ending with </html>.
@@ -447,7 +416,7 @@ STRUCTURAL REQUIREMENTS  (non-negotiable)
 2. PROBLEM BANNER
    <div class="problem-banner">
      <span class="banner-label">PROBLEM</span>
-     <p class="banner-text">{ problem_statement from explanation script }</p>
+     <p class="banner-text">{ problem_statement from scene plan }</p>
    </div>
 
 3. SVG STAGE  (viewBox="0 0 850 450", preserveAspectRatio="xMidYMid slice")
@@ -487,7 +456,7 @@ STRUCTURAL REQUIREMENTS  (non-negotiable)
        <text x="45" y="55" fill="#66fcf1" font-size="14" font-weight="bold">
          { topic } Parameters:
        </text>
-       <!-- one <text> per given item from explanation script -->
+       <!-- one <text> per given item from scene plan -->
 
 5. INSIDE overlay-scene1 (ELEMENTS overlay):
    - Rotation arc arrow (dashed, cyan) near the main element.
@@ -509,8 +478,8 @@ STRUCTURAL REQUIREMENTS  (non-negotiable)
             <text ...>{ symbol } = { value } { unit }</text>
    - FORMULA BOX (dark rect, green border):
        Position: top-right quadrant (~x=420 to 800, y=30 to 165).
-       Content: kinematic solution header + all solution_steps from explanation
-       script, laid out as monospace <text> rows.
+       Content: kinematic solution header + all solution_steps from scene plan,
+       laid out as monospace <text> rows.
        Final answer line in cyan, with the numeric value in red (#ff3366).
        Example structure:
          <rect x="420" y="30" width="370" height="135" rx="8"
@@ -593,7 +562,7 @@ JAVASCRIPT  (inside <script> at end of <body>)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 A. CONFIG object — stores all physical/pixel dimensions derived from the
-   explanation script (crank radius in px, connecting rod length in px, pivot
+   scene plan (crank radius in px, connecting rod length in px, pivot
    coordinates, scale factor, omega, etc.).
 
 B. Per-component animate functions:
@@ -665,7 +634,7 @@ G. Initialize: setTimeout(() => resetAnim(), 100);
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 QUALITY CHECKLIST  (verify before outputting)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-□ Problem statement shown in banner (full text from explanation script).
+□ Problem statement shown in banner (full text from scene plan).
 □ All given values shown in scene-0 Given Data card.
 □ All 4 overlay groups (overlay-scene0 … overlay-scene3) present in SVG.
 □ blur-shield transitions correctly per scene.
@@ -683,49 +652,22 @@ QUALITY CHECKLIST  (verify before outputting)
 """
 
 
-def _slim_explanation(explanation: dict) -> dict:
-    """
-    Strip verbose fields from the explanation dict before sending to Part 3.
-    The full explanation can be 3–5 KB of JSON; we only need what Part 3
-    actually uses to build the SVG. Reducing prompt size leaves more of the
-    output token budget for the actual HTML.
-    """
-    return {
-        "topic":             explanation.get("topic", ""),
-        "subject_area":      explanation.get("subject_area", ""),
-        "problem_statement": explanation.get("problem_statement", ""),
-        "given":             explanation.get("given", []),
-        "find":              explanation.get("find", ""),
-        "solution_steps":    explanation.get("solution_steps", []),
-        "final_answer":      explanation.get("final_answer", {}),
-        # Keep components but drop verbose fields Gemini doesn't need
-        "components": [
-            {k: v for k, v in c.items()
-             if k in ("id", "label", "shape", "color_hint", "motion_type",
-                      "pivot_or_anchor", "approx_size", "layer_order", "role")}
-            for c in explanation.get("components", [])
-        ],
-        "diagram_notes": explanation.get("diagram_notes", ""),
-    }
-
-
 def _generate_html(
-    explanation: dict,
+    question: str,
     scene_plan: dict,
     api_key: str | None = None,
 ) -> str:
     """
-    Part 3: produce the full interactive HTML from explanation + scene plan.
+    Part 2: produce the full interactive HTML from question + scene plan.
 
     Includes a truncation-retry loop: if the returned HTML is suspiciously
     short (< MIN_HTML_CHARS), it means Gemini hit its output token limit
     silently and returned a stub.  We retry up to HTML_MAX_RETRIES times.
     """
-    slim_exp = _slim_explanation(explanation)
     prompt = (
-        f"{PART3_SYSTEM}\n\n"
-        f"=== PART A: Problem Data (JSON) ===\n"
-        f"{json.dumps(slim_exp, indent=2)}\n\n"
+        f"{PART2_SYSTEM}\n\n"
+        f"=== PART A: Original Question ===\n"
+        f"{question}\n\n"
         f"=== PART B: Scene Plan (JSON) ===\n"
         f"{json.dumps(scene_plan, indent=2)}"
     )
@@ -735,7 +677,7 @@ def _generate_html(
         try:
             raw = _call_gemini(prompt, api_key=api_key, max_tokens=16384)
         except RuntimeError as exc:
-            log.warning(f"[q_animation] Part 3 attempt {attempt} error: {exc}")
+            log.warning(f"[q_animation] Part 2 attempt {attempt} error: {exc}")
             if attempt < HTML_MAX_RETRIES:
                 time.sleep(3)
                 continue
@@ -754,7 +696,7 @@ def _generate_html(
             return raw   # ✅ full HTML produced
 
         log.warning(
-            f"[q_animation] Part 3 attempt {attempt}: HTML too short "
+            f"[q_animation] Part 2 attempt {attempt}: HTML too short "
             f"({len(raw):,} chars < {MIN_HTML_CHARS:,} minimum). "
             f"{'Retrying...' if attempt < HTML_MAX_RETRIES else 'Using best result.'}"
         )
@@ -765,7 +707,7 @@ def _generate_html(
 
     # Return the longest result we got even if still short
     raise RuntimeError(
-        f"Part 3 generated only {len(last_html):,} chars after {HTML_MAX_RETRIES} "
+        f"Part 2 generated only {len(last_html):,} chars after {HTML_MAX_RETRIES} "
         f"attempts (minimum expected: {MIN_HTML_CHARS:,}). "
         f"The model may be hitting its output token limit. "
         f"Check your Gemini API quota or try a simpler question."
@@ -773,7 +715,7 @@ def _generate_html(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5.  Core Synchronous Pipeline
+# 4.  Core Synchronous Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _run_pipeline(
@@ -781,13 +723,13 @@ def _run_pipeline(
     api_key: str | None = None,
     output_path: str | None = None,
     verbose: bool = True,
-) -> tuple[str, str, dict, dict]:
+) -> tuple[str, str, dict]:
     """
-    Synchronous 3-part pipeline: question → HTML.
+    Synchronous 2-part pipeline: question → HTML.
 
     Returns
     -------
-    tuple of (html_string, output_path_written, explanation_dict, scene_plan_dict)
+    tuple of (html_string, output_path_written, scene_plan_dict)
     """
     def log_msg(msg: str) -> None:
         if verbose:
@@ -796,26 +738,22 @@ def _run_pipeline(
 
     log_msg(f"Gemini model: {GEMINI_MODEL}")
 
-    # Part 1 — Explanation Script
-    log_msg("Part 1 → Generating explanation script ...")
-    explanation = _generate_explanation(question, api_key=api_key)
-    topic = explanation.get("topic", "animation")
+    # Part 1 — Scene Plan (solves problem + designs animation)
+    log_msg("Part 1 → Solving problem and generating 4-scene animation plan ...")
+    scene_plan = _generate_scene_plan(question, api_key=api_key)
+    topic = scene_plan.get("topic", "animation")
     log_msg(f"  Topic: {topic}")
-    log_msg(f"  Subject area: {explanation.get('subject_area', 'Unknown')}")
-    log_msg(f"  Components: {len(explanation.get('components', []))}")
-    log_msg(f"  Solution steps: {len(explanation.get('solution_steps', []))}")
-
-    # Part 2 — Scene Plan
-    log_msg("Part 2 → Generating 4-scene animation plan ...")
-    scene_plan = _generate_scene_plan(explanation, api_key=api_key)
+    log_msg(f"  Subject area: {scene_plan.get('subject_area', 'Unknown')}")
+    log_msg(f"  Components: {len(scene_plan.get('components', []))}")
+    log_msg(f"  Solution steps: {len(scene_plan.get('solution_steps', []))}")
     log_msg(f"  Scenes generated: {len(scene_plan.get('scenes', []))}")
 
-    # Part 3 — High-Rich Interactive SVG HTML
-    log_msg("Part 3 → Generating interactive HTML animation ...")
-    html = _generate_html(explanation, scene_plan, api_key=api_key)
+    # Part 2 — High-Rich Interactive SVG HTML
+    log_msg("Part 2 → Generating interactive HTML animation ...")
+    html = _generate_html(question, scene_plan, api_key=api_key)
     log_msg(f"  HTML length: {len(html):,} chars  (minimum expected: {MIN_HTML_CHARS:,})")
     if len(html) < MIN_HTML_CHARS:
-        log_msg(f"  ⚠️  WARNING: HTML is shorter than expected — may not render correctly")
+        log_msg("  ⚠️  WARNING: HTML is shorter than expected — may not render correctly")
 
     # Write to disk
     if output_path is None:
@@ -825,11 +763,11 @@ def _run_pipeline(
         f.write(html)
     log_msg(f"  Written to: {output_path}  ({len(html):,} bytes)")
 
-    return html, output_path, explanation, scene_plan
+    return html, output_path, scene_plan
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6.  Public API — CLI / direct import
+# 5.  Public API — CLI / direct import
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_animation(
@@ -839,7 +777,7 @@ def generate_animation(
     verbose: bool = True,
 ) -> str:
     """
-    Full 3-part pipeline: question → premium interactive HTML file.
+    Full 2-part pipeline: question → premium interactive HTML file.
 
     Parameters
     ----------
@@ -852,7 +790,7 @@ def generate_animation(
     -------
     str : Path to the generated HTML file.
     """
-    _, written_path, _, _ = _run_pipeline(
+    _, written_path, _ = _run_pipeline(
         question=question,
         api_key=api_key,
         output_path=output_path,
@@ -862,7 +800,7 @@ def generate_animation(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7.  Backend API — called by main.py via POST /generate-question-animation
+# 6.  Backend API — called by main.py via POST /generate-question-animation
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def generate_question_animation(question: str) -> dict:
@@ -888,26 +826,26 @@ async def generate_question_animation(question: str) -> dict:
 
     loop = asyncio.get_event_loop()
 
-    html, _, explanation, _ = await loop.run_in_executor(
+    html, _, scene_plan = await loop.run_in_executor(
         None,
         lambda: _run_pipeline(question=question, verbose=True),
     )
 
-    final = explanation.get("final_answer", {})
+    final = scene_plan.get("final_answer", {})
     explanation_text = (
         final.get("statement")
-        or f"Topic: {explanation.get('topic', question[:80])}"
+        or f"Topic: {scene_plan.get('topic', question[:80])}"
     )
 
     return {
         "animation_code": html,
-        "title":          explanation.get("topic", question[:80]),
+        "title":          scene_plan.get("topic", question[:80]),
         "explanation":    explanation_text,
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8.  Example Questions  (for CLI testing)
+# 7.  Example Questions  (for CLI testing)
 # ─────────────────────────────────────────────────────────────────────────────
 
 EXAMPLE_QUESTIONS = {
@@ -959,7 +897,7 @@ EXAMPLE_QUESTIONS = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 9.  CLI Entry Point
+# 8.  CLI Entry Point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
