@@ -106,7 +106,7 @@ except Exception as _anthropic_init_err:
 # ---------------------------------------------------------------------------
 # Gemini client
 # ---------------------------------------------------------------------------
-GEMINI_MODEL = "gemini-2.5-pro"
+GEMINI_MODEL = "gemini-3.1-pro-preview"
 _gemini_client = None
 _GEMINI_DISABLED_REASON = None
 
@@ -133,7 +133,7 @@ if _GEMINI_AVAILABLE:
 else:
     _GEMINI_DISABLED_REASON = "No Gemini SDK installed"
 
-MAX_TOK = 32000
+MAX_TOK = 18000
 MAX_TOK_CONCEPT = 16000
 
 
