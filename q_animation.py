@@ -26,7 +26,7 @@ v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
 
   WHAT DID NOT CHANGE:
   - All post-processing injection functions (ToFind, FinalAnswer, AnswerBox,
-    Notes, ControlsBar, Glossary, TeacherVoice, StepController, NavPatch)
+    Notes, ControlsBar, Glossary, StepController, NavPatch)
   - All extraction utilities (ToFindExtractor, GivenValuesExtractor,
     LargeInputPreprocessor, HaikuSolutionGenerator replaced by GeminiSolutionGenerator)
   - All validation (GenerationValidator, HtmlSanitizer)
@@ -36,7 +36,7 @@ v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
 
   GEMINI MODEL: gemini-3.1-pro-preview for ALL stages.
   ANTHROPIC:    client kept alive only for injected panel JS that references it
-                (TeacherVoice, ControlsBar etc. are pure HTML/JS, no API calls).
+                (ControlsBar etc. are pure HTML/JS, no API calls).
                 If ANTHROPIC_API_KEY is missing the pipeline still works fully.
 
   REQUIRED ENV VAR:
@@ -410,6 +410,43 @@ class HtmlSanitizer:
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
         QAnimLogger.ok("Sanitizer", "HTML sanitized")
         return html
+
+
+# ===========================================================================
+#  MODULE 3.5 — Centering CSS Injection
+# ===========================================================================
+
+_CENTERING_CSS_OVERRIDE = """\
+<style id="qanim-centering-override">
+body {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  min-height: 100vh !important;
+  padding: 20px !important;
+  box-sizing: border-box !important;
+}
+.dashboard {
+  width: 100% !important;
+  max-width: 900px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+</style>"""
+
+
+def inject_centering_css(html: str) -> str:
+    """Inject centering overrides so the animation dashboard is always centred."""
+    try:
+        if "</head>" in html:
+            html = html.replace("</head>", _CENTERING_CSS_OVERRIDE + "\n</head>", 1)
+        else:
+            html = _CENTERING_CSS_OVERRIDE + "\n" + html
+        QAnimLogger.ok("CenteringCSS", "Centering override injected")
+    except Exception as exc:
+        QAnimLogger.warn("CenteringCSS", f"Injection failed: {exc}")
+    return html
 
 
 # ===========================================================================
@@ -1287,13 +1324,13 @@ def inject_answer_box_panel(html, answer_targets=None):
 
 _NOTES_CSS = """
 <style id="qanim-notes-styles">
-#qanim-notes-btn { position:fixed; bottom:80px; right:20px; z-index:6900;
+#qanim-notes-btn { position:fixed; top:14px; right:16px; z-index:6900;
   display:flex; align-items:center; gap:7px; padding:10px 18px 10px 13px; border-radius:11px;
   border:1.5px solid #d1d5db; background:#fff; color:#475569;
   font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:700;
   cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,.11); transition:background .15s,border-color .15s,color .15s; }
 #qanim-notes-btn:hover { background:#fefce8; border-color:#ca8a04; color:#92400e; }
-#qanim-notes-panel { position:fixed; bottom:140px; right:20px; z-index:7200; width:clamp(300px,28vw,420px); max-height:72vh;
+#qanim-notes-panel { position:fixed; top:50px; right:16px; z-index:7200; width:340px; max-height:80vh;
   border-radius:14px; background:#fff; border:1px solid #e2e8f0; box-shadow:0 8px 32px rgba(0,0,0,.10);
   display:flex; flex-direction:column; overflow:hidden; opacity:0; transform:translateY(-8px) scale(.97);
   pointer-events:none; transition:opacity .22s ease,transform .22s ease; }
@@ -1455,24 +1492,23 @@ def inject_notes_system(html):
 _CONTROLS_BAR_CSS = """
 <style id="qanim-controls-bar-styles">
 #qanim-controls-bar { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:7000;
-  display:flex; align-items:center; gap:clamp(4px,0.5vw,10px); background:rgba(255,255,255,.98);
+  display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.98);
   backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
-  border:1.5px solid transparent; border-radius:18px; padding:clamp(8px,0.8vw,14px) clamp(12px,1.2vw,22px);
+  border:1.5px solid transparent; border-radius:16px; padding:10px 14px;
   box-shadow:0 6px 36px rgba(124,58,237,.18),0 2px 8px rgba(0,0,0,.08); white-space:nowrap; }
-#qanim-controls-bar::before { content:''; position:absolute; inset:-2px; border-radius:20px;
+#qanim-controls-bar::before { content:''; position:absolute; inset:-2px; border-radius:18px;
   background:linear-gradient(90deg,#7c3aed,#db2777,#f59e0b,#7c3aed); background-size:200% 100%;
   animation:qanim-bar-glow 4s linear infinite; z-index:-1; }
 @keyframes qanim-bar-glow { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
-.qanim-ctrl-btn { display:flex; align-items:center; gap:clamp(4px,0.4vw,8px); padding:clamp(7px,0.65vw,12px) clamp(12px,1.1vw,20px); border-radius:10px;
+.qanim-ctrl-btn { display:flex; align-items:center; gap:5px; padding:8px 15px; border-radius:10px;
   border:1.5px solid #e2e8f0; background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%); color:#334155;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:clamp(11px,0.85vw,14px); font-weight:700; cursor:pointer;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700; cursor:pointer;
   transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s;
   user-select:none; letter-spacing:.2px; }
 .qanim-ctrl-btn:hover { background:linear-gradient(135deg,#ede9fe 0%,#fdf4ff 100%); border-color:#7c3aed;
   color:#6d28d9; transform:translateY(-2px); box-shadow:0 4px 14px rgba(124,58,237,.22); }
 .qanim-ctrl-btn:active { transform:translateY(0); box-shadow:none; }
-.ctrl-label { font-size:clamp(11px,0.85vw,14px); }
-.qanim-ctrl-sep { width:1px; height:clamp(18px,1.6vw,26px); background:linear-gradient(to bottom,transparent,#c4b5fd,transparent); flex-shrink:0; }
+.qanim-ctrl-sep { width:1px; height:22px; background:linear-gradient(to bottom,transparent,#c4b5fd,transparent); flex-shrink:0; }
 </style>
 """
 
@@ -1633,185 +1669,6 @@ def inject_glossary_panel(html, terms=None):
     except Exception as e:
         QAnimLogger.warn("GlossaryInjector", f"JS failed: {e}")
     QAnimLogger.ok("GlossaryInjector", f"Glossary panel injected ({len(terms)} term(s))")
-    return html
-
-
-# ===========================================================================
-#  MODULE 11 — Teacher Voice Recording System
-# ===========================================================================
-
-_TEACHER_VOICE_CSS = """
-<style id="qanim-teacher-voice-styles">
-#qanim-teacher-voice-btn { display:flex; align-items:center; gap:5px; padding:8px 15px; border-radius:10px;
-  border:1.5px solid #e2e8f0; background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%); color:#334155;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700; cursor:pointer;
-  transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s;
-  user-select:none; letter-spacing:.2px; position:relative; }
-#qanim-teacher-voice-btn:hover { background:linear-gradient(135deg,#ede9fe 0%,#fdf4ff 100%);
-  border-color:#7c3aed; color:#6d28d9; transform:translateY(-2px); box-shadow:0 4px 14px rgba(124,58,237,.22); }
-#qanim-teacher-voice-btn.has-recording { border-color:#16a34a; color:#15803d; }
-#tv-backdrop { display:none; position:fixed; inset:0; z-index:8700; background:rgba(15,23,42,.45);
-  backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
-#tv-backdrop.open { display:flex; align-items:flex-end; justify-content:center; padding:0 0 80px; opacity:1; }
-#tv-panel { width:min(560px,96vw); border-radius:18px 18px 14px 14px; background:#fff;
-  border:1px solid #e2e8f0; box-shadow:0 -4px 40px rgba(0,0,0,.14); opacity:0; transform:translateY(20px);
-  transition:opacity .28s ease,transform .28s cubic-bezier(.34,1.56,.64,1); overflow:hidden; }
-#tv-panel.open { opacity:1; transform:translateY(0); }
-.tv-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px 12px;
-  border-bottom:1px solid #f1f5f9; background:#fff; }
-.tv-header-left { display:flex; align-items:center; gap:11px; }
-.tv-icon-wrap { width:38px; height:38px; border-radius:10px; background:linear-gradient(135deg,#ede9fe,#fdf4ff);
-  display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; border:1px solid #ddd6fe; }
-.tv-header-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:16px; font-weight:800; color:#1e293b; }
-.tv-header-sub { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; color:#64748b; margin-top:2px; }
-.tv-close-btn { width:32px; height:32px; border-radius:50%; border:1.5px solid #e2e8f0; background:#f8fafc;
-  color:#64748b; font-size:13px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s,color .15s; }
-.tv-close-btn:hover { background:#fee2e2; color:#dc2626; }
-.tv-body { padding:18px 20px 22px; display:flex; flex-direction:column; gap:14px; }
-.tv-btn { flex:1; min-width:100px; padding:11px 14px; border-radius:10px; border:1.5px solid #e2e8f0;
-  background:#f8fafc; color:#334155; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:13px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
-  transition:background .15s,border-color .15s,color .15s,transform .12s; }
-.tv-btn.primary { background:#7c3aed; border-color:#7c3aed; color:#fff; }
-.tv-btn.primary:hover { background:#6d28d9; }
-.tv-btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
-.tv-btn.stop { background:#fef2f2; border-color:#fca5a5; color:#b91c1c; }
-.tv-actions { display:flex; gap:8px; flex-wrap:wrap; }
-.tv-util-row { display:flex; gap:8px; align-items:center; padding-top:4px; border-top:1px solid #f1f5f9; }
-.tv-util-btn { padding:7px 13px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; color:#64748b;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; font-weight:600; cursor:pointer;
-  display:flex; align-items:center; gap:5px; transition:background .12s,color .12s; }
-.tv-util-btn:hover { background:#ede9fe; border-color:#7c3aed; color:#6d28d9; }
-.tv-hint { flex:1; font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10.5px; color:#94a3b8; line-height:1.5; text-align:right; }
-#tv-timer { font-family:'Courier New',monospace; font-size:14px; font-weight:800; color:#64748b; }
-#tv-audio-player { width:100%; border-radius:8px; display:none; outline:none; }
-#tv-audio-player.show { display:block; }
-#tv-waveform-bar { height:48px; border-radius:10px; border:1.5px dashed #e2e8f0; background:#f8fafc;
-  display:flex; align-items:center; justify-content:center; gap:8px; color:#94a3b8; font-size:12px; overflow:hidden; }
-#tv-waveform-bar.active { border-color:#dc2626; background:#fef2f2; }
-#tv-waveform-bar.has-audio { border-color:#16a34a; background:#f0fdf4; }
-</style>
-"""
-
-_TEACHER_VOICE_DOM = """
-<div id="tv-backdrop" aria-hidden="true"></div>
-<div id="tv-panel" role="dialog" aria-label="Teacher Voice" aria-hidden="true">
-  <div class="tv-header">
-    <div class="tv-header-left">
-      <div class="tv-icon-wrap">&#x1F3A4;</div>
-      <div>
-        <div class="tv-header-title">Teacher Voice</div>
-        <div class="tv-header-sub" id="tv-header-sub">Record your explanation for students</div>
-      </div>
-    </div>
-    <button class="tv-close-btn" id="tv-close-btn" aria-label="Close">&#x2715;</button>
-  </div>
-  <div class="tv-body">
-    <div id="tv-waveform-bar">
-      <canvas id="tv-wave-canvas" style="width:100%;height:36px;display:block;"></canvas>
-      <span id="tv-timer">0:00</span>
-    </div>
-    <audio id="tv-audio-player" controls></audio>
-    <div class="tv-actions" id="tv-actions">
-      <button class="tv-btn primary" id="tv-record-btn">&#x1F3A4; Start Recording</button>
-      <button class="tv-btn stop" id="tv-stop-btn" disabled>&#x23F9; Stop</button>
-      <button class="tv-btn" id="tv-play-btn" disabled>&#x25B6;&#xFE0F; Play</button>
-      <button class="tv-btn danger" id="tv-delete-btn" disabled>&#x1F5D1; Delete</button>
-    </div>
-    <div class="tv-util-row">
-      <button class="tv-util-btn" id="tv-export-btn" disabled>&#x2B07;&#xFE0F; Export Audio</button>
-      <label class="tv-util-btn" style="cursor:pointer;">&#x2B06;&#xFE0F; Import Audio
-        <input type="file" id="tv-import-input" accept="audio/*" style="display:none;">
-      </label>
-      <span class="tv-hint">Share exported audio with students via email or your LMS.</span>
-    </div>
-  </div>
-</div>
-"""
-
-_TEACHER_VOICE_JS = r"""
-<script id="qanim-teacher-voice">
-(function initTeacherVoice(){
-  'use strict';
-  var _open=false,_recording=false,_mediaRec=null,_chunks=[],_audioBlob=null,_audioUrl=null,_timerInt=null,_timerSec=0;
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  function _startTimer(){_timerSec=0;_timerInt=setInterval(function(){_timerSec++;var m=Math.floor(_timerSec/60),s=_timerSec%60;var el=_el('tv-timer');if(el)el.textContent=m+':'+(s<10?'0':'')+s;},1000);}
-  function _stopTimer(){clearInterval(_timerInt);_timerInt=null;}
-  function _setUIIdle(hasAudio){_recording=false;_el('tv-record-btn').disabled=false;_el('tv-stop-btn').disabled=true;_el('tv-play-btn').disabled=!hasAudio;_el('tv-delete-btn').disabled=!hasAudio;_el('tv-export-btn').disabled=!hasAudio;var ap=_el('tv-audio-player');if(ap)ap.className=hasAudio?'show':'';}
-  function _setUIRecording(){_recording=true;_el('tv-record-btn').disabled=true;_el('tv-stop-btn').disabled=false;_el('tv-play-btn').disabled=true;_el('tv-delete-btn').disabled=true;_el('tv-export-btn').disabled=true;var el=_el('tv-timer');if(el)el.textContent='0:00';}
-  function _syncCtrlBtn(hasAudio){var btn=_el('qanim-teacher-voice-btn');if(!btn)return;if(hasAudio)btn.classList.add('has-recording');else btn.classList.remove('has-recording','playing');}
-  function _startRecording(){
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){alert('Audio recording not supported in this browser.');return;}
-    navigator.mediaDevices.getUserMedia({audio:true,video:false}).then(function(stream){
-      _chunks=[];var options={};
-      if(MediaRecorder.isTypeSupported('audio/webm'))options.mimeType='audio/webm';
-      else if(MediaRecorder.isTypeSupported('audio/ogg'))options.mimeType='audio/ogg';
-      _mediaRec=new MediaRecorder(stream,options);
-      _mediaRec.ondataavailable=function(e){if(e.data.size>0)_chunks.push(e.data);};
-      _mediaRec.onstop=function(){
-        stream.getTracks().forEach(function(t){t.stop();});_stopTimer();
-        _audioBlob=new Blob(_chunks,{type:_mediaRec.mimeType||'audio/webm'});
-        if(_audioUrl)URL.revokeObjectURL(_audioUrl);_audioUrl=URL.createObjectURL(_audioBlob);
-        var ap=_el('tv-audio-player');if(ap)ap.src=_audioUrl;
-        _setUIIdle(true);_syncCtrlBtn(true);
-      };
-      _mediaRec.start(100);_setUIRecording();_startTimer();
-      var wb=_el('tv-waveform-bar');if(wb)wb.className='active';
-    }).catch(function(err){alert('Could not access microphone: '+(err.message||err));});
-  }
-  function _stopRecording(){if(_mediaRec&&_mediaRec.state!=='inactive')_mediaRec.stop();var wb=_el('tv-waveform-bar');if(wb)wb.className='has-audio';}
-  function _deleteRecording(){if(!confirm('Delete the saved teacher voice recording?'))return;if(_audioUrl){URL.revokeObjectURL(_audioUrl);_audioUrl=null;}_audioBlob=null;var ap=_el('tv-audio-player');if(ap){ap.src='';ap.className='';}var wb=_el('tv-waveform-bar');if(wb)wb.className='';_setUIIdle(false);_syncCtrlBtn(false);}
-  function _exportAudio(){if(!_audioBlob){alert('No recording to export.');return;}var ext=(_audioBlob.type.indexOf('ogg')!==-1)?'ogg':'webm';var url=URL.createObjectURL(_audioBlob);var a=document.createElement('a');a.download='teacher_voice.'+ext;a.href=url;a.click();setTimeout(function(){URL.revokeObjectURL(url);},3000);}
-  function _importAudio(file){if(!file)return;var reader=new FileReader();reader.onloadend=function(){_audioUrl=reader.result;var ap=_el('tv-audio-player');if(ap)ap.src=_audioUrl;_setUIIdle(true);_syncCtrlBtn(true);};reader.readAsDataURL(file);}
-  function openPanel(){var bd=_el('tv-backdrop'),p=_el('tv-panel');if(!bd||!p)return;bd.classList.add('open');p.classList.add('open');p.setAttribute('aria-hidden','false');_open=true;}
-  function closePanel(){var bd=_el('tv-backdrop'),p=_el('tv-panel');if(bd)bd.classList.remove('open');if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}p_open=false;_open=false;}
-  window.openTeacherVoicePanel=openPanel;window.closeTeacherVoicePanel=closePanel;
-  _onReady(function(){
-    var bar=_el('qanim-controls-bar');
-    if(bar){var sep=document.createElement('div');sep.className='qanim-ctrl-sep';bar.appendChild(sep);
-      var btn=document.createElement('button');btn.id='qanim-teacher-voice-btn';btn.title='Teacher Voice';
-      btn.innerHTML='<span>&#x1F3A4;</span><span class="ctrl-label">Teacher Voice</span>';bar.appendChild(btn);}
-    _onReady(function(){
-      var ctrlBtn=_el('qanim-teacher-voice-btn');
-      if(ctrlBtn)ctrlBtn.addEventListener('click',function(e){e.stopPropagation();_open?closePanel():openPanel();});
-    });
-    var cb=_el('tv-close-btn');if(cb)cb.addEventListener('click',function(e){e.stopPropagation();closePanel();});
-    var bd=_el('tv-backdrop');if(bd)bd.addEventListener('click',function(e){if(e.target===bd)closePanel();});
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&_open)closePanel();});
-    var recBtn=_el('tv-record-btn');if(recBtn)recBtn.addEventListener('click',_startRecording);
-    var stopBtn=_el('tv-stop-btn');if(stopBtn)stopBtn.addEventListener('click',_stopRecording);
-    var playBtn=_el('tv-play-btn');if(playBtn)playBtn.addEventListener('click',function(){var ap=_el('tv-audio-player');if(!ap)return;if(ap.paused){ap.play();playBtn.textContent='\u23F8\uFE0F Pause';}else{ap.pause();playBtn.innerHTML='\u25B6\uFE0F Play';}ap.onended=function(){playBtn.innerHTML='\u25B6\uFE0F Play';};});
-    var delBtn=_el('tv-delete-btn');if(delBtn)delBtn.addEventListener('click',_deleteRecording);
-    var expBtn=_el('tv-export-btn');if(expBtn)expBtn.addEventListener('click',_exportAudio);
-    var impInput=_el('tv-import-input');if(impInput)impInput.addEventListener('change',function(e){var file=e.target.files&&e.target.files[0];if(file)_importAudio(file);e.target.value='';});
-  });
-})();
-</script>
-"""
-
-
-def inject_teacher_voice(html):
-    try:
-        if '</head>' in html:
-            html = html.replace('</head>', _TEACHER_VOICE_CSS + '\n</head>', 1)
-    except Exception as e:
-        QAnimLogger.warn("TeacherVoice", f"CSS injection failed: {e}")
-    try:
-        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
-        if body_match:
-            ins = body_match.end()
-            html = html[:ins] + '\n' + _TEACHER_VOICE_DOM + html[ins:]
-    except Exception as e:
-        QAnimLogger.warn("TeacherVoice", f"DOM injection failed: {e}")
-    try:
-        if '</body>' in html:
-            html = html.replace('</body>', _TEACHER_VOICE_JS + '\n</body>', 1)
-        else:
-            html += '\n' + _TEACHER_VOICE_JS
-        QAnimLogger.ok("TeacherVoice", "Teacher Voice system injected")
-    except Exception as e:
-        QAnimLogger.warn("TeacherVoice", f"JS injection failed: {e}")
     return html
 
 
@@ -2126,61 +1983,7 @@ The output must match this exact structure:
       --accent-green: #97c459;
       --border-radius: 12px;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background-color: var(--bg-color);
-      color: var(--text-main);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      padding: clamp(12px, 2vw, 32px);
-    }
-    .dashboard {
-      background-color: var(--panel-bg);
-      border-radius: var(--border-radius);
-      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
-      width: 100%;
-      max-width: min(1400px, 96vw);
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      margin: auto;
-    }
-    .question-banner {
-      padding: clamp(14px,1.5vw,22px) clamp(18px,2vw,32px);
-      background: linear-gradient(135deg, #1f2833 0%, #141a21 100%);
-      border-bottom: 1px solid #333;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .q-label { font-size: clamp(11px,0.85vw,14px); font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:1px; }
-    .q-text  { font-size: clamp(14px,1.1vw,18px);  color:#fff; line-height:1.4; }
-    .svg-container { width:100%; aspect-ratio:16/9; background:radial-gradient(circle at center,#1a1a24 0%,#050508 100%); position:relative; overflow:hidden; }
-    svg { display:block; width:100%; height:100%; }
-    .svg-layer { transition: opacity 0.5s ease; }
-    #blur-shield { transition: opacity 0.5s ease; }
-    .control-panel { padding: clamp(16px,2vw,32px) clamp(18px,2.5vw,40px); background:linear-gradient(180deg,#1f2833 0%,#151b22 100%); border-top:1px solid #333; }
-    .step-indicator { display:flex; gap:clamp(6px,0.8vw,14px); justify-content:center; margin-bottom:clamp(12px,1.2vw,20px); }
-    .step-dot { width:clamp(10px,0.8vw,14px); height:clamp(10px,0.8vw,14px); border-radius:50%; background:rgba(255,255,255,0.2); cursor:pointer; transition:all 0.3s ease; }
-    .step-dot.active { background:var(--accent-cyan); box-shadow:0 0 8px var(--accent-cyan); transform:scale(1.2); }
-    .info-box { background:rgba(0,0,0,0.2); padding:clamp(12px,1.3vw,22px); border-radius:8px; border-left:4px solid var(--accent-cyan); min-height:clamp(90px,9vw,140px); }
-    .info-box h3 { color:#fff; margin-bottom:clamp(6px,0.7vw,12px); font-size:clamp(15px,1.2vw,22px); }
-    .badges { display:flex; gap:clamp(6px,0.7vw,12px); margin-bottom:10px; flex-wrap:wrap; }
-    .badge { padding:clamp(3px,0.3vw,5px) clamp(8px,0.8vw,14px); border-radius:12px; font-size:clamp(11px,0.85vw,14px); font-weight:bold; color:#000; }
-    .badge-cyan { background:var(--accent-cyan); }
-    .badge-orange { background:var(--accent-orange); }
-    .badge-green { background:var(--accent-green); }
-    .info-desc { font-size:clamp(13px,1vw,17px); line-height:1.6; }
-    .actions { display:flex; justify-content:center; margin-top:clamp(14px,1.5vw,24px); gap:clamp(10px,1vw,20px); }
-    button { padding:clamp(9px,0.8vw,14px) clamp(18px,1.8vw,30px); border:none; border-radius:8px; font-weight:bold; cursor:pointer; transition:all 0.2s ease; font-size:clamp(13px,1vw,17px); }
-    .btn-primary { background:var(--accent-cyan); color:#000; }
-    .btn-primary:hover { background:#fff; box-shadow:0 0 10px var(--accent-cyan); }
-    .btn-secondary { background:transparent; color:var(--text-main); border:1px solid var(--text-main); }
-    .btn-secondary:hover { background:rgba(255,255,255,0.1); color:#fff; }
-    .math-box { font-family:'Courier New',Courier,monospace; background:rgba(0,0,0,0.8); border:1px solid var(--accent-orange); border-radius:6px; padding:clamp(12px,1.2vw,20px); font-size:clamp(12px,0.95vw,16px); }
+    /* ... full dark-theme styles ... */
   </style>
 </head>
 <body>
@@ -2278,16 +2081,7 @@ nextStep() / resetAnim() manage currentStep.
 - requestAnimationFrame loop must keep running for continuous motion
 - freezing mechanism: smoothly interpolate angle to solution angle, then pause
 - Math box (last step): show actual formula, substitution, and final answer
-
-═══ LAYOUT & RESPONSIVENESS (MANDATORY) ═══
-- body: display:flex; justify-content:center; align-items:center; min-height:100vh — dashboard MUST be centred on screen
-- .dashboard: max-width:min(1400px,96vw) — fills large displays (smartboards, 4K monitors) and laptops
-- ALL font-size values MUST use clamp(): e.g. clamp(13px,1vw,18px) — never fixed px alone
-- ALL padding values MUST use clamp(): e.g. clamp(14px,1.5vw,28px)
-- .actions: justify-content:center — Next/Restart buttons centred, not right-aligned
-- .info-box h3: font-size clamp(15px,1.2vw,22px) — readable on a 75" smartboard at distance
-- .info-desc: font-size clamp(13px,1vw,17px); line-height:1.6
-- .step-dot: width and height use clamp(10px,0.8vw,14px)
+- CENTERING: body must use { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:20px; } so the .dashboard div is horizontally centred on the page. .dashboard must have { width:100%; max-width:900px; margin:0 auto; }. Never float or absolutely-position the dashboard to the right.
 
 ═══ OUTPUT ═══
 Return ONLY the complete <!DOCTYPE html>...</html> page as raw text.
@@ -2311,7 +2105,6 @@ CRITICAL REMINDERS:
 8. Use the accent colors from the scene script for each component.
 9. Do NOT use const/let/arrow functions/backtick template literals.
 10. The math box in the last step MUST show the actual numerical calculation from final_answer.
-11. LAYOUT: body must use display:flex; justify-content:center; align-items:center so the dashboard is CENTRED on screen. dashboard max-width MUST be min(1400px,96vw). All font-size and padding must use clamp() for responsiveness on large screens (smartboards, laptops). Buttons (.actions) must be centred with justify-content:center.
 
 Return the complete HTML page — nothing else."""
 
@@ -2514,29 +2307,29 @@ class GeminiAnimationBuilder:
             --border-radius: 12px;
         }}
         * {{ box-sizing:border-box; margin:0; padding:0; font-family:'Segoe UI',system-ui,-apple-system,sans-serif; }}
-        body {{ background-color:var(--bg-color); color:var(--text-main); display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:clamp(12px,2vw,32px); }}
-        .dashboard {{ width:100%; max-width:min(1400px,96vw); background:var(--panel-bg); border-radius:var(--border-radius); box-shadow:0 15px 35px rgba(0,0,0,0.5); overflow:hidden; border:1px solid #333; margin:auto; }}
-        .question-banner {{ padding:clamp(14px,1.5vw,22px) clamp(18px,2vw,32px); background:linear-gradient(135deg,#1f2833 0%,#141a21 100%); border-bottom:1px solid #333; display:flex; flex-direction:column; gap:6px; }}
-        .q-label {{ font-size:clamp(11px,0.85vw,14px); font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:1px; }}
-        .q-text {{ font-size:clamp(14px,1.1vw,18px); color:#fff; line-height:1.4; }}
+        body {{ background-color:var(--bg-color); color:var(--text-main); display:flex; flex-direction:column; align-items:center; min-height:100vh; padding:20px; }}
+        .dashboard {{ width:100%; max-width:850px; background:var(--panel-bg); border-radius:var(--border-radius); box-shadow:0 15px 35px rgba(0,0,0,0.5); overflow:hidden; border:1px solid #333; }}
+        .question-banner {{ padding:18px 24px; background:linear-gradient(135deg,#1f2833 0%,#141a21 100%); border-bottom:1px solid #333; display:flex; flex-direction:column; gap:6px; }}
+        .q-label {{ font-size:12px; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:1px; }}
+        .q-text {{ font-size:15px; color:#fff; line-height:1.4; }}
         .svg-container {{ width:100%; aspect-ratio:16/9; background:radial-gradient(circle at center,#1a1a24 0%,#050508 100%); position:relative; overflow:hidden; }}
         svg {{ display:block; width:100%; height:100%; }}
         .svg-layer {{ transition:opacity 0.6s cubic-bezier(0.4,0,0.2,1); }}
-        .control-panel {{ padding:clamp(16px,2vw,32px) clamp(18px,2.5vw,40px); background:linear-gradient(180deg,#1f2833 0%,#151b22 100%); border-top:1px solid #333; }}
-        .step-indicator {{ display:flex; align-items:center; gap:clamp(8px,1vw,16px); margin-bottom:clamp(12px,1.2vw,20px); }}
-        .step-dot {{ width:clamp(9px,0.7vw,14px); height:clamp(9px,0.7vw,14px); border-radius:50%; background:#444; transition:background 0.4s,transform 0.4s; }}
+        .control-panel {{ padding:24px; background:linear-gradient(180deg,#1f2833 0%,#151b22 100%); border-top:1px solid #333; }}
+        .step-indicator {{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }}
+        .step-dot {{ width:10px; height:10px; border-radius:50%; background:#444; transition:background 0.4s,transform 0.4s; }}
         .step-dot.active {{ background:var(--accent-cyan); box-shadow:0 0 10px var(--accent-cyan); transform:scale(1.2); }}
-        .step-label {{ font-size:clamp(12px,0.9vw,16px); color:#888; font-weight:500; letter-spacing:0.5px; text-transform:uppercase; }}
-        .info-box {{ background:#0b0c10; border:1px solid #333; border-radius:8px; padding:clamp(14px,1.5vw,24px); min-height:clamp(100px,10vw,160px); display:flex; flex-direction:column; justify-content:center; }}
-        .info-box h3 {{ color:#fff; margin-bottom:clamp(8px,0.8vw,14px); font-size:clamp(15px,1.2vw,22px); display:flex; align-items:center; gap:8px; }}
-        .badges {{ display:flex; gap:clamp(8px,0.8vw,14px); flex-wrap:wrap; margin-bottom:10px; }}
-        .badge {{ padding:clamp(3px,0.3vw,6px) clamp(10px,0.9vw,16px); border-radius:20px; font-size:clamp(11px,0.85vw,14px); font-weight:600; display:flex; align-items:center; gap:6px; }}
+        .step-label {{ font-size:14px; color:#888; font-weight:500; letter-spacing:0.5px; text-transform:uppercase; }}
+        .info-box {{ background:#0b0c10; border:1px solid #333; border-radius:8px; padding:16px; min-height:120px; display:flex; flex-direction:column; justify-content:center; }}
+        .info-box h3 {{ color:#fff; margin-bottom:12px; font-size:16px; display:flex; align-items:center; gap:8px; }}
+        .badges {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px; }}
+        .badge {{ padding:4px 12px; border-radius:20px; font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px; }}
         .badge-cyan {{ background:rgba(102,252,241,0.1); border:1px solid var(--accent-cyan-dim); color:var(--accent-cyan); }}
         .badge-orange {{ background:rgba(252,163,17,0.1); border:1px solid #b3730b; color:var(--accent-orange); }}
         .badge-green {{ background:rgba(151,196,89,0.1); border:1px solid #6b933a; color:var(--accent-green); }}
-        .info-desc {{ font-size:clamp(13px,1vw,17px); line-height:1.6; color:#a0a0a0; }}
-        .actions {{ display:flex; justify-content:center; gap:clamp(10px,1vw,20px); margin-top:clamp(16px,1.5vw,28px); }}
-        button {{ padding:clamp(9px,0.8vw,14px) clamp(18px,1.8vw,32px); border-radius:8px; font-size:clamp(13px,1vw,17px); font-weight:600; cursor:pointer; transition:all 0.2s; border:none; outline:none; }}
+        .info-desc {{ font-size:14px; line-height:1.5; color:#a0a0a0; }}
+        .actions {{ display:flex; justify-content:flex-end; gap:12px; margin-top:20px; }}
+        button {{ padding:10px 20px; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.2s; border:none; outline:none; }}
         .btn-primary {{ background:var(--accent-cyan-dim); color:#fff; box-shadow:0 4px 10px rgba(69,162,158,0.3); }}
         .btn-primary:hover {{ background:var(--accent-cyan); color:#000; box-shadow:0 6px 15px rgba(102,252,241,0.4); }}
         .btn-secondary {{ background:transparent; color:var(--text-main); border:1px solid #555; }}
@@ -2845,6 +2638,9 @@ async def _run_generation_pipeline(question: str) -> dict:
     # Sanitize
     animation_html = HtmlSanitizer.sanitize(animation_html)
 
+    # Centre the animation dashboard (override whatever Gemini generated)
+    animation_html = inject_centering_css(animation_html)
+
     # Build answer targets
     answer_targets = _build_answer_targets(
         to_find_targets=to_find_targets,
@@ -2866,7 +2662,6 @@ async def _run_generation_pipeline(question: str) -> dict:
     html = inject_answer_box_panel(html, answer_targets)
     html = inject_controls_bar(html)
     html = inject_glossary_panel(html, glossary_result.get("terms", []))
-    html = inject_teacher_voice(html)
     html = inject_nav_patch_and_scene_desc(html)
     html = inject_step_controller(html)   # absolute last
 
@@ -3026,5 +2821,5 @@ if __name__ == "__main__":
         print("  OK  Component-by-component reveal with blur/focus")
         print("  OK  Real physics motion (rotating, oscillating, tracing)")
         print("  OK  Math solution box in final step")
-        print("  OK  All panels injected (Find/FinalAnswer/AnswerBox/Notes/Glossary/Teacher)")
+        print("  OK  All panels injected (Find/FinalAnswer/AnswerBox/Notes/Glossary)")
         print("  OK  Gemini 2.5 Pro for all stages")
