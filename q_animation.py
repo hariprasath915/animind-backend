@@ -698,13 +698,21 @@ _STEP_ANSWER_DOM = """
       <div class="sa-icon-wrap">&#x1FA9C;</div>
       <div>
         <div id="stepans-heading" class="sa-title">Step by Step Answer</div>
-        <div class="sa-subtitle">Complete solution procedure for this question</div>
+        <div class="sa-subtitle">Solution workflow for this question</div>
       </div>
     </div>
     <button id="stepans-close" class="sa-close-btn" aria-label="Close">&#x2715;</button>
   </div>
+  <div class="sa-flow-track-wrap">
+    <div id="sa-flow-track" class="sa-flow-track"></div>
+  </div>
   <div class="sa-body">
     <div id="stepans-items-container" class="sa-items-container"></div>
+  </div>
+  <div class="sa-footer">
+    <button id="sa-prev-btn" class="sa-nav-btn sa-prev-btn" type="button">&#8249; Previous</button>
+    <div id="sa-progress-label" class="sa-progress-label">Step 1 of 1</div>
+    <button id="sa-next-btn" class="sa-nav-btn sa-next-btn" type="button">Next &#8250;</button>
   </div>
 </aside>
 """
@@ -715,7 +723,7 @@ _STEP_ANSWER_CSS = """
   background:rgba(15,23,42,.42); backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
 #stepans-backdrop.open { display:block; opacity:1; }
 #stepans-panel { display:flex; flex-direction:column; position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(560px,94vw);
+  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(620px,94vw);
   max-height:86vh; border-radius:18px; background:#fff; border:1px solid #e2e8f0;
   box-shadow:0 20px 60px rgba(37,99,235,.18),0 2px 8px rgba(0,0,0,.06);
   opacity:0; pointer-events:none;
@@ -732,31 +740,56 @@ _STEP_ANSWER_CSS = """
   background:#fafafa; color:#888; font-size:13px; display:flex; align-items:center; justify-content:center;
   cursor:pointer; transition:background .15s,color .15s,border-color .15s; flex-shrink:0; }
 .sa-close-btn:hover { background:#fee2e2; color:#dc2626; border-color:#fca5a5; }
-.sa-body { overflow-y:auto; flex:1; padding:18px 22px 24px; display:flex; flex-direction:column; gap:2px; }
-.sa-items-container { display:flex; flex-direction:column; gap:2px; }
-.sa-step-card { display:flex; align-items:flex-start; gap:14px; padding:14px 18px;
-  border-radius:12px; background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #2563eb;
-  opacity:0; transform:translateY(10px); transition:opacity .30s ease,transform .30s ease; }
-.sa-step-card.visible { opacity:1; transform:translateY(0); }
-.sa-step-num { min-width:32px; height:32px; border-radius:50%; background:#2563eb; color:#fff;
-  font-size:13px; font-weight:800; display:flex; align-items:center; justify-content:center;
+.sa-flow-track-wrap { flex-shrink:0; background:#fafbff; border-bottom:1px solid #f0f0f8;
+  padding:14px 22px 12px; overflow-x:auto; overflow-y:hidden; }
+.sa-flow-track { display:flex; align-items:center; min-width:max-content; padding:2px 2px 4px; }
+.sa-flow-node { display:flex; align-items:center; cursor:pointer; background:none; border:none;
+  padding:0; font:inherit; }
+.sa-flow-dot { width:30px; height:30px; border-radius:50%; background:#e9edf5; color:#7c8aa0;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:800;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0; border:2px solid transparent;
+  transition:background .22s ease,color .22s ease,transform .22s ease,box-shadow .22s ease,border-color .22s ease; }
+.sa-flow-node:hover .sa-flow-dot { background:#dbe6fd; color:#1d4ed8; }
+.sa-flow-node.sa-done .sa-flow-dot { background:#dcfce7; color:#16a34a; }
+.sa-flow-node.sa-active .sa-flow-dot { background:#2563eb; color:#fff; border-color:#bfdbfe;
+  box-shadow:0 0 0 4px rgba(37,99,235,.16); transform:scale(1.14); }
+.sa-flow-line { width:28px; height:2px; background:#e2e8f0; flex-shrink:0; margin:0 1px;
+  transition:background .22s ease; }
+.sa-flow-line.sa-done { background:#86efac; }
+.sa-body { overflow-y:auto; flex:1; padding:20px 22px 10px; display:flex; flex-direction:column; }
+.sa-items-container { display:flex; flex-direction:column; }
+.sa-step-card { display:flex; align-items:flex-start; gap:16px; padding:20px 20px;
+  border-radius:14px; background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #2563eb;
+  opacity:0; transform:translateX(14px); transition:opacity .22s ease,transform .22s ease; }
+.sa-step-card.visible { opacity:1; transform:translateX(0); }
+.sa-step-num { min-width:38px; height:38px; border-radius:50%; background:#2563eb; color:#fff;
+  font-size:15px; font-weight:800; display:flex; align-items:center; justify-content:center;
   flex-shrink:0; box-shadow:0 2px 8px rgba(37,99,235,.30); }
 .sa-step-body { flex:1; min-width:0; }
-.sa-step-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700;
-  color:#1d4ed8; text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
-.sa-step-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13.5px; font-weight:500;
-  color:#1e293b; line-height:1.65; white-space:pre-wrap; word-break:break-word; }
-.sa-step-connector { display:flex; align-items:center; justify-content:center; height:18px;
-  color:#93c5fd; font-size:15px; }
+.sa-step-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12.5px; font-weight:700;
+  color:#1d4ed8; text-transform:uppercase; letter-spacing:.5px; margin-bottom:7px; }
+.sa-step-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14.5px; font-weight:500;
+  color:#1e293b; line-height:1.75; white-space:pre-wrap; word-break:break-word; }
 .sa-empty { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
   font-size:13px; color:#94a3b8; text-align:center; padding:28px 0; font-style:italic; }
+.sa-footer { display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:14px 22px; border-top:1px solid #f0f0f8; flex-shrink:0; background:#fff; }
+.sa-nav-btn { display:inline-flex; align-items:center; gap:6px; padding:9px 16px; border-radius:10px;
+  border:1.5px solid #e2e8f0; background:#fff; color:#334155; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:13px; font-weight:700; cursor:pointer; transition:background .15s,border-color .15s,color .15s,opacity .15s; }
+.sa-nav-btn:hover:not(:disabled) { background:#eff6ff; border-color:#93c5fd; color:#1d4ed8; }
+.sa-nav-btn:disabled { opacity:.38; cursor:not-allowed; }
+.sa-next-btn { background:#2563eb; border-color:#2563eb; color:#fff; }
+.sa-next-btn:hover:not(:disabled) { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
+.sa-progress-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px;
+  font-weight:700; color:#64748b; flex-shrink:0; }
 </style>
 """
 
 STEP_ANSWER_JS_MODULE = r"""
 (function initStepAnswerSystem(){
   'use strict';
-  var stepAnsOpen=false,_built=false;
+  var stepAnsOpen=false,_built=false,_steps=[],_cur=0;
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function _esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -769,33 +802,79 @@ STEP_ANSWER_JS_MODULE = r"""
     if(m&&m[2]){return{title:m[1],body:m[2]};}
     return{title:'Step '+(idx+1),body:text};
   }
+  function _buildFlowTrack(){
+    var track=_el('sa-flow-track');if(!track)return;
+    if(_steps.length===0){track.innerHTML='';return;}
+    var html='';
+    for(var i=0;i<_steps.length;i++){
+      html+='<button type="button" class="sa-flow-node" data-idx="'+i+'" title="'+_esc(_splitStep(_steps[i],i).title)+'"><div class="sa-flow-dot">'+(i+1)+'</div></button>';
+      if(i<_steps.length-1){html+='<div class="sa-flow-line" data-line="'+i+'"></div>';}
+    }
+    track.innerHTML=html;
+    var nodes=track.querySelectorAll('.sa-flow-node');
+    for(var n=0;n<nodes.length;n++){
+      nodes[n].addEventListener('click',function(e){
+        e.stopPropagation();
+        var idx=parseInt(this.getAttribute('data-idx'),10);
+        if(!isNaN(idx))_goTo(idx);
+      });
+    }
+  }
+  function _updateFlowTrack(){
+    var track=_el('sa-flow-track');if(!track)return;
+    var nodes=track.querySelectorAll('.sa-flow-node');
+    var lines=track.querySelectorAll('.sa-flow-line');
+    for(var i=0;i<nodes.length;i++){
+      nodes[i].classList.remove('sa-active','sa-done');
+      if(i===_cur)nodes[i].classList.add('sa-active');
+      else if(i<_cur)nodes[i].classList.add('sa-done');
+    }
+    for(var j=0;j<lines.length;j++){
+      var lidx=parseInt(lines[j].getAttribute('data-line'),10);
+      if(lidx<_cur)lines[j].classList.add('sa-done');else lines[j].classList.remove('sa-done');
+    }
+    var activeNode=track.querySelector('.sa-flow-node.sa-active');
+    if(activeNode&&activeNode.scrollIntoView){activeNode.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});}
+  }
+  function _renderCard(){
+    var container=_el('stepans-items-container');if(!container)return;
+    if(!_steps||_steps.length===0){container.innerHTML='<div class="sa-empty">No step-by-step solution is available.</div>';return;}
+    var parts=_splitStep(_steps[_cur],_cur);
+    container.innerHTML='<div class="sa-step-card" id="sa-step-'+_cur+'"><div class="sa-step-num">'+(_cur+1)+'</div><div class="sa-step-body"><div class="sa-step-title">'+_esc(parts.title)+'</div><div class="sa-step-text">'+_esc(parts.body)+'</div></div></div>';
+    var card=container.querySelector('.sa-step-card');
+    if(card){card.style.transition='none';setTimeout(function(){card.style.transition='opacity .22s ease,transform .22s ease';card.classList.add('visible');},20);}
+  }
+  function _updateFooter(){
+    var prevBtn=_el('sa-prev-btn'),nextBtn=_el('sa-next-btn'),label=_el('sa-progress-label');
+    var n=_steps.length;
+    if(label)label.textContent=n?('Step '+(_cur+1)+' of '+n):'No steps';
+    if(prevBtn)prevBtn.disabled=(_cur<=0);
+    if(nextBtn){
+      nextBtn.disabled=(n===0);
+      nextBtn.textContent=(n>0&&_cur>=n-1)?'Done \u2713':'Next \u203A';
+    }
+  }
+  function _goTo(idx){
+    if(!_steps||_steps.length===0)return;
+    if(idx<0)idx=0;if(idx>_steps.length-1)idx=_steps.length-1;
+    _cur=idx;
+    _renderCard();_updateFlowTrack();_updateFooter();
+  }
   function _buildPanel(){
     if(_built)return;_built=true;
-    var steps=_loadSteps();
-    var container=_el('stepans-items-container');if(!container)return;
-    if(!steps||steps.length===0){container.innerHTML='<div class="sa-empty">No step-by-step solution is available.</div>';return;}
-    var html='';
-    for(var i=0;i<steps.length;i++){
-      var parts=_splitStep(steps[i],i);
-      html+='<div class="sa-step-card" id="sa-step-'+i+'"><div class="sa-step-num">'+(i+1)+'</div><div class="sa-step-body"><div class="sa-step-title">'+_esc(parts.title)+'</div><div class="sa-step-text">'+_esc(parts.body)+'</div></div></div>';
-      if(i<steps.length-1){html+='<div class="sa-step-connector">&#8595;</div>';}
-    }
-    container.innerHTML=html;
-  }
-  function _animateReveal(){
-    var cards=document.querySelectorAll('.sa-step-card');
-    for(var i=0;i<cards.length;i++){(function(el,idx){el.classList.remove('visible');el.style.transition='none';setTimeout(function(){el.style.transition='opacity .30s ease,transform .30s ease';el.classList.add('visible');},80+idx*110);})(cards[i],i);}
+    _steps=_loadSteps();_cur=0;
+    _buildFlowTrack();_renderCard();_updateFlowTrack();_updateFooter();
   }
   function openStepAnswer(){
     _buildPanel();
     var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');if(!backdrop||!panel)return;
-    backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');stepAnsOpen=true;setTimeout(_animateReveal,80);
+    backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');stepAnsOpen=true;
   }
   function closeStepAnswer(){
     var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');
     if(backdrop)backdrop.classList.remove('open');
     if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
-    stepAnsOpen=false;_built=false;
+    stepAnsOpen=false;
   }
   window.openStepAnswer=openStepAnswer;window.closeStepAnswer=closeStepAnswer;
   window.toggleStepAnswer=function(){stepAnsOpen?closeStepAnswer():openStepAnswer();};
@@ -807,7 +886,14 @@ STEP_ANSWER_JS_MODULE = r"""
     wireBtn();
     var closeBtn=_el('stepans-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeStepAnswer();});
     var backdrop=_el('stepans-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeStepAnswer();});
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&stepAnsOpen)closeStepAnswer();});
+    var prevBtn=_el('sa-prev-btn');if(prevBtn)prevBtn.addEventListener('click',function(e){e.stopPropagation();_goTo(_cur-1);});
+    var nextBtn=_el('sa-next-btn');if(nextBtn)nextBtn.addEventListener('click',function(e){e.stopPropagation();if(_cur>=_steps.length-1){closeStepAnswer();}else{_goTo(_cur+1);}});
+    document.addEventListener('keydown',function(e){
+      if(!stepAnsOpen)return;
+      if(e.key==='Escape')closeStepAnswer();
+      else if(e.key==='ArrowRight')_goTo(_cur+1);
+      else if(e.key==='ArrowLeft')_goTo(_cur-1);
+    });
   });
 })();
 """
