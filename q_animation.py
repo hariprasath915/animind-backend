@@ -684,8 +684,11 @@ def inject_to_find_system(html, targets):
 #  does NOT call Gemini again.
 # ===========================================================================
 
-def _build_step_answer_data_tag(steps):
-    payload = {"steps": [str(s) for s in (steps or [])]}
+def _build_step_answer_data_tag(steps, key_insight=""):
+    payload = {
+        "steps": [str(s) for s in (steps or [])],
+        "key_insight": str(key_insight or ""),
+    }
     return ('<script type="application/json" id="__step_answer_data__">\n'
             + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
 
@@ -719,113 +722,219 @@ _STEP_ANSWER_DOM = """
 
 _STEP_ANSWER_CSS = """
 <style id="qanim-stepans-styles">
+/* ── Backdrop & Panel ── */
 #stepans-backdrop { display:none; position:fixed; inset:0; z-index:8500;
-  background:rgba(15,23,42,.42); backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
+  background:rgba(15,23,42,.48); backdrop-filter:blur(8px); opacity:0; transition:opacity .26s ease; }
 #stepans-backdrop.open { display:block; opacity:1; }
 #stepans-panel { display:flex; flex-direction:column; position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(820px,96vw);
-  max-height:92vh; border-radius:18px; background:#fff; border:1px solid #e2e8f0;
-  box-shadow:0 20px 60px rgba(37,99,235,.18),0 2px 8px rgba(0,0,0,.06);
+  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(860px,96vw);
+  max-height:92vh; border-radius:20px; background:#fff; border:1px solid #e2e8f0;
+  box-shadow:0 24px 64px rgba(37,99,235,.18),0 2px 12px rgba(0,0,0,.08);
   opacity:0; pointer-events:none;
   transition:opacity .28s ease,transform .28s cubic-bezier(.34,1.56,.64,1); overflow:hidden; }
 #stepans-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+/* ── Header ── */
 .sa-header { display:flex; align-items:center; justify-content:space-between;
-  padding:18px 22px 14px; border-bottom:1px solid #f0f0f8; flex-shrink:0; background:#fff; }
-.sa-header-left { display:flex; align-items:center; gap:13px; }
-.sa-icon-wrap { width:40px; height:40px; border-radius:10px; background:#eff6ff;
-  display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
+  padding:18px 24px 15px; border-bottom:1px solid #f0f0f8; flex-shrink:0;
+  background:linear-gradient(135deg,#fff 0%,#f8f9ff 100%); }
+.sa-header-left { display:flex; align-items:center; gap:14px; }
+.sa-icon-wrap { width:42px; height:42px; border-radius:12px;
+  background:linear-gradient(135deg,#eff6ff 0%,#e0e7ff 100%);
+  display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0;
+  box-shadow:0 2px 8px rgba(37,99,235,.14); }
 .sa-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:17px; font-weight:800; color:#1a1a2e; }
 .sa-subtitle { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; color:#64748b; margin-top:2px; }
-.sa-close-btn { width:34px; height:34px; border-radius:50%; border:1.5px solid #e8e8f0;
+.sa-close-btn { width:36px; height:36px; border-radius:50%; border:1.5px solid #e8e8f0;
   background:#fafafa; color:#888; font-size:13px; display:flex; align-items:center; justify-content:center;
   cursor:pointer; transition:background .15s,color .15s,border-color .15s; flex-shrink:0; }
 .sa-close-btn:hover { background:#fee2e2; color:#dc2626; border-color:#fca5a5; }
-.sa-flow-track-wrap { flex-shrink:0; background:#fafbff; border-bottom:1px solid #f0f0f8;
-  padding:14px 22px 12px; overflow-x:auto; overflow-y:hidden; }
-.sa-flow-track { display:flex; align-items:center; min-width:max-content; padding:2px 2px 4px; }
+/* ── Flow Track ── */
+.sa-flow-track-wrap { flex-shrink:0; background:linear-gradient(135deg,#fafbff 0%,#f4f7ff 100%);
+  border-bottom:1px solid #edf0f8; padding:14px 24px 12px; overflow-x:auto; overflow-y:hidden; }
+.sa-flow-track { display:flex; align-items:center; min-width:max-content; padding:2px 2px 4px; gap:0; }
 .sa-flow-node { display:flex; align-items:center; cursor:pointer; background:none; border:none;
-  padding:0; font:inherit; }
-.sa-flow-dot { width:30px; height:30px; border-radius:50%; background:#e9edf5; color:#7c8aa0;
+  padding:0; font:inherit; flex-direction:column; gap:4px; }
+.sa-flow-dot { width:34px; height:34px; border-radius:50%; background:#e9edf5; color:#7c8aa0;
   font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:800;
   display:flex; align-items:center; justify-content:center; flex-shrink:0; border:2px solid transparent;
   transition:background .22s ease,color .22s ease,transform .22s ease,box-shadow .22s ease,border-color .22s ease; }
+.sa-flow-node-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:9px; font-weight:700;
+  color:#94a3b8; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; max-width:60px;
+  text-align:center; overflow:hidden; text-overflow:ellipsis; display:none; }
 .sa-flow-node:hover .sa-flow-dot { background:#dbe6fd; color:#1d4ed8; }
-.sa-flow-node.sa-done .sa-flow-dot { background:#dcfce7; color:#16a34a; }
-.sa-flow-node.sa-active .sa-flow-dot { background:#2563eb; color:#fff; border-color:#bfdbfe;
-  box-shadow:0 0 0 4px rgba(37,99,235,.16); transform:scale(1.14); }
-.sa-flow-line { width:28px; height:2px; background:#e2e8f0; flex-shrink:0; margin:0 1px;
-  transition:background .22s ease; }
-.sa-flow-line.sa-done { background:#86efac; }
-.sa-body { overflow-y:auto; flex:1; padding:20px 22px 10px; display:flex; flex-direction:column; }
+.sa-flow-node.sa-done .sa-flow-dot { background:#dcfce7; color:#16a34a; border-color:#86efac; }
+.sa-flow-node.sa-active .sa-flow-dot { background:linear-gradient(135deg,#2563eb,#3b82f6); color:#fff;
+  border-color:#bfdbfe; box-shadow:0 0 0 5px rgba(37,99,235,.14); transform:scale(1.18); }
+.sa-flow-node.sa-active .sa-flow-node-label { color:#2563eb; display:block; }
+.sa-flow-line { width:36px; height:3px; background:#e2e8f0; flex-shrink:0; margin:0 2px; align-self:flex-start; margin-top:17px;
+  transition:background .3s ease; border-radius:2px; }
+.sa-flow-line.sa-done { background:linear-gradient(to right,#86efac,#4ade80); }
+/* ── Body ── */
+.sa-body { overflow-y:auto; flex:1; padding:22px 24px 12px; display:flex; flex-direction:column; }
 .sa-items-container { display:flex; flex-direction:column; }
-.sa-step-card { display:flex; align-items:flex-start; gap:16px; padding:20px 20px;
-  border-radius:14px; background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #2563eb;
-  opacity:0; transform:translateX(14px); transition:opacity .22s ease,transform .22s ease; }
+.sa-step-card { display:flex; align-items:flex-start; gap:16px; padding:20px 22px;
+  border-radius:16px; background:#f8fafc; border:1px solid #e2e8f0; border-left:5px solid #2563eb;
+  opacity:0; transform:translateX(16px); transition:opacity .25s ease,transform .25s ease; }
 .sa-step-card.visible { opacity:1; transform:translateX(0); }
-.sa-step-num { min-width:38px; height:38px; border-radius:50%; background:#2563eb; color:#fff;
-  font-size:15px; font-weight:800; display:flex; align-items:center; justify-content:center;
-  flex-shrink:0; box-shadow:0 2px 8px rgba(37,99,235,.30); }
+/* Step accent colors */
+.sa-step-card[data-step="1"] { border-left-color:#2563eb; background:linear-gradient(135deg,#f8faff 0%,#f0f5ff 100%); }
+.sa-step-card[data-step="2"] { border-left-color:#7c3aed; background:linear-gradient(135deg,#faf8ff 0%,#f5f0ff 100%); }
+.sa-step-card[data-step="3"] { border-left-color:#0d9488; background:linear-gradient(135deg,#f8fffd 0%,#f0fdfb 100%); }
+.sa-step-card[data-step="4"] { border-left-color:#d97706; background:linear-gradient(135deg,#fffcf8 0%,#fff8ef 100%); }
+.sa-step-card[data-step="5"] { border-left-color:#16a34a; background:linear-gradient(135deg,#f8fff8 0%,#f0fdf4 100%); }
+.sa-step-num { min-width:40px; height:40px; border-radius:50%; background:#2563eb; color:#fff;
+  font-size:16px; font-weight:800; display:flex; align-items:center; justify-content:center;
+  flex-shrink:0; box-shadow:0 3px 10px rgba(37,99,235,.32); }
+.sa-step-card[data-step="2"] .sa-step-num { background:#7c3aed; box-shadow:0 3px 10px rgba(124,58,237,.32); }
+.sa-step-card[data-step="3"] .sa-step-num { background:#0d9488; box-shadow:0 3px 10px rgba(13,148,136,.32); }
+.sa-step-card[data-step="4"] .sa-step-num { background:#d97706; box-shadow:0 3px 10px rgba(217,119,6,.32); }
+.sa-step-card[data-step="5"] .sa-step-num { background:#16a34a; box-shadow:0 3px 10px rgba(22,163,74,.32); }
 .sa-step-body { flex:1; min-width:0; }
-.sa-step-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12.5px; font-weight:700;
-  color:#1d4ed8; text-transform:uppercase; letter-spacing:.5px; margin-bottom:7px; }
+.sa-step-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; font-weight:800;
+  color:#1d4ed8; text-transform:uppercase; letter-spacing:.6px; margin-bottom:10px; }
+.sa-step-card[data-step="2"] .sa-step-title { color:#7c3aed; }
+.sa-step-card[data-step="3"] .sa-step-title { color:#0d9488; }
+.sa-step-card[data-step="4"] .sa-step-title { color:#d97706; }
+.sa-step-card[data-step="5"] .sa-step-title { color:#16a34a; }
 .sa-step-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14.5px; font-weight:500;
   color:#1e293b; line-height:1.75; white-space:pre-wrap; word-break:break-word; }
 .sa-empty { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
   font-size:13px; color:#94a3b8; text-align:center; padding:28px 0; font-style:italic; }
+/* ── Footer ── */
 .sa-footer { display:flex; align-items:center; justify-content:space-between; gap:10px;
-  padding:14px 22px; border-top:1px solid #f0f0f8; flex-shrink:0; background:#fff; }
-.sa-nav-btn { display:inline-flex; align-items:center; gap:6px; padding:9px 16px; border-radius:10px;
+  padding:14px 24px; border-top:1px solid #f0f0f8; flex-shrink:0;
+  background:linear-gradient(135deg,#fff 0%,#f8f9ff 100%); }
+.sa-nav-btn { display:inline-flex; align-items:center; gap:6px; padding:10px 18px; border-radius:11px;
   border:1.5px solid #e2e8f0; background:#fff; color:#334155; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
   font-size:13px; font-weight:700; cursor:pointer; transition:background .15s,border-color .15s,color .15s,opacity .15s; }
 .sa-nav-btn:hover:not(:disabled) { background:#eff6ff; border-color:#93c5fd; color:#1d4ed8; }
-.sa-nav-btn:disabled { opacity:.38; cursor:not-allowed; }
-.sa-next-btn { background:#2563eb; border-color:#2563eb; color:#fff; }
-.sa-next-btn:hover:not(:disabled) { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
+.sa-nav-btn:disabled { opacity:.35; cursor:not-allowed; }
+.sa-next-btn { background:linear-gradient(135deg,#2563eb,#3b82f6); border-color:#2563eb; color:#fff;
+  box-shadow:0 3px 10px rgba(37,99,235,.28); }
+.sa-next-btn:hover:not(:disabled) { background:linear-gradient(135deg,#1d4ed8,#2563eb); box-shadow:0 4px 14px rgba(37,99,235,.38); }
 .sa-progress-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px;
   font-weight:700; color:#64748b; flex-shrink:0; }
-/* ── Given data boxes (Step 1) ── */
-.sa-given-grid { display:flex; flex-wrap:wrap; gap:10px; padding:4px 0 6px; }
-.sa-given-box { display:inline-flex; align-items:center; gap:6px; padding:8px 14px;
-  border-radius:10px; background:#eff6ff; border:1.5px solid #bfdbfe; color:#1d4ed8;
-  font-family:'Courier New',Courier,monospace; font-size:14px; font-weight:700;
-  box-shadow:0 1px 4px rgba(37,99,235,.10); white-space:nowrap; }
-.sa-given-box:nth-child(4n+1) { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
-.sa-given-box:nth-child(4n+2) { background:#f0fdf4; border-color:#bbf7d0; color:#15803d; }
-.sa-given-box:nth-child(4n+3) { background:#fefce8; border-color:#fde68a; color:#b45309; }
-.sa-given-box:nth-child(4n)   { background:#fdf4ff; border-color:#e9d5ff; color:#7e22ce; }
-/* ── Formula flowchart (Step 4) ── */
-.sa-flowchart { display:flex; flex-direction:column; align-items:center; gap:0; padding:6px 0; }
-.sa-flow-formula-box { width:100%; max-width:560px; padding:13px 20px; border-radius:12px;
-  text-align:center; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:15px; font-weight:700; box-sizing:border-box; margin:0 auto; }
-.sa-flow-formula-box.blue  { background:#eff6ff; border:2px solid #93c5fd; color:#1d4ed8; }
-.sa-flow-formula-box.orange{ background:#fff7ed; border:2px solid #fdba74; color:#c2410c; }
-.sa-flow-formula-box.purple{ background:#faf5ff; border:2px solid #d8b4fe; color:#7c3aed; }
-.sa-flow-formula-box.pink  { background:#fff1f2; border:2px solid #fda4af; color:#be123c; }
-.sa-flow-formula-box .sub-text { font-size:12px; font-weight:400; color:inherit; opacity:0.72; margin-top:4px; }
-.sa-flow-arrow { width:2px; height:28px; background:linear-gradient(to bottom,#93c5fd,#c084fc);
-  margin:0 auto; position:relative; }
-.sa-flow-arrow::after { content:'▼'; position:absolute; bottom:-10px; left:50%;
-  transform:translateX(-50%); font-size:14px; color:#c084fc; }
-.sa-flow-footer-note { font-size:11.5px; color:#64748b; text-align:center; margin-top:10px; font-style:italic; }
-/* ── Substitution steps (Step 5) ── */
-.sa-sub-container { display:flex; flex-direction:column; gap:10px; padding:4px 0; }
-.sa-sub-card { display:flex; align-items:flex-start; gap:14px; padding:14px 16px;
-  border-radius:12px; background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #2563eb; }
+
+/* ══════════════════════════════════════════════
+   STEP 1 — Given Data Boxes
+   ══════════════════════════════════════════════ */
+.sa-given-section-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px;
+  font-weight:800; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; }
+.sa-given-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; padding:2px 0 6px; }
+.sa-given-box { display:flex; align-items:center; gap:10px; padding:12px 16px;
+  border-radius:12px; background:#fff; border:1.5px solid #bfdbfe;
+  box-shadow:0 2px 6px rgba(37,99,235,.08); transition:transform .15s,box-shadow .15s; }
+.sa-given-box:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(37,99,235,.14); }
+.sa-given-box:nth-child(4n+1) { border-color:#bfdbfe; }
+.sa-given-box:nth-child(4n+2) { border-color:#bbf7d0; }
+.sa-given-box:nth-child(4n+3) { border-color:#fde68a; }
+.sa-given-box:nth-child(4n+0) { border-color:#e9d5ff; }
+.sa-given-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; background:#2563eb; }
+.sa-given-box:nth-child(4n+2) .sa-given-dot { background:#16a34a; }
+.sa-given-box:nth-child(4n+3) .sa-given-dot { background:#d97706; }
+.sa-given-box:nth-child(4n+0) .sa-given-dot { background:#7c3aed; }
+.sa-given-info { flex:1; min-width:0; }
+.sa-given-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px; font-weight:700;
+  color:#94a3b8; text-transform:uppercase; letter-spacing:.6px; margin-bottom:2px; }
+.sa-given-value { font-family:'Courier New',Courier,monospace; font-size:14px; font-weight:800;
+  color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ══════════════════════════════════════════════
+   STEP 2 — Conditions to Find
+   ══════════════════════════════════════════════ */
+.sa-find-list { display:flex; flex-direction:column; gap:10px; padding:2px 0; }
+.sa-find-item { display:flex; align-items:center; gap:14px; padding:13px 18px;
+  border-radius:12px; background:#fff; border:1.5px solid #e9d5ff;
+  box-shadow:0 2px 6px rgba(124,58,237,.08); transition:transform .15s,box-shadow .15s; }
+.sa-find-item:hover { transform:translateX(4px); box-shadow:0 4px 12px rgba(124,58,237,.14); }
+.sa-find-roman { min-width:36px; height:36px; border-radius:50%;
+  background:linear-gradient(135deg,#7c3aed,#8b5cf6); color:#fff;
+  font-size:13px; font-weight:800; font-style:italic;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  box-shadow:0 2px 8px rgba(124,58,237,.30); }
+.sa-find-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14.5px;
+  font-weight:600; color:#1e293b; line-height:1.5; }
+
+/* ══════════════════════════════════════════════
+   STEP 3 — Formula Flowchart
+   ══════════════════════════════════════════════ */
+.sa-flowchart { display:flex; flex-direction:column; align-items:center; gap:0; padding:6px 0 4px; }
+.sa-flow-formula-box { width:100%; max-width:600px; padding:14px 22px; border-radius:14px;
+  text-align:center; box-sizing:border-box; margin:0 auto; transition:transform .2s; }
+.sa-flow-formula-box:hover { transform:scale(1.02); }
+.sa-flow-formula-box .formula-text { font-family:'Courier New',Courier,monospace;
+  font-size:15.5px; font-weight:800; letter-spacing:.3px; }
+.sa-flow-formula-box .formula-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px;
+  margin-bottom:6px; opacity:.7; }
+.sa-flow-formula-box.blue  { background:linear-gradient(135deg,#eff6ff,#dbeafe); border:2px solid #93c5fd; color:#1d4ed8; }
+.sa-flow-formula-box.orange{ background:linear-gradient(135deg,#fff7ed,#fed7aa); border:2px solid #fb923c; color:#c2410c; }
+.sa-flow-formula-box.purple{ background:linear-gradient(135deg,#faf5ff,#ede9fe); border:2px solid #c084fc; color:#7c3aed; }
+.sa-flow-formula-box.pink  { background:linear-gradient(135deg,#fff1f2,#fecdd3); border:2px solid #fb7185; color:#be123c; }
+.sa-flow-formula-box.teal  { background:linear-gradient(135deg,#f0fdfa,#ccfbf1); border:2px solid #5eead4; color:#0f766e; }
+.sa-flow-arrow { display:flex; flex-direction:column; align-items:center; gap:2px; margin:2px 0; }
+.sa-flow-arrow-line { width:3px; height:22px; background:linear-gradient(to bottom,#93c5fd,#c084fc); border-radius:2px; }
+.sa-flow-arrow-head { width:0; height:0; border-left:8px solid transparent;
+  border-right:8px solid transparent; border-top:10px solid #c084fc; }
+.sa-flow-footer-note { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11.5px;
+  color:#64748b; text-align:center; margin-top:12px; padding:10px 16px; background:#f8fafc;
+  border-radius:8px; border:1px solid #e2e8f0; font-style:italic; }
+
+/* ══════════════════════════════════════════════
+   STEP 4 — Substitution Steps
+   ══════════════════════════════════════════════ */
+.sa-sub-intro { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px;
+  color:#64748b; margin-bottom:14px; line-height:1.6; }
+.sa-sub-container { display:flex; flex-direction:column; gap:10px; padding:2px 0; }
+.sa-sub-card { display:flex; align-items:flex-start; gap:14px; padding:15px 18px;
+  border-radius:13px; background:#fff; border:1px solid #e2e8f0; border-left:4px solid #2563eb;
+  transition:transform .15s,box-shadow .15s; }
+.sa-sub-card:hover { transform:translateX(3px); box-shadow:0 3px 10px rgba(0,0,0,.08); }
+.sa-sub-card:nth-child(1) { border-left-color:#2563eb; }
 .sa-sub-card:nth-child(2) { border-left-color:#0d9488; }
-.sa-sub-card:nth-child(3) { border-left-color:#16a34a; }
-.sa-sub-card:nth-child(4) { border-left-color:#d97706; }
-.sa-sub-num { min-width:32px; height:32px; border-radius:50%; background:#2563eb; color:#fff;
+.sa-sub-card:nth-child(3) { border-left-color:#d97706; }
+.sa-sub-card:nth-child(4) { border-left-color:#16a34a; }
+.sa-sub-card:nth-child(5) { border-left-color:#7c3aed; }
+.sa-sub-num { min-width:34px; height:34px; border-radius:50%; background:#2563eb; color:#fff;
   font-size:13px; font-weight:800; display:flex; align-items:center; justify-content:center;
   flex-shrink:0; box-shadow:0 2px 6px rgba(37,99,235,.28); }
 .sa-sub-card:nth-child(2) .sa-sub-num { background:#0d9488; box-shadow:0 2px 6px rgba(13,148,136,.28); }
-.sa-sub-card:nth-child(3) .sa-sub-num { background:#16a34a; box-shadow:0 2px 6px rgba(22,163,74,.28); }
-.sa-sub-card:nth-child(4) .sa-sub-num { background:#d97706; box-shadow:0 2px 6px rgba(217,119,6,.28); }
+.sa-sub-card:nth-child(3) .sa-sub-num { background:#d97706; box-shadow:0 2px 6px rgba(217,119,6,.28); }
+.sa-sub-card:nth-child(4) .sa-sub-num { background:#16a34a; box-shadow:0 2px 6px rgba(22,163,74,.28); }
+.sa-sub-card:nth-child(5) .sa-sub-num { background:#7c3aed; box-shadow:0 2px 6px rgba(124,58,237,.28); }
 .sa-sub-body { flex:1; min-width:0; }
-.sa-sub-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700;
-  color:#475569; text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
-.sa-sub-expr { font-family:'Courier New',Courier,monospace; font-size:14.5px; font-weight:600;
-  color:#1e293b; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+.sa-sub-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; font-weight:800;
+  color:#475569; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px; }
+.sa-sub-card:nth-child(1) .sa-sub-title { color:#2563eb; }
+.sa-sub-card:nth-child(2) .sa-sub-title { color:#0d9488; }
+.sa-sub-card:nth-child(3) .sa-sub-title { color:#d97706; }
+.sa-sub-card:nth-child(4) .sa-sub-title { color:#16a34a; }
+.sa-sub-card:nth-child(5) .sa-sub-title { color:#7c3aed; }
+.sa-sub-expr { font-family:'Courier New',Courier,monospace; font-size:14px; font-weight:600;
+  color:#1e293b; line-height:1.65; white-space:pre-wrap; word-break:break-word; }
+
+/* ══════════════════════════════════════════════
+   STEP 5 — Final Answer
+   ══════════════════════════════════════════════ */
+.sa-final-container { display:flex; flex-direction:column; gap:12px; padding:2px 0; }
+.sa-final-answer-card { display:flex; align-items:center; gap:16px; padding:18px 22px;
+  border-radius:14px; background:linear-gradient(135deg,#f0fdf4,#dcfce7); border:2px solid #86efac;
+  box-shadow:0 4px 16px rgba(22,163,74,.14); }
+.sa-final-check { min-width:44px; height:44px; border-radius:50%;
+  background:linear-gradient(135deg,#16a34a,#22c55e); color:#fff; font-size:20px;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  box-shadow:0 3px 10px rgba(22,163,74,.36); }
+.sa-final-body { flex:1; min-width:0; }
+.sa-final-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px; font-weight:800;
+  color:#15803d; text-transform:uppercase; letter-spacing:1.2px; margin-bottom:6px; }
+.sa-final-value { font-family:'Courier New',Courier,monospace; font-size:18px; font-weight:900;
+  color:#14532d; word-break:break-word; line-height:1.4; }
+.sa-final-insight { padding:14px 18px; border-radius:12px; background:#fffbf0;
+  border:1.5px solid #fde68a; }
+.sa-final-insight-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px;
+  font-weight:800; color:#b45309; text-transform:uppercase; letter-spacing:1.2px; margin-bottom:6px; }
+.sa-final-insight-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13.5px;
+  color:#78350f; line-height:1.7; }
 </style>
 """
 
@@ -833,146 +942,309 @@ STEP_ANSWER_JS_MODULE = r"""
 (function initStepAnswerSystem(){
   'use strict';
   var stepAnsOpen=false,_built=false,_steps=[],_cur=0;
+
+  /* ── Step config: titles and icons for each of the 5 steps ── */
+  var STEP_META=[
+    {icon:'&#x1F4CB;',title:'Given Data',         color:'#2563eb'},
+    {icon:'&#x1F50D;',title:'Conditions to Find', color:'#7c3aed'},
+    {icon:'&#x1F9EE;',title:'Formula Used',        color:'#0d9488'},
+    {icon:'&#x1F4DD;',title:'Substitution',        color:'#d97706'},
+    {icon:'&#x2705;', title:'Final Answer',        color:'#16a34a'}
+  ];
+
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function _esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
   function _loadSteps(){
     try{var tag=_el('__step_answer_data__');if(!tag)return[];var data=JSON.parse(tag.textContent)||{};return Array.isArray(data.steps)?data.steps:[];}catch(e){return[];}
   }
+
+  /* ── Parse step: extract step number and body ── */
   function _splitStep(raw,idx){
     var text=String(raw||'').trim();
-    var m=text.match(/^(Step\s*\d+)\s*[:\-]\s*(.*)$/i);
-    if(m&&m[2]){return{num:parseInt(m[1].replace(/\D/g,''),10)||idx+1,title:m[1],body:m[2]};}
-    return{num:idx+1,title:'Step '+(idx+1),body:text};
+    /* "Step 1 - Given Data: ..." or "Step 1: ..." */
+    var m=text.match(/^Step\s*(\d+)\s*[-:–]\s*[^:]*?:\s*([\s\S]*)$/i);
+    if(m&&m[2]){return{num:parseInt(m[1],10)||idx+1,body:m[2].trim()};}
+    var m2=text.match(/^Step\s*(\d+)\s*[:\-]\s*([\s\S]*)$/i);
+    if(m2&&m2[2]){return{num:parseInt(m2[1],10)||idx+1,body:m2[2].trim()};}
+    return{num:idx+1,body:text};
   }
 
-  /* ── Extract given values from step 1 body text ──────────────────────── */
-  function _parseGivenBoxes(bodyText){
-    var boxes=[];
-    /* match patterns like: symbol = value unit  or  Name = value unit */
-    var re=/([A-Za-z_\u00b0][A-Za-z_0-9\u00b0\u03b1-\u03c9\u0391-\u03a9]{0,20})\s*=\s*([-+]?\d[\d.,]*(?:\s*[xX\u00d7]\s*10[\^]?[-+]?\d+)?)\s*([A-Za-z\u00b0\u00b2\u00b3][A-Za-z\u00b0\u00b2\u00b3\u00b7\/\s]{0,15})?/g;
-    var m;
-    while((m=re.exec(bodyText))!==null){
-      var sym=m[1].trim(),val=m[2].trim(),unit=(m[3]||'').trim().replace(/[.,;]+$/,'');
-      if(sym&&val){boxes.push(sym+' = '+val+(unit?' '+unit:''));}
-      if(boxes.length>=12)break;
+  /* ══════════════════════════════════════════════
+     STEP 1 — Given Data
+     Input: "m_dot = 2 kg/s; c_p = 4.18 kJ/kg·K; T_in = 80°C"
+     ══════════════════════════════════════════════ */
+  function _renderStep1(body){
+    var items=[];
+    /* Split on semicolons */
+    var parts=body.split(/[;]+/);
+    for(var i=0;i<parts.length;i++){
+      var p=parts[i].trim().replace(/^[,\s]+|[,\s]+$/g,'');
+      if(!p)continue;
+      /* Try to parse "symbol = value unit" */
+      var m=p.match(/^([^=]+?)\s*=\s*(.+)$/);
+      if(m){
+        var sym=m[1].trim(),valunit=m[2].trim();
+        items.push({sym:sym,valunit:valunit});
+      } else if(p.length>1){
+        items.push({sym:'',valunit:p});
+      }
+      if(items.length>=16)break;
     }
-    /* fallback: split by comma/semicolon if regex found nothing */
-    if(boxes.length===0){
-      var parts=bodyText.split(/[,;]/);
-      for(var i=0;i<parts.length&&i<10;i++){var p=parts[i].trim();if(p.length>1&&p.length<50)boxes.push(p);}
-    }
-    return boxes;
-  }
-
-  /* ── Extract formula flowchart rows from step 4 body text ─────────────── */
-  function _parseFlowchart(bodyText){
-    var rows=[];
-    var colors=['blue','orange','purple','pink'];
-    /* Replace arrow chars and split on safe delimiters only — no non-ASCII in regex */
-    var raw=bodyText;
-    raw=raw.replace(/\u2192|\u2794|\u27f9|=>/g,'|');
-    var lines=raw.split(/[;|\n\r]+/);
-    for(var i=0;i<lines.length;i++){
-      var ln=lines[i].trim().replace(/^[-*]+\s*/,'');
-      if(ln.length>2){rows.push({text:ln,color:colors[rows.length%4]});}
-      if(rows.length>=6)break;
-    }
-    if(rows.length<=1){
-      var alt=bodyText.split(',');
-      rows=[];
-      for(var j=0;j<alt.length&&j<5;j++){var s=alt[j].trim();if(s.length>1){rows.push({text:s,color:colors[j%4]});}}
-    }
-    if(rows.length===0){rows=[{text:bodyText,color:'blue'}];}
-    return rows;
-  }
-
-  /* ── Extract substitution sub-steps from step 5 body text ─────────────── */
-  function _parseSubstitution(bodyText){
-    var labels=['Write Formula','Substitute Values','Simplify','Result'];
-    var cards=[];
-    var DELIM='||SPLIT||';
-    var raw=bodyText;
-    /* Replace arrow/newline chars — all via unicode escapes, safe in any browser */
-    raw=raw.replace(/\u2192|\u2794|\u27f9|=>/g,DELIM);
-    raw=raw.replace(/\n|\r/g,DELIM);
-    raw=raw.replace(/(\d)\.\s+([A-Z])/g,'$1.'+DELIM+'$2');
-    raw=raw.replace(/\.\s+(Write|Substitute|Plug|Put|Calculate|Solve|Result|Final|Therefore|Thus|Hence)\b/gi,DELIM+'$1');
-    var parts=raw.split(DELIM);
-    for(var i=0;i<parts.length&&cards.length<4;i++){
-      var p=parts[i].trim().replace(/^\d+[.)]\s*/,'');
-      if(p.length>2){cards.push({title:labels[cards.length]||('Step '+(cards.length+1)),expr:p});}
-    }
-    if(cards.length<=1){
-      var alt2=bodyText.replace(/,\s*([A-Z])/g,DELIM+'$1').split(DELIM);
-      if(alt2.length>1){
-        cards=[];
-        for(var k=0;k<alt2.length&&k<4;k++){
-          var q=alt2[k].trim();
-          if(q.length>2){cards.push({title:labels[k]||('Step '+(k+1)),expr:q});}
-        }
+    if(items.length===0){
+      /* Fallback: split by comma */
+      var fallbackParts=body.split(',');
+      for(var j=0;j<fallbackParts.length;j++){
+        var fp=fallbackParts[j].trim();
+        if(fp.length>1){items.push({sym:'',valunit:fp});}
+        if(items.length>=12)break;
       }
     }
-    if(cards.length===0){cards=[{title:'Substitution',expr:bodyText}];}
-    return cards;
+    if(items.length===0){
+      return '<div class="sa-step-text">'+_esc(body)+'</div>';
+    }
+    var html='<div class="sa-given-section-title">All given values</div>';
+    html+='<div class="sa-given-grid">';
+    for(var k=0;k<items.length;k++){
+      var it=items[k];
+      html+='<div class="sa-given-box">';
+      html+='<div class="sa-given-dot"></div>';
+      html+='<div class="sa-given-info">';
+      if(it.sym){html+='<div class="sa-given-label">'+_esc(it.sym)+'</div>';}
+      html+='<div class="sa-given-value">'+_esc(it.valunit)+'</div>';
+      html+='</div></div>';
+    }
+    html+='</div>';
+    return html;
   }
 
-  /* ── Render a step card ─────────────────────────────────────────────────── */
+  /* ══════════════════════════════════════════════
+     STEP 2 — Conditions to Find
+     Input: "i) Heat removal rate Q; ii) Outlet temp T_out; iii) Efficiency η"
+     ══════════════════════════════════════════════ */
+  function _renderStep2(body){
+    var items=[];
+    /* Split on ; or newlines */
+    var parts=body.split(/[;\n\r]+/);
+    for(var i=0;i<parts.length;i++){
+      var p=parts[i].trim().replace(/^[,\s]+|[,\s]+$/g,'');
+      if(!p)continue;
+      /* Extract roman numeral prefix if present */
+      var m=p.match(/^([ivxIVX]+\)|[ivxIVX]+\.\s*|\([ivxIVX]+\)\s*|\d+[.)]\s*)/i);
+      var roman='',text=p;
+      if(m){roman=m[0].replace(/[).(]\s*/g,'').trim();text=p.slice(m[0].length).trim();}
+      else{roman=String.fromCharCode(105+items.length); /* i,j,k... fallback */}
+      if(text.length>0){items.push({roman:roman,text:text});}
+      if(items.length>=8)break;
+    }
+    if(items.length===0){
+      /* Fallback */
+      var fallback=body.split(',');
+      for(var j=0;j<fallback.length;j++){
+        var fp=fallback[j].trim();
+        if(fp.length>1){
+          var romans=['i','ii','iii','iv','v','vi','vii','viii'];
+          items.push({roman:romans[items.length]||String(items.length+1),text:fp});
+        }
+        if(items.length>=6)break;
+      }
+    }
+    if(items.length===0){return '<div class="sa-step-text">'+_esc(body)+'</div>';}
+    var html='<div class="sa-find-list">';
+    for(var k=0;k<items.length;k++){
+      html+='<div class="sa-find-item">';
+      html+='<div class="sa-find-roman">'+_esc(items[k].roman)+'</div>';
+      html+='<div class="sa-find-text">'+_esc(items[k].text)+'</div>';
+      html+='</div>';
+    }
+    html+='</div>';
+    return html;
+  }
+
+  /* ══════════════════════════════════════════════
+     STEP 3 — Formula Flowchart
+     Input: "Re = ρ V D / μ; Pr = μ c_p / k; Nu = 0.023 × Re^0.8 × Pr^0.4; h = Nu × k / D"
+     ══════════════════════════════════════════════ */
+  function _renderStep3(body){
+    var colors=['blue','orange','purple','pink','teal'];
+    var rows=[];
+    var footerNote='';
+
+    /* Check for a footer note (last item containing "evaluate" or "bulk") */
+    var parts=body.split(/[;\n\r]+/);
+    for(var i=0;i<parts.length;i++){
+      var p=parts[i].trim().replace(/^[-*•]\s*/,'');
+      if(!p)continue;
+      var lower=p.toLowerCase();
+      if((lower.indexOf('evaluate')!==-1||lower.indexOf('bulk')!==-1||lower.indexOf('note')!==-1)&&p.length<120){
+        footerNote=p;
+      } else if(p.length>2){
+        rows.push({text:p,color:colors[rows.length%colors.length]});
+      }
+      if(rows.length>=6)break;
+    }
+
+    /* Fallback: single formula */
+    if(rows.length===0){rows=[{text:body.split(';')[0]||body,color:'blue'}];}
+
+    var html='<div class="sa-flowchart">';
+    for(var r=0;r<rows.length;r++){
+      /* Try to split "label: formula" */
+      var rowText=rows[r].text;
+      var labelHtml='',formulaText=rowText;
+      var labelMatch=rowText.match(/^([A-Za-z][A-Za-z\s\-_]{0,30}):\s*(.+)$/);
+      if(labelMatch){
+        labelHtml='<div class="formula-label">'+_esc(labelMatch[1])+'</div>';
+        formulaText=labelMatch[2];
+      }
+      html+='<div class="sa-flow-formula-box '+rows[r].color+'">';
+      html+=labelHtml;
+      html+='<div class="formula-text">'+_esc(formulaText)+'</div>';
+      html+='</div>';
+      if(r<rows.length-1){
+        html+='<div class="sa-flow-arrow"><div class="sa-flow-arrow-line"></div><div class="sa-flow-arrow-head"></div></div>';
+      }
+    }
+    html+='</div>';
+    if(footerNote){
+      html+='<div class="sa-flow-footer-note">&#x1F4CC; '+_esc(footerNote)+'</div>';
+    }
+    return html;
+  }
+
+  /* ══════════════════════════════════════════════
+     STEP 4 — Substitution Steps
+     Input: "Write Formula => Q = m_dot × c_p × ΔT || Substitute => Q = 2 × 4.18 × 40 || Result => Q = 334.4 kW"
+     ══════════════════════════════════════════════ */
+  function _renderStep4(body){
+    var cards=[];
+    /* Primary split: || */
+    var parts=body.split('||');
+    /* Secondary: try semicolons if || not found */
+    if(parts.length<=1){parts=body.split(/[;\n\r]+/);}
+    for(var i=0;i<parts.length&&cards.length<6;i++){
+      var p=parts[i].trim();
+      if(!p)continue;
+      /* Try "LABEL => expression" */
+      var m=p.match(/^([^=\u21d2]{1,40}?)\s*(?:=>|\u21d2|->)\s*([\s\S]+)$/);
+      var title='',expr='';
+      if(m){title=m[1].trim();expr=m[2].trim();}
+      else{
+        /* Fallback: first word(s) as title if comma or colon found */
+        var cm=p.match(/^([A-Za-z][A-Za-z\s]{1,25}?):\s*([\s\S]+)$/);
+        if(cm){title=cm[1].trim();expr=cm[2].trim();}
+        else{title='Step '+(cards.length+1);expr=p;}
+      }
+      if(expr.length>0){cards.push({title:title,expr:expr});}
+    }
+    if(cards.length===0){
+      return '<div class="sa-step-text">'+_esc(body)+'</div>';
+    }
+    var html='<div class="sa-sub-intro">Follow each substitution step carefully:</div>';
+    html+='<div class="sa-sub-container">';
+    for(var c=0;c<cards.length;c++){
+      html+='<div class="sa-sub-card">';
+      html+='<div class="sa-sub-num">'+(c+1)+'</div>';
+      html+='<div class="sa-sub-body">';
+      if(cards[c].title){html+='<div class="sa-sub-title">'+_esc(cards[c].title)+'</div>';}
+      html+='<div class="sa-sub-expr">'+_esc(cards[c].expr)+'</div>';
+      html+='</div></div>';
+    }
+    html+='</div>';
+    return html;
+  }
+
+  /* ══════════════════════════════════════════════
+     STEP 5 — Final Answer
+     Input: "Q = 334.4 kW; h = 1250 W/m²·K"
+     ══════════════════════════════════════════════ */
+  function _renderStep5(body,keyInsight){
+    var answers=[];
+    var parts=body.split(/[;\n\r]+/);
+    for(var i=0;i<parts.length;i++){
+      var p=parts[i].trim().replace(/^[-*•]\s*/,'');
+      if(!p)continue;
+      answers.push(p);
+      if(answers.length>=6)break;
+    }
+    if(answers.length===0){answers=[body];}
+
+    var html='<div class="sa-final-container">';
+    for(var a=0;a<answers.length;a++){
+      html+='<div class="sa-final-answer-card">';
+      html+='<div class="sa-final-check">&#x2713;</div>';
+      html+='<div class="sa-final-body">';
+      html+='<div class="sa-final-label">Result '+(answers.length>1?String.fromCharCode(105+a)+')':'')+'</div>';
+      html+='<div class="sa-final-value">'+_esc(answers[a])+'</div>';
+      html+='</div></div>';
+    }
+    if(keyInsight){
+      html+='<div class="sa-final-insight">';
+      html+='<div class="sa-final-insight-label">&#x1F4A1; Key Insight</div>';
+      html+='<div class="sa-final-insight-text">'+_esc(keyInsight)+'</div>';
+      html+='</div>';
+    }
+    html+='</div>';
+    return html;
+  }
+
+  /* ── Master render dispatcher ── */
   function _renderCard(){
     var container=_el('stepans-items-container');if(!container)return;
     if(!_steps||_steps.length===0){
       container.innerHTML='<div class="sa-empty">No step-by-step solution is available.</div>';return;
     }
     var parts=_splitStep(_steps[_cur],_cur);
-    var stepNum=parts.num;   /* 1-based step number */
+    var stepNum=Math.max(1,Math.min(5,parts.num));
+    var meta=STEP_META[stepNum-1]||STEP_META[0];
     var inner='';
 
-    if(stepNum===1){
-      /* ── Step 1: Given data boxes ── */
-      var boxes=_parseGivenBoxes(parts.body);
-      var boxHtml='';
-      for(var b=0;b<boxes.length;b++){boxHtml+='<div class="sa-given-box">'+_esc(boxes[b])+'</div>';}
-      if(!boxHtml){boxHtml='<div class="sa-given-box">'+_esc(parts.body)+'</div>';}
-      inner='<div class="sa-given-grid">'+boxHtml+'</div>';
-    } else if(stepNum===4){
-      /* ── Step 4: Formula flowchart ── */
-      var rows=_parseFlowchart(parts.body);
-      var fcHtml='';
-      for(var r=0;r<rows.length;r++){
-        fcHtml+='<div class="sa-flow-formula-box '+_esc(rows[r].color)+'">'+_esc(rows[r].text)+'</div>';
-        if(r<rows.length-1){fcHtml+='<div class="sa-flow-arrow"></div>';}
-      }
-      inner='<div class="sa-flowchart">'+fcHtml+'</div>';
-    } else if(stepNum===5){
-      /* ── Step 5: Substitution steps ── */
-      var cards=_parseSubstitution(parts.body);
-      var subHtml='';
-      for(var c=0;c<cards.length;c++){
-        subHtml+='<div class="sa-sub-card"><div class="sa-sub-num">'+(c+1)+'</div>'
-          +'<div class="sa-sub-body"><div class="sa-sub-title">'+_esc(cards[c].title)+'</div>'
-          +'<div class="sa-sub-expr">'+_esc(cards[c].expr)+'</div></div></div>';
-      }
-      inner='<div class="sa-sub-container">'+subHtml+'</div>';
-    } else {
-      /* ── Default: plain text card (Steps 2, 3, 6, …) ── */
-      inner='<div class="sa-step-text">'+_esc(parts.body)+'</div>';
-    }
+    /* Try to get key insight from step 5 data for final step */
+    var keyInsight='';
+    try{
+      var tag=_el('__step_answer_data__');
+      if(tag){var d=JSON.parse(tag.textContent)||{};keyInsight=d.key_insight||'';}
+    }catch(e){}
 
-    container.innerHTML='<div class="sa-step-card" id="sa-step-'+_cur+'">'
+    if(stepNum===1)      {inner=_renderStep1(parts.body);}
+    else if(stepNum===2) {inner=_renderStep2(parts.body);}
+    else if(stepNum===3) {inner=_renderStep3(parts.body);}
+    else if(stepNum===4) {inner=_renderStep4(parts.body);}
+    else if(stepNum===5) {inner=_renderStep5(parts.body,keyInsight);}
+    else                 {inner='<div class="sa-step-text">'+_esc(parts.body)+'</div>';}
+
+    container.innerHTML='<div class="sa-step-card" id="sa-step-'+_cur+'" data-step="'+stepNum+'">'
       +'<div class="sa-step-num">'+(_cur+1)+'</div>'
-      +'<div class="sa-step-body"><div class="sa-step-title">'+_esc(parts.title)+'</div>'
-      +inner+'</div></div>';
+      +'<div class="sa-step-body">'
+      +'<div class="sa-step-title">'+meta.icon+' '+_esc(meta.title)+'</div>'
+      +inner
+      +'</div></div>';
 
     var card=container.querySelector('.sa-step-card');
-    if(card){card.style.transition='none';setTimeout(function(){card.style.transition='opacity .22s ease,transform .22s ease';card.classList.add('visible');},20);}
+    if(card){
+      card.style.opacity='0';card.style.transform='translateX(16px)';
+      card.style.transition='none';
+      setTimeout(function(){
+        card.style.transition='opacity .25s ease,transform .25s ease';
+        card.style.opacity='1';card.style.transform='translateX(0)';
+        card.classList.add('visible');
+      },20);
+    }
   }
 
+  /* ── Flow track ── */
   function _buildFlowTrack(){
     var track=_el('sa-flow-track');if(!track)return;
     if(_steps.length===0){track.innerHTML='';return;}
     var html='';
+    var STEP_LABELS=['Given','Find','Formula','Substitution','Answer'];
     for(var i=0;i<_steps.length;i++){
-      html+='<button type="button" class="sa-flow-node" data-idx="'+i+'" title="'+_esc(_splitStep(_steps[i],i).title)+'"><div class="sa-flow-dot">'+(i+1)+'</div></button>';
+      var lbl=STEP_LABELS[i]||('Step '+(i+1));
+      html+='<button type="button" class="sa-flow-node" data-idx="'+i+'" title="'+_esc(lbl)+'">';
+      html+='<div class="sa-flow-dot">'+(i+1)+'</div>';
+      html+='<div class="sa-flow-node-label">'+_esc(lbl)+'</div>';
+      html+='</button>';
       if(i<_steps.length-1){html+='<div class="sa-flow-line" data-line="'+i+'"></div>';}
     }
     track.innerHTML=html;
@@ -985,6 +1257,7 @@ STEP_ANSWER_JS_MODULE = r"""
       });
     }
   }
+
   function _updateFlowTrack(){
     var track=_el('sa-flow-track');if(!track)return;
     var nodes=track.querySelectorAll('.sa-flow-node');
@@ -1001,6 +1274,7 @@ STEP_ANSWER_JS_MODULE = r"""
     var activeNode=track.querySelector('.sa-flow-node.sa-active');
     if(activeNode&&activeNode.scrollIntoView){activeNode.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});}
   }
+
   function _updateFooter(){
     var prevBtn=_el('sa-prev-btn'),nextBtn=_el('sa-next-btn'),label=_el('sa-progress-label');
     var n=_steps.length;
@@ -1008,20 +1282,24 @@ STEP_ANSWER_JS_MODULE = r"""
     if(prevBtn)prevBtn.disabled=(_cur<=0);
     if(nextBtn){
       nextBtn.disabled=(n===0);
-      nextBtn.textContent=(n>0&&_cur>=n-1)?'Done \u2713':'Next \u203A';
+      if(n>0&&_cur>=n-1){nextBtn.textContent='Done \u2713';}
+      else{nextBtn.textContent='Next \u203A';}
     }
   }
+
   function _goTo(idx){
     if(!_steps||_steps.length===0)return;
     if(idx<0)idx=0;if(idx>_steps.length-1)idx=_steps.length-1;
     _cur=idx;
     _renderCard();_updateFlowTrack();_updateFooter();
   }
+
   function _buildPanel(){
     if(_built)return;_built=true;
     _steps=_loadSteps();_cur=0;
     _buildFlowTrack();_renderCard();_updateFlowTrack();_updateFooter();
   }
+
   function openStepAnswer(){
     _buildPanel();
     var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');if(!backdrop||!panel)return;
@@ -1035,6 +1313,7 @@ STEP_ANSWER_JS_MODULE = r"""
   }
   window.openStepAnswer=openStepAnswer;window.closeStepAnswer=closeStepAnswer;
   window.toggleStepAnswer=function(){stepAnsOpen?closeStepAnswer():openStepAnswer();};
+
   _onReady(function(){
     function wireBtn(){var btn=document.getElementById('stepans-ctrl-btn');
       if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();});}
@@ -1044,7 +1323,10 @@ STEP_ANSWER_JS_MODULE = r"""
     var closeBtn=_el('stepans-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeStepAnswer();});
     var backdrop=_el('stepans-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeStepAnswer();});
     var prevBtn=_el('sa-prev-btn');if(prevBtn)prevBtn.addEventListener('click',function(e){e.stopPropagation();_goTo(_cur-1);});
-    var nextBtn=_el('sa-next-btn');if(nextBtn)nextBtn.addEventListener('click',function(e){e.stopPropagation();if(_cur>=_steps.length-1){closeStepAnswer();}else{_goTo(_cur+1);}});
+    var nextBtn=_el('sa-next-btn');if(nextBtn)nextBtn.addEventListener('click',function(e){
+      e.stopPropagation();
+      if(_cur>=_steps.length-1){closeStepAnswer();}else{_goTo(_cur+1);}
+    });
     document.addEventListener('keydown',function(e){
       if(!stepAnsOpen)return;
       if(e.key==='Escape')closeStepAnswer();
@@ -1056,12 +1338,12 @@ STEP_ANSWER_JS_MODULE = r"""
 """
 
 
-def inject_step_answer_panel(html, solution_steps):
+def inject_step_answer_panel(html, solution_steps, key_insight=""):
     html = re.sub(r'<script[^>]+id=["\']__step_answer_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     html = re.sub(r'<style[^>]+id=["\']qanim-stepans-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
 
     try:
-        data_tag = _build_step_answer_data_tag(solution_steps)
+        data_tag = _build_step_answer_data_tag(solution_steps, key_insight)
         if '</head>' in html:
             html = html.replace('</head>', data_tag + '\n</head>', 1)
         else:
@@ -1302,13 +1584,24 @@ _SOLUTION_SYSTEM = """You are an expert engineering professor generating a step-
 
 Return ONLY valid JSON with this structure:
 {
-  "steps": ["Step 1: ...", "Step 2: ...", ...],
+  "steps": [
+    "Step 1 - Given Data: <list every given value as: symbol = value unit, separated by semicolons. Example: m_dot = 2 kg/s; c_p = 4.18 kJ/kg·K; T_in = 80°C; T_out = 40°C>",
+    "Step 2 - Conditions to Find: <list each unknown using roman numerals: i) Heat removal rate Q; ii) Outlet temperature T_out; iii) Efficiency η>",
+    "Step 3 - Formula Used: <list each formula on its own line separated by semicolons. For Dittus-Boelter style: Re = ρ V D / μ; Pr = μ c_p / k; Nu = 0.023 × Re^0.8 × Pr^0.4; h = Nu × k / D. For heat transfer: Q = m_dot × c_p × ΔT. Include the note: Evaluate all properties at bulk mean temperature T_bulk = (T_in + T_out)/2>",
+    "Step 4 - Substitution and Explanation: <show substitution step by step. Write each sub-step separated by || symbol. Each sub-step format: LABEL => expression. Example: Write Formula => Q = m_dot × c_p × ΔT || Substitute Values => Q = 2 × 4.18 × (80 - 40) || Simplify => Q = 2 × 4.18 × 40 = 334.4 kJ/s || Result => Q = 334.4 kW>",
+    "Step 5 - Final Answer: <state the final answer clearly. Format: symbol = numerical_value unit. For multiple answers use semicolons: Q = 334.4 kW; h = 1250 W/m²·K>"
+  ],
   "final_answer": "complete answer with all values and units",
   "key_insight": "one memorable insight sentence"
 }
 
-RULES:
-- steps: numbered steps following: Given -> Find -> Governing Law -> Formula -> Substitution -> Calculation -> Result
+CRITICAL RULES:
+- steps: EXACTLY 5 steps, no more, no less. Follow the step titles and formats exactly.
+- Step 1 must use semicolon-separated symbol = value unit pairs for all given data.
+- Step 2 must use roman numerals (i), ii), iii)) for each unknown.
+- Step 3 must list formulas separated by semicolons, one formula per line concept.
+- Step 4 must use || as separator between sub-steps, each as LABEL => expression.
+- Step 5 must show final answer as symbol = value unit.
 - final_answer: MUST include computed numerical values with units. Never leave empty.
 - key_insight: one clear sentence capturing the core concept.
 - Use simple, clear English. Short sentences.
@@ -3080,7 +3373,7 @@ async def _run_generation_pipeline(question: str) -> dict:
         final_answer=final_answer,
         key_insight=key_insight,
     )
-    html = inject_step_answer_panel(html, solution_steps)
+    html = inject_step_answer_panel(html, solution_steps, key_insight=key_insight)
     html = inject_notes_system(html)
     html = inject_answer_box_panel(html, answer_targets)
     html = inject_controls_bar(html)
