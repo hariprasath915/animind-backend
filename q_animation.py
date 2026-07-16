@@ -867,22 +867,22 @@ STEP_ANSWER_JS_MODULE = r"""
 
   /* ── Extract formula flowchart rows from step 4 body text ─────────────── */
   function _parseFlowchart(bodyText){
-    /* look for lines that look like formulas: contain =, numbers, or variables */
     var rows=[];
-    var lines=bodyText.split(/[\n;|→\-]+/);
     var colors=['blue','orange','purple','pink'];
+    /* Replace arrow chars and split on safe delimiters only — no non-ASCII in regex */
+    var raw=bodyText;
+    raw=raw.replace(/\u2192|\u2794|\u27f9|=>/g,'|');
+    var lines=raw.split(/[;|\n\r]+/);
     for(var i=0;i<lines.length;i++){
-      var ln=lines[i].trim().replace(/^[-–•*]+\s*/,'');
+      var ln=lines[i].trim().replace(/^[-*]+\s*/,'');
       if(ln.length>2){rows.push({text:ln,color:colors[rows.length%4]});}
       if(rows.length>=6)break;
     }
-    /* if only one long sentence, split at connectors */
     if(rows.length<=1){
-      var alt=bodyText.split(/[,](?=\s*(?:where|so|then|therefore|thus|gives|yields|hence))/i);
+      var alt=bodyText.split(',');
       rows=[];
       for(var j=0;j<alt.length&&j<5;j++){var s=alt[j].trim();if(s.length>1){rows.push({text:s,color:colors[j%4]});}}
     }
-    /* last resort: treat whole body as one box */
     if(rows.length===0){rows=[{text:bodyText,color:'blue'}];}
     return rows;
   }
@@ -893,7 +893,8 @@ STEP_ANSWER_JS_MODULE = r"""
     var cards=[];
     var DELIM='||SPLIT||';
     var raw=bodyText;
-    raw=raw.replace(/\u2192|\u27f9|=>/g,DELIM);
+    /* Replace arrow/newline chars — all via unicode escapes, safe in any browser */
+    raw=raw.replace(/\u2192|\u2794|\u27f9|=>/g,DELIM);
     raw=raw.replace(/\n|\r/g,DELIM);
     raw=raw.replace(/(\d)\.\s+([A-Z])/g,'$1.'+DELIM+'$2');
     raw=raw.replace(/\.\s+(Write|Substitute|Plug|Put|Calculate|Solve|Result|Final|Therefore|Thus|Hence)\b/gi,DELIM+'$1');
