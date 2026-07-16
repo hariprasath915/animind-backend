@@ -1354,19 +1354,35 @@ STEP_ANSWER_JS_MODULE = r"""
   window.toggleStepAnswer=function(){stepAnsOpen?closeStepAnswer():openStepAnswer();};
 
   _onReady(function(){
+    /* ── Primary wiring: event delegation on document (timing-safe) ── */
+    document.addEventListener('click',function(e){
+      var t=e.target;
+      /* Walk up to 5 levels to handle clicks on child <span> elements */
+      for(var i=0;i<5;i++){
+        if(!t||t===document)break;
+        if(t.id==='stepans-ctrl-btn'){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();return;}
+        if(t.id==='stepans-close'){e.stopPropagation();closeStepAnswer();return;}
+        if(t.id==='sa-prev-btn'){e.stopPropagation();_goTo(_cur-1);return;}
+        if(t.id==='sa-next-btn'){e.stopPropagation();if(_cur>=_steps.length-1){closeStepAnswer();}else{_goTo(_cur+1);}return;}
+        if(t.id==='stepans-backdrop'){closeStepAnswer();return;}
+        t=t.parentElement;
+      }
+    },true); /* capture phase so it fires before any Gemini-generated stopPropagation */
+
+    /* ── Fallback: also wire directly if elements already exist ── */
     var _wireTries=0;
-    function wireBtn(){var btn=document.getElementById('stepans-ctrl-btn');
-      if(btn){btn.addEventListener('click',function(e){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();});}
-      else if(_wireTries++<25){setTimeout(wireBtn,100);}
+    function wireBtn(){
+      var btn=document.getElementById('stepans-ctrl-btn');
+      if(btn&&!btn._saBound){
+        btn._saBound=true;
+        btn.addEventListener('click',function(e){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();});
+      }else if(!btn&&_wireTries++<30){setTimeout(wireBtn,80);}
     }
     wireBtn();
-    var closeBtn=_el('stepans-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeStepAnswer();});
-    var backdrop=_el('stepans-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeStepAnswer();});
-    var prevBtn=_el('sa-prev-btn');if(prevBtn)prevBtn.addEventListener('click',function(e){e.stopPropagation();_goTo(_cur-1);});
-    var nextBtn=_el('sa-next-btn');if(nextBtn)nextBtn.addEventListener('click',function(e){
-      e.stopPropagation();
-      if(_cur>=_steps.length-1){closeStepAnswer();}else{_goTo(_cur+1);}
-    });
+    var closeBtn=_el('stepans-close');if(closeBtn&&!closeBtn._saBound){closeBtn._saBound=true;closeBtn.addEventListener('click',function(e){e.stopPropagation();closeStepAnswer();});}
+    var backdrop=_el('stepans-backdrop');if(backdrop&&!backdrop._saBound){backdrop._saBound=true;backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeStepAnswer();});}
+    var prevBtn=_el('sa-prev-btn');if(prevBtn&&!prevBtn._saBound){prevBtn._saBound=true;prevBtn.addEventListener('click',function(e){e.stopPropagation();_goTo(_cur-1);});}
+    var nextBtn=_el('sa-next-btn');if(nextBtn&&!nextBtn._saBound){nextBtn._saBound=true;nextBtn.addEventListener('click',function(e){e.stopPropagation();if(_cur>=_steps.length-1){closeStepAnswer();}else{_goTo(_cur+1);}});}
     document.addEventListener('keydown',function(e){
       if(!stepAnsOpen)return;
       if(e.key==='Escape')closeStepAnswer();
@@ -2269,7 +2285,7 @@ _CONTROLS_BAR_CSS = """
 
 _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution">
+  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution" onclick="if(window.openStepAnswer)window.openStepAnswer();else if(window.toggleStepAnswer)window.toggleStepAnswer();">
     <span>&#x1FA9C;</span><span class="ctrl-label">Step by Step Answer</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
