@@ -748,27 +748,46 @@ _STEP_ANSWER_CSS = """
   background:#fafafa; color:#888; font-size:13px; display:flex; align-items:center; justify-content:center;
   cursor:pointer; transition:background .15s,color .15s,border-color .15s; flex-shrink:0; }
 .sa-close-btn:hover { background:#fee2e2; color:#dc2626; border-color:#fca5a5; }
-/* ── Flow Track ── */
+/* ── Flow Track (workflow diagram strip) ── */
 .sa-flow-track-wrap { flex-shrink:0; background:linear-gradient(135deg,#fafbff 0%,#f4f7ff 100%);
-  border-bottom:1px solid #edf0f8; padding:14px 24px 12px; overflow-x:auto; overflow-y:hidden; }
-.sa-flow-track { display:flex; align-items:center; min-width:max-content; padding:2px 2px 4px; gap:0; }
+  border-bottom:1px solid #edf0f8; padding:16px 20px 14px; overflow-x:auto; overflow-y:hidden; }
+.sa-flow-track { display:flex; align-items:flex-start; min-width:max-content; padding:2px 2px 4px; gap:0; }
 .sa-flow-node { display:flex; align-items:center; cursor:pointer; background:none; border:none;
-  padding:0; font:inherit; flex-direction:column; gap:4px; }
-.sa-flow-dot { width:34px; height:34px; border-radius:50%; background:#e9edf5; color:#7c8aa0;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:800;
-  display:flex; align-items:center; justify-content:center; flex-shrink:0; border:2px solid transparent;
+  padding:6px 4px; font:inherit; flex-direction:column; gap:6px; border-radius:14px;
+  transition:background .18s ease; position:relative; }
+.sa-flow-node:hover { background:rgba(37,99,235,.06); }
+.sa-flow-dot { width:46px; height:46px; border-radius:14px; background:#eef1f8; color:#94a3b8;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:20px; font-weight:800;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0; border:2px solid #e2e8f0;
+  box-shadow:0 1px 3px rgba(15,23,42,.05);
   transition:background .22s ease,color .22s ease,transform .22s ease,box-shadow .22s ease,border-color .22s ease; }
-.sa-flow-node-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:9px; font-weight:700;
-  color:#94a3b8; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; max-width:60px;
-  text-align:center; overflow:hidden; text-overflow:ellipsis; display:none; }
-.sa-flow-node:hover .sa-flow-dot { background:#dbe6fd; color:#1d4ed8; }
+.sa-flow-step-badge { position:absolute; top:0; right:2px; width:16px; height:16px; border-radius:50%;
+  background:#cbd5e1; color:#fff; font-size:9px; font-weight:800; display:flex; align-items:center;
+  justify-content:center; font-family:-apple-system,'Segoe UI',Arial,sans-serif; box-shadow:0 1px 3px rgba(0,0,0,.18); }
+.sa-flow-node-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10.5px; font-weight:700;
+  color:#94a3b8; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; max-width:82px;
+  text-align:center; overflow:hidden; text-overflow:ellipsis; display:block; transition:color .2s ease; }
+/* Per-step accent colors (teacher-legible color coding, same hues as the content cards below) */
+.sa-flow-node[data-step="0"] .sa-flow-dot { border-color:#bfdbfe; }
+.sa-flow-node[data-step="1"] .sa-flow-dot { border-color:#e9d5ff; }
+.sa-flow-node[data-step="2"] .sa-flow-dot { border-color:#99f6e4; }
+.sa-flow-node[data-step="3"] .sa-flow-dot { border-color:#fed7aa; }
+.sa-flow-node[data-step="4"] .sa-flow-dot { border-color:#bbf7d0; }
 .sa-flow-node.sa-done .sa-flow-dot { background:#dcfce7; color:#16a34a; border-color:#86efac; }
+.sa-flow-node.sa-done .sa-flow-step-badge { background:#16a34a; }
+.sa-flow-node.sa-done .sa-flow-node-label { color:#16a34a; }
 .sa-flow-node.sa-active .sa-flow-dot { background:linear-gradient(135deg,#2563eb,#3b82f6); color:#fff;
-  border-color:#bfdbfe; box-shadow:0 0 0 5px rgba(37,99,235,.14); transform:scale(1.18); }
-.sa-flow-node.sa-active .sa-flow-node-label { color:#2563eb; display:block; }
-.sa-flow-line { width:36px; height:3px; background:#e2e8f0; flex-shrink:0; margin:0 2px; align-self:flex-start; margin-top:17px;
-  transition:background .3s ease; border-radius:2px; }
-.sa-flow-line.sa-done { background:linear-gradient(to right,#86efac,#4ade80); }
+  border-color:#bfdbfe; box-shadow:0 0 0 6px rgba(37,99,235,.14); transform:scale(1.1); }
+.sa-flow-node.sa-active .sa-flow-step-badge { background:#2563eb; }
+.sa-flow-node.sa-active .sa-flow-node-label { color:#2563eb; }
+/* Arrow connectors between workflow blocks */
+.sa-flow-arrow-connector { display:flex; align-items:center; justify-content:center;
+  min-width:34px; height:46px; flex-shrink:0; margin-top:6px; }
+.sa-flow-arrow-connector svg { width:30px; height:14px; overflow:visible; }
+.sa-flow-arrow-connector .sa-arrow-shaft { stroke:#d7dee9; stroke-width:2.5; transition:stroke .3s ease; }
+.sa-flow-arrow-connector .sa-arrow-head { fill:#d7dee9; transition:fill .3s ease; }
+.sa-flow-arrow-connector.sa-done .sa-arrow-shaft { stroke:#4ade80; }
+.sa-flow-arrow-connector.sa-done .sa-arrow-head { fill:#4ade80; }
 /* ── Body ── */
 .sa-body { overflow-y:auto; flex:1; padding:22px 24px 12px; display:flex; flex-direction:column; }
 .sa-items-container { display:flex; flex-direction:column; }
@@ -1234,6 +1253,14 @@ STEP_ANSWER_JS_MODULE = r"""
   }
 
   /* ── Flow track ── */
+  /* Small right-pointing arrow connector used between workflow blocks */
+  function _arrowSvg(){
+    return '<svg viewBox="0 0 30 14" xmlns="http://www.w3.org/2000/svg">'
+      +'<line class="sa-arrow-shaft" x1="1" y1="7" x2="21" y2="7" stroke-linecap="round"></line>'
+      +'<polygon class="sa-arrow-head" points="19,1 30,7 19,13"></polygon>'
+      +'</svg>';
+  }
+
   function _buildFlowTrack(){
     var track=_el('sa-flow-track');if(!track)return;
     if(_steps.length===0){track.innerHTML='';return;}
@@ -1241,11 +1268,14 @@ STEP_ANSWER_JS_MODULE = r"""
     var STEP_LABELS=['Given','Find','Formula','Substitution','Answer'];
     for(var i=0;i<_steps.length;i++){
       var lbl=STEP_LABELS[i]||('Step '+(i+1));
-      html+='<button type="button" class="sa-flow-node" data-idx="'+i+'" title="'+_esc(lbl)+'">';
-      html+='<div class="sa-flow-dot">'+(i+1)+'</div>';
+      var meta=STEP_META[i]||STEP_META[0];
+      html+='<button type="button" class="sa-flow-node" data-idx="'+i+'" data-step="'+i+'" title="'+_esc(lbl)+'">';
+      html+='<div class="sa-flow-dot">'+meta.icon+'<span class="sa-flow-step-badge">'+(i+1)+'</span></div>';
       html+='<div class="sa-flow-node-label">'+_esc(lbl)+'</div>';
       html+='</button>';
-      if(i<_steps.length-1){html+='<div class="sa-flow-line" data-line="'+i+'"></div>';}
+      if(i<_steps.length-1){
+        html+='<div class="sa-flow-arrow-connector" data-line="'+i+'">'+_arrowSvg()+'</div>';
+      }
     }
     track.innerHTML=html;
     var nodes=track.querySelectorAll('.sa-flow-node');
@@ -1261,11 +1291,20 @@ STEP_ANSWER_JS_MODULE = r"""
   function _updateFlowTrack(){
     var track=_el('sa-flow-track');if(!track)return;
     var nodes=track.querySelectorAll('.sa-flow-node');
-    var lines=track.querySelectorAll('.sa-flow-line');
+    var lines=track.querySelectorAll('.sa-flow-arrow-connector');
     for(var i=0;i<nodes.length;i++){
       nodes[i].classList.remove('sa-active','sa-done');
-      if(i===_cur)nodes[i].classList.add('sa-active');
-      else if(i<_cur)nodes[i].classList.add('sa-done');
+      var dot=nodes[i].querySelector('.sa-flow-dot');
+      var meta=STEP_META[i]||STEP_META[0];
+      if(i===_cur){
+        nodes[i].classList.add('sa-active');
+        if(dot)dot.innerHTML=meta.icon+'<span class="sa-flow-step-badge">'+(i+1)+'</span>';
+      }else if(i<_cur){
+        nodes[i].classList.add('sa-done');
+        if(dot)dot.innerHTML='&#x2713;<span class="sa-flow-step-badge">'+(i+1)+'</span>';
+      }else{
+        if(dot)dot.innerHTML=meta.icon+'<span class="sa-flow-step-badge">'+(i+1)+'</span>';
+      }
     }
     for(var j=0;j<lines.length;j++){
       var lidx=parseInt(lines[j].getAttribute('data-line'),10);
