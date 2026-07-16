@@ -133,8 +133,8 @@ if _GEMINI_AVAILABLE:
 else:
     _GEMINI_DISABLED_REASON = "No Gemini SDK installed"
 
-MAX_TOK = 18000
-MAX_TOK_CONCEPT = 16000
+MAX_TOK = 22000
+MAX_TOK_CONCEPT = 18000
 
 
 # ===========================================================================
@@ -1309,7 +1309,7 @@ STEP_ANSWER_JS_MODULE = r"""
     var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');
     if(backdrop)backdrop.classList.remove('open');
     if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
-    stepAnsOpen=false;
+    stepAnsOpen=false;_built=false;
   }
   window.openStepAnswer=openStepAnswer;window.closeStepAnswer=closeStepAnswer;
   window.toggleStepAnswer=function(){stepAnsOpen?closeStepAnswer():openStepAnswer();};
@@ -2230,18 +2230,15 @@ _CONTROLS_BAR_CSS = """
 
 _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution"
-    onclick="if(typeof openStepAnswer==='function'){openStepAnswer();}else if(typeof toggleStepAnswer==='function'){toggleStepAnswer();}">
+  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution">
     <span>&#x1FA9C;</span><span class="ctrl-label">Step by Step Answer</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="fa-ctrl-btn" title="View final answer"
-    onclick="if(typeof openFinalAnswer==='function'){openFinalAnswer();}else if(typeof toggleFinalAnswer==='function'){toggleFinalAnswer();}">
+  <button class="qanim-ctrl-btn" id="fa-ctrl-btn" title="View final answer">
     <span>&#x2705;</span><span class="ctrl-label">Final Answer</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer"
-    onclick="if(typeof openAnswerBox==='function'){openAnswerBox();}else if(typeof toggleAnswerBox==='function'){toggleAnswerBox();}">
+  <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
   </button>
 </div>
