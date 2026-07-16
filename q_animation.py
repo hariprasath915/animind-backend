@@ -1026,7 +1026,7 @@ STEP_ANSWER_JS_MODULE = r"""
   function _renderStep2(body){
     var items=[];
     /* Split on ; or newlines */
-    var parts=body.split(/[;\n\r]+/);
+    var parts=body.split(/;|\n|\r/).filter(function(x){return x.trim().length>0;});
     for(var i=0;i<parts.length;i++){
       var p=parts[i].trim().replace(/^[,\s]+|[,\s]+$/g,'');
       if(!p)continue;
@@ -1072,7 +1072,7 @@ STEP_ANSWER_JS_MODULE = r"""
     var footerNote='';
 
     /* Check for a footer note (last item containing "evaluate" or "bulk") */
-    var parts=body.split(/[;\n\r]+/);
+    var parts=body.split(/;|\n|\r/).filter(function(x){return x.trim().length>0;});
     for(var i=0;i<parts.length;i++){
       var p=parts[i].trim().replace(/^[-*•]\s*/,'');
       if(!p)continue;
@@ -1122,7 +1122,7 @@ STEP_ANSWER_JS_MODULE = r"""
     /* Primary split: || */
     var parts=body.split('||');
     /* Secondary: try semicolons if || not found */
-    if(parts.length<=1){parts=body.split(/[;\n\r]+/);}
+    if(parts.length<=1){parts=body.split(/;|\n|\r/).filter(function(x){return x.trim().length>0;});}
     for(var i=0;i<parts.length&&cards.length<6;i++){
       var p=parts[i].trim();
       if(!p)continue;
@@ -1161,7 +1161,7 @@ STEP_ANSWER_JS_MODULE = r"""
      ══════════════════════════════════════════════ */
   function _renderStep5(body,keyInsight){
     var answers=[];
-    var parts=body.split(/[;\n\r]+/);
+    var parts=body.split(/;|\n|\r/).filter(function(x){return x.trim().length>0;});
     for(var i=0;i<parts.length;i++){
       var p=parts[i].trim().replace(/^[-*•]\s*/,'');
       if(!p)continue;
@@ -1315,9 +1315,10 @@ STEP_ANSWER_JS_MODULE = r"""
   window.toggleStepAnswer=function(){stepAnsOpen?closeStepAnswer():openStepAnswer();};
 
   _onReady(function(){
+    var _wireTries=0;
     function wireBtn(){var btn=document.getElementById('stepans-ctrl-btn');
-      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();});}
-      else{setTimeout(wireBtn,80);}
+      if(btn){btn.addEventListener('click',function(e){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();});}
+      else if(_wireTries++<25){setTimeout(wireBtn,100);}
     }
     wireBtn();
     var closeBtn=_el('stepans-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeStepAnswer();});
@@ -1533,9 +1534,10 @@ _FINAL_ANSWER_JS = r"""
   window.openFinalAnswer=openFinalAnswer;window.closeFinalAnswer=closeFinalAnswer;
   window.toggleFinalAnswer=function(){faOpen?closeFinalAnswer():openFinalAnswer();};
   _onReady(function(){
+    var _wireTries=0;
     function wireBtn(){var btn=document.getElementById('fa-ctrl-btn');
-      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();faOpen?closeFinalAnswer():openFinalAnswer();});}
-      else{setTimeout(wireBtn,80);}
+      if(btn){btn.addEventListener('click',function(e){e.stopPropagation();faOpen?closeFinalAnswer():openFinalAnswer();});}
+      else if(_wireTries++<25){setTimeout(wireBtn,100);}
     }
     wireBtn();
     var closeBtn=_el('fa-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeFinalAnswer();});
@@ -1965,9 +1967,10 @@ _ANSWER_BOX_JS = r"""
   }
   window.openAnswerBox=openAnswerBox;window.closeAnswerBox=closeAnswerBox;window.resetAnswerBox=function(){_loaded=false;_targets=[];_currentIdx=0;};
   _onReady(function(){
+    var _wireCTries=0;
     function wireCtrlBtn(){var btn=document.getElementById('answerbox-ctrl-btn');
-      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();abOpen?closeAnswerBox():openAnswerBox();});}
-      else{setTimeout(wireCtrlBtn,100);}
+      if(btn){btn.addEventListener('click',function(e){e.stopPropagation();abOpen?closeAnswerBox():openAnswerBox();});}
+      else if(_wireCTries++<25){setTimeout(wireCtrlBtn,100);}
     }
     wireCtrlBtn();
     var closeBtn=_el('ab-close-btn');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeAnswerBox();});
@@ -2227,15 +2230,18 @@ _CONTROLS_BAR_CSS = """
 
 _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution">
+  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution"
+    onclick="if(typeof openStepAnswer==='function'){openStepAnswer();}else if(typeof toggleStepAnswer==='function'){toggleStepAnswer();}">
     <span>&#x1FA9C;</span><span class="ctrl-label">Step by Step Answer</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="fa-ctrl-btn" title="View final answer">
+  <button class="qanim-ctrl-btn" id="fa-ctrl-btn" title="View final answer"
+    onclick="if(typeof openFinalAnswer==='function'){openFinalAnswer();}else if(typeof toggleFinalAnswer==='function'){toggleFinalAnswer();}">
     <span>&#x2705;</span><span class="ctrl-label">Final Answer</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
+  <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer"
+    onclick="if(typeof openAnswerBox==='function'){openAnswerBox();}else if(typeof toggleAnswerBox==='function'){toggleAnswerBox();}">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
   </button>
 </div>
