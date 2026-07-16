@@ -889,17 +889,21 @@ STEP_ANSWER_JS_MODULE = r"""
 
   /* ── Extract substitution sub-steps from step 5 body text ─────────────── */
   function _parseSubstitution(bodyText){
-    var cards=[];
-    /* split on numbered sub-steps, newlines, "→", or comma-after-sentence */
-    var parts=bodyText.split(/\n|\r|(?<=\d)\.\s+(?=[A-Z])|(?:→|⟹|=>)|(?:\.\s+(?=Write|Substitute|Plug|Put|Calculate|Solve|Result|Final|Therefore|Thus|Hence|So\b))/);
     var labels=['Write Formula','Substitute Values','Simplify','Result'];
+    var cards=[];
+    var DELIM='||SPLIT||';
+    var raw=bodyText;
+    raw=raw.replace(/\u2192|\u27f9|=>/g,DELIM);
+    raw=raw.replace(/\n|\r/g,DELIM);
+    raw=raw.replace(/(\d)\.\s+([A-Z])/g,'$1.'+DELIM+'$2');
+    raw=raw.replace(/\.\s+(Write|Substitute|Plug|Put|Calculate|Solve|Result|Final|Therefore|Thus|Hence)\b/gi,DELIM+'$1');
+    var parts=raw.split(DELIM);
     for(var i=0;i<parts.length&&cards.length<4;i++){
       var p=parts[i].trim().replace(/^\d+[.)]\s*/,'');
       if(p.length>2){cards.push({title:labels[cards.length]||('Step '+(cards.length+1)),expr:p});}
     }
-    /* If splitting gave only 1 chunk, try comma-split */
     if(cards.length<=1){
-      var alt2=bodyText.split(/,\s*(?=[A-Z])/);
+      var alt2=bodyText.replace(/,\s*([A-Z])/g,DELIM+'$1').split(DELIM);
       if(alt2.length>1){
         cards=[];
         for(var k=0;k<alt2.length&&k<4;k++){
