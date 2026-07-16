@@ -723,8 +723,8 @@ _STEP_ANSWER_CSS = """
   background:rgba(15,23,42,.42); backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
 #stepans-backdrop.open { display:block; opacity:1; }
 #stepans-panel { display:flex; flex-direction:column; position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(620px,94vw);
-  max-height:86vh; border-radius:18px; background:#fff; border:1px solid #e2e8f0;
+  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(820px,96vw);
+  max-height:92vh; border-radius:18px; background:#fff; border:1px solid #e2e8f0;
   box-shadow:0 20px 60px rgba(37,99,235,.18),0 2px 8px rgba(0,0,0,.06);
   opacity:0; pointer-events:none;
   transition:opacity .28s ease,transform .28s cubic-bezier(.34,1.56,.64,1); overflow:hidden; }
@@ -783,6 +783,49 @@ _STEP_ANSWER_CSS = """
 .sa-next-btn:hover:not(:disabled) { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
 .sa-progress-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px;
   font-weight:700; color:#64748b; flex-shrink:0; }
+/* ── Given data boxes (Step 1) ── */
+.sa-given-grid { display:flex; flex-wrap:wrap; gap:10px; padding:4px 0 6px; }
+.sa-given-box { display:inline-flex; align-items:center; gap:6px; padding:8px 14px;
+  border-radius:10px; background:#eff6ff; border:1.5px solid #bfdbfe; color:#1d4ed8;
+  font-family:'Courier New',Courier,monospace; font-size:14px; font-weight:700;
+  box-shadow:0 1px 4px rgba(37,99,235,.10); white-space:nowrap; }
+.sa-given-box:nth-child(4n+1) { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+.sa-given-box:nth-child(4n+2) { background:#f0fdf4; border-color:#bbf7d0; color:#15803d; }
+.sa-given-box:nth-child(4n+3) { background:#fefce8; border-color:#fde68a; color:#b45309; }
+.sa-given-box:nth-child(4n)   { background:#fdf4ff; border-color:#e9d5ff; color:#7e22ce; }
+/* ── Formula flowchart (Step 4) ── */
+.sa-flowchart { display:flex; flex-direction:column; align-items:center; gap:0; padding:6px 0; }
+.sa-flow-formula-box { width:100%; max-width:560px; padding:13px 20px; border-radius:12px;
+  text-align:center; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:15px; font-weight:700; box-sizing:border-box; margin:0 auto; }
+.sa-flow-formula-box.blue  { background:#eff6ff; border:2px solid #93c5fd; color:#1d4ed8; }
+.sa-flow-formula-box.orange{ background:#fff7ed; border:2px solid #fdba74; color:#c2410c; }
+.sa-flow-formula-box.purple{ background:#faf5ff; border:2px solid #d8b4fe; color:#7c3aed; }
+.sa-flow-formula-box.pink  { background:#fff1f2; border:2px solid #fda4af; color:#be123c; }
+.sa-flow-formula-box .sub-text { font-size:12px; font-weight:400; color:inherit; opacity:0.72; margin-top:4px; }
+.sa-flow-arrow { width:2px; height:28px; background:linear-gradient(to bottom,#93c5fd,#c084fc);
+  margin:0 auto; position:relative; }
+.sa-flow-arrow::after { content:'▼'; position:absolute; bottom:-10px; left:50%;
+  transform:translateX(-50%); font-size:14px; color:#c084fc; }
+.sa-flow-footer-note { font-size:11.5px; color:#64748b; text-align:center; margin-top:10px; font-style:italic; }
+/* ── Substitution steps (Step 5) ── */
+.sa-sub-container { display:flex; flex-direction:column; gap:10px; padding:4px 0; }
+.sa-sub-card { display:flex; align-items:flex-start; gap:14px; padding:14px 16px;
+  border-radius:12px; background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #2563eb; }
+.sa-sub-card:nth-child(2) { border-left-color:#0d9488; }
+.sa-sub-card:nth-child(3) { border-left-color:#16a34a; }
+.sa-sub-card:nth-child(4) { border-left-color:#d97706; }
+.sa-sub-num { min-width:32px; height:32px; border-radius:50%; background:#2563eb; color:#fff;
+  font-size:13px; font-weight:800; display:flex; align-items:center; justify-content:center;
+  flex-shrink:0; box-shadow:0 2px 6px rgba(37,99,235,.28); }
+.sa-sub-card:nth-child(2) .sa-sub-num { background:#0d9488; box-shadow:0 2px 6px rgba(13,148,136,.28); }
+.sa-sub-card:nth-child(3) .sa-sub-num { background:#16a34a; box-shadow:0 2px 6px rgba(22,163,74,.28); }
+.sa-sub-card:nth-child(4) .sa-sub-num { background:#d97706; box-shadow:0 2px 6px rgba(217,119,6,.28); }
+.sa-sub-body { flex:1; min-width:0; }
+.sa-sub-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700;
+  color:#475569; text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
+.sa-sub-expr { font-family:'Courier New',Courier,monospace; font-size:14.5px; font-weight:600;
+  color:#1e293b; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
 </style>
 """
 
@@ -799,9 +842,126 @@ STEP_ANSWER_JS_MODULE = r"""
   function _splitStep(raw,idx){
     var text=String(raw||'').trim();
     var m=text.match(/^(Step\s*\d+)\s*[:\-]\s*(.*)$/i);
-    if(m&&m[2]){return{title:m[1],body:m[2]};}
-    return{title:'Step '+(idx+1),body:text};
+    if(m&&m[2]){return{num:parseInt(m[1].replace(/\D/g,''),10)||idx+1,title:m[1],body:m[2]};}
+    return{num:idx+1,title:'Step '+(idx+1),body:text};
   }
+
+  /* ── Extract given values from step 1 body text ──────────────────────── */
+  function _parseGivenBoxes(bodyText){
+    var boxes=[];
+    /* match patterns like: symbol = value unit  or  Name = value unit */
+    var re=/([A-Za-z_\u00b0][A-Za-z_0-9\u00b0\u03b1-\u03c9\u0391-\u03a9]{0,20})\s*=\s*([-+]?\d[\d.,]*(?:\s*[xX\u00d7]\s*10[\^]?[-+]?\d+)?)\s*([A-Za-z\u00b0\u00b2\u00b3][A-Za-z\u00b0\u00b2\u00b3\u00b7\/\s]{0,15})?/g;
+    var m;
+    while((m=re.exec(bodyText))!==null){
+      var sym=m[1].trim(),val=m[2].trim(),unit=(m[3]||'').trim().replace(/[.,;]+$/,'');
+      if(sym&&val){boxes.push(sym+' = '+val+(unit?' '+unit:''));}
+      if(boxes.length>=12)break;
+    }
+    /* fallback: split by comma/semicolon if regex found nothing */
+    if(boxes.length===0){
+      var parts=bodyText.split(/[,;]/);
+      for(var i=0;i<parts.length&&i<10;i++){var p=parts[i].trim();if(p.length>1&&p.length<50)boxes.push(p);}
+    }
+    return boxes;
+  }
+
+  /* ── Extract formula flowchart rows from step 4 body text ─────────────── */
+  function _parseFlowchart(bodyText){
+    /* look for lines that look like formulas: contain =, numbers, or variables */
+    var rows=[];
+    var lines=bodyText.split(/[\n;|→\-]+/);
+    var colors=['blue','orange','purple','pink'];
+    for(var i=0;i<lines.length;i++){
+      var ln=lines[i].trim().replace(/^[-–•*]+\s*/,'');
+      if(ln.length>2){rows.push({text:ln,color:colors[rows.length%4]});}
+      if(rows.length>=6)break;
+    }
+    /* if only one long sentence, split at connectors */
+    if(rows.length<=1){
+      var alt=bodyText.split(/[,](?=\s*(?:where|so|then|therefore|thus|gives|yields|hence))/i);
+      rows=[];
+      for(var j=0;j<alt.length&&j<5;j++){var s=alt[j].trim();if(s.length>1){rows.push({text:s,color:colors[j%4]});}}
+    }
+    /* last resort: treat whole body as one box */
+    if(rows.length===0){rows=[{text:bodyText,color:'blue'}];}
+    return rows;
+  }
+
+  /* ── Extract substitution sub-steps from step 5 body text ─────────────── */
+  function _parseSubstitution(bodyText){
+    var cards=[];
+    /* split on numbered sub-steps, newlines, "→", or comma-after-sentence */
+    var parts=bodyText.split(/\n|\r|(?<=\d)\.\s+(?=[A-Z])|(?:→|⟹|=>)|(?:\.\s+(?=Write|Substitute|Plug|Put|Calculate|Solve|Result|Final|Therefore|Thus|Hence|So\b))/);
+    var labels=['Write Formula','Substitute Values','Simplify','Result'];
+    for(var i=0;i<parts.length&&cards.length<4;i++){
+      var p=parts[i].trim().replace(/^\d+[.)]\s*/,'');
+      if(p.length>2){cards.push({title:labels[cards.length]||('Step '+(cards.length+1)),expr:p});}
+    }
+    /* If splitting gave only 1 chunk, try comma-split */
+    if(cards.length<=1){
+      var alt2=bodyText.split(/,\s*(?=[A-Z])/);
+      if(alt2.length>1){
+        cards=[];
+        for(var k=0;k<alt2.length&&k<4;k++){
+          var q=alt2[k].trim();
+          if(q.length>2){cards.push({title:labels[k]||('Step '+(k+1)),expr:q});}
+        }
+      }
+    }
+    if(cards.length===0){cards=[{title:'Substitution',expr:bodyText}];}
+    return cards;
+  }
+
+  /* ── Render a step card ─────────────────────────────────────────────────── */
+  function _renderCard(){
+    var container=_el('stepans-items-container');if(!container)return;
+    if(!_steps||_steps.length===0){
+      container.innerHTML='<div class="sa-empty">No step-by-step solution is available.</div>';return;
+    }
+    var parts=_splitStep(_steps[_cur],_cur);
+    var stepNum=parts.num;   /* 1-based step number */
+    var inner='';
+
+    if(stepNum===1){
+      /* ── Step 1: Given data boxes ── */
+      var boxes=_parseGivenBoxes(parts.body);
+      var boxHtml='';
+      for(var b=0;b<boxes.length;b++){boxHtml+='<div class="sa-given-box">'+_esc(boxes[b])+'</div>';}
+      if(!boxHtml){boxHtml='<div class="sa-given-box">'+_esc(parts.body)+'</div>';}
+      inner='<div class="sa-given-grid">'+boxHtml+'</div>';
+    } else if(stepNum===4){
+      /* ── Step 4: Formula flowchart ── */
+      var rows=_parseFlowchart(parts.body);
+      var fcHtml='';
+      for(var r=0;r<rows.length;r++){
+        fcHtml+='<div class="sa-flow-formula-box '+_esc(rows[r].color)+'">'+_esc(rows[r].text)+'</div>';
+        if(r<rows.length-1){fcHtml+='<div class="sa-flow-arrow"></div>';}
+      }
+      inner='<div class="sa-flowchart">'+fcHtml+'</div>';
+    } else if(stepNum===5){
+      /* ── Step 5: Substitution steps ── */
+      var cards=_parseSubstitution(parts.body);
+      var subHtml='';
+      for(var c=0;c<cards.length;c++){
+        subHtml+='<div class="sa-sub-card"><div class="sa-sub-num">'+(c+1)+'</div>'
+          +'<div class="sa-sub-body"><div class="sa-sub-title">'+_esc(cards[c].title)+'</div>'
+          +'<div class="sa-sub-expr">'+_esc(cards[c].expr)+'</div></div></div>';
+      }
+      inner='<div class="sa-sub-container">'+subHtml+'</div>';
+    } else {
+      /* ── Default: plain text card (Steps 2, 3, 6, …) ── */
+      inner='<div class="sa-step-text">'+_esc(parts.body)+'</div>';
+    }
+
+    container.innerHTML='<div class="sa-step-card" id="sa-step-'+_cur+'">'
+      +'<div class="sa-step-num">'+(_cur+1)+'</div>'
+      +'<div class="sa-step-body"><div class="sa-step-title">'+_esc(parts.title)+'</div>'
+      +inner+'</div></div>';
+
+    var card=container.querySelector('.sa-step-card');
+    if(card){card.style.transition='none';setTimeout(function(){card.style.transition='opacity .22s ease,transform .22s ease';card.classList.add('visible');},20);}
+  }
+
   function _buildFlowTrack(){
     var track=_el('sa-flow-track');if(!track)return;
     if(_steps.length===0){track.innerHTML='';return;}
@@ -835,14 +995,6 @@ STEP_ANSWER_JS_MODULE = r"""
     }
     var activeNode=track.querySelector('.sa-flow-node.sa-active');
     if(activeNode&&activeNode.scrollIntoView){activeNode.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});}
-  }
-  function _renderCard(){
-    var container=_el('stepans-items-container');if(!container)return;
-    if(!_steps||_steps.length===0){container.innerHTML='<div class="sa-empty">No step-by-step solution is available.</div>';return;}
-    var parts=_splitStep(_steps[_cur],_cur);
-    container.innerHTML='<div class="sa-step-card" id="sa-step-'+_cur+'"><div class="sa-step-num">'+(_cur+1)+'</div><div class="sa-step-body"><div class="sa-step-title">'+_esc(parts.title)+'</div><div class="sa-step-text">'+_esc(parts.body)+'</div></div></div>';
-    var card=container.querySelector('.sa-step-card');
-    if(card){card.style.transition='none';setTimeout(function(){card.style.transition='opacity .22s ease,transform .22s ease';card.classList.add('visible');},20);}
   }
   function _updateFooter(){
     var prevBtn=_el('sa-prev-btn'),nextBtn=_el('sa-next-btn'),label=_el('sa-progress-label');
@@ -1777,10 +1929,6 @@ _CONTROLS_BAR_CSS = """
 
 _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
-  <button class="qanim-ctrl-btn" id="tofind-btn" data-tofind-btn title="What to find">
-    <span>&#x1F50D;</span><span class="ctrl-label">Find</span>
-  </button>
-  <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution">
     <span>&#x1FA9C;</span><span class="ctrl-label">Step by Step Answer</span>
   </button>
@@ -2927,7 +3075,6 @@ async def _run_generation_pipeline(question: str) -> dict:
         final_answer=final_answer,
         key_insight=key_insight,
     )
-    html = inject_to_find_system(html, to_find_targets)
     html = inject_step_answer_panel(html, solution_steps)
     html = inject_notes_system(html)
     html = inject_answer_box_panel(html, answer_targets)
