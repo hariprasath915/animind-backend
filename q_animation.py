@@ -25,7 +25,7 @@ v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
       * Question banner showing the original question
 
   WHAT DID NOT CHANGE:
-  - All post-processing injection functions (ToFind, FinalAnswer, AnswerBox,
+  - All post-processing injection functions (ToFind, StepAnswer, AnswerBox,
     Notes, ControlsBar, Glossary, StepAnswer, StepController, NavPatch)
   - All extraction utilities (ToFindExtractor, GivenValuesExtractor,
     LargeInputPreprocessor, HaikuSolutionGenerator replaced by GeminiSolutionGenerator)
@@ -1383,203 +1383,6 @@ def inject_step_answer_panel(html, gemini_sol):
 
 
 # ===========================================================================
-#  MODULE 7 — Final Answer Panel System
-# ===========================================================================
-
-def _build_final_answer_data_tag(answer_targets, final_answer, key_insight):
-    ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
-    items = []
-    for idx, t in enumerate(answer_targets or []):
-        label  = str(t.get("label", "")).strip()
-        value  = str(t.get("value", "")).strip()
-        unit   = str(t.get("unit",  "")).strip()
-        roman  = ROMAN[idx] if idx < len(ROMAN) else str(idx + 1)
-        items.append({"roman": roman, "label": label, "value": value, "unit": unit})
-
-    if not items and final_answer:
-        _num_re = re.compile(
-            r'([A-Za-z_][A-Za-z_0-9]*)\s*[=:]\s*([-+]?\d[\d.,]*(?:\s*[×x*]\s*10\^?[-+]?\d+)?)\s*([A-Za-z°%/²³·]+(?:\s*[A-Za-z°%/²³·]+)*)?',
-            re.IGNORECASE)
-        for i, m in enumerate(_num_re.finditer(final_answer)):
-            roman = ROMAN[i] if i < len(ROMAN) else str(i + 1)
-            items.append({
-                "roman": roman,
-                "label": m.group(1).strip(),
-                "value": m.group(2).strip(),
-                "unit":  (m.group(3) or "").strip(),
-            })
-
-    payload = {
-        "items":       items,
-        "raw_answer":  str(final_answer  or ""),
-        "key_insight": str(key_insight   or ""),
-    }
-    return ('<script type="application/json" id="__final_answer_data__">\n'
-            + json.dumps(payload, ensure_ascii=False, indent=2) + '\n</script>')
-
-
-_FINAL_ANSWER_PANEL_DOM = """
-<div id="fa-backdrop" aria-hidden="true"></div>
-<aside id="fa-panel" role="dialog" aria-labelledby="fa-heading" aria-hidden="true">
-  <div class="fa-header">
-    <div class="fa-header-left">
-      <div class="fa-icon-wrap">&#x2705;</div>
-      <div>
-        <div id="fa-heading" class="fa-title">Final Answer</div>
-        <div class="fa-subtitle">Computed results for this question</div>
-      </div>
-    </div>
-    <button id="fa-close" class="fa-close-btn" aria-label="Close">&#x2715;</button>
-  </div>
-  <div class="fa-body">
-    <div id="fa-items-container" class="fa-items-container"></div>
-    <div id="fa-insight-card" class="fa-insight-card">
-      <div class="fa-insight-label">&#x1F4A1; Key Insight</div>
-      <div id="fa-insight-text" class="fa-insight-text"></div>
-    </div>
-  </div>
-</aside>
-"""
-
-_FINAL_ANSWER_PANEL_CSS = """
-<style id="qanim-fa-styles">
-#fa-backdrop { display:none; position:fixed; inset:0; z-index:8500;
-  background:rgba(15,23,42,.42); backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
-#fa-backdrop.open { display:block; opacity:1; }
-#fa-panel { display:flex; flex-direction:column; position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(520px,94vw);
-  max-height:86vh; border-radius:18px; background:#fff; border:1px solid #e2e8f0;
-  box-shadow:0 20px 60px rgba(80,60,140,.18),0 2px 8px rgba(0,0,0,.06);
-  opacity:0; pointer-events:none;
-  transition:opacity .28s ease,transform .28s cubic-bezier(.34,1.56,.64,1); overflow:hidden; }
-#fa-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
-.fa-header { display:flex; align-items:center; justify-content:space-between;
-  padding:18px 22px 14px; border-bottom:1px solid #f0f0f8; flex-shrink:0; background:#fff; }
-.fa-header-left { display:flex; align-items:center; gap:13px; }
-.fa-icon-wrap { width:40px; height:40px; border-radius:10px; background:#f0fdf4;
-  display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
-.fa-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:17px; font-weight:800; color:#1a1a2e; }
-.fa-subtitle { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; color:#64748b; margin-top:2px; }
-.fa-close-btn { width:34px; height:34px; border-radius:50%; border:1.5px solid #e8e8f0;
-  background:#fafafa; color:#888; font-size:13px; display:flex; align-items:center; justify-content:center;
-  cursor:pointer; transition:background .15s,color .15s,border-color .15s; flex-shrink:0; }
-.fa-close-btn:hover { background:#fee2e2; color:#dc2626; border-color:#fca5a5; }
-.fa-body { overflow-y:auto; flex:1; padding:18px 22px 24px; display:flex; flex-direction:column; gap:12px; }
-.fa-items-container { display:flex; flex-direction:column; gap:10px; }
-.fa-item { display:flex; align-items:flex-start; gap:14px; padding:14px 18px;
-  border-radius:12px; background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #16a34a;
-  opacity:0; transform:translateY(10px); transition:opacity .30s ease,transform .30s ease; }
-.fa-item.visible { opacity:1; transform:translateY(0); }
-.fa-item-roman { min-width:32px; height:32px; border-radius:50%; background:#16a34a; color:#fff;
-  font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center;
-  flex-shrink:0; font-style:italic; box-shadow:0 2px 8px rgba(22,163,74,.30); }
-.fa-item-body { flex:1; }
-.fa-item-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700;
-  color:#166534; text-transform:uppercase; letter-spacing:.6px; margin-bottom:5px; }
-.fa-item-value { font-family:'Courier New',Courier,monospace; font-size:15px; font-weight:800; color:#1e293b;
-  background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:6px 12px;
-  display:inline-block; word-break:break-word; }
-.fa-insight-card { border-radius:13px; padding:14px 18px; background:#fffbf0;
-  border:1.5px solid #fde8a0; opacity:0; transition:opacity .35s ease; }
-.fa-insight-card.visible { opacity:1; }
-.fa-insight-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px; font-weight:800;
-  text-transform:uppercase; letter-spacing:1.5px; color:#b45309; margin-bottom:7px; }
-.fa-insight-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#78350f; line-height:1.72; }
-</style>
-"""
-
-_FINAL_ANSWER_JS = r"""
-(function initFinalAnswerSystem(){
-  'use strict';
-  var faOpen=false,_built=false;
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  function _esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-  function _loadData(){
-    try{var tag=_el('__final_answer_data__');if(!tag)return{};return JSON.parse(tag.textContent)||{};}catch(e){return{};}
-  }
-  function _buildPanel(){
-    if(_built)return;_built=true;
-    var data=_loadData();var items=Array.isArray(data.items)?data.items:[];
-    var container=_el('fa-items-container');if(!container)return;
-    if(items.length===0&&data.raw_answer){
-      container.innerHTML='<div class="fa-item visible"><div class="fa-item-roman">i</div><div class="fa-item-body"><div class="fa-item-label">Answer</div><div class="fa-item-value">'+_esc(data.raw_answer)+'</div></div></div>';
-    }else{
-      var html='';
-      for(var i=0;i<items.length;i++){
-        var it=items[i];var valueStr=_esc(it.value||'');
-        if(it.unit&&it.value&&it.value.indexOf(it.unit)===-1){valueStr+=' '+_esc(it.unit);}
-        html+='<div class="fa-item" id="fa-item-'+i+'"><div class="fa-item-roman">'+_esc(it.roman)+'</div><div class="fa-item-body"><div class="fa-item-label">'+_esc(it.label)+'</div><div class="fa-item-value">'+valueStr+'</div></div></div>';
-      }
-      container.innerHTML=html;
-    }
-    var insEl=_el('fa-insight-text'),insCard=_el('fa-insight-card');
-    if(data.key_insight){if(insEl)insEl.textContent=data.key_insight;if(insCard)insCard.style.display='';}
-    else{if(insCard)insCard.style.display='none';}
-  }
-  function _animateReveal(){
-    var items=document.querySelectorAll('.fa-item');
-    for(var i=0;i<items.length;i++){(function(el,idx){el.classList.remove('visible');el.style.transition='none';setTimeout(function(){el.style.transition='opacity .30s ease,transform .30s ease';el.classList.add('visible');},80+idx*110);})(items[i],i);}
-    var insCard=_el('fa-insight-card');
-    if(insCard){insCard.classList.remove('visible');setTimeout(function(){insCard.classList.add('visible');},80+items.length*110+120);}
-  }
-  function openFinalAnswer(){
-    _buildPanel();
-    var backdrop=_el('fa-backdrop'),panel=_el('fa-panel');if(!backdrop||!panel)return;
-    backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');faOpen=true;setTimeout(_animateReveal,80);
-  }
-  function closeFinalAnswer(){
-    var backdrop=_el('fa-backdrop'),panel=_el('fa-panel');
-    if(backdrop)backdrop.classList.remove('open');
-    if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
-    faOpen=false;_built=false;
-  }
-  window.openFinalAnswer=openFinalAnswer;window.closeFinalAnswer=closeFinalAnswer;
-  window.toggleFinalAnswer=function(){faOpen?closeFinalAnswer():openFinalAnswer();};
-  _onReady(function(){
-    function wireBtn(){var btn=document.getElementById('fa-ctrl-btn');
-      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();faOpen?closeFinalAnswer():openFinalAnswer();});}
-      else{setTimeout(wireBtn,80);}
-    }
-    wireBtn();
-    var closeBtn=_el('fa-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeFinalAnswer();});
-    var backdrop=_el('fa-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeFinalAnswer();});
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&faOpen)closeFinalAnswer();});
-  });
-})();
-"""
-
-
-def inject_final_answer_panel(html, answer_targets, final_answer, key_insight):
-    html = re.sub(r'<script[^>]+id=["\']__sol_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
-    html = re.sub(r'<script[^>]+id=["\']__final_answer_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
-    html = re.sub(r'<style[^>]+id=["\']qanim-fa-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-
-    data_tag = _build_final_answer_data_tag(answer_targets, final_answer, key_insight)
-    if '</head>' in html:
-        html = html.replace('</head>', data_tag + '\n</head>', 1)
-    else:
-        html = data_tag + '\n' + html
-
-    if '</head>' in html:
-        html = html.replace('</head>', _FINAL_ANSWER_PANEL_CSS + '\n</head>', 1)
-
-    body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
-    if body_match:
-        ins = body_match.end()
-        html = html[:ins] + '\n' + _FINAL_ANSWER_PANEL_DOM + html[ins:]
-
-    fa_script = '<script>\n' + _FINAL_ANSWER_JS + '\n</script>'
-    if '</body>' in html:
-        html = html.replace('</body>', fa_script + '\n</body>', 1)
-    else:
-        html += '\n' + fa_script
-
-    QAnimLogger.ok("FinalAnswer", f"Injected Final Answer panel ({len(answer_targets or [])} item(s))")
-    return html
-
-
-# ===========================================================================
 #  MODULE 7.5 — GeminiSolutionGenerator
 #  Replaces HaikuSolutionGenerator. Uses Gemini 3.1 Pro Preview.
 # ===========================================================================
@@ -1991,15 +1794,8 @@ _ANSWER_BOX_JS = r"""
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function _loadTargets(){
     if(_loaded)return;_loaded=true;
-    try{var tag=_el('__answer_targets__');if(!tag){_useFallback();return;}
+    try{var tag=_el('__answer_targets__');if(!tag){return;}
       var data=JSON.parse(tag.textContent)||{};_targets=Array.isArray(data.answer_targets)?data.answer_targets:[];}
-    catch(e){_targets=[];}
-    if(_targets.length===0)_useFallback();
-  }
-  function _useFallback(){
-    try{var tag=_el('__final_answer_data__');if(!tag)return;
-      var data=JSON.parse(tag.textContent)||{};
-      _targets=[{label:'Final Answer',value:String(data.raw_answer||''),unit:'',insight:String(data.key_insight||'')}];}
     catch(e){_targets=[];}
   }
   function _renderTarget(idx){
@@ -3458,14 +3254,8 @@ async def _run_generation_pipeline(question: str) -> dict:
     # Solution steps flat list — kept for result dict / backward-compat downstream
     solution_steps = gemini_sol.get("steps", []) or scene_script.get("solution_steps", [])
 
-    # ── Inject all panels (unchanged injection pipeline) ──
+    # ── Inject all panels ──
     html = animation_html
-    html = inject_final_answer_panel(
-        html=html,
-        answer_targets=answer_targets,
-        final_answer=final_answer,
-        key_insight=key_insight,
-    )
     # Pass the full gemini_sol dict so the 5-step panel uses structured fields
     html = inject_step_answer_panel(html, gemini_sol)
     html = inject_notes_system(html)
@@ -3629,5 +3419,5 @@ if __name__ == "__main__":
         print("  OK  Component-by-component reveal with blur/focus")
         print("  OK  Real physics motion (rotating, oscillating, tracing)")
         print("  OK  Math solution box in final step")
-        print("  OK  All panels injected (Find/StepAnswer/FinalAnswer/AnswerBox/Notes/Glossary)")
+        print("  OK  All panels injected (Find/StepAnswer/AnswerBox/Notes/Glossary)")
         print("  OK  Gemini 2.5 Pro for all stages")
