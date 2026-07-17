@@ -1389,44 +1389,48 @@ def inject_step_answer_panel(html, gemini_sol):
 
 _SOLUTION_SYSTEM = """You are an expert engineering professor generating a structured 5-step solution for students.
 
-Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no extra text, no comments:
+Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no extra text, no comments.
+The worked example below (comparing a solid sphere and a hollow sphere rolling down an incline) shows
+the EXACT calculation style, level of detail, and formatting you must reproduce for every question —
+including implicit/qualitative given data, fraction-AND-decimal forms for every ratio, an explicit
+numeric comparison, and a plain-language verdict in the final answer:
 {
   "given_data": [
-    "rho = 1000 kg/m3",
-    "V = 2 m/s",
-    "D = 0.05 m",
-    "mu = 0.001 Pa.s"
+    "M = mass of each sphere (identical for both)",
+    "R = radius of each sphere (identical for both)",
+    "theta = angle of the inclined plane",
+    "Both spheres start from rest",
+    "Both spheres roll without slipping"
   ],
   "to_find": [
-    "i) Reynolds number Re",
-    "ii) Heat transfer coefficient h",
-    "iii) Nusselt number Nu"
+    "i) Which sphere reaches the bottom of the incline first",
+    "ii) The ratio of their accelerations, a_solid / a_hollow"
   ],
   "formulas": [
-    {"text": "Re = rho x V x D / mu", "color": "blue"},
-    {"text": "Pr = mu x c_p / k",     "color": "orange"},
-    {"text": "Nu = 0.023 x Re^0.8 x Pr^0.4", "color": "purple"},
-    {"text": "h = Nu x k / D",          "color": "pink"}
+    {"text": "a = g x sin(theta) / (1 + I / (M R^2))", "color": "blue"},
+    {"text": "I_solid = (2/5) M R^2",  "color": "orange"},
+    {"text": "I_hollow = (2/3) M R^2", "color": "purple"},
+    {"text": "a_solid / a_hollow = (5/7) / (3/5) = 25/21", "color": "green"}
   ],
-  "formula_note": "Evaluate all properties at bulk mean temperature T_bulk = (T_in + T_out)/2",
+  "formula_note": "M, R and theta are identical for both spheres, so they cancel out of the ratio — only the moment-of-inertia term (I/MR^2) makes the two spheres roll differently.",
   "substitution_steps": [
-    {"title": "Calculate Reynolds Number",      "expr": "Re = (1000 x 2 x 0.05) / 0.001 = 100000"},
-    {"title": "Calculate Prandtl Number",       "expr": "Pr = (0.001 x 4200) / 0.6 = 7"},
-    {"title": "Apply Dittus-Boelter Equation",  "expr": "Nu = 0.023 x (100000)^0.8 x (7)^0.4 = 365"},
-    {"title": "Find Heat Transfer Coefficient", "expr": "h = 365 x 0.6 / 0.05 = 4380 W/(m2.K)"}
+    {"title": "Moment-of-inertia ratio for each sphere", "expr": "Solid:  I/MR^2 = 2/5 = 0.4\\nHollow: I/MR^2 = 2/3 = 0.667"},
+    {"title": "Denominator (1 + I/MR^2) for each sphere", "expr": "Solid:  1 + 0.4 = 1.4 = 7/5\\nHollow: 1 + 0.667 = 1.667 = 5/3"},
+    {"title": "Acceleration of each sphere", "expr": "a_solid = g sin(theta) / (7/5) = (5/7) g sin(theta) = 0.714 g sin(theta)\\na_hollow = g sin(theta) / (5/3) = (3/5) g sin(theta) = 0.600 g sin(theta)"},
+    {"title": "Ratio of accelerations", "expr": "a_solid / a_hollow = (5/7) / (3/5) = 25/21 = 1.19"}
   ],
-  "final_answer": "h = 4380 W/(m2.K),  Re = 100000,  Nu = 365",
-  "key_insight": "Higher flow velocity raises Re, which boosts h through the 0.8-power relationship."
+  "final_answer": "a_solid = (5/7) g sin(theta) = 0.714 g sin(theta),  a_hollow = (3/5) g sin(theta) = 0.600 g sin(theta),  ratio = 25/21 = 1.19  ->  The solid sphere reaches the bottom first, about 19% faster than the hollow sphere.",
+  "key_insight": "A larger moment-of-inertia ratio I/MR^2 makes the denominator of a = g sin(theta)/(1+I/MR^2) bigger, so the object accelerates more slowly — mass concentrated at the outer shell (hollow) resists spinning more than mass spread through the volume (solid)."
 }
 
-STRICT RULES:
-- given_data: Extract EVERY numerical value stated in the question. Format each as \"symbol = value unit\". Minimum 2, maximum 12 items. Never leave empty.
-- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Never leave empty.
-- formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them.
-- formula_note: Optional note about evaluation conditions (e.g. bulk temperature). Set to \"\" if not applicable.
-- substitution_steps: 3-5 numbered calculation steps. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown).
-- final_answer: Complete answer containing ALL computed numerical values with units. Must NEVER be empty.
-- key_insight: One clear memorable sentence about the core physics or mathematical concept.
+STRICT RULES (match the worked example's calculation style exactly):
+- given_data: Extract EVERY numerical value stated in the question, AND every qualitative/implicit condition that affects the solution (e.g. \"starts from rest\", \"rolls without slipping\", \"same mass\", \"frictionless\"). Format numeric items as \\\"symbol = value unit\\\"; format qualitative items as short plain-English conditions. Minimum 2, maximum 12 items. Never leave empty.
+- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. If the question asks for a comparison (which is faster/bigger/first), phrase it as a comparison AND include the specific ratio or quantity that answers it. Never leave empty.
+- formulas: 2-6 key formulas arranged as an input-to-output chain, starting from the general governing law and narrowing down to the specific substituted relations (mirror how the example goes: general formula -> I for each case -> final ratio). Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them.
+- formula_note: Explain what cancels out or what condition lets the formula simplify (e.g. equal masses, equal radii). Set to \"\" only if genuinely not applicable.
+- substitution_steps: 3-5 numbered calculation steps, each isolating ONE part of the arithmetic — never combine "substitute" and "final ratio" into a single step. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual expression with REAL numbers substituted). Whenever a value is a clean fraction, show BOTH the fraction and its decimal form (e.g. \"2/5 = 0.4\"), exactly like the worked example. When comparing two cases (two objects, two scenarios, before/after), compute both sides on separate lines within the same step using \\n so they line up for comparison.
+- final_answer: Complete answer containing ALL computed numerical values with units AND, if the question involves a comparison, an explicit plain-language verdict (state which option wins/is larger/is faster and by how much, e.g. \"about 19% faster\"). Must NEVER be empty.
+- key_insight: One clear, memorable sentence that explains the underlying physical or mathematical REASON for the result (not just a restatement of the answer) — the same way the example explains why a bigger I/MR^2 means slower acceleration.
 - Pure JSON only — no markdown, no backtick fences, no preamble."""
 
 
