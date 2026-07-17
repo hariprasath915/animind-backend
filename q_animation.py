@@ -1779,7 +1779,7 @@ _ANSWER_BOX_DOM = """
     <div id="ab-alldone-card">
       <span class="ab-alldone-emoji">&#x1F389;</span>
       <div class="ab-alldone-title">All answers submitted!</div>
-      <div class="ab-alldone-sub">Great work. Open <strong>Final Answer</strong> to review the complete result.</div>
+      <div class="ab-alldone-sub">Great work! Open <strong>Step by Step Answer</strong> to review the full solution.</div>
     </div>
   </div>
 </div>
@@ -2118,10 +2118,6 @@ _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
   <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution">
     <span>&#x1FA9C;</span><span class="ctrl-label">Step by Step Answer</span>
-  </button>
-  <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="fa-ctrl-btn" title="View final answer">
-    <span>&#x2705;</span><span class="ctrl-label">Final Answer</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
