@@ -2370,7 +2370,7 @@ def inject_nav_patch_and_scene_desc(html, scene_descriptions=None):
 #          "badges": [{"text": "...", "type": "cyan|orange|green"}],
 #          "components": ["component_id_1", "component_id_2"],
 #          "focus_component": "component_id or null",
-#          "show_math": false,
+#          "to_find_label": "what this step reveals",
 #          "math_content": ""
 #        }, ...
 #      ],
@@ -2424,8 +2424,7 @@ OUTPUT: Return ONLY valid JSON, no markdown fences, no preamble:
       "components_new": ["comp_id_1"],
       "focus_component": "comp_id_1",
       "blur_background": true,
-      "show_math": false,
-      "math_lines": []
+      "to_find_label": "the specific quantity this step reveals, e.g. 'belt velocity v = 14.14 m/s'"
     }
   ],
   "svg_components": {
@@ -2440,15 +2439,15 @@ OUTPUT: Return ONLY valid JSON, no markdown fences, no preamble:
 }
 
 RULES:
-1. steps: 3-5 steps minimum, always end with a math/solution step.
+1. steps: 3-5 steps minimum, always end with the main answer step.
 2. First step: establish the frame/ground/fixed structure.
 3. Each subsequent step: introduce ONE new moving/key component.
-4. Last step: freeze at the solution angle/state and show the math calculation box.
+4. Last step: freeze at the solution angle/state. Show a clean 'To find:' label for the main answer quantity — NO calculation popup.
 5. badges: use type "cyan", "orange", or "green".
 6. svg_components: describe every physical component: frame, pivot, crank, rod, piston,
    gears, pulleys, beams, coils, etc. Position everything in an 850x478 coordinate space.
 7. final_answer: MUST contain computed numerical answer with units. Never leave empty.
-8. math_lines: for the last step, provide the actual calculation lines to show in the math box.
+8. to_find_label: for EVERY step, write the specific quantity being revealed or computed in that step (concise, e.g. 'belt velocity v', 'tension T1 in tight side', 'speed of driven pulley N2'). The last step's to_find_label must state the primary answer quantity with its computed value.
 9. motion_type: accurately describe what this component does physically."""
 
 _SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
@@ -2459,8 +2458,9 @@ Remember:
 - Plan the step-by-step visual reveal carefully.
 - Each step shows exactly ONE new component appearing with motion.
 - Components are drawn one by one in the correct physical order.
-- The final step freezes the mechanism at the solution state and shows the math.
+- The final step freezes the mechanism at the solution state and shows a clean 'To find:' label — NO calculations popup box.
 - Compute the actual numerical answer and include it in final_answer.
+- Every step must have a concise to_find_label.
 
 Return ONLY valid JSON."""
 
@@ -2517,8 +2517,7 @@ class GeminiSceneAnalyzer:
                     "components_new": ["frame"],
                     "focus_component": "frame",
                     "blur_background": False,
-                    "show_math": False,
-                    "math_lines": []
+                    "to_find_label": "the system setup and given values"
                 },
                 {
                     "step_number": 2,
@@ -2530,8 +2529,7 @@ class GeminiSceneAnalyzer:
                     "components_new": ["solution"],
                     "focus_component": None,
                     "blur_background": False,
-                    "show_math": True,
-                    "math_lines": ["Apply governing formula", "Substitute given values", "Compute the answer"]
+                    "to_find_label": "the final computed answer — please re-generate for detail"
                 }
             ],
             "svg_components": {
@@ -2545,7 +2543,7 @@ class GeminiSceneAnalyzer:
                 "solution": {
                     "description": "Math solution box with calculation steps",
                     "motion_type": "static",
-                    "motion_description": "Math box appearing with the solution",
+                    "motion_description": "Clean 'To find:' label card appearing",
                     "accent_color": "#97c459",
                     "labels": ["Solution"]
                 }
@@ -2634,12 +2632,17 @@ The output must match this exact structure:
 5. All component layers start with style="opacity:0" EXCEPT layer-frame (always visible).
 6. A <rect id="blur-shield"> sits BETWEEN the frame layer and component layers.
    It starts with opacity="0" and gets set to 0.4-0.6 during focus steps to dim the background.
-7. Overlay groups <g class="svg-layer" id="overlay-stepN"> hold labels, arrows, math boxes for each step. Start at opacity:0.
-8. METALLIC GRADIENTS: use linearGradient for physical parts (steel, crank, rod, piston, gears).
+7. Overlay groups <g class="svg-layer" id="overlay-stepN"> hold labels, arrows, and the "To find:" pill for each step. Start at opacity:0.
+8. METALLIC GRADIENTS: use multi-stop linearGradient for physical parts. Add feDropShadow filters for depth.
 9. GLOW FILTERS: feGaussianBlur glow for active/highlighted elements.
 10. ARROW MARKERS: at least arrowCyan (#66fcf1), arrowOrange (#fca311), arrowGreen (#97c459).
-11. The math box (last step overlay) must show actual calculation lines in monospace font.
-12. ZERO text overlaps — compute positions carefully.
+11. TO FIND PILL (every step overlay): Each overlay-stepN MUST contain a clean "To find:" pill at the bottom of the SVG:
+    - White rounded card: <rect x="80" y="408" width="690" height="56" rx="14" fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5"/>
+    - "TO FIND" eyebrow: <text x="108" y="428" fill="#0e7490" font-size="10" font-weight="800" letter-spacing="2" font-family="'Segoe UI',sans-serif">TO FIND</text>
+    - Answer text: <text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600" font-family="'Segoe UI',sans-serif">[toFind text from stepsData]</text>
+    - Drop shadow: add <filter id="pillShadow"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/></filter> and set filter="url(#pillShadow)" on the pill rect.
+    - NEVER show a "Calculations:" box or formula dump. Only show the "To find:" pill.
+12. ZERO text overlaps — compute positions carefully. Keep all labels inside the viewBox.
 
 ═══ ANIMATION RULES ═══
 Each component must have REAL MOTION matching its physical behavior:
@@ -2661,6 +2664,7 @@ stepsData array drives everything:
     title: "Step N: ...",
     badges: `<span class="badge badge-cyan">...</span>`,
     desc: "...",
+    toFind: "...",          // what this step reveals — displayed in the 'To find:' pill
     // component opacities: each layer has an explicit opacity entry
     layerOpacities: { 'layer-frame': 1, 'layer-crank': 0, ... }
   }
@@ -2678,7 +2682,8 @@ nextStep() / resetAnim() manage currentStep.
 - Include question-banner div showing the original question
 - requestAnimationFrame loop must keep running for continuous motion
 - freezing mechanism: smoothly interpolate angle to solution angle, then pause
-- Math box (last step): show actual formula, substitution, and final answer
+- TO FIND PILL (mandatory, replaces math box): every step overlay MUST include the clean white pill at the bottom (y≈408) showing "TO FIND" eyebrow + the specific quantity for that step. NO formula dumps, NO "Calculations:" box, NO dark popup containers.
+- POLISH: use feDropShadow filters on overlay cards, multi-stop metallic gradients, smooth cubic-bezier transitions (0.4s), consistent stroke-width hierarchy (frame=2, components=2.5–3, labels=1.5).
 - CENTERING: body must use { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:20px; } so the .dashboard div is horizontally centred on the page. .dashboard must have { width:100%; max-width:900px; margin:0 auto; }. Never float or absolutely-position the dashboard to the right.
 
 ═══ OUTPUT ═══
@@ -2699,10 +2704,10 @@ CRITICAL REMINDERS:
 4. The blur-shield dims the background when focusing on a new component.
 5. Each component must visibly animate (rotate/translate/oscillate) when it first appears.
 6. Labels and annotations appear AFTER the component is shown (in the overlay group for that step).
-7. The LAST step snaps to the solution angle/state and shows the full math calculation box.
+7. The LAST step snaps to the solution angle/state. Show ONLY the "To find:" pill (white card at bottom of SVG). NO calculations popup, NO formula dump box.
 8. Use the accent colors from the scene script for each component.
 9. Do NOT use const/let/arrow functions/backtick template literals.
-10. The math box in the last step MUST show the actual numerical calculation from final_answer.
+10. Every overlay-stepN MUST include the "To find:" pill with the toFind text from stepsData. Read the toFind field from stepsData[currentStep] and render it inside the pill dynamically.
 
 Return the complete HTML page — nothing else."""
 
@@ -2832,16 +2837,18 @@ class GeminiAnimationBuilder:
             for b in step.get("badges", []):
                 bt = b.get("type", "cyan")
                 badges_html += f'<span class="badge badge-{bt}">{html_module.escape(b.get("text",""))}</span> '
-            math_lines = step.get("math_lines", [])
-            show_math = step.get("show_math", False)
+            math_lines = step.get("math_lines", [])       # kept for legacy compat only
+            show_math  = step.get("show_math", False)      # kept for legacy compat only
+            to_find_label = step.get("to_find_label", "")
             blur = 0.5 if step.get("blur_background") else 0
             step_num = step.get("step_number", 1) - 1
 
             # Escape strings for JS
-            label_js   = label.replace('"', '\\"')
-            title_js   = title_s.replace('"', '\\"')
-            desc_js    = desc.replace('"', '\\"').replace('\n', ' ')
-            badges_js  = badges_html.replace('"', '\\"').replace('\n', '')
+            label_js    = label.replace('"', '\\"')
+            title_js    = title_s.replace('"', '\\"')
+            desc_js     = desc.replace('"', '\\"').replace('\n', ' ')
+            badges_js   = badges_html.replace('"', '\\"').replace('\n', '')
+            to_find_js  = to_find_label.replace('"', '\\"')
 
             steps_js_parts.append(
                 "    {\n"
@@ -2851,7 +2858,7 @@ class GeminiAnimationBuilder:
                 f'      title: "{title_js}",\n'
                 f'      badges: "{badges_js}",\n'
                 f'      desc: "{desc_js}",\n'
-                f'      showMath: {"true" if show_math else "false"}\n'
+                f'      toFind: "{to_find_js}"\n'
                 "    }"
             )
 
@@ -2860,19 +2867,30 @@ class GeminiAnimationBuilder:
         # Build overlay SVG groups
         overlay_groups = []
         for i, step in enumerate(steps):
-            math_lines = step.get("math_lines", [])
-            math_svg = ""
-            if step.get("show_math") and math_lines:
-                math_svg += f'<rect x="50" y="30" width="750" height="{30 + len(math_lines)*22}" rx="8" fill="rgba(15,15,19,0.9)" stroke="#97c459" stroke-width="1.5"/>'
-                math_svg += f'<text x="425" y="55" fill="#97c459" font-size="13" font-weight="bold" text-anchor="middle">SOLUTION</text>'
-                y_pos = 75
-                for j, line in enumerate(math_lines):
-                    line_esc = html_module.escape(str(line))
-                    color = "#66fcf1" if j == len(math_lines) - 1 else "#ffffff"
-                    math_svg += f'<text x="60" y="{y_pos}" fill="{color}" font-size="13" font-family="monospace">{line_esc}</text>'
-                    y_pos += 22
+            to_find_label = step.get("to_find_label", "")
+            # Fallback: derive to_find_label from math_lines for legacy scene scripts
+            if not to_find_label:
+                ml = step.get("math_lines", [])
+                to_find_label = ml[-1] if ml else step.get("label", f"Step {i+1}")
+
+            pill_svg = ""
+            if to_find_label:
+                tfl_esc = html_module.escape(str(to_find_label))
+                pill_svg = (
+                    '<filter id="pillShadow' + str(i) + '" x="-5%" y="-20%" width="110%" height="160%">'
+                    '<feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/>'
+                    '</filter>'
+                    '<rect x="80" y="408" width="690" height="56" rx="14"'
+                    ' fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5"'
+                    f' filter="url(#pillShadow{i})"/>'
+                    '<text x="108" y="428" fill="#0e7490" font-size="10" font-weight="800"'
+                    ' letter-spacing="2" font-family="\'Segoe UI\',sans-serif">TO FIND</text>'
+                    f'<text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600"'
+                    f' font-family="\'Segoe UI\',sans-serif">{tfl_esc}</text>'
+                )
+
             overlay_groups.append(
-                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0">{math_svg}</g>'
+                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0">{pill_svg}</g>'
             )
         overlays_html = "\n                ".join(overlay_groups)
 
