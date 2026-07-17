@@ -1389,55 +1389,44 @@ def inject_step_answer_panel(html, gemini_sol):
 
 _SOLUTION_SYSTEM = """You are an expert engineering professor generating a structured 5-step solution for students.
 
-CRITICAL, NON-NEGOTIABLE RULE: every one of these fields — given_data, to_find, formulas,
-substitution_steps, final_answer — MUST be fully populated with real, question-specific content.
-An empty array, an empty string, or a vague placeholder (e.g. "see question", "no formula available")
-for ANY of these fields is treated as a FAILED response. If you are unsure of exact numbers, still
-reason through the physics/engineering and give your best complete, concrete solution — never leave a
-field blank.
-
-Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no extra text, no comments.
-The worked example below (comparing a solid sphere and a hollow sphere rolling down an incline) shows
-the EXACT calculation style, level of detail, and formatting you must reproduce for every question —
-including implicit/qualitative given data, fraction-AND-decimal forms for every ratio, an explicit
-numeric comparison, and a plain-language verdict in the final answer:
+Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no extra text, no comments:
 {
   "given_data": [
-    "M = mass of each sphere (identical for both)",
-    "R = radius of each sphere (identical for both)",
-    "theta = angle of the inclined plane",
-    "Both spheres start from rest",
-    "Both spheres roll without slipping"
+    "rho = 1000 kg/m3",
+    "V = 2 m/s",
+    "D = 0.05 m",
+    "mu = 0.001 Pa.s"
   ],
   "to_find": [
-    "i) Which sphere reaches the bottom of the incline first",
-    "ii) The ratio of their accelerations, a_solid / a_hollow"
+    "i) Reynolds number Re",
+    "ii) Heat transfer coefficient h",
+    "iii) Nusselt number Nu"
   ],
   "formulas": [
-    {"text": "a = g x sin(theta) / (1 + I / (M R^2))", "color": "blue"},
-    {"text": "I_solid = (2/5) M R^2",  "color": "orange"},
-    {"text": "I_hollow = (2/3) M R^2", "color": "purple"},
-    {"text": "a_solid / a_hollow = (5/7) / (3/5) = 25/21", "color": "green"}
+    {"text": "Re = rho x V x D / mu", "color": "blue"},
+    {"text": "Pr = mu x c_p / k",     "color": "orange"},
+    {"text": "Nu = 0.023 x Re^0.8 x Pr^0.4", "color": "purple"},
+    {"text": "h = Nu x k / D",          "color": "pink"}
   ],
-  "formula_note": "M, R and theta are identical for both spheres, so they cancel out of the ratio — only the moment-of-inertia term (I/MR^2) makes the two spheres roll differently.",
+  "formula_note": "Evaluate all properties at bulk mean temperature T_bulk = (T_in + T_out)/2",
   "substitution_steps": [
-    {"title": "Moment-of-inertia ratio for each sphere", "expr": "Solid:  I/MR^2 = 2/5 = 0.4\\nHollow: I/MR^2 = 2/3 = 0.667"},
-    {"title": "Denominator (1 + I/MR^2) for each sphere", "expr": "Solid:  1 + 0.4 = 1.4 = 7/5\\nHollow: 1 + 0.667 = 1.667 = 5/3"},
-    {"title": "Acceleration of each sphere", "expr": "a_solid = g sin(theta) / (7/5) = (5/7) g sin(theta) = 0.714 g sin(theta)\\na_hollow = g sin(theta) / (5/3) = (3/5) g sin(theta) = 0.600 g sin(theta)"},
-    {"title": "Ratio of accelerations", "expr": "a_solid / a_hollow = (5/7) / (3/5) = 25/21 = 1.19"}
+    {"title": "Calculate Reynolds Number",      "expr": "Re = (1000 x 2 x 0.05) / 0.001 = 100000"},
+    {"title": "Calculate Prandtl Number",       "expr": "Pr = (0.001 x 4200) / 0.6 = 7"},
+    {"title": "Apply Dittus-Boelter Equation",  "expr": "Nu = 0.023 x (100000)^0.8 x (7)^0.4 = 365"},
+    {"title": "Find Heat Transfer Coefficient", "expr": "h = 365 x 0.6 / 0.05 = 4380 W/(m2.K)"}
   ],
-  "final_answer": "a_solid = (5/7) g sin(theta) = 0.714 g sin(theta),  a_hollow = (3/5) g sin(theta) = 0.600 g sin(theta),  ratio = 25/21 = 1.19  ->  The solid sphere reaches the bottom first, about 19% faster than the hollow sphere.",
-  "key_insight": "A larger moment-of-inertia ratio I/MR^2 makes the denominator of a = g sin(theta)/(1+I/MR^2) bigger, so the object accelerates more slowly — mass concentrated at the outer shell (hollow) resists spinning more than mass spread through the volume (solid)."
+  "final_answer": "h = 4380 W/(m2.K),  Re = 100000,  Nu = 365",
+  "key_insight": "Higher flow velocity raises Re, which boosts h through the 0.8-power relationship."
 }
 
-STRICT RULES (match the worked example's calculation style exactly):
-- given_data: Extract EVERY numerical value stated in the question, AND every qualitative/implicit condition that affects the solution (e.g. \"starts from rest\", \"rolls without slipping\", \"same mass\", \"frictionless\"). Format numeric items as \\\"symbol = value unit\\\"; format qualitative items as short plain-English conditions. Minimum 2, maximum 12 items. Never leave empty.
-- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. If the question asks for a comparison (which is faster/bigger/first), phrase it as a comparison AND include the specific ratio or quantity that answers it. Never leave empty.
-- formulas: 2-6 key formulas arranged as an input-to-output chain, starting from the general governing law and narrowing down to the specific substituted relations (mirror how the example goes: general formula -> I for each case -> final ratio). Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them.
-- formula_note: Explain what cancels out or what condition lets the formula simplify (e.g. equal masses, equal radii). Set to \"\" only if genuinely not applicable.
-- substitution_steps: 3-5 numbered calculation steps, each isolating ONE part of the arithmetic — never combine "substitute" and "final ratio" into a single step. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual expression with REAL numbers substituted). Whenever a value is a clean fraction, show BOTH the fraction and its decimal form (e.g. \"2/5 = 0.4\"), exactly like the worked example. When comparing two cases (two objects, two scenarios, before/after), compute both sides on separate lines within the same step using \\n so they line up for comparison.
-- final_answer: Complete answer containing ALL computed numerical values with units AND, if the question involves a comparison, an explicit plain-language verdict (state which option wins/is larger/is faster and by how much, e.g. \"about 19% faster\"). Must NEVER be empty.
-- key_insight: One clear, memorable sentence that explains the underlying physical or mathematical REASON for the result (not just a restatement of the answer) — the same way the example explains why a bigger I/MR^2 means slower acceleration.
+STRICT RULES:
+- given_data: Extract EVERY numerical value stated in the question. Format each as \"symbol = value unit\". Minimum 2, maximum 12 items. Never leave empty.
+- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Never leave empty.
+- formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them.
+- formula_note: Optional note about evaluation conditions (e.g. bulk temperature). Set to \"\" if not applicable.
+- substitution_steps: 3-5 numbered calculation steps. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown).
+- final_answer: Complete answer containing ALL computed numerical values with units. Must NEVER be empty.
+- key_insight: One clear memorable sentence about the core physics or mathematical concept.
 - Pure JSON only — no markdown, no backtick fences, no preamble."""
 
 
@@ -1473,32 +1462,6 @@ class GeminiSolutionGenerator:
         "raw": "",
     }
 
-    _REQUIRED_MIN = {
-        "given_data": 1,
-        "to_find": 1,
-        "formulas": 1,
-        "substitution_steps": 1,
-    }
-
-    @classmethod
-    def _is_complete(cls, parsed: dict) -> bool:
-        """Reject any parse that would render a vague/placeholder step-by-step panel."""
-        if not parsed:
-            return False
-        for key, min_len in cls._REQUIRED_MIN.items():
-            val = parsed.get(key)
-            if not isinstance(val, list) or len(val) < min_len:
-                return False
-        for f in parsed.get("formulas", []):
-            if not str(f.get("text", "")).strip():
-                return False
-        for s in parsed.get("substitution_steps", []):
-            if not str(s.get("expr", "")).strip():
-                return False
-        if not str(parsed.get("final_answer", "")).strip():
-            return False
-        return True
-
     @classmethod
     def generate(cls, question: str) -> dict:
         if _gemini_client is None:
@@ -1506,71 +1469,21 @@ class GeminiSolutionGenerator:
             return cls._FALLBACK
 
         QAnimLogger.info("GeminiSolution", f"Generating solution via {GEMINI_MODEL}...")
-        base_prompt = f"Solve this question step by step:\n\nQUESTION: {question[:800]}\n\nReturn ONLY valid JSON."
+        user_prompt = f"Solve this question step by step:\n\nQUESTION: {question[:800]}\n\nReturn ONLY valid JSON."
 
-        MAX_ATTEMPTS = 3
-        last_parsed = None
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            user_prompt = base_prompt
-            if attempt > 1:
-                user_prompt = (
-                    base_prompt +
-                    "\n\nCRITICAL RETRY NOTICE: Your previous response left one or more of "
-                    "given_data, to_find, formulas, substitution_steps or final_answer empty or "
-                    "incomplete. This is NOT ALLOWED. Every one of those fields MUST be fully "
-                    "populated with question-specific content — never an empty array, never a "
-                    "placeholder like 'see question'. Re-derive the full solution from scratch and "
-                    "return the complete JSON object with every field filled in."
-                )
-            try:
-                raw = cls._call_gemini(
-                    user_prompt, cls._solution_system_text(),
-                    max_tokens=8192,
-                )
-                parsed = cls._parse(raw)
-                if parsed is cls._FALLBACK:
-                    QAnimLogger.warn(
-                        "GeminiSolution",
-                        f"Attempt {attempt}/{MAX_ATTEMPTS} JSON parse failed — retrying"
-                    )
-                    continue
-                last_parsed = parsed
-                if cls._is_complete(parsed):
-                    return parsed
-                QAnimLogger.warn(
-                    "GeminiSolution",
-                    f"Attempt {attempt}/{MAX_ATTEMPTS} returned incomplete step data — retrying"
-                )
-            except Exception as e:
-                QAnimLogger.warn("GeminiSolution", f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {e}")
-
-        if last_parsed and last_parsed is not cls._FALLBACK:
-            QAnimLogger.warn("GeminiSolution", "All retries incomplete — using best available partial result")
-            return cls._fill_gaps(last_parsed)
-
-        QAnimLogger.warn("GeminiSolution", "All attempts failed — using fallback")
-        return cls._FALLBACK
-
-    @classmethod
-    def _fill_gaps(cls, parsed: dict) -> dict:
-        """Patch only the missing pieces of a partially-valid result with the generic
-        fallback content, instead of discarding a mostly-good solution entirely."""
-        merged = dict(parsed)
-        for key in ("given_data", "to_find", "formulas", "substitution_steps"):
-            if not merged.get(key):
-                merged[key] = cls._FALLBACK[key]
-        if not str(merged.get("final_answer", "")).strip():
-            merged["final_answer"] = cls._FALLBACK["final_answer"]
-        if not str(merged.get("key_insight", "")).strip():
-            merged["key_insight"] = cls._FALLBACK["key_insight"]
-        return merged
+        try:
+            raw = cls._call_gemini(user_prompt, cls._solution_system_text(), max_tokens=4096)
+            return cls._parse(raw)
+        except Exception as e:
+            QAnimLogger.warn("GeminiSolution", f"Generation failed: {e} — using fallback")
+            return cls._FALLBACK
 
     @classmethod
     def _solution_system_text(cls):
         return _SOLUTION_SYSTEM
 
     @classmethod
-    def _call_gemini(cls, user_prompt: str, system_text: str, max_tokens: int = 4096, force_json: bool = True) -> str:
+    def _call_gemini(cls, user_prompt: str, system_text: str, max_tokens: int = 4096) -> str:
         import time as _time
         MAX_RETRIES  = 3
         RETRY_DELAYS = [15, 30, 60]
@@ -1578,31 +1491,27 @@ class GeminiSolutionGenerator:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 if _GEMINI_SDK_STYLE == "generativeai":
-                    gen_config = {"temperature": 0.3, "max_output_tokens": max_tokens}
-                    if force_json:
-                        gen_config["response_mime_type"] = "application/json"
                     model_obj = _gemini_client.GenerativeModel(
                         model_name=GEMINI_MODEL,
                         system_instruction=system_text,
-                        generation_config=gen_config,
+                        generation_config={"temperature": 0.3, "max_output_tokens": max_tokens},
                     )
                     response = model_obj.generate_content(user_prompt)
                     return response.text.strip()
                 else:
-                    config_kwargs = dict(
-                        system_instruction=system_text,
-                        temperature=0.3,
-                        max_output_tokens=max_tokens,
-                    )
-                    if force_json:
-                        config_kwargs["response_mime_type"] = "application/json"
                     try:
                         config = _google_genai.types.GenerateContentConfig(
+                            system_instruction=system_text,
+                            temperature=0.3,
+                            max_output_tokens=max_tokens,
                             thinking_config=_google_genai.types.ThinkingConfig(thinking_level="low"),
-                            **config_kwargs,
                         )
                     except Exception:
-                        config = _google_genai.types.GenerateContentConfig(**config_kwargs)
+                        config = _google_genai.types.GenerateContentConfig(
+                            system_instruction=system_text,
+                            temperature=0.3,
+                            max_output_tokens=max_tokens,
+                        )
                     response = _gemini_client.models.generate_content(
                         model=GEMINI_MODEL,
                         contents=user_prompt,
@@ -1615,9 +1524,6 @@ class GeminiSolutionGenerator:
                 if is_429 and attempt < MAX_RETRIES:
                     _time.sleep(RETRY_DELAYS[attempt - 1])
                     continue
-                # Some SDK/model combos reject response_mime_type — retry once without it.
-                if force_json and "response_mime_type" in err_str.lower():
-                    return cls._call_gemini(user_prompt, system_text, max_tokens=max_tokens, force_json=False)
                 raise
 
         raise RuntimeError("All Gemini retry attempts exhausted")
@@ -2296,8 +2202,10 @@ _GLOSSARY_CTRL_BTN_TEMPLATE = """  <div class="qanim-ctrl-sep"></div>
 
 
 def _build_glossary_dom(terms):
+    if not terms:
+        return "", ""
     cards = []
-    for t in (terms or []):
+    for t in terms:
         term    = html_module.escape(str(t.get("term", "")))
         meaning = html_module.escape(str(t.get("meaning", "")))
         if not term or not meaning:
@@ -2309,13 +2217,7 @@ def _build_glossary_dom(terms):
             f'    </div>'
         )
     if not cards:
-        # Graceful empty state — the panel/button must always render, never vanish.
-        cards.append(
-            '    <div class="glossary-term-card">\n'
-            '      <div class="glossary-term-word">All clear!</div>\n'
-            '      <div class="glossary-term-meaning">No specialized terms needed explaining for this question.</div>\n'
-            '    </div>'
-        )
+        return "", ""
     cards_html = "\n".join(cards)
     btn_html = _GLOSSARY_CTRL_BTN_TEMPLATE.format(count=len(cards))
     panel_html = (
@@ -2335,6 +2237,9 @@ def _build_glossary_dom(terms):
 
 def inject_glossary_panel(html, terms=None):
     btn_html, panel_html = _build_glossary_dom(terms or [])
+    if not panel_html:
+        QAnimLogger.info("GlossaryInjector", "No difficult words — panel skipped")
+        return html
     try:
         if '</head>' in html:
             html = html.replace('</head>', _GLOSSARY_CSS + '\n</head>', 1)
@@ -2361,7 +2266,7 @@ def inject_glossary_panel(html, terms=None):
             html += '\n' + glossary_script
     except Exception as e:
         QAnimLogger.warn("GlossaryInjector", f"JS failed: {e}")
-    QAnimLogger.ok("GlossaryInjector", f"Glossary panel injected ({len(terms or [])} term(s))")
+    QAnimLogger.ok("GlossaryInjector", f"Glossary panel injected ({len(terms)} term(s))")
     return html
 
 
@@ -3163,72 +3068,43 @@ setTimeout(function() {{ resetAnim(); }}, 100);
 #  GLOSSARY ANALYZER (Gemini-based)
 # ===========================================================================
 
-_GLOSSARY_SYSTEM_GEMINI = """Find DIFFICULT or TECHNICAL words/phrases in the question that could confuse a student,
-and explain each one in simple everyday English.
+_GLOSSARY_SYSTEM_GEMINI = """Find DIFFICULT or TECHNICAL words in the question that could confuse a student.
 Return ONLY valid JSON:
 {"terms": [{"term": "word", "meaning": "simple explanation in 15 words or less"}]}
 
 Rules:
-- ALWAYS return AT LEAST 3 terms and at most 8. This field must never be empty.
-- If the question has few obviously "hard" words, still pick the most technical/domain-specific
-  terms present — subject-specific nouns, symbols, named laws/effects, units, or jargon that a
-  student meeting this topic for the first time might not know (e.g. "moment of inertia",
-  "coefficient of restitution", "isothermal", "torque", "rms value"). There is ALWAYS something
-  in an engineering/science question worth explaining — never skip this.
-- Write meanings in very simple, everyday English, 15 words or less.
+- Pick 2-8 genuinely hard/technical/jargon words only.
+- Write meanings in very simple, everyday English.
+- If no hard words found, return {"terms": []}.
 - Pure JSON only — no markdown, no fences."""
-
-
-_GLOSSARY_FALLBACK_TERMS = [
-    {"term": "Given data", "meaning": "The known values stated in the question that you start with."},
-    {"term": "To find", "meaning": "The unknown quantity or result the question asks you to calculate."},
-    {"term": "Governing equation", "meaning": "The main formula that relates the given values to the unknown."},
-]
 
 
 class GeminiGlossaryAnalyzer:
 
     @classmethod
-    def _try_once(cls, question: str, reinforce: bool = False) -> list:
-        prompt = f"Question: {question[:800]}"
-        if reinforce:
-            prompt += ("\n\nCRITICAL RETRY NOTICE: Your previous response returned zero terms. "
-                       "This is NOT ALLOWED — return at least 3 technical/domain terms from this "
-                       "question, even if they seem basic to an expert.")
-        raw = GeminiSolutionGenerator._call_gemini(
-            prompt,
-            _GLOSSARY_SYSTEM_GEMINI,
-            max_tokens=800
-        )
-        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
-        data = json.loads(raw)
-        terms = []
-        for t in (data.get("terms") or [])[:8]:
-            term    = str(t.get("term", "") or "").strip()
-            meaning = str(t.get("meaning", "") or "").strip()
-            if term and meaning:
-                terms.append({"term": term, "meaning": meaning})
-        return terms
-
-    @classmethod
     def analyze(cls, question: str) -> dict:
         if _gemini_client is None:
-            QAnimLogger.warn("GlossaryAnalyzer", "Gemini client not available — using generic fallback terms")
-            return {"terms": list(_GLOSSARY_FALLBACK_TERMS)}
-
-        MAX_ATTEMPTS = 3
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                terms = cls._try_once(question, reinforce=(attempt > 1))
-                if terms:
-                    QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s) (attempt {attempt})")
-                    return {"terms": terms}
-                QAnimLogger.warn("GlossaryAnalyzer", f"Attempt {attempt}/{MAX_ATTEMPTS} returned zero terms — retrying")
-            except Exception as e:
-                QAnimLogger.warn("GlossaryAnalyzer", f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {e}")
-
-        QAnimLogger.warn("GlossaryAnalyzer", "All attempts empty/failed — using generic fallback terms so panel stays consistent")
-        return {"terms": list(_GLOSSARY_FALLBACK_TERMS)}
+            return {"terms": []}
+        try:
+            raw = GeminiSolutionGenerator._call_gemini(
+                f"Question: {question[:800]}",
+                _GLOSSARY_SYSTEM_GEMINI,
+                max_tokens=800
+            )
+            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
+            data = json.loads(raw)
+            terms = []
+            for t in (data.get("terms") or [])[:8]:
+                term    = str(t.get("term", "") or "").strip()
+                meaning = str(t.get("meaning", "") or "").strip()
+                if term and meaning:
+                    terms.append({"term": term, "meaning": meaning})
+            if terms:
+                QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s)")
+            return {"terms": terms}
+        except Exception as e:
+            QAnimLogger.warn("GlossaryAnalyzer", f"Failed: {e}")
+            return {"terms": []}
 
     @classmethod
     async def analyze_async(cls, question: str) -> dict:
