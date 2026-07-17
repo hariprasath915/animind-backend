@@ -1389,6 +1389,13 @@ def inject_step_answer_panel(html, gemini_sol):
 
 _SOLUTION_SYSTEM = """You are an expert engineering professor generating a structured 5-step solution for students.
 
+CRITICAL, NON-NEGOTIABLE RULE: every one of these fields — given_data, to_find, formulas,
+substitution_steps, final_answer — MUST be fully populated with real, question-specific content.
+An empty array, an empty string, or a vague placeholder (e.g. "see question", "no formula available")
+for ANY of these fields is treated as a FAILED response. If you are unsure of exact numbers, still
+reason through the physics/engineering and give your best complete, concrete solution — never leave a
+field blank.
+
 Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no extra text, no comments.
 The worked example below (comparing a solid sphere and a hollow sphere rolling down an incline) shows
 the EXACT calculation style, level of detail, and formatting you must reproduce for every question —
@@ -1466,6 +1473,32 @@ class GeminiSolutionGenerator:
         "raw": "",
     }
 
+    _REQUIRED_MIN = {
+        "given_data": 1,
+        "to_find": 1,
+        "formulas": 1,
+        "substitution_steps": 1,
+    }
+
+    @classmethod
+    def _is_complete(cls, parsed: dict) -> bool:
+        """Reject any parse that would render a vague/placeholder step-by-step panel."""
+        if not parsed:
+            return False
+        for key, min_len in cls._REQUIRED_MIN.items():
+            val = parsed.get(key)
+            if not isinstance(val, list) or len(val) < min_len:
+                return False
+        for f in parsed.get("formulas", []):
+            if not str(f.get("text", "")).strip():
+                return False
+        for s in parsed.get("substitution_steps", []):
+            if not str(s.get("expr", "")).strip():
+                return False
+        if not str(parsed.get("final_answer", "")).strip():
+            return False
+        return True
+
     @classmethod
     def generate(cls, question: str) -> dict:
         if _gemini_client is None:
@@ -1473,21 +1506,71 @@ class GeminiSolutionGenerator:
             return cls._FALLBACK
 
         QAnimLogger.info("GeminiSolution", f"Generating solution via {GEMINI_MODEL}...")
-        user_prompt = f"Solve this question step by step:\n\nQUESTION: {question[:800]}\n\nReturn ONLY valid JSON."
+        base_prompt = f"Solve this question step by step:\n\nQUESTION: {question[:800]}\n\nReturn ONLY valid JSON."
 
-        try:
-            raw = cls._call_gemini(user_prompt, cls._solution_system_text(), max_tokens=4096)
-            return cls._parse(raw)
-        except Exception as e:
-            QAnimLogger.warn("GeminiSolution", f"Generation failed: {e} — using fallback")
-            return cls._FALLBACK
+        MAX_ATTEMPTS = 3
+        last_parsed = None
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            user_prompt = base_prompt
+            if attempt > 1:
+                user_prompt = (
+                    base_prompt +
+                    "\n\nCRITICAL RETRY NOTICE: Your previous response left one or more of "
+                    "given_data, to_find, formulas, substitution_steps or final_answer empty or "
+                    "incomplete. This is NOT ALLOWED. Every one of those fields MUST be fully "
+                    "populated with question-specific content — never an empty array, never a "
+                    "placeholder like 'see question'. Re-derive the full solution from scratch and "
+                    "return the complete JSON object with every field filled in."
+                )
+            try:
+                raw = cls._call_gemini(
+                    user_prompt, cls._solution_system_text(),
+                    max_tokens=8192,
+                )
+                parsed = cls._parse(raw)
+                if parsed is cls._FALLBACK:
+                    QAnimLogger.warn(
+                        "GeminiSolution",
+                        f"Attempt {attempt}/{MAX_ATTEMPTS} JSON parse failed — retrying"
+                    )
+                    continue
+                last_parsed = parsed
+                if cls._is_complete(parsed):
+                    return parsed
+                QAnimLogger.warn(
+                    "GeminiSolution",
+                    f"Attempt {attempt}/{MAX_ATTEMPTS} returned incomplete step data — retrying"
+                )
+            except Exception as e:
+                QAnimLogger.warn("GeminiSolution", f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {e}")
+
+        if last_parsed and last_parsed is not cls._FALLBACK:
+            QAnimLogger.warn("GeminiSolution", "All retries incomplete — using best available partial result")
+            return cls._fill_gaps(last_parsed)
+
+        QAnimLogger.warn("GeminiSolution", "All attempts failed — using fallback")
+        return cls._FALLBACK
+
+    @classmethod
+    def _fill_gaps(cls, parsed: dict) -> dict:
+        """Patch only the missing pieces of a partially-valid result with the generic
+        fallback content, instead of discarding a mostly-good solution entirely."""
+        merged = dict(parsed)
+        for key in ("given_data", "to_find", "formulas", "substitution_steps"):
+            if not merged.get(key):
+                merged[key] = cls._FALLBACK[key]
+        if not str(merged.get("final_answer", "")).strip():
+            merged["final_answer"] = cls._FALLBACK["final_answer"]
+        if not str(merged.get("key_insight", "")).strip():
+            merged["key_insight"] = cls._FALLBACK["key_insight"]
+        return merged
 
     @classmethod
     def _solution_system_text(cls):
         return _SOLUTION_SYSTEM
 
     @classmethod
-    def _call_gemini(cls, user_prompt: str, system_text: str, max_tokens: int = 4096) -> str:
+    def _call_gemini(cls, user_prompt: str, system_text: str, max_tokens: int = 4096, force_json: bool = True) -> str:
         import time as _time
         MAX_RETRIES  = 3
         RETRY_DELAYS = [15, 30, 60]
@@ -1495,27 +1578,31 @@ class GeminiSolutionGenerator:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 if _GEMINI_SDK_STYLE == "generativeai":
+                    gen_config = {"temperature": 0.3, "max_output_tokens": max_tokens}
+                    if force_json:
+                        gen_config["response_mime_type"] = "application/json"
                     model_obj = _gemini_client.GenerativeModel(
                         model_name=GEMINI_MODEL,
                         system_instruction=system_text,
-                        generation_config={"temperature": 0.3, "max_output_tokens": max_tokens},
+                        generation_config=gen_config,
                     )
                     response = model_obj.generate_content(user_prompt)
                     return response.text.strip()
                 else:
+                    config_kwargs = dict(
+                        system_instruction=system_text,
+                        temperature=0.3,
+                        max_output_tokens=max_tokens,
+                    )
+                    if force_json:
+                        config_kwargs["response_mime_type"] = "application/json"
                     try:
                         config = _google_genai.types.GenerateContentConfig(
-                            system_instruction=system_text,
-                            temperature=0.3,
-                            max_output_tokens=max_tokens,
                             thinking_config=_google_genai.types.ThinkingConfig(thinking_level="low"),
+                            **config_kwargs,
                         )
                     except Exception:
-                        config = _google_genai.types.GenerateContentConfig(
-                            system_instruction=system_text,
-                            temperature=0.3,
-                            max_output_tokens=max_tokens,
-                        )
+                        config = _google_genai.types.GenerateContentConfig(**config_kwargs)
                     response = _gemini_client.models.generate_content(
                         model=GEMINI_MODEL,
                         contents=user_prompt,
@@ -1528,6 +1615,9 @@ class GeminiSolutionGenerator:
                 if is_429 and attempt < MAX_RETRIES:
                     _time.sleep(RETRY_DELAYS[attempt - 1])
                     continue
+                # Some SDK/model combos reject response_mime_type — retry once without it.
+                if force_json and "response_mime_type" in err_str.lower():
+                    return cls._call_gemini(user_prompt, system_text, max_tokens=max_tokens, force_json=False)
                 raise
 
         raise RuntimeError("All Gemini retry attempts exhausted")
@@ -2206,10 +2296,8 @@ _GLOSSARY_CTRL_BTN_TEMPLATE = """  <div class="qanim-ctrl-sep"></div>
 
 
 def _build_glossary_dom(terms):
-    if not terms:
-        return "", ""
     cards = []
-    for t in terms:
+    for t in (terms or []):
         term    = html_module.escape(str(t.get("term", "")))
         meaning = html_module.escape(str(t.get("meaning", "")))
         if not term or not meaning:
@@ -2221,7 +2309,13 @@ def _build_glossary_dom(terms):
             f'    </div>'
         )
     if not cards:
-        return "", ""
+        # Graceful empty state — the panel/button must always render, never vanish.
+        cards.append(
+            '    <div class="glossary-term-card">\n'
+            '      <div class="glossary-term-word">All clear!</div>\n'
+            '      <div class="glossary-term-meaning">No specialized terms needed explaining for this question.</div>\n'
+            '    </div>'
+        )
     cards_html = "\n".join(cards)
     btn_html = _GLOSSARY_CTRL_BTN_TEMPLATE.format(count=len(cards))
     panel_html = (
@@ -2241,9 +2335,6 @@ def _build_glossary_dom(terms):
 
 def inject_glossary_panel(html, terms=None):
     btn_html, panel_html = _build_glossary_dom(terms or [])
-    if not panel_html:
-        QAnimLogger.info("GlossaryInjector", "No difficult words — panel skipped")
-        return html
     try:
         if '</head>' in html:
             html = html.replace('</head>', _GLOSSARY_CSS + '\n</head>', 1)
@@ -2270,7 +2361,7 @@ def inject_glossary_panel(html, terms=None):
             html += '\n' + glossary_script
     except Exception as e:
         QAnimLogger.warn("GlossaryInjector", f"JS failed: {e}")
-    QAnimLogger.ok("GlossaryInjector", f"Glossary panel injected ({len(terms)} term(s))")
+    QAnimLogger.ok("GlossaryInjector", f"Glossary panel injected ({len(terms or [])} term(s))")
     return html
 
 
@@ -3072,43 +3163,72 @@ setTimeout(function() {{ resetAnim(); }}, 100);
 #  GLOSSARY ANALYZER (Gemini-based)
 # ===========================================================================
 
-_GLOSSARY_SYSTEM_GEMINI = """Find DIFFICULT or TECHNICAL words in the question that could confuse a student.
+_GLOSSARY_SYSTEM_GEMINI = """Find DIFFICULT or TECHNICAL words/phrases in the question that could confuse a student,
+and explain each one in simple everyday English.
 Return ONLY valid JSON:
 {"terms": [{"term": "word", "meaning": "simple explanation in 15 words or less"}]}
 
 Rules:
-- Pick 2-8 genuinely hard/technical/jargon words only.
-- Write meanings in very simple, everyday English.
-- If no hard words found, return {"terms": []}.
+- ALWAYS return AT LEAST 3 terms and at most 8. This field must never be empty.
+- If the question has few obviously "hard" words, still pick the most technical/domain-specific
+  terms present — subject-specific nouns, symbols, named laws/effects, units, or jargon that a
+  student meeting this topic for the first time might not know (e.g. "moment of inertia",
+  "coefficient of restitution", "isothermal", "torque", "rms value"). There is ALWAYS something
+  in an engineering/science question worth explaining — never skip this.
+- Write meanings in very simple, everyday English, 15 words or less.
 - Pure JSON only — no markdown, no fences."""
+
+
+_GLOSSARY_FALLBACK_TERMS = [
+    {"term": "Given data", "meaning": "The known values stated in the question that you start with."},
+    {"term": "To find", "meaning": "The unknown quantity or result the question asks you to calculate."},
+    {"term": "Governing equation", "meaning": "The main formula that relates the given values to the unknown."},
+]
 
 
 class GeminiGlossaryAnalyzer:
 
     @classmethod
+    def _try_once(cls, question: str, reinforce: bool = False) -> list:
+        prompt = f"Question: {question[:800]}"
+        if reinforce:
+            prompt += ("\n\nCRITICAL RETRY NOTICE: Your previous response returned zero terms. "
+                       "This is NOT ALLOWED — return at least 3 technical/domain terms from this "
+                       "question, even if they seem basic to an expert.")
+        raw = GeminiSolutionGenerator._call_gemini(
+            prompt,
+            _GLOSSARY_SYSTEM_GEMINI,
+            max_tokens=800
+        )
+        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
+        data = json.loads(raw)
+        terms = []
+        for t in (data.get("terms") or [])[:8]:
+            term    = str(t.get("term", "") or "").strip()
+            meaning = str(t.get("meaning", "") or "").strip()
+            if term and meaning:
+                terms.append({"term": term, "meaning": meaning})
+        return terms
+
+    @classmethod
     def analyze(cls, question: str) -> dict:
         if _gemini_client is None:
-            return {"terms": []}
-        try:
-            raw = GeminiSolutionGenerator._call_gemini(
-                f"Question: {question[:800]}",
-                _GLOSSARY_SYSTEM_GEMINI,
-                max_tokens=800
-            )
-            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
-            data = json.loads(raw)
-            terms = []
-            for t in (data.get("terms") or [])[:8]:
-                term    = str(t.get("term", "") or "").strip()
-                meaning = str(t.get("meaning", "") or "").strip()
-                if term and meaning:
-                    terms.append({"term": term, "meaning": meaning})
-            if terms:
-                QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s)")
-            return {"terms": terms}
-        except Exception as e:
-            QAnimLogger.warn("GlossaryAnalyzer", f"Failed: {e}")
-            return {"terms": []}
+            QAnimLogger.warn("GlossaryAnalyzer", "Gemini client not available — using generic fallback terms")
+            return {"terms": list(_GLOSSARY_FALLBACK_TERMS)}
+
+        MAX_ATTEMPTS = 3
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                terms = cls._try_once(question, reinforce=(attempt > 1))
+                if terms:
+                    QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s) (attempt {attempt})")
+                    return {"terms": terms}
+                QAnimLogger.warn("GlossaryAnalyzer", f"Attempt {attempt}/{MAX_ATTEMPTS} returned zero terms — retrying")
+            except Exception as e:
+                QAnimLogger.warn("GlossaryAnalyzer", f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {e}")
+
+        QAnimLogger.warn("GlossaryAnalyzer", "All attempts empty/failed — using generic fallback terms so panel stays consistent")
+        return {"terms": list(_GLOSSARY_FALLBACK_TERMS)}
 
     @classmethod
     async def analyze_async(cls, question: str) -> dict:
