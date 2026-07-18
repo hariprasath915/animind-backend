@@ -719,49 +719,113 @@ def _build_step_answer_data_tag(gemini_sol):
 
 
 _STEP_ANSWER_DOM = """
-<div id="stepans-backdrop" aria-hidden="true"></div>
-<aside id="stepans-panel" role="dialog" aria-labelledby="stepans-heading" aria-hidden="true">
-  <div class="sa-header">
-    <div class="sa-header-left">
-      <div class="sa-icon-wrap">&#x1FA9C;</div>
-      <div>
-        <div id="stepans-heading" class="sa-title">Step by Step Answer</div>
-        <div class="sa-subtitle">Solution workflow for this question</div>
-      </div>
+<div id="qanim-stepbystep-section" style="display:none;">
+  <div class="sbs-wrapper">
+    <h2 class="sbs-main-title">How We Solve It &#x2014; Step by Step</h2>
+    <div class="sbs-steps-container" id="sbs-steps-container"></div>
+    <div class="sbs-try-it-bar">
+      &#x1F4A1; Try it yourself! Use the <strong>Answer Box</strong> to check your answer.
     </div>
-    <button id="stepans-close" class="sa-close-btn" aria-label="Close">&#x2715;</button>
   </div>
-  <div class="sa-flow-track-wrap">
-    <div id="sa-flow-track" class="sa-flow-track"></div>
-  </div>
-  <div class="sa-body">
-    <div id="stepans-items-container" class="sa-items-container"></div>
-  </div>
-  <div class="sa-footer">
-    <button id="sa-prev-btn" class="sa-nav-btn sa-prev-btn" type="button">&#8249; Previous</button>
-    <div id="sa-progress-label" class="sa-progress-label">Step 1 of 1</div>
-    <button id="sa-next-btn" class="sa-nav-btn sa-next-btn" type="button">Next &#8250;</button>
-  </div>
-</aside>
+</div>
 """
 
 _STEP_ANSWER_CSS = """
 <style id="qanim-stepans-styles">
-/* ── Panel shell ─────────────────────────────────────────────────────── */
-#stepans-backdrop { display:none; position:fixed; inset:0; z-index:8500;
-  background:rgba(15,23,42,.42); backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
-#stepans-backdrop.open { display:block; opacity:1; }
-#stepans-panel { display:flex; flex-direction:column; position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(820px,96vw);
-  max-height:92vh; border-radius:18px; background:#fff; border:1px solid #e2e8f0;
-  box-shadow:0 20px 60px rgba(37,99,235,.18),0 2px 8px rgba(0,0,0,.06);
-  opacity:0; pointer-events:none;
-  transition:opacity .28s ease,transform .28s cubic-bezier(.34,1.56,.64,1); overflow:hidden; }
-#stepans-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
-/* ── Header ──────────────────────────────────────────────────────────── */
-.sa-header { display:flex; align-items:center; justify-content:space-between;
-  padding:18px 22px 14px; border-bottom:1px solid #f0f0f8; flex-shrink:0; background:#fff; }
-.sa-header-left { display:flex; align-items:center; gap:13px; }
+/* ── Inline Step-by-Step Section ───────────────────────────────────── */
+#qanim-stepbystep-section { width:100%; max-width:900px; margin:0 auto; box-sizing:border-box; padding-bottom:100px; }
+#qanim-stepbystep-section.visible { display:block !important; }
+.sbs-wrapper { background:#fff; border-radius:18px; box-shadow:0 4px 32px rgba(37,99,235,.10),0 1px 4px rgba(0,0,0,.06);
+  border:1px solid #e8eef8; overflow:hidden; margin-top:32px; }
+.sbs-main-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:24px; font-weight:800;
+  color:#1a1a2e; text-align:center; padding:28px 24px 20px; border-bottom:1px solid #f0f2f8;
+  background:linear-gradient(135deg,#f8fafc 0%,#f0f4ff 100%); margin:0; }
+.sbs-steps-container { padding:24px; display:flex; flex-direction:column; gap:14px; }
+/* ── Individual step cards ── */
+.sbs-step-card { display:flex; align-items:flex-start; gap:0; border-radius:14px;
+  border:1.5px solid #e2e8f0; overflow:hidden; background:#fff; }
+.sbs-step-num-col { min-width:52px; display:flex; align-items:center; justify-content:center;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:22px; font-weight:900;
+  padding:20px 0; flex-shrink:0; }
+.sbs-step-body { flex:1; padding:18px 20px; }
+.sbs-step-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:800;
+  margin-bottom:6px; line-height:1.4; }
+.sbs-step-desc { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#475569;
+  line-height:1.65; }
+/* step color themes */
+.sbs-step-card.sbs-s0 { border-color:#bfdbfe; background:#f8fbff; }
+.sbs-step-card.sbs-s0 .sbs-step-num-col { background:#dbeafe; color:#1d4ed8; }
+.sbs-step-card.sbs-s0 .sbs-step-title { color:#1d4ed8; }
+.sbs-step-card.sbs-s1 { border-color:#c7d2fe; background:#f9f8ff; }
+.sbs-step-card.sbs-s1 .sbs-step-num-col { background:#e0e7ff; color:#4338ca; }
+.sbs-step-card.sbs-s1 .sbs-step-title { color:#4338ca; }
+.sbs-step-card.sbs-s2 { border-color:#a7f3d0; background:#f8fffc; }
+.sbs-step-card.sbs-s2 .sbs-step-num-col { background:#d1fae5; color:#15803d; }
+.sbs-step-card.sbs-s2 .sbs-step-title { color:#15803d; }
+.sbs-step-card.sbs-s3 { border-color:#fca5a5; background:#fff8f8; }
+.sbs-step-card.sbs-s3 .sbs-step-num-col { background:#fee2e2; color:#dc2626; }
+.sbs-step-card.sbs-s3 .sbs-step-title { color:#dc2626; }
+.sbs-step-card.sbs-s4 { border-color:#fde68a; background:#fffdf0; }
+.sbs-step-card.sbs-s4 .sbs-step-num-col { background:#fef9c3; color:#b45309; }
+.sbs-step-card.sbs-s4 .sbs-step-title { color:#b45309; }
+/* ── Formula flowchart inside a step ── */
+.sbs-flowchart { display:flex; flex-direction:column; align-items:center; gap:0; margin-top:10px; }
+.sbs-flow-box { width:100%; max-width:520px; padding:12px 20px; border-radius:12px;
+  text-align:center; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:14.5px; font-weight:700; box-sizing:border-box; margin:0 auto; }
+.sbs-flow-box.blue   { background:#eff6ff; border:2px solid #93c5fd; color:#1d4ed8; }
+.sbs-flow-box.orange { background:#fff7ed; border:2px solid #fdba74; color:#c2410c; }
+.sbs-flow-box.purple { background:#faf5ff; border:2px solid #d8b4fe; color:#7c3aed; }
+.sbs-flow-box.pink   { background:#fff1f2; border:2px solid #fda4af; color:#be123c; }
+.sbs-flow-box.green  { background:#f0fdf4; border:2px solid #86efac; color:#15803d; }
+.sbs-flow-box.teal   { background:#f0fdfa; border:2px solid #5eead4; color:#0f766e; }
+.sbs-flow-arrow { width:2px; height:28px; background:linear-gradient(to bottom,#93c5fd,#c084fc); margin:0 auto; position:relative; }
+.sbs-flow-arrow::after { content:'\25BC'; position:absolute; bottom:-10px; left:50%; transform:translateX(-50%); font-size:12px; color:#c084fc; }
+.sbs-flow-note { font-size:11.5px; color:#64748b; text-align:center; margin-top:14px; font-style:italic;
+  padding:8px 16px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0; max-width:520px; margin-left:auto; margin-right:auto; }
+/* ── Given data boxes inside a step ── */
+.sbs-given-grid { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.sbs-given-box { display:inline-flex; align-items:center; padding:8px 14px; border-radius:8px;
+  font-family:'Courier New',Courier,monospace; font-size:13px; font-weight:700; white-space:nowrap; }
+.sbs-given-box:nth-child(4n+1) { background:#eff6ff; border:1.5px solid #bfdbfe; color:#1d4ed8; }
+.sbs-given-box:nth-child(4n+2) { background:#f0fdf4; border:1.5px solid #bbf7d0; color:#15803d; }
+.sbs-given-box:nth-child(4n+3) { background:#fefce8; border:1.5px solid #fde68a; color:#b45309; }
+.sbs-given-box:nth-child(4n)   { background:#fdf4ff; border:1.5px solid #e9d5ff; color:#7e22ce; }
+/* ── Substitution steps inside a step ── */
+.sbs-sub-list { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+.sbs-sub-item { display:flex; align-items:flex-start; gap:12px; padding:12px 14px;
+  border-radius:10px; background:#f8fafc; border:1px solid #e2e8f0; }
+.sbs-sub-item:nth-child(1) { border-left:3px solid #2563eb; }
+.sbs-sub-item:nth-child(2) { border-left:3px solid #0d9488; }
+.sbs-sub-item:nth-child(3) { border-left:3px solid #16a34a; }
+.sbs-sub-item:nth-child(4) { border-left:3px solid #d97706; }
+.sbs-sub-item:nth-child(5) { border-left:3px solid #7c3aed; }
+.sbs-sub-num { min-width:28px; height:28px; border-radius:50%; background:#2563eb; color:#fff;
+  font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.sbs-sub-item:nth-child(2) .sbs-sub-num { background:#0d9488; }
+.sbs-sub-item:nth-child(3) .sbs-sub-num { background:#16a34a; }
+.sbs-sub-item:nth-child(4) .sbs-sub-num { background:#d97706; }
+.sbs-sub-item:nth-child(5) .sbs-sub-num { background:#7c3aed; }
+.sbs-sub-body { flex:1; min-width:0; }
+.sbs-sub-title { font-size:11px; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
+.sbs-sub-expr { font-family:'Courier New',Courier,monospace; font-size:13px; font-weight:600; color:#1e293b; line-height:1.6; }
+/* ── Final answer box inside step ── */
+.sbs-final-box { padding:18px 20px; border-radius:14px; background:linear-gradient(135deg,#f0fdf4,#ecfdf5);
+  border:2px solid #86efac; margin-top:8px; }
+.sbs-final-label { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1.5px; color:#15803d; margin-bottom:10px; }
+.sbs-final-value { font-family:'Courier New',Courier,monospace; font-size:15px; font-weight:800; color:#1e293b;
+  line-height:1.8; padding:14px 16px; background:#fff; border:1.5px solid #bbf7d0; border-radius:10px; }
+.sbs-insight { margin-top:12px; padding:12px 14px; border-radius:10px; background:#fffbf0; border:1.5px solid #fde68a; }
+.sbs-insight-badge { display:block; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1px; color:#b45309; margin-bottom:4px; }
+.sbs-insight-text { font-size:12.5px; color:#78350f; line-height:1.7; }
+/* ── CTA bar ── */
+.sbs-try-it-bar { margin:0 24px 24px; padding:16px 22px; border-radius:12px;
+  background:#eff6ff; border:2px solid #2563eb; color:#1d4ed8;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:700;
+  text-align:center; line-height:1.5; }
+/* ── Legacy modal stubs (kept so old JS refs don't error) ── */
+#stepans-backdrop { display:none !important; }
+#stepans-panel { display:none !important; }
 .sa-icon-wrap { width:40px; height:40px; border-radius:10px; background:#eff6ff;
   display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
 .sa-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:17px; font-weight:800; color:#1a1a2e; }
@@ -855,72 +919,13 @@ _STEP_ANSWER_CSS = """
 .sa-flow-formula-box { width:100%; max-width:580px; padding:15px 24px; border-radius:14px;
   text-align:center; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
   font-size:15.5px; font-weight:700; box-sizing:border-box; margin:0 auto; }
-.sa-flow-formula-box.blue   { background:#eff6ff; border:2px solid #93c5fd; color:#1d4ed8; }
-.sa-flow-formula-box.orange { background:#fff7ed; border:2px solid #fdba74; color:#c2410c; }
-.sa-flow-formula-box.purple { background:#faf5ff; border:2px solid #d8b4fe; color:#7c3aed; }
-.sa-flow-formula-box.pink   { background:#fff1f2; border:2px solid #fda4af; color:#be123c; }
-.sa-flow-formula-box.green  { background:#f0fdf4; border:2px solid #86efac; color:#15803d; }
-.sa-flow-formula-box.teal   { background:#f0fdfa; border:2px solid #5eead4; color:#0f766e; }
-.sa-flow-arrow { width:2px; height:32px; background:linear-gradient(to bottom,#93c5fd,#c084fc);
-  margin:0 auto; position:relative; }
-.sa-flow-arrow::after { content:'\25BC'; position:absolute; bottom:-11px; left:50%;
-  transform:translateX(-50%); font-size:13px; color:#c084fc; }
-.sa-flow-footer-note { font-size:12px; color:#64748b; text-align:center; margin-top:16px;
-  font-style:italic; padding:9px 18px; background:#f8fafc; border-radius:9px;
-  border:1px solid #e2e8f0; max-width:580px; margin-left:auto; margin-right:auto; }
-/* ── Step 4: Substitution & Explanation cards ────────────────────────── */
-.sa-sub-container { display:flex; flex-direction:column; gap:10px; padding:4px 0 6px; }
-.sa-sub-card { display:flex; align-items:flex-start; gap:14px; padding:14px 16px;
-  border-radius:12px; background:#f8fafc; border:1px solid #e2e8f0; }
-.sa-sub-card:nth-child(1) { border-left:4px solid #2563eb; }
-.sa-sub-card:nth-child(2) { border-left:4px solid #0d9488; }
-.sa-sub-card:nth-child(3) { border-left:4px solid #16a34a; }
-.sa-sub-card:nth-child(4) { border-left:4px solid #d97706; }
-.sa-sub-card:nth-child(5) { border-left:4px solid #7c3aed; }
-.sa-sub-num { min-width:34px; height:34px; border-radius:50%; color:#fff;
-  font-size:14px; font-weight:800; display:flex; align-items:center; justify-content:center;
-  flex-shrink:0; }
-.sa-sub-card:nth-child(1) .sa-sub-num { background:#2563eb; box-shadow:0 2px 6px rgba(37,99,235,.28); }
-.sa-sub-card:nth-child(2) .sa-sub-num { background:#0d9488; box-shadow:0 2px 6px rgba(13,148,136,.28); }
-.sa-sub-card:nth-child(3) .sa-sub-num { background:#16a34a; box-shadow:0 2px 6px rgba(22,163,74,.28); }
-.sa-sub-card:nth-child(4) .sa-sub-num { background:#d97706; box-shadow:0 2px 6px rgba(217,119,6,.28); }
-.sa-sub-card:nth-child(5) .sa-sub-num { background:#7c3aed; box-shadow:0 2px 6px rgba(124,58,237,.28); }
-.sa-sub-body { flex:1; min-width:0; }
-.sa-sub-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:800;
-  color:#475569; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
-.sa-sub-expr { font-family:'Courier New',Courier,monospace; font-size:14px; font-weight:600;
-  color:#1e293b; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
-/* CTA bar */
-.sa-try-it-bar { margin-top:14px; padding:14px 20px; border-radius:12px;
-  background:#fff; border:2px solid #2563eb; color:#1d4ed8;
-  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13.5px; font-weight:700;
-  text-align:center; line-height:1.5; }
-/* ── Step 5: Final Answer ─────────────────────────────────────────────── */
-.sa-final-answer-box { padding:22px 24px; border-radius:16px;
-  background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%); border:2px solid #86efac; }
-.sa-final-answer-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px;
-  font-weight:800; text-transform:uppercase; letter-spacing:1.5px; color:#15803d; margin-bottom:12px; }
-.sa-final-answer-value { font-family:'Courier New',Courier,monospace; font-size:16px; font-weight:800;
-  color:#1e293b; line-height:1.8; white-space:pre-wrap; word-break:break-word;
-  padding:16px 20px; background:#fff; border:1.5px solid #bbf7d0; border-radius:12px;
-  box-shadow:0 2px 10px rgba(22,163,74,.10); }
-.sa-final-insight { margin-top:14px; padding:14px 16px; border-radius:12px;
-  background:#fffbf0; border:1.5px solid #fde68a; }
-.sa-insight-badge { display:block; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
-  font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1.2px;
-  color:#b45309; margin-bottom:6px; }
-.sa-insight-content { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px;
-  color:#78350f; line-height:1.72; }
 </style>
 """
 
 STEP_ANSWER_JS_MODULE = r"""
-(function initStepAnswerSystem(){
+(function initInlineStepByStep(){
   'use strict';
-  var stepAnsOpen=false,_built=false,_cur=0,_data=null;
-  var STEP_LABELS=['Given Data','To Find','Formula Used','Substitution & Explanation','Final Answer'];
-  var STEP_ICONS=['&#x1F4CB;','&#x1F50D;','&#x1F4D0;','&#x1F522;','&#x2705;'];
-  var TOTAL_STEPS=5;
+  var _data=null,_built=false;
 
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
@@ -932,419 +937,153 @@ STEP_ANSWER_JS_MODULE = r"""
     catch(e){return(_data={});}
   }
 
-  /* ── Step 1: Given Data colored boxes ─────────────────────── */
-  function _renderStep0(){
-    var d=_loadData();
-    var boxes=Array.isArray(d.given_data)?d.given_data:[];
-    var h='';
-    for(var b=0;b<boxes.length;b++){h+='<div class="sa-given-box">'+_esc(boxes[b])+'</div>';}
-    if(!h){h='<div class="sa-given-box">No given data found \u2014 check the question</div>';}
-    return '<div class="sa-given-grid">'+h+'</div>';
+  /* ── Build each of the 5 step cards ── */
+  function _buildCard(idx,title,innerHtml){
+    var cls='sbs-step-card sbs-s'+(idx%5);
+    return '<div class="'+cls+'">'
+      +'<div class="sbs-step-num-col">'+(idx+1)+'</div>'
+      +'<div class="sbs-step-body">'
+      +'<div class="sbs-step-title">'+_esc(title)+'</div>'
+      +innerHtml
+      +'</div></div>';
   }
 
-  /* ── Step 2: Conditions to Find (vertical roman-numeral list) */
-  function _renderStep1(){
+  /* Step 1 – Given Data */
+  function _buildStep0(){
+    var d=_loadData();
+    var boxes=Array.isArray(d.given_data)?d.given_data:[];
+    var h='<div class="sbs-given-grid">';
+    for(var b=0;b<boxes.length;b++){h+='<div class="sbs-given-box">'+_esc(boxes[b])+'</div>';}
+    if(!boxes.length){h+='<div class="sbs-given-box">See the question for given values</div>';}
+    h+='</div>';
+    return _buildCard(0,'Given Data',h);
+  }
+
+  /* Step 2 – To Find */
+  function _buildStep1(){
     var d=_loadData();
     var items=Array.isArray(d.to_find)?d.to_find:[];
     var ROMAN=['i','ii','iii','iv','v','vi','vii','viii','ix','x'];
-    var h='';
+    var h='<div class="sbs-step-desc">';
     for(var t=0;t<items.length;t++){
-      h+='<div class="sa-tofind-item">'
-        +'<div class="sa-tofind-icon">'+_esc(ROMAN[t]||String(t+1))+'</div>'
-        +'<div class="sa-tofind-text">'+_esc(items[t])+'</div>'
-        +'</div>';
+      h+='<strong>'+_esc(ROMAN[t]||String(t+1))+') </strong>'+_esc(items[t])+'<br>';
     }
-    if(!h){h='<div class="sa-tofind-item"><div class="sa-tofind-icon">i</div><div class="sa-tofind-text">See the question for what to find</div></div>';}
-    return '<div class="sa-tofind-list">'+h+'</div>';
+    if(!items.length){h+='See the question for what to find';}
+    h+='</div>';
+    return _buildCard(1,'What We Need to Find',h);
   }
 
-  /* ── Step 3: Formula flowchart ────────────────────────────── */
-  function _renderStep2(){
+  /* Step 3 – Formulas flowchart */
+  function _buildStep2(){
     var d=_loadData();
     var rows=Array.isArray(d.formulas)?d.formulas:[];
-    var fc='';
+    var fc='<div class="sbs-flowchart">';
     for(var r=0;r<rows.length;r++){
       var row=rows[r];
       var clr=(typeof row==='object'&&row.color)?String(row.color):'blue';
       var txt=(typeof row==='object'&&row.text)?String(row.text):String(row);
-      fc+='<div class="sa-flow-formula-box '+_esc(clr)+'">'+_esc(txt)+'</div>';
-      if(r<rows.length-1){fc+='<div class="sa-flow-arrow"></div>';}
+      fc+='<div class="sbs-flow-box '+_esc(clr)+'">'+_esc(txt)+'</div>';
+      if(r<rows.length-1){fc+='<div class="sbs-flow-arrow"></div>';}
     }
-    if(!fc){fc='<div class="sa-flow-formula-box blue">No formula available</div>';}
-    var note=d.formula_note?('<div class="sa-flow-footer-note">'+_esc(d.formula_note)+'</div>'):'';
-    return '<div class="sa-flowchart">'+fc+'</div>'+note;
+    if(!rows.length){fc+='<div class="sbs-flow-box blue">No formula available</div>';}
+    fc+='</div>';
+    if(d.formula_note){fc+='<div class="sbs-flow-note">'+_esc(d.formula_note)+'</div>';}
+    return _buildCard(2,'Formula / Core Formula',fc);
   }
 
-  /* ── Step 4: Substitution & Explanation numbered cards ─────── */
-  function _renderStep3(){
+  /* Step 4 – Substitution & Calculation */
+  function _buildStep3(){
     var d=_loadData();
     var cards=Array.isArray(d.substitution_steps)?d.substitution_steps:[];
-    var h='';
+    var h='<div class="sbs-sub-list">';
     for(var c=0;c<cards.length;c++){
       var card=cards[c];
       var title=(typeof card==='object'&&card.title)?String(card.title):('Step '+(c+1));
       var expr=(typeof card==='object'&&card.expr)?String(card.expr):String(card);
-      h+='<div class="sa-sub-card">'
-        +'<div class="sa-sub-num">'+(c+1)+'</div>'
-        +'<div class="sa-sub-body">'
-        +'<div class="sa-sub-title">'+_esc(title)+'</div>'
-        +'<div class="sa-sub-expr">'+_esc(expr)+'</div>'
+      h+='<div class="sbs-sub-item">'
+        +'<div class="sbs-sub-num">'+(c+1)+'</div>'
+        +'<div class="sbs-sub-body">'
+        +'<div class="sbs-sub-title">'+_esc(title)+'</div>'
+        +'<div class="sbs-sub-expr">'+_esc(expr)+'</div>'
         +'</div></div>';
     }
-    if(!h){
-      h='<div class="sa-sub-card">'
-       +'<div class="sa-sub-num">1</div>'
-       +'<div class="sa-sub-body"><div class="sa-sub-title">Calculation</div>'
-       +'<div class="sa-sub-expr">See solution for calculation details</div>'
-       +'</div></div>';
+    if(!cards.length){
+      h+='<div class="sbs-sub-item"><div class="sbs-sub-num">1</div>'
+        +'<div class="sbs-sub-body"><div class="sbs-sub-title">Calculation</div>'
+        +'<div class="sbs-sub-expr">See solution for calculation details</div></div></div>';
     }
-    return '<div class="sa-sub-container">'+h+'</div>'
-      +'<div class="sa-try-it-bar">&#x1F4A1; Try it yourself! Use the <strong>Answer Box</strong> below to check your answer.</div>';
+    h+='</div>';
+    return _buildCard(3,'Substitution & Calculation',h);
   }
 
-  /* ── Step 5: Final Answer highlighted display ──────────────── */
-  function _renderStep4(){
+  /* Step 5 – Final Answer */
+  function _buildStep4(){
     var d=_loadData();
     var answer=d.final_answer||'See complete solution';
     var insight=d.key_insight||'';
-    var h='<div class="sa-final-answer-box">'
-      +'<div class="sa-final-answer-label">&#x2705; Final Answer</div>'
-      +'<div class="sa-final-answer-value">'+_esc(answer)+'</div>';
+    var h='<div class="sbs-final-box">'
+      +'<div class="sbs-final-label">&#x2705; Final Answer</div>'
+      +'<div class="sbs-final-value">'+_esc(answer)+'</div>';
     if(insight){
-      h+='<div class="sa-final-insight">'
-        +'<span class="sa-insight-badge">&#x1F4A1; Key Insight</span>'
-        +'<div class="sa-insight-content">'+_esc(insight)+'</div>'
+      h+='<div class="sbs-insight">'
+        +'<span class="sbs-insight-badge">&#x1F4A1; Key Insight</span>'
+        +'<div class="sbs-insight-text">'+_esc(insight)+'</div>'
         +'</div>';
     }
     h+='</div>';
-    return h;
+    return _buildCard(4,'Final Answer',h);
   }
 
-  /* ── Render current step ──────────────────────────────────── */
-  function _renderCard(){
-    var container=_el('stepans-items-container');
+  /* Build and show the entire inline section */
+  function buildInlineSection(){
+    if(_built)return;_built=true;
+    var container=_el('sbs-steps-container');
     if(!container)return;
-    var inner='';
-    if(_cur===0)inner=_renderStep0();
-    else if(_cur===1)inner=_renderStep1();
-    else if(_cur===2)inner=_renderStep2();
-    else if(_cur===3)inner=_renderStep3();
-    else if(_cur===4)inner=_renderStep4();
+    container.innerHTML=_buildStep0()+_buildStep1()+_buildStep2()+_buildStep3()+_buildStep4();
+  }
 
-    container.innerHTML='<div class="sa-step-card sa-step-'+_cur+'" id="sa-step-'+_cur+'">'
-      +'<div class="sa-step-num">'+STEP_ICONS[_cur]+'</div>'
-      +'<div class="sa-step-body">'
-      +'<div class="sa-step-title">Step '+(_cur+1)+': '+_esc(STEP_LABELS[_cur])+'</div>'
-      +inner
-      +'</div></div>';
-
-    var card=container.querySelector('.sa-step-card');
-    if(card){
-      card.style.transition='none';
-      setTimeout(function(){
-        card.style.transition='opacity .22s ease,transform .22s ease';
-        card.classList.add('visible');
-      },20);
+  /* Called when animation reaches last step */
+  window.showInlineStepByStep=function(){
+    buildInlineSection();
+    var sec=_el('qanim-stepbystep-section');
+    if(sec){
+      sec.style.display='block';
+      setTimeout(function(){sec.scrollIntoView({behavior:'smooth',block:'start'});},120);
     }
-  }
+  };
 
-  function _buildFlowTrack(){
-    var track=_el('sa-flow-track');if(!track)return;
-    var h='';
-    for(var i=0;i<TOTAL_STEPS;i++){
-      h+='<button type="button" class="sa-flow-node" data-idx="'+i+'" title="'+_esc(STEP_LABELS[i])+'">'
-        +'<div class="sa-flow-dot">'+(i+1)+'</div>'
-        +'<div class="sa-flow-node-label">'+_esc(STEP_LABELS[i])+'</div>'
-        +'</button>';
-      if(i<TOTAL_STEPS-1){h+='<div class="sa-flow-line" data-line="'+i+'"></div>';}
-    }
-    track.innerHTML=h;
-    var nodes=track.querySelectorAll('.sa-flow-node');
-    for(var n=0;n<nodes.length;n++){
-      (function(idx){
-        nodes[idx].addEventListener('click',function(e){e.stopPropagation();_goTo(idx);});
-      })(n);
-    }
-  }
+  /* Stubs so old button references don't throw errors */
+  window.openStepAnswer=function(){window.showInlineStepByStep();};
+  window.closeStepAnswer=function(){};
+  window.toggleStepAnswer=function(){window.showInlineStepByStep();};
 
-  function _updateFlowTrack(){
-    var track=_el('sa-flow-track');if(!track)return;
-    var nodes=track.querySelectorAll('.sa-flow-node');
-    var lines=track.querySelectorAll('.sa-flow-line');
-    for(var i=0;i<nodes.length;i++){
-      nodes[i].classList.remove('sa-active','sa-done');
-      if(i===_cur)nodes[i].classList.add('sa-active');
-      else if(i<_cur)nodes[i].classList.add('sa-done');
-    }
-    for(var j=0;j<lines.length;j++){
-      var lidx=parseInt(lines[j].getAttribute('data-line'),10);
-      if(lidx<_cur)lines[j].classList.add('sa-done');else lines[j].classList.remove('sa-done');
-    }
-    var active=track.querySelector('.sa-flow-node.sa-active');
-    if(active&&active.scrollIntoView){active.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});}
-  }
-
-  function _updateFooter(){
-    var prevBtn=_el('sa-prev-btn'),nextBtn=_el('sa-next-btn'),label=_el('sa-progress-label');
-    if(label)label.textContent='Step '+(_cur+1)+' of '+TOTAL_STEPS;
-    if(prevBtn)prevBtn.disabled=(_cur<=0);
-    if(nextBtn){
-      nextBtn.disabled=false;
-      nextBtn.textContent=(_cur>=TOTAL_STEPS-1)?'Done \u2713':'Next \u203A';
-    }
-  }
-
-  function _goTo(idx){
-    if(idx<0)idx=0;if(idx>TOTAL_STEPS-1)idx=TOTAL_STEPS-1;
-    _cur=idx;_renderCard();_updateFlowTrack();_updateFooter();
-  }
-
-  function _buildPanel(){
-    if(_built)return;_built=true;
-    _cur=0;_data=null;
-    _buildFlowTrack();_renderCard();_updateFlowTrack();_updateFooter();
-  }
-
-  function openStepAnswer(){
-    _buildPanel();
-    var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');if(!backdrop||!panel)return;
-    backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');stepAnsOpen=true;
-  }
-
-  function closeStepAnswer(){
-    var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');
-    if(backdrop)backdrop.classList.remove('open');
-    if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
-    stepAnsOpen=false;
-  }
-
-  window.openStepAnswer=openStepAnswer;window.closeStepAnswer=closeStepAnswer;
-  window.toggleStepAnswer=function(){stepAnsOpen?closeStepAnswer():openStepAnswer();};
-
+  /* Wire up the "Step by Step Answer" ctrl-bar button to also trigger the inline section */
   _onReady(function(){
-    function wireBtn(){var btn=document.getElementById('stepans-ctrl-btn');
-      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();});}
-      else{setTimeout(wireBtn,80);}
+    function wireBtn(){
+      var btn=_el('stepans-ctrl-btn');
+      if(btn){
+        btn.removeAttribute('onclick');
+        btn.addEventListener('click',function(e){e.stopPropagation();window.showInlineStepByStep();});
+      } else {setTimeout(wireBtn,80);}
     }
     wireBtn();
-    var closeBtn=_el('stepans-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeStepAnswer();});
-    var backdrop=_el('stepans-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeStepAnswer();});
-    var prevBtn=_el('sa-prev-btn');if(prevBtn)prevBtn.addEventListener('click',function(e){e.stopPropagation();_goTo(_cur-1);});
-    var nextBtn=_el('sa-next-btn');if(nextBtn)nextBtn.addEventListener('click',function(e){
-      e.stopPropagation();if(_cur>=TOTAL_STEPS-1){closeStepAnswer();}else{_goTo(_cur+1);}
-    });
-    document.addEventListener('keydown',function(e){
-      if(!stepAnsOpen)return;
-      if(e.key==='Escape')closeStepAnswer();
-      else if(e.key==='ArrowRight'||e.key==='ArrowDown')_goTo(_cur+1);
-      else if(e.key==='ArrowLeft'||e.key==='ArrowUp')_goTo(_cur-1);
-    });
   });
 })();
 
-"""  # end STEP_ANSWER_JS_MODULE – orphaned legacy helpers removed
-
-_STEP_ANSWER_JS_MODULE_DUMMY = r"""
-  function _parseFlowchart(bodyText){
-    var rows=[];
-    var colors=['blue','orange','purple','pink'];
-    /* Replace arrow chars and split on safe delimiters only — no non-ASCII in regex */
-    var raw=bodyText;
-    raw=raw.replace(/\u2192|\u2794|\u27f9|=>/g,'|');
-    var lines=raw.split(/[;|\n\r]+/);
-    for(var i=0;i<lines.length;i++){
-      var ln=lines[i].trim().replace(/^[-*]+\s*/,'');
-      if(ln.length>2){rows.push({text:ln,color:colors[rows.length%4]});}
-      if(rows.length>=6)break;
-    }
-    if(rows.length<=1){
-      var alt=bodyText.split(',');
-      rows=[];
-      for(var j=0;j<alt.length&&j<5;j++){var s=alt[j].trim();if(s.length>1){rows.push({text:s,color:colors[j%4]});}}
-    }
-    if(rows.length===0){rows=[{text:bodyText,color:'blue'}];}
-    return rows;
-  }
-
-  /* ── Extract substitution sub-steps from step 5 body text ─────────────── */
-  function _parseSubstitution(bodyText){
-    var labels=['Write Formula','Substitute Values','Simplify','Result'];
-    var cards=[];
-    var DELIM='||SPLIT||';
-    var raw=bodyText;
-    /* Replace arrow/newline chars — all via unicode escapes, safe in any browser */
-    raw=raw.replace(/\u2192|\u2794|\u27f9|=>/g,DELIM);
-    raw=raw.replace(/\n|\r/g,DELIM);
-    raw=raw.replace(/(\d)\.\s+([A-Z])/g,'$1.'+DELIM+'$2');
-    raw=raw.replace(/\.\s+(Write|Substitute|Plug|Put|Calculate|Solve|Result|Final|Therefore|Thus|Hence)\b/gi,DELIM+'$1');
-    var parts=raw.split(DELIM);
-    for(var i=0;i<parts.length&&cards.length<4;i++){
-      var p=parts[i].trim().replace(/^\d+[.)]\s*/,'');
-      if(p.length>2){cards.push({title:labels[cards.length]||('Step '+(cards.length+1)),expr:p});}
-    }
-    if(cards.length<=1){
-      var alt2=bodyText.replace(/,\s*([A-Z])/g,DELIM+'$1').split(DELIM);
-      if(alt2.length>1){
-        cards=[];
-        for(var k=0;k<alt2.length&&k<4;k++){
-          var q=alt2[k].trim();
-          if(q.length>2){cards.push({title:labels[k]||('Step '+(k+1)),expr:q});}
-        }
-      }
-    }
-    if(cards.length===0){cards=[{title:'Substitution',expr:bodyText}];}
-    return cards;
-  }
-
-  /* ── Render a step card ─────────────────────────────────────────────────── */
-  function _renderCard(){
-    var container=_el('stepans-items-container');if(!container)return;
-    if(!_steps||_steps.length===0){
-      container.innerHTML='<div class="sa-empty">No step-by-step solution is available.</div>';return;
-    }
-    var parts=_splitStep(_steps[_cur],_cur);
-    var stepNum=parts.num;   /* 1-based step number */
-    var inner='';
-
-    if(stepNum===1){
-      /* ── Step 1: Given data boxes ── */
-      var boxes=_parseGivenBoxes(parts.body);
-      var boxHtml='';
-      for(var b=0;b<boxes.length;b++){boxHtml+='<div class="sa-given-box">'+_esc(boxes[b])+'</div>';}
-      if(!boxHtml){boxHtml='<div class="sa-given-box">'+_esc(parts.body)+'</div>';}
-      inner='<div class="sa-given-grid">'+boxHtml+'</div>';
-    } else if(stepNum===4){
-      /* ── Step 4: Formula flowchart ── */
-      var rows=_parseFlowchart(parts.body);
-      var fcHtml='';
-      for(var r=0;r<rows.length;r++){
-        fcHtml+='<div class="sa-flow-formula-box '+_esc(rows[r].color)+'">'+_esc(rows[r].text)+'</div>';
-        if(r<rows.length-1){fcHtml+='<div class="sa-flow-arrow"></div>';}
-      }
-      inner='<div class="sa-flowchart">'+fcHtml+'</div>';
-    } else if(stepNum===5){
-      /* ── Step 5: Substitution steps ── */
-      var cards=_parseSubstitution(parts.body);
-      var subHtml='';
-      for(var c=0;c<cards.length;c++){
-        subHtml+='<div class="sa-sub-card"><div class="sa-sub-num">'+(c+1)+'</div>'
-          +'<div class="sa-sub-body"><div class="sa-sub-title">'+_esc(cards[c].title)+'</div>'
-          +'<div class="sa-sub-expr">'+_esc(cards[c].expr)+'</div></div></div>';
-      }
-      inner='<div class="sa-sub-container">'+subHtml+'</div>';
-    } else {
-      /* ── Default: plain text card (Steps 2, 3, 6, …) ── */
-      inner='<div class="sa-step-text">'+_esc(parts.body)+'</div>';
-    }
-
-    container.innerHTML='<div class="sa-step-card" id="sa-step-'+_cur+'">'
-      +'<div class="sa-step-num">'+(_cur+1)+'</div>'
-      +'<div class="sa-step-body"><div class="sa-step-title">'+_esc(parts.title)+'</div>'
-      +inner+'</div></div>';
-
-    var card=container.querySelector('.sa-step-card');
-    if(card){card.style.transition='none';setTimeout(function(){card.style.transition='opacity .22s ease,transform .22s ease';card.classList.add('visible');},20);}
-  }
-
-  function _buildFlowTrack(){
-    var track=_el('sa-flow-track');if(!track)return;
-    if(_steps.length===0){track.innerHTML='';return;}
-    var html='';
-    for(var i=0;i<_steps.length;i++){
-      html+='<button type="button" class="sa-flow-node" data-idx="'+i+'" title="'+_esc(_splitStep(_steps[i],i).title)+'"><div class="sa-flow-dot">'+(i+1)+'</div></button>';
-      if(i<_steps.length-1){html+='<div class="sa-flow-line" data-line="'+i+'"></div>';}
-    }
-    track.innerHTML=html;
-    var nodes=track.querySelectorAll('.sa-flow-node');
-    for(var n=0;n<nodes.length;n++){
-      nodes[n].addEventListener('click',function(e){
-        e.stopPropagation();
-        var idx=parseInt(this.getAttribute('data-idx'),10);
-        if(!isNaN(idx))_goTo(idx);
-      });
-    }
-  }
-  function _updateFlowTrack(){
-    var track=_el('sa-flow-track');if(!track)return;
-    var nodes=track.querySelectorAll('.sa-flow-node');
-    var lines=track.querySelectorAll('.sa-flow-line');
-    for(var i=0;i<nodes.length;i++){
-      nodes[i].classList.remove('sa-active','sa-done');
-      if(i===_cur)nodes[i].classList.add('sa-active');
-      else if(i<_cur)nodes[i].classList.add('sa-done');
-    }
-    for(var j=0;j<lines.length;j++){
-      var lidx=parseInt(lines[j].getAttribute('data-line'),10);
-      if(lidx<_cur)lines[j].classList.add('sa-done');else lines[j].classList.remove('sa-done');
-    }
-    var activeNode=track.querySelector('.sa-flow-node.sa-active');
-    if(activeNode&&activeNode.scrollIntoView){activeNode.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});}
-  }
-  function _updateFooter(){
-    var prevBtn=_el('sa-prev-btn'),nextBtn=_el('sa-next-btn'),label=_el('sa-progress-label');
-    var n=_steps.length;
-    if(label)label.textContent=n?('Step '+(_cur+1)+' of '+n):'No steps';
-    if(prevBtn)prevBtn.disabled=(_cur<=0);
-    if(nextBtn){
-      nextBtn.disabled=(n===0);
-      nextBtn.textContent=(n>0&&_cur>=n-1)?'Done \u2713':'Next \u203A';
-    }
-  }
-  function _goTo(idx){
-    if(!_steps||_steps.length===0)return;
-    if(idx<0)idx=0;if(idx>_steps.length-1)idx=_steps.length-1;
-    _cur=idx;
-    _renderCard();_updateFlowTrack();_updateFooter();
-  }
-  function _buildPanel(){
-    if(_built)return;_built=true;
-    _steps=_loadSteps();_cur=0;
-    _buildFlowTrack();_renderCard();_updateFlowTrack();_updateFooter();
-  }
-  function openStepAnswer(){
-    _buildPanel();
-    var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');if(!backdrop||!panel)return;
-    backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');stepAnsOpen=true;
-  }
-  function closeStepAnswer(){
-    var backdrop=_el('stepans-backdrop'),panel=_el('stepans-panel');
-    if(backdrop)backdrop.classList.remove('open');
-    if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
-    stepAnsOpen=false;
-  }
-  window.openStepAnswer=openStepAnswer;window.closeStepAnswer=closeStepAnswer;
-  window.toggleStepAnswer=function(){stepAnsOpen?closeStepAnswer():openStepAnswer();};
-  _onReady(function(){
-    function wireBtn(){var btn=document.getElementById('stepans-ctrl-btn');
-      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();stepAnsOpen?closeStepAnswer():openStepAnswer();});}
-      else{setTimeout(wireBtn,80);}
-    }
-    wireBtn();
-    var closeBtn=_el('stepans-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeStepAnswer();});
-    var backdrop=_el('stepans-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeStepAnswer();});
-    var prevBtn=_el('sa-prev-btn');if(prevBtn)prevBtn.addEventListener('click',function(e){e.stopPropagation();_goTo(_cur-1);});
-    var nextBtn=_el('sa-next-btn');if(nextBtn)nextBtn.addEventListener('click',function(e){e.stopPropagation();if(_cur>=_steps.length-1){closeStepAnswer();}else{_goTo(_cur+1);}});
-    document.addEventListener('keydown',function(e){
-      if(!stepAnsOpen)return;
-      if(e.key==='Escape')closeStepAnswer();
-      else if(e.key==='ArrowRight')_goTo(_cur+1);
-      else if(e.key==='ArrowLeft')_goTo(_cur-1);
-    });
-  });
-})();
-"""
+"""  # end STEP_ANSWER_JS_MODULE
 
 
 def inject_step_answer_panel(html, gemini_sol):
     """
-    Inject the structured 5-step answer panel.
-    gemini_sol: dict from GeminiSolutionGenerator.generate() containing
-                given_data, to_find, formulas, formula_note,
-                substitution_steps, final_answer, key_insight.
+    Inject the inline 5-step solution section that auto-reveals after animation completes.
+    Also patches the animation's nextStep() to call showInlineStepByStep() on last step.
+    gemini_sol: dict from GeminiSolutionGenerator.generate().
     """
+    # Remove any pre-existing data/style tags to avoid duplication
     html = re.sub(r'<script[^>]+id=["\']__step_answer_data__["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
     html = re.sub(r'<style[^>]+id=["\']qanim-stepans-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
 
+    # 1. Inject solution data tag into <head>
     try:
         data_tag = _build_step_answer_data_tag(gemini_sol)
         if '</head>' in html:
@@ -1354,20 +1093,23 @@ def inject_step_answer_panel(html, gemini_sol):
     except Exception as e:
         QAnimLogger.warn("StepAnswerInjector", f"Data tag insertion failed: {e}")
 
+    # 2. Inject CSS into <head>
     try:
         if '</head>' in html:
             html = html.replace('</head>', _STEP_ANSWER_CSS + '\n</head>', 1)
     except Exception as e:
         QAnimLogger.warn("StepAnswerInjector", f"CSS insertion failed: {e}")
 
+    # 3. Inject the inline DOM section just before </body>
     try:
-        body_match = re.search(r'<body[^>]*>', html, re.IGNORECASE)
-        if body_match:
-            ins = body_match.end()
-            html = html[:ins] + '\n' + _STEP_ANSWER_DOM + html[ins:]
+        if '</body>' in html:
+            html = html.replace('</body>', _STEP_ANSWER_DOM + '\n</body>', 1)
+        else:
+            html += '\n' + _STEP_ANSWER_DOM
     except Exception as e:
         QAnimLogger.warn("StepAnswerInjector", f"DOM insertion failed: {e}")
 
+    # 4. Inject JS module
     try:
         sa_script = '<script>\n' + STEP_ANSWER_JS_MODULE + '\n</script>'
         if '</body>' in html:
@@ -1377,8 +1119,56 @@ def inject_step_answer_panel(html, gemini_sol):
     except Exception as e:
         QAnimLogger.warn("StepAnswerInjector", f"JS module insertion failed: {e}")
 
+    # 5. Patch the animation's nextStep() / applyStep() so that reaching the last
+    #    animation step automatically reveals the inline solution section.
+    _ANIM_PATCH_JS = """
+<script id="qanim-laststep-patch">
+(function patchAnimLastStep(){
+  'use strict';
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  _onReady(function(){
+    /* Wrap applyStep to detect last step */
+    var _origApply=window.applyStep;
+    if(typeof _origApply==='function'){
+      window.applyStep=function(idx){
+        _origApply(idx);
+        var total=Array.isArray(window.stepsData)?window.stepsData.length:0;
+        if(total>0&&idx>=total-1){
+          if(typeof window.showInlineStepByStep==='function'){
+            setTimeout(window.showInlineStepByStep,600);
+          }
+        }
+      };
+    }
+    /* Also wrap nextStep for Gemini-generated animations */
+    var _origNext=window.nextStep;
+    if(typeof _origNext==='function'){
+      window.nextStep=function(){
+        var total=Array.isArray(window.stepsData)?window.stepsData.length:0;
+        var cur=typeof window.currentStep==='number'?window.currentStep:-1;
+        _origNext();
+        var newCur=typeof window.currentStep==='number'?window.currentStep:cur;
+        if(total>0&&newCur>=total-1){
+          if(typeof window.showInlineStepByStep==='function'){
+            setTimeout(window.showInlineStepByStep,600);
+          }
+        }
+      };
+    }
+  });
+})();
+</script>
+"""
+    try:
+        if '</body>' in html:
+            html = html.replace('</body>', _ANIM_PATCH_JS + '\n</body>', 1)
+        else:
+            html += '\n' + _ANIM_PATCH_JS
+    except Exception as e:
+        QAnimLogger.warn("StepAnswerInjector", f"Anim patch injection failed: {e}")
+
     n_subs = len(gemini_sol.get("substitution_steps") or [])
-    QAnimLogger.ok("StepAnswerInjector", f"Injected 5-step structured answer panel ({n_subs} substitution step(s))")
+    QAnimLogger.ok("StepAnswerInjector", f"Injected inline step-by-step section ({n_subs} substitution step(s))")
     return html
 
 
@@ -2116,10 +1906,6 @@ _CONTROLS_BAR_CSS = """
 
 _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="View the full step-by-step solution">
-    <span>&#x1FA9C;</span><span class="ctrl-label">Step by Step Answer</span>
-  </button>
-  <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
   </button>
