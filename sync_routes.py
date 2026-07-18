@@ -50,6 +50,26 @@ router = APIRouter(prefix="/sync", tags=["Cloud Sync"])
 
 
 # ════════════════════════════════════════════════════════════════
+# PUBLIC CONFIG  —  GET /sync/config  (no JWT required)
+# Returns the Supabase public URL and anon key so the browser
+# can initialise Supabase Realtime WebSocket subscriptions.
+# The anon key is intentionally public — it only allows read
+# access to rows/buckets that have permissive RLS policies.
+# ════════════════════════════════════════════════════════════════
+
+@router.get("/config", status_code=200)
+def get_public_config():
+    """
+    Returns public Supabase configuration needed by the browser.
+    No authentication required.
+    """
+    return {
+        "supabase_url":      os.getenv("SUPABASE_URL", ""),
+        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY", ""),
+    }
+
+
+# ════════════════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════════════════
 
@@ -1462,3 +1482,146 @@ def delete_global_animation(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete global animation: {e}")
 
+
+
+# ════════════════════════════════════════════════════════════════
+# LESSONS — Admin Content Management + Kahoot-Style Library
+# ════════════════════════════════════════════════════════════════
+
+LESSON_BUCKETS = {
+    "thumbnail": "lesson-thumbnails",
+    "animation": "lesson-videos",
+    "theory":    "lesson-html",
+}
+
+
+def _is_admin(current_user: dict) -> bool:
+    return (current_user.get("email") or "").strip().lower() == MAIN_USER_EMAIL.strip().lower()
+
+
+def _require_admin(current_user: dict) -> None:
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Only the admin can perform this action.")
+
+
+def _get_service_client():
+    supa_url = os.getenv("SUPABASE_URL", "")
+    supa_key = os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "")
+    if not supa_url or not supa_key:
+        raise HTTPException(status_code=503, detail="Supabase not configured.")
+    from supabase import create_client as _create_client
+    return _create_client(supa_url, supa_key)
+
+
+@router.post("/lessons/upload-file", status_code=200)
+async def upload_lesson_file(
+    file: UploadFile = File(...),
+    file_type: str = Form(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Admin-only: upload thumbnail/video/html to Supabase Storage."""
+    _require_admin(current_user)
+    if file_type not in LESSON_BUCKETS:
+        raise HTTPException(status_code=400, detail=f"file_type must be one of: {list(LESSON_BUCKETS.keys())}")
+    bucket = LESSON_BUCKETS[file_type]
+    import uuid as _uuid
+    safe_name   = (file.filename or "file").replace(" ", "_")
+    unique_name = f"{_uuid.uuid4().hex}_{safe_name}"
+    data = await file.read()
+    service_sb = _get_service_client()
+    try:
+        service_sb.storage.from_(bucket).upload(
+            unique_name, data,
+            file_options={"content-type": file.content_type or "application/octet-stream"},
+        )
+        supa_url   = os.getenv("SUPABASE_URL", "")
+        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
+        print(f"[LESSONS] Uploaded {file_type} -> {public_url}")
+        return {"public_url": public_url, "storage_path": unique_name, "bucket": bucket}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+
+class LessonCreate(BaseModel):
+    title:         str           = Field(..., min_length=1, max_length=200)
+    thumbnail_url: Optional[str] = None
+    theory_url:    Optional[str] = None
+    animation_url: Optional[str] = None
+    quiz_data:     list          = Field(default_factory=list)
+
+
+@router.post("/lessons", status_code=201)
+def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_current_user)):
+    """Admin-only: insert a new lesson row into public.lessons."""
+    _require_admin(current_user)
+    service_sb = _get_service_client()
+    row = {
+        "title":         payload.title.strip(),
+        "thumbnail_url": payload.thumbnail_url or None,
+        "theory_url":    payload.theory_url    or None,
+        "animation_url": payload.animation_url or None,
+        "quiz_data":     payload.quiz_data,
+        "created_at":    _now(),
+        "updated_at":    _now(),
+    }
+    try:
+        res     = service_sb.table("lessons").insert(row).execute()
+        created = (res.data or [{}])[0]
+        print(f"[LESSONS] Created lesson '{payload.title}' -> id={created.get('id')}")
+        return {"success": True, "lesson": created}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create lesson: {e}")
+
+
+@router.get("/lessons", status_code=200)
+def list_lessons(current_user: dict = Depends(get_current_user)):
+    """All authenticated users: list all lessons ordered by created_at asc."""
+    service_sb = _get_service_client()
+    try:
+        res = (
+            service_sb.table("lessons")
+            .select("id, title, thumbnail_url, theory_url, animation_url, quiz_data, created_at")
+            .order("created_at", desc=False)
+            .execute()
+        )
+        lessons = res.data or []
+        return {"lessons": lessons, "count": len(lessons)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list lessons: {e}")
+
+
+@router.delete("/lessons/{lesson_id}", status_code=200)
+def delete_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Admin-only: delete lesson row and its Supabase Storage files."""
+    _require_admin(current_user)
+    service_sb = _get_service_client()
+    try:
+        row_res = service_sb.table("lessons").select("*").eq("id", lesson_id).execute()
+        rows = row_res.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Lesson {lesson_id} not found.")
+        lesson = rows[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch lesson: {e}")
+
+    def _del_storage(bucket: str, url):
+        if not url:
+            return
+        try:
+            filename = url.split(f"/{bucket}/")[-1]
+            service_sb.storage.from_(bucket).remove([filename])
+        except Exception as se:
+            print(f"[LESSONS] Could not delete {bucket}/{filename}: {se}")
+
+    _del_storage("lesson-thumbnails", lesson.get("thumbnail_url"))
+    _del_storage("lesson-videos",     lesson.get("animation_url"))
+    _del_storage("lesson-html",       lesson.get("theory_url"))
+
+    try:
+        service_sb.table("lessons").delete().eq("id", lesson_id).execute()
+        print(f"[LESSONS] Deleted lesson {lesson_id}")
+        return {"success": True, "message": f"Lesson {lesson_id} deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete lesson: {e}")
