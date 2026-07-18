@@ -537,6 +537,39 @@ window.addEventListener('unhandledrejection',function(e){
 """
 
 
+def _insert_before_container_close(html, open_tag_regex, insertion):
+    """
+    Find `open_tag_regex` (e.g. an opening <div id="..."> tag) and insert
+    `insertion` immediately before that specific element's TRUE closing tag,
+    correctly skipping over any nested elements of the same tag type in
+    between. Returns (new_html, True) on success, (html, False) if the
+    opening tag wasn't found or was never closed.
+
+    This replaces brittle non-greedy regexes like `(.*?)</div>`, which stop
+    at the FIRST closing tag encountered — including nested ones — rather
+    than the matching one, and literal-string anchors, which silently fail
+    to match on any whitespace/formatting drift.
+    """
+    m = re.search(open_tag_regex, html, re.IGNORECASE)
+    if not m:
+        return html, False
+    tag_name_match = re.match(r'<\s*([a-zA-Z0-9]+)', m.group(0))
+    if not tag_name_match:
+        return html, False
+    tag = tag_name_match.group(1)
+    tag_re = re.compile(r'<' + tag + r'\b[^>]*>|</' + tag + r'\s*>', re.IGNORECASE)
+    depth = 1
+    for tm in tag_re.finditer(html, m.end()):
+        if tm.group(0).lower().startswith('</'):
+            depth -= 1
+        else:
+            depth += 1
+        if depth == 0:
+            close_start = tm.start()
+            return html[:close_start] + '\n' + insertion + html[close_start:], True
+    return html, False
+
+
 # ===========================================================================
 #  MODULE 6 — ToFind Panel
 # ===========================================================================
@@ -604,6 +637,7 @@ _TO_FIND_CSS = """
 TO_FIND_JS_MODULE = r"""
 (function initToFindSystem(){
   'use strict';
+  if(window.__qanimToFindInit)return;window.__qanimToFindInit=true;
   var toFindOpen=false,_panelBuilt=false;
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function _el(id){return document.getElementById(id);}
@@ -633,7 +667,7 @@ TO_FIND_JS_MODULE = r"""
   }
   window.openToFind=openToFind;window.closeToFind=closeToFind;window.toggleToFind=function(){toFindOpen?closeToFind():openToFind();};
   _onReady(function(){
-    var tfBtn=_el('tofind-btn')||document.querySelector('[data-tofind-btn]');
+    var tfBtn=_el('tofind-ctrl-btn')||_el('tofind-btn')||document.querySelector('[data-tofind-btn]');
     if(tfBtn){tfBtn.removeAttribute('onclick');tfBtn.addEventListener('click',function(e){e.stopPropagation();openToFind();});}
     var closeBtn=_el('tofind-close');if(closeBtn)closeBtn.addEventListener('click',closeToFind);
     var backdrop=_el('tofind-backdrop');if(backdrop)backdrop.addEventListener('click',closeToFind);
@@ -666,7 +700,7 @@ def inject_to_find_system(html, targets):
     except Exception as e:
         QAnimLogger.warn("ToFindInjector", f"DOM insertion failed: {e}")
     try:
-        tofind_script = '<script>\n' + TO_FIND_JS_MODULE + '\n</script>'
+        tofind_script = '<script id="qanim-js-tofind">\n' + TO_FIND_JS_MODULE + '\n</script>'
         if '</body>' in html:
             html = html.replace('</body>', tofind_script + '\n</body>', 1)
         else:
@@ -925,6 +959,7 @@ _STEP_ANSWER_CSS = """
 STEP_ANSWER_JS_MODULE = r"""
 (function initInlineStepByStep(){
   'use strict';
+  if(window.__qanimStepAnswerInit)return;window.__qanimStepAnswerInit=true;
   var _data=null,_built=false;
 
   function _el(id){return document.getElementById(id);}
@@ -1111,7 +1146,7 @@ def inject_step_answer_panel(html, gemini_sol):
 
     # 4. Inject JS module
     try:
-        sa_script = '<script>\n' + STEP_ANSWER_JS_MODULE + '\n</script>'
+        sa_script = '<script id="qanim-js-stepanswer">\n' + STEP_ANSWER_JS_MODULE + '\n</script>'
         if '</body>' in html:
             html = html.replace('</body>', sa_script + '\n</body>', 1)
         else:
@@ -1579,6 +1614,7 @@ _ANSWER_BOX_DOM = """
 _ANSWER_BOX_JS = r"""
 (function initAnswerBox(){
   'use strict';
+  if(window.__qanimAnswerBoxInit)return;window.__qanimAnswerBoxInit=true;
   var abOpen=false,_targets=[],_currentIdx=0,_loaded=false;
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
@@ -1699,7 +1735,7 @@ def inject_answer_box_panel(html, answer_targets=None):
     except Exception as e:
         QAnimLogger.warn("AnswerBoxInjector", f"DOM failed: {e}")
     try:
-        ab_script = '<script>\n' + _ANSWER_BOX_JS + '\n</script>'
+        ab_script = '<script id="qanim-js-answerbox">\n' + _ANSWER_BOX_JS + '\n</script>'
         if '</body>' in html:
             html = html.replace('</body>', ab_script + '\n</body>', 1)
         else:
@@ -1812,6 +1848,7 @@ _NOTES_DOM = """
 _NOTES_JS = r"""
 (function initNotesSystem(){
   'use strict';
+  if(window.__qanimNotesInit)return;window.__qanimNotesInit=true;
   var isOpen=false,isMin=false,isDrawing=false;
   var currentTool='pen',currentColor='#1e293b',currentSize=4,currentTab='canvas';
   var undoStack=[],MAX_UNDO=30;
@@ -1866,7 +1903,7 @@ def inject_notes_system(html):
     except Exception as e:
         QAnimLogger.warn("NotesInjector", f"DOM insertion failed: {e}")
     try:
-        notes_script = '<script>\n' + _NOTES_JS + '\n</script>'
+        notes_script = '<script id="qanim-js-notes">\n' + _NOTES_JS + '\n</script>'
         if '</body>' in html:
             html = html.replace('</body>', notes_script + '\n</body>', 1)
         else:
@@ -1908,6 +1945,10 @@ _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
+  <button class="qanim-ctrl-btn" id="tofind-ctrl-btn" title="What are you asked to find?">
+    <span>&#x1F50D;</span><span class="ctrl-label">To Find</span>
   </button>
 </div>
 """
@@ -1967,6 +2008,7 @@ _GLOSSARY_CSS = """
 _GLOSSARY_JS = r"""
 (function initGlossaryPanel(){
   'use strict';
+  if(window.__qanimGlossaryInit)return;window.__qanimGlossaryInit=true;
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function openGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(!p)return;p.classList.add('open');p.setAttribute('aria-hidden','false');if(b)b.classList.add('open');}
@@ -2032,9 +2074,21 @@ def inject_glossary_panel(html, terms=None):
     except Exception as e:
         QAnimLogger.warn("GlossaryInjector", f"CSS failed: {e}")
     try:
-        anchor = '<span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>\n  </button>'
-        if anchor in html:
-            html = html.replace(anchor, anchor + '\n' + btn_html, 1)
+        # Robust against whitespace/formatting drift: locate the controls-bar
+        # container by its id and insert the glossary button right before its
+        # TRUE closing </div> (found via a balanced-tag scan, since the bar
+        # itself contains a nested <div class="qanim-ctrl-sep"> — a naive
+        # non-greedy regex would stop at that nested div instead). The
+        # previous implementation matched an exact literal string built from
+        # the Answer Box button's markup; any whitespace/formatting drift
+        # there made the match silently fail — the actual root cause of the
+        # glossary button intermittently not appearing even when the panel
+        # itself was present.
+        html, attached = _insert_before_container_close(
+            html, r'<div id="qanim-controls-bar"[^>]*>', btn_html
+        )
+        if not attached:
+            QAnimLogger.warn("GlossaryInjector", "Controls bar container not found — button not attached")
     except Exception as e:
         QAnimLogger.warn("GlossaryInjector", f"Button attach failed: {e}")
     try:
@@ -2045,7 +2099,7 @@ def inject_glossary_panel(html, terms=None):
     except Exception as e:
         QAnimLogger.warn("GlossaryInjector", f"DOM failed: {e}")
     try:
-        glossary_script = '<script>\n' + _GLOSSARY_JS + '\n</script>'
+        glossary_script = '<script id="qanim-js-glossary">\n' + _GLOSSARY_JS + '\n</script>'
         if '</body>' in html:
             html = html.replace('</body>', glossary_script + '\n</body>', 1)
         else:
@@ -2088,7 +2142,7 @@ _STEP_CONTROLLER_JS = r"""
       console.log("[QAnim SC] Legacy scene controller ready, "+scenes.length+" scenes");
     }catch(err){console.error("[QAnim SC] Fatal:",err);}
   }
-  if(document.readyState==="complete")initSC();else window.addEventListener("load",initSC);
+  if(document.readyState!=="loading")initSC();else document.addEventListener("DOMContentLoaded",initSC);
 })();
 </script>
 """
@@ -2133,6 +2187,445 @@ def inject_nav_patch_and_scene_desc(html, scene_descriptions=None):
         html += '\n' + injection
     QAnimLogger.ok("NavPatch", "Nav patch injected")
     return html
+
+
+# ===========================================================================
+#  MODULE 14 — PANEL RELIABILITY ENGINE
+#  ---------------------------------------------------------------------
+#  This is the fix for the "panels randomly missing" bug class. It does NOT
+#  patch individual symptoms. It replaces the previous "splice string, hope,
+#  log success unconditionally" injection model with a deterministic
+#  pipeline:
+#
+#     normalize document skeleton
+#           |
+#     inject all panels
+#           |
+#     verify every required component (DOM + CSS + JS + data, by id)
+#           |
+#     repair ONLY what verification found missing (strip stale fragments,
+#     re-inject just that component — bounded retry loop)
+#           |
+#     resolve duplicate ids
+#           |
+#     final verification report (never silently "ok")
+#
+#  ROOT CAUSES THIS FIXES (found by reading the actual pipeline, not guessed):
+#
+#   1. `inject_to_find_system()` existed and was fully implemented, but was
+#      NEVER CALLED anywhere in `generate_question_animation()`, and no
+#      button anywhere in the DOM ever opened it. The "To Find" panel was
+#      not "randomly" missing — it was ALWAYS missing. Dead code, now wired
+#      in and given a permanent trigger button in the controls bar.
+#
+#   2. The Glossary trigger button was attached by matching an EXACT literal
+#      string copied from the Answer Box button's markup
+#      (`'<span>...Answer Box</span>\\n  </button>'`). Any whitespace or
+#      formatting drift in that string — which the previous code had no
+#      control over once other injectors touched the surrounding HTML — made
+#      `in html` silently return False, so the button was never attached
+#      even though the glossary panel/CSS/JS were. Replaced with a
+#      balanced-tag scan keyed off `id="qanim-controls-bar"`.
+#
+#   3. Every injector spliced HTML at the literal strings `</head>`,
+#      `<body...>`, `</body>` found in the AI-GENERATED page. Nothing
+#      guaranteed those anchors existed, were unique, or were well-formed —
+#      Gemini's raw output varies per-request (code fences, missing/duplicate
+#      head or body tags, stray trailing text). When an anchor was missing,
+#      the `try/except` swallowed it, logged a *warning* (or nothing), and
+#      the pipeline moved on with that component's CSS/DOM/JS silently
+#      absent. This explains the "sometimes appears, sometimes doesn't" —
+#      it correlates with how well-formed each individual Gemini generation
+#      happened to be, not with anything random in this code.
+#      `DocumentSkeletonNormalizer` now guarantees a single well-formed
+#      <head>/<body> skeleton BEFORE any panel is injected, so the anchors
+#      every injector depends on are always present.
+#
+#   4. Several injectors called `QAnimLogger.ok(...)` unconditionally after
+#      their try/except blocks, regardless of whether any of those blocks
+#      actually succeeded — so a fully-failed injection still logged as
+#      success. Verification now checks the actual resulting HTML instead
+#      of trusting injector-reported status.
+#
+#   5. None of the DOM/JS fragments were idempotent — re-running an injector
+#      (e.g. on retry) would duplicate ids, buttons, and listeners. Repair
+#      now always strips a component's previous fragments before
+#      re-injecting it, and every panel JS module has a `window.__qanimXInit`
+#      guard as a second line of defense.
+# ===========================================================================
+
+
+class DocumentSkeletonNormalizer:
+    """
+    Guarantees a single, well-formed <!DOCTYPE>/<html>/<head>...</head>/
+    <body>...</body>/</html> skeleton BEFORE any panel injection runs, so
+    every injector's `</head>` / `<body...>` / `</body>` anchor is always
+    present exactly once. This is the architectural fix for "malformed
+    generated HTML" — instead of every injector individually hoping the
+    anchors exist, we deterministically guarantee them once, up front.
+    """
+
+    @staticmethod
+    def normalize(html: str) -> str:
+        if not html:
+            return html
+        original_len = len(html)
+        html = html.strip()
+
+        # Strip markdown code fences some LLMs wrap raw HTML output in.
+        html = re.sub(r'^```(?:html)?\s*\n?', '', html, flags=re.IGNORECASE)
+        html = re.sub(r'\n?```\s*$', '', html)
+
+        # Truncate anything after the LAST </html> (trailing commentary,
+        # duplicate documents, etc.) — same policy as HtmlSanitizer, applied
+        # first so every check below operates on the real document only.
+        last_close = html.rfind('</html>')
+        if last_close != -1:
+            html = html[:last_close + len('</html>')]
+
+        if '<!DOCTYPE' not in html[:200].upper():
+            html = '<!DOCTYPE html>\n' + html
+
+        if not re.search(r'<html[\s>]', html, re.IGNORECASE):
+            html = re.sub(r'(<!DOCTYPE[^>]*>)', r'\1\n<html lang="en">', html, count=1, flags=re.IGNORECASE)
+            if not html.rstrip().endswith('</html>'):
+                html = html + '\n</html>'
+
+        head_open = re.search(r'<head[\s>]', html, re.IGNORECASE)
+        head_close = re.search(r'</head\s*>', html, re.IGNORECASE)
+        if not head_open:
+            html = re.sub(
+                r'(<html[^>]*>)', r'\1\n<head><meta charset="UTF-8"></head>',
+                html, count=1, flags=re.IGNORECASE,
+            )
+        elif not head_close:
+            # <head> was opened but never closed — close it right before <body>
+            body_open = re.search(r'<body[\s>]', html, re.IGNORECASE)
+            insert_at = body_open.start() if body_open else len(html)
+            html = html[:insert_at] + '</head>\n' + html[insert_at:]
+
+        body_open = re.search(r'<body[\s>]', html, re.IGNORECASE)
+        body_close = re.search(r'</body\s*>', html, re.IGNORECASE)
+        if not body_open:
+            head_close2 = re.search(r'</head\s*>', html, re.IGNORECASE)
+            insert_at = head_close2.end() if head_close2 else len(html)
+            html = html[:insert_at] + '\n<body>' + html[insert_at:]
+        if not re.search(r'</body\s*>', html, re.IGNORECASE):
+            html_close = re.search(r'</html\s*>', html, re.IGNORECASE)
+            insert_at = html_close.start() if html_close else len(html)
+            html = html[:insert_at] + '\n</body>\n' + html[insert_at:]
+
+        if not re.search(r'</html\s*>', html, re.IGNORECASE):
+            html = html + '\n</html>'
+
+        if len(html) != original_len:
+            QAnimLogger.warn("SkeletonNormalizer", f"Document skeleton repaired ({original_len} -> {len(html)} chars)")
+        else:
+            QAnimLogger.ok("SkeletonNormalizer", "Document skeleton already well-formed")
+        return html
+
+
+def _insert_before_container_close_module14(html, open_tag_regex, insertion):
+    """Alias kept for clarity within this module — see _insert_before_container_close above."""
+    return _insert_before_container_close(html, open_tag_regex, insertion)
+
+
+class DuplicateIdResolver:
+    """
+    Scans the full document for duplicate `id="..."` attributes. Duplicate
+    ids on OUR OWN reserved namespaces (qanim-*, tofind-*, answerbox-*,
+    sbs-*, notes-*, glossary-*, ab-*, __*__) indicate a component got
+    injected more than once — those are resolved by the repair loop
+    stripping-then-reinjecting, not by renaming (renaming would break the
+    id-based wiring between DOM/CSS/JS). Duplicate ids OUTSIDE our
+    namespace (i.e. authored by Gemini in the base animation, e.g. a
+    reused `id="btn-next"`) are resolved here by suffixing every
+    occurrence after the first, since two elements answering to
+    `getElementById` is itself a source of "random" behaviour (whichever
+    one the browser's internal index happens to return).
+    """
+
+    _RESERVED_PREFIXES = (
+        "qanim-", "tofind-", "answerbox-", "sbs-", "notes-",
+        "glossary-", "ab-", "__",
+    )
+
+    @classmethod
+    def find_duplicates(cls, html):
+        ids = re.findall(r'\bid=["\']([^"\']+)["\']', html)
+        counts = {}
+        for i in ids:
+            counts[i] = counts.get(i, 0) + 1
+        return {k: v for k, v in counts.items() if v > 1}
+
+    @classmethod
+    def resolve(cls, html):
+        dupes = cls.find_duplicates(html)
+        if not dupes:
+            return html, {}
+        resolved = {}
+        for id_, count in dupes.items():
+            if id_.startswith(cls._RESERVED_PREFIXES):
+                # Leave as-is here — the repair loop is responsible for
+                # de-duplicating our own components via strip-then-reinject.
+                continue
+            pattern = re.compile(r'(id=["\'])' + re.escape(id_) + r'(["\'])')
+            counter = {"n": 0}
+
+            def _sub(m):
+                counter["n"] += 1
+                if counter["n"] == 1:
+                    return m.group(0)
+                return f'{m.group(1)}{id_}-dup{counter["n"]}{m.group(2)}'
+
+            html = pattern.sub(_sub, html)
+            resolved[id_] = count - 1
+        return html, resolved
+
+
+# ---------------------------------------------------------------------------
+# Required-components registry: every panel the product promises to render,
+# expressed as the concrete ids that must exist in the final HTML.
+# ---------------------------------------------------------------------------
+REQUIRED_COMPONENTS = {
+    "ToFind": {
+        "data": ["__tofind_data__"],
+        "css":  ["qanim-tofind-styles"],
+        "dom":  ["tofind-panel", "tofind-backdrop", "tofind-items-container", "tofind-ctrl-btn"],
+        "js":   ["qanim-js-tofind"],
+    },
+    "StepAnswer": {
+        "data": ["__step_answer_data__"],
+        "css":  ["qanim-stepans-styles"],
+        "dom":  ["qanim-stepbystep-section", "sbs-steps-container"],
+        "js":   ["qanim-js-stepanswer"],
+    },
+    "AnswerBox": {
+        "data": None,
+        "css":  ["qanim-answerbox-styles"],
+        "dom":  ["answerbox-panel", "answerbox-backdrop"],
+        "js":   ["qanim-js-answerbox"],
+    },
+    "Notes": {
+        "data": None,
+        "css":  ["qanim-notes-styles"],
+        "dom":  ["qanim-notes-panel", "qanim-notes-btn"],
+        "js":   ["qanim-js-notes"],
+    },
+    "Controls": {
+        "data": None,
+        "css":  ["qanim-controls-bar-styles"],
+        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn"],
+        "js":   None,
+    },
+    "Glossary": {
+        # Only required when there ARE glossary terms — see
+        # PanelInjectionManager._optional_skip(). Skipped (not "failed")
+        # when the question had no difficult terms to define.
+        "data": None,
+        "css":  ["qanim-glossary-styles"],
+        "dom":  ["qanim-glossary-panel", "glossary-ctrl-btn"],
+        "js":   ["qanim-js-glossary"],
+    },
+    "Navigation": {
+        "data": None, "css": None, "dom": None,
+        "js":   ["__nav_patch__"],
+    },
+    "StepController": {
+        "data": None, "css": None, "dom": None,
+        "js":   ["qanim-step-controller"],
+    },
+}
+
+# Regex fragments used to strip a component's previous output before
+# re-injecting it, making repair idempotent (no duplicate ids/listeners).
+STRIP_PATTERNS = {
+    "ToFind": [
+        re.compile(r'<script[^>]*id=["\']__tofind_data__["\'][^>]*>.*?</script>', re.DOTALL),
+        re.compile(r'<style[^>]*id=["\']qanim-tofind-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="tofind-backdrop"[^>]*>\s*</div>\s*<aside id="tofind-panel".*?</aside>', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-tofind["\'][^>]*>.*?</script>', re.DOTALL),
+    ],
+    "StepAnswer": [
+        re.compile(r'<script[^>]*id=["\']__step_answer_data__["\'][^>]*>.*?</script>', re.DOTALL),
+        re.compile(r'<style[^>]*id=["\']qanim-stepans-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="qanim-stepbystep-section".*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-stepanswer["\'][^>]*>.*?</script>', re.DOTALL),
+        re.compile(r'<script id="qanim-laststep-patch">.*?</script>', re.DOTALL),
+    ],
+    "AnswerBox": [
+        re.compile(r'<style[^>]*id=["\']qanim-answerbox-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="answerbox-backdrop"[^>]*>.*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-answerbox["\'][^>]*>.*?</script>', re.DOTALL),
+    ],
+    "Notes": [
+        re.compile(r'<style[^>]*id=["\']qanim-notes-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<button id="qanim-notes-btn".*?</button>\s*<div id="qanim-notes-panel".*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-notes["\'][^>]*>.*?</script>', re.DOTALL),
+    ],
+    "Controls": [
+        re.compile(r'<style[^>]*id=["\']qanim-controls-bar-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="qanim-controls-bar".*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
+    ],
+    "Glossary": [
+        re.compile(r'<style[^>]*id=["\']qanim-glossary-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="qanim-glossary-backdrop"[^>]*>.*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-glossary["\'][^>]*>.*?</script>', re.DOTALL),
+    ],
+    "Navigation": [
+        re.compile(r'<script id="__nav_patch__">.*?</script>', re.DOTALL),
+    ],
+    "StepController": [
+        re.compile(r'<script id="qanim-step-controller">.*?</script>', re.DOTALL),
+    ],
+}
+
+
+class ComponentVerifier:
+    """Checks the ACTUAL resulting HTML for every required id — never trusts
+    an injector's self-reported success."""
+
+    @staticmethod
+    def _has_id(html, id_):
+        return re.search(r'\bid=["\']' + re.escape(id_) + r'["\']', html) is not None
+
+    @classmethod
+    def check_component(cls, html, spec):
+        missing = []
+        for kind in ("data", "css", "dom", "js"):
+            ids = spec.get(kind)
+            if not ids:
+                continue
+            for id_ in ids:
+                if not cls._has_id(html, id_):
+                    missing.append(f"{kind}:{id_}")
+        return missing
+
+    @classmethod
+    def verify_all(cls, html, registry, skip=None):
+        skip = skip or set()
+        report = {}
+        for name, spec in registry.items():
+            if name in skip:
+                report[name] = {"ok": True, "missing": [], "skipped": True}
+                continue
+            missing = cls.check_component(html, spec)
+            report[name] = {"ok": len(missing) == 0, "missing": missing, "skipped": False}
+        return report
+
+
+class PanelInjectionContext:
+    """Bundles everything the individual injectors need so the orchestrator
+    can call any of them (fresh injection OR targeted repair) uniformly."""
+
+    def __init__(self, gemini_sol, answer_targets, glossary_terms, to_find_targets):
+        self.gemini_sol = gemini_sol
+        self.answer_targets = answer_targets
+        self.glossary_terms = glossary_terms or []
+        self.to_find_targets = to_find_targets or []
+
+
+class PanelInjectionManager:
+    """
+    Single initialization manager for the injection pipeline itself
+    (build-time, not runtime): generate -> normalize -> inject all -> verify
+    -> repair (bounded) -> resolve duplicate ids -> final report. Replaces
+    the old flat sequence of independent inject_*() calls with no
+    verification step in between.
+    """
+
+    MAX_REPAIR_PASSES = 3
+
+    @classmethod
+    def run(cls, html, ctx: "PanelInjectionContext"):
+        html = DocumentSkeletonNormalizer.normalize(html)
+
+        html, dup_report = DuplicateIdResolver.resolve(html)
+        if dup_report:
+            QAnimLogger.warn("DuplicateIds", f"Resolved {len(dup_report)} duplicate id(s) from base animation: {dup_report}")
+
+        html = cls._inject_all(html, ctx)
+
+        skip = cls._optional_skip(ctx)
+        report = ComponentVerifier.verify_all(html, REQUIRED_COMPONENTS, skip=skip)
+
+        attempt = 1
+        while not all(r["ok"] for r in report.values()) and attempt <= cls.MAX_REPAIR_PASSES:
+            missing_names = [n for n, r in report.items() if not r["ok"]]
+            QAnimLogger.warn("Repair", f"Pass {attempt}/{cls.MAX_REPAIR_PASSES}: missing components -> {missing_names}")
+            html = cls._repair(html, ctx, missing_names, report)
+            report = ComponentVerifier.verify_all(html, REQUIRED_COMPONENTS, skip=skip)
+            attempt += 1
+
+        html, dup_report2 = DuplicateIdResolver.resolve(html)
+        if dup_report2:
+            QAnimLogger.warn("DuplicateIds", f"Post-repair duplicates resolved: {dup_report2}")
+
+        still_missing = [n for n, r in report.items() if not r["ok"]]
+        for name, r in report.items():
+            if r.get("skipped"):
+                QAnimLogger.info("Verify", f"{name}: skipped (not applicable — e.g. no glossary terms)")
+            elif r["ok"]:
+                QAnimLogger.ok("Verify", f"{name}: verified present (DOM+CSS+JS+data all found)")
+            else:
+                QAnimLogger.error("Verify", f"{name}: STILL MISSING after {attempt - 1} repair pass(es) -> {r['missing']}")
+
+        return html, {
+            "all_ok": len(still_missing) == 0,
+            "still_missing": still_missing,
+            "repair_passes": attempt - 1,
+            "report": report,
+        }
+
+    @staticmethod
+    def _optional_skip(ctx):
+        skip = set()
+        if not ctx.glossary_terms:
+            skip.add("Glossary")
+        return skip
+
+    @classmethod
+    def _inject_all(cls, html, ctx):
+        html = inject_step_answer_panel(html, ctx.gemini_sol)
+        html = inject_notes_system(html)
+        html = inject_answer_box_panel(html, ctx.answer_targets)
+        html = inject_controls_bar(html)
+        html = inject_to_find_system(html, ctx.to_find_targets)
+        html = inject_glossary_panel(html, ctx.glossary_terms)
+        html = inject_nav_patch_and_scene_desc(html)
+        html = inject_step_controller(html)
+        return html
+
+    @classmethod
+    def _strip(cls, html, name):
+        for pattern in STRIP_PATTERNS.get(name, []):
+            html = pattern.sub('', html)
+        return html
+
+    @classmethod
+    def _repair(cls, html, ctx, missing_names, report):
+        dispatch = {
+            "ToFind":         lambda h: inject_to_find_system(cls._strip(h, "ToFind"), ctx.to_find_targets),
+            "StepAnswer":     lambda h: inject_step_answer_panel(cls._strip(h, "StepAnswer"), ctx.gemini_sol),
+            "AnswerBox":      lambda h: inject_answer_box_panel(cls._strip(h, "AnswerBox"), ctx.answer_targets),
+            "Notes":          lambda h: inject_notes_system(cls._strip(h, "Notes")),
+            "Controls":       lambda h: inject_controls_bar(cls._strip(h, "Controls")),
+            "Glossary":       lambda h: inject_glossary_panel(cls._strip(h, "Glossary"), ctx.glossary_terms),
+            "Navigation":     lambda h: inject_nav_patch_and_scene_desc(cls._strip(h, "Navigation")),
+            "StepController": lambda h: inject_step_controller(cls._strip(h, "StepController")),
+        }
+        for name in missing_names:
+            fn = dispatch.get(name)
+            if not fn:
+                QAnimLogger.error("Repair", f"{name}: no repair strategy registered — cannot self-heal")
+                continue
+            try:
+                before_missing = report[name]["missing"]
+                html = fn(html)
+                QAnimLogger.info("Repair", f"{name}: re-injected (was missing {before_missing})")
+            except Exception as e:
+                QAnimLogger.error("Repair", f"{name}: repair raised {type(e).__name__}: {e}")
+        return html
 
 
 # ===========================================================================
@@ -3054,16 +3547,30 @@ async def _run_generation_pipeline(question: str) -> dict:
     # Solution steps flat list — kept for result dict / backward-compat downstream
     solution_steps = gemini_sol.get("steps", []) or scene_script.get("solution_steps", [])
 
-    # ── Inject all panels ──
-    html = animation_html
-    # Pass the full gemini_sol dict so the 5-step panel uses structured fields
-    html = inject_step_answer_panel(html, gemini_sol)
-    html = inject_notes_system(html)
-    html = inject_answer_box_panel(html, answer_targets)
-    html = inject_controls_bar(html)
-    html = inject_glossary_panel(html, glossary_result.get("terms", []))
-    html = inject_nav_patch_and_scene_desc(html)
-    html = inject_step_controller(html)   # absolute last
+    # ── Inject all panels through the Panel Reliability Engine ──
+    # (normalize document skeleton -> inject every panel -> verify every
+    #  required id actually landed -> repair ONLY what's missing, bounded
+    #  retries -> resolve duplicate ids -> final verified report)
+    panel_ctx = PanelInjectionContext(
+        gemini_sol=gemini_sol,
+        answer_targets=answer_targets,
+        glossary_terms=glossary_result.get("terms", []),
+        to_find_targets=to_find_targets,
+    )
+    html, injection_report = PanelInjectionManager.run(animation_html, panel_ctx)
+
+    if not injection_report["all_ok"]:
+        QAnimLogger.error(
+            "Pipeline",
+            f"{len(injection_report['still_missing'])} panel(s) could not be "
+            f"self-healed after {injection_report['repair_passes']} repair pass(es): "
+            f"{injection_report['still_missing']}",
+        )
+    else:
+        QAnimLogger.ok(
+            "Pipeline",
+            f"All required panels verified present (repair passes used: {injection_report['repair_passes']})",
+        )
 
     # Validate
     try:
@@ -3094,7 +3601,8 @@ async def _run_generation_pipeline(question: str) -> dict:
         "category":        category,
         "n_scenes":        n_scenes,
         "engine_version":  "v1.0-gemini",
-        "render_status":   "ok",
+        "render_status":   "ok" if injection_report["all_ok"] else "panels_incomplete",
+        "panel_verification": injection_report,
     }
 
     QAnimLogger.ok("Pipeline", (
