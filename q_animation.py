@@ -995,13 +995,34 @@ STEP_ANSWER_JS_MODULE = r"""
   }
 
   /* Step 2 – To Find */
+  /* Converts a to_find string to "symbol = ?" format.
+     - If it already contains '?', return as-is.
+     - If it matches "sym = <numeric_value>", strip the value → "sym = ?"
+     - If it has "sym = anything", strip rhs → "sym = ?"
+     - Otherwise append " = ?" */
+  function _toFindSymbol(raw){
+    if(!raw)return'? = ?';
+    var s=String(raw).trim();
+    if(s.indexOf('?')!==-1)return s;
+    // "sym = numeric_value [unit]" → "sym = ?"
+    var numRe=/^(.+?)\s*=\s*[-+]?\d[\d.,]*(?:\s*[xX\u00d7*]\s*10[\^]?[-+]?\d+)?(?:\s*[A-Za-z\u00b0\u00b2\u00b3\u00b5%\u00b7/]+(?:\s*[A-Za-z\u00b0\u00b2\u00b3\u00b5\u00b7/]+)*)?\s*$/;
+    var m=numRe.exec(s);
+    if(m)return m[1].trim()+' = ?';
+    // "sym = anything" → "sym = ?"
+    var eqRe=/^(.+?)\s*=\s*.+$/;
+    var m2=eqRe.exec(s);
+    if(m2)return m2[1].trim()+' = ?';
+    // no '=' at all
+    return s+' = ?';
+  }
+
   function _buildStep1(){
     var d=_loadData();
     var items=Array.isArray(d.to_find)?d.to_find:[];
     var ROMAN=['i','ii','iii','iv','v','vi','vii','viii','ix','x'];
     var h='<div class="sbs-step-desc">';
     for(var t=0;t<items.length;t++){
-      h+='<strong>'+_esc(ROMAN[t]||String(t+1))+') </strong>'+_esc(items[t])+'<br>';
+      h+='<strong>'+_esc(ROMAN[t]||String(t+1))+') </strong>'+_esc(_toFindSymbol(items[t]))+'<br>';
     }
     if(!items.length){h+='See the question for what to find';}
     h+='</div>';
@@ -1223,9 +1244,9 @@ Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no ex
     "mu = 0.001 Pa.s"
   ],
   "to_find": [
-    "i) Reynolds number Re",
-    "ii) Heat transfer coefficient h",
-    "iii) Nusselt number Nu"
+    "i) Re = ?",
+    "ii) h = ?",
+    "iii) Nu = ?"
   ],
   "formulas": [
     {"text": "Re = rho x V x D / mu", "color": "blue"},
@@ -1246,7 +1267,7 @@ Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no ex
 
 STRICT RULES:
 - given_data: Extract EVERY numerical value stated in the question. Format each as \"symbol = value unit\". Minimum 2, maximum 12 items. Never leave empty.
-- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Never leave empty.
+- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Each entry MUST be in "symbol = ?" format (e.g. "i) Re = ?", "ii) h = ?", "iii) Nu = ?"). NEVER include computed numerical values here — show only the unknown symbol with = ?. Never leave empty.
 - formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them.
 - formula_note: Optional note about evaluation conditions (e.g. bulk temperature). Set to \"\" if not applicable.
 - substitution_steps: 3-5 numbered calculation steps. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown).
@@ -2831,7 +2852,7 @@ OUTPUT: Return ONLY valid JSON, no markdown fences, no preamble:
       "components_new": ["comp_id_1"],
       "focus_component": "comp_id_1",
       "blur_background": true,
-      "to_find_label": "the specific quantity this step reveals, e.g. 'belt velocity v = 14.14 m/s'"
+      "to_find_label": "symbol = ? (e.g. 'v = ?' or 'c = ?' or 'N2 = ?')"
     }
   ],
   "svg_components": {
@@ -2854,7 +2875,7 @@ RULES:
 6. svg_components: describe every physical component: frame, pivot, crank, rod, piston,
    gears, pulleys, beams, coils, etc. Position everything in an 850x478 coordinate space.
 7. final_answer: MUST contain computed numerical answer with units. Never leave empty.
-8. to_find_label: for EVERY step, write the specific quantity being revealed or computed in that step (concise, e.g. 'belt velocity v', 'tension T1 in tight side', 'speed of driven pulley N2'). The last step's to_find_label must state the primary answer quantity with its computed value.
+8. to_find_label: for EVERY step, write ONLY the unknown symbol followed by ' = ?' — never include the computed numerical answer. Examples: 'v = ?', 'c = ?', 'N2 = ?', 'T1 = ?', 'Re = ?'. The label shows WHAT is being sought, not the answer.
 9. motion_type: accurately describe what this component does physically."""
 
 _SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
@@ -2867,7 +2888,7 @@ Remember:
 - Components are drawn one by one in the correct physical order.
 - The final step freezes the mechanism at the solution state and shows a clean 'To find:' label — NO calculations popup box.
 - Compute the actual numerical answer and include it in final_answer.
-- Every step must have a concise to_find_label.
+- Every step must have a to_find_label that shows ONLY the unknown symbol followed by ' = ?' (e.g. 'v = ?', 'c = ?', 'N2 = ?'). NEVER put the computed numeric answer in to_find_label.
 
 Return ONLY valid JSON."""
 
@@ -3046,9 +3067,9 @@ The output must match this exact structure:
 11. TO FIND PILL (every step overlay): Each overlay-stepN MUST contain a clean "To find:" pill at the bottom of the SVG:
     - White rounded card: <rect x="80" y="408" width="690" height="56" rx="14" fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5"/>
     - "TO FIND" eyebrow: <text x="108" y="428" fill="#0e7490" font-size="10" font-weight="800" letter-spacing="2" font-family="'Segoe UI',sans-serif">TO FIND</text>
-    - Answer text: <text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600" font-family="'Segoe UI',sans-serif">[toFind text from stepsData]</text>
+    - Symbol text: <text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600" font-family="'Segoe UI',sans-serif">[toFind text from stepsData — MUST be symbol = ? format, e.g. "v = ?" or "c = ?"]</text>
     - Drop shadow: add <filter id="pillShadow"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/></filter> and set filter="url(#pillShadow)" on the pill rect.
-    - NEVER show a "Calculations:" box or formula dump. Only show the "To find:" pill.
+    - NEVER show a "Calculations:" box, formula dump, or computed numeric answer in the pill. The pill shows ONLY the unknown symbol with = ? (e.g. "v = ?", "c = ?", "N2 = ?").
 12. ZERO text overlaps — compute positions carefully. Keep all labels inside the viewBox.
 
 ═══ ANIMATION RULES ═══
@@ -3089,7 +3110,7 @@ nextStep() / resetAnim() manage currentStep.
 - Include question-banner div showing the original question
 - requestAnimationFrame loop must keep running for continuous motion
 - freezing mechanism: smoothly interpolate angle to solution angle, then pause
-- TO FIND PILL (mandatory, replaces math box): every step overlay MUST include the clean white pill at the bottom (y≈408) showing "TO FIND" eyebrow + the specific quantity for that step. NO formula dumps, NO "Calculations:" box, NO dark popup containers.
+- TO FIND PILL (mandatory, replaces math box): every step overlay MUST include the clean white pill at the bottom (y≈408) showing "TO FIND" eyebrow + the unknown symbol with = ? (e.g. "v = ?", "c = ?", "N2 = ?"). The pill NEVER shows computed numeric values — only the symbol being sought. NO formula dumps, NO "Calculations:" box, NO dark popup containers, NO numeric answers in the pill.
 - POLISH: use feDropShadow filters on overlay cards, multi-stop metallic gradients, smooth cubic-bezier transitions (0.4s), consistent stroke-width hierarchy (frame=2, components=2.5–3, labels=1.5).
 - CENTERING: body must use { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:20px; } so the .dashboard div is horizontally centred on the page. .dashboard must have { width:100%; max-width:900px; margin:0 auto; }. Never float or absolutely-position the dashboard to the right.
 
@@ -3114,7 +3135,7 @@ CRITICAL REMINDERS:
 7. The LAST step snaps to the solution angle/state. Show ONLY the "To find:" pill (white card at bottom of SVG). NO calculations popup, NO formula dump box.
 8. Use the accent colors from the scene script for each component.
 9. Do NOT use const/let/arrow functions/backtick template literals.
-10. Every overlay-stepN MUST include the "To find:" pill with the toFind text from stepsData. Read the toFind field from stepsData[currentStep] and render it inside the pill dynamically.
+10. Every overlay-stepN MUST include the "To find:" pill with the toFind text from stepsData. Read the toFind field from stepsData[currentStep] and render it inside the pill dynamically. The toFind text MUST be in "symbol = ?" format (e.g. "v = ?", "c = ?"). NEVER render a computed numeric value inside the pill — it shows what is being sought, not the answer.
 
 Return the complete HTML page — nothing else."""
 
@@ -3225,6 +3246,37 @@ class GeminiAnimationBuilder:
             QAnimLogger.error("AnimationBuilder", f"Repair failed: {e}")
             return RecoveryEngine.fallback_html(question, "Animation generation failed — please regenerate.")
 
+    @staticmethod
+    def _sanitize_to_find_label(label: str) -> str:
+        """
+        Ensure a to_find_label is in 'symbol = ?' format.
+        If the label already contains '?', return it as-is (already correct).
+        If it contains a numeric answer (digits after '='), strip the number and append '= ?'.
+        Otherwise, if it ends with '= <something>', replace the value with '?'.
+        Falls back to label + ' = ?' if no '=' found.
+        """
+        if not label:
+            return "? = ?"
+        # Already in symbol = ? form
+        if "?" in label:
+            return label.strip()
+        # Pattern: "sym = <numeric_value> unit"  → keep sym, replace value with ?
+        numeric_pattern = re.compile(
+            r'^(.+?)\s*=\s*[-+]?\d[\d.,]*(?:\s*[×x*]\s*10\^?[-+]?\d+)?(?:\s*[A-Za-z°²³µ/%·/]+(?:\s*[A-Za-z°²³µ·/]+)*)?\s*$'
+        )
+        m = numeric_pattern.match(label.strip())
+        if m:
+            sym = m.group(1).strip()
+            return sym + " = ?"
+        # Pattern: "sym = text_value" → replace rhs with ?
+        eq_pattern = re.compile(r'^(.+?)\s*=\s*.+$')
+        m2 = eq_pattern.match(label.strip())
+        if m2:
+            sym = m2.group(1).strip()
+            return sym + " = ?"
+        # No '=' at all: append = ?
+        return label.strip() + " = ?"
+
     @classmethod
     def _build_minimal_page(cls, question: str, script: dict) -> str:
         """Build a clean minimal animation page directly from the scene script (no AI needed)."""
@@ -3246,7 +3298,7 @@ class GeminiAnimationBuilder:
                 badges_html += f'<span class="badge badge-{bt}">{html_module.escape(b.get("text",""))}</span> '
             math_lines = step.get("math_lines", [])       # kept for legacy compat only
             show_math  = step.get("show_math", False)      # kept for legacy compat only
-            to_find_label = step.get("to_find_label", "")
+            to_find_label = cls._sanitize_to_find_label(step.get("to_find_label", ""))
             blur = 0.5 if step.get("blur_background") else 0
             step_num = step.get("step_number", 1) - 1
 
@@ -3274,11 +3326,13 @@ class GeminiAnimationBuilder:
         # Build overlay SVG groups
         overlay_groups = []
         for i, step in enumerate(steps):
-            to_find_label = step.get("to_find_label", "")
+            raw_to_find = step.get("to_find_label", "")
             # Fallback: derive to_find_label from math_lines for legacy scene scripts
-            if not to_find_label:
+            if not raw_to_find:
                 ml = step.get("math_lines", [])
-                to_find_label = ml[-1] if ml else step.get("label", f"Step {i+1}")
+                raw_to_find = ml[-1] if ml else step.get("label", f"Step {i+1}")
+            # Always enforce symbol = ? format — never show computed numeric answers
+            to_find_label = cls._sanitize_to_find_label(raw_to_find)
 
             pill_svg = ""
             if to_find_label:
