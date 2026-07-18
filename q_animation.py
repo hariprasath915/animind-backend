@@ -1972,6 +1972,121 @@ def inject_controls_bar(html):
 
 
 # ===========================================================================
+#  MODULE 10.7 — Previous Step Button
+#  Adds a "Previous Step" control next to the animation's own Restart /
+#  Next Step buttons (the ones inside <div class="control-panel"><div
+#  class="actions">, NOT the floating qanim-controls-bar). Located via the
+#  `id="btn-next"` attribute the animation-builder prompt requires every
+#  generated page to use, rather than an exact literal string — so it
+#  survives whatever whitespace/formatting Gemini happens to produce.
+# ===========================================================================
+
+_PREV_STEP_CSS = """
+<style id="qanim-prevstep-styles">
+#btn-prev.qanim-prev-btn { background:transparent; color:#334155; border:1px solid #cbd5e1;
+  padding:10px 20px; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer;
+  transition:all .2s ease; margin-right:auto; }
+#btn-prev.qanim-prev-btn:hover:not(:disabled) { background:rgba(15,23,42,.05); color:#1e293b; }
+#btn-prev.qanim-prev-btn:disabled { opacity:.4; cursor:not-allowed; }
+</style>
+"""
+
+_PREV_STEP_BTN_HTML = (
+    '<button class="btn-secondary qanim-prev-btn" id="btn-prev" '
+    'onclick="prevStep()" disabled>&#x25C0; Previous Step</button>'
+)
+
+PREV_STEP_JS_MODULE = r"""
+(function initPrevStepButton(){
+  'use strict';
+  if(window.__qanimPrevStepInit)return;window.__qanimPrevStepInit=true;
+
+  function _updateBtn(){
+    var pb=document.getElementById('btn-prev');
+    if(!pb)return;
+    var cur=typeof window.currentStep==='number'?window.currentStep:-1;
+    pb.disabled=(cur<=0);
+  }
+
+  // Exposed so the button's onclick (and anyone else) can call it directly.
+  window.prevStep=function(){
+    if(typeof window.currentStep!=='number')return;
+    if(window.currentStep<=0)return;
+    window.currentStep--;
+    if(typeof window.applyStep==='function')window.applyStep(window.currentStep);
+    // Stepping back from the last step must un-hide Next Step again
+    // (the base animation hides it there — see applyStep()/btn-next).
+    var nb=document.getElementById('btn-next');
+    if(nb)nb.style.display='inline-block';
+  };
+
+  // Piggyback on applyStep — every path that changes the step
+  // (nextStep, resetAnim, prevStep itself) funnels through it, so wrapping
+  // it once keeps the Previous button's enabled/disabled state correct
+  // regardless of which of those triggered the change.
+  var _origApplyPrev=window.applyStep;
+  if(typeof _origApplyPrev==='function'){
+    window.applyStep=function(idx){
+      _origApplyPrev(idx);
+      _updateBtn();
+    };
+  }
+
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  _onReady(function(){
+    var pb=document.getElementById('btn-prev');
+    if(pb){pb.removeAttribute('onclick');pb.addEventListener('click',function(e){e.stopPropagation();window.prevStep();});}
+    _updateBtn();
+  });
+})();
+"""
+
+
+def inject_previous_step_button(html):
+    # Strip any previous instance first — keeps repair/retry idempotent.
+    html = re.sub(r'<style[^>]*id=["\']qanim-prevstep-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'<button[^>]*id=["\']btn-prev["\'][^>]*>.*?</button>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'<script[^>]*id=["\']qanim-js-prevstep["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
+
+    try:
+        if '</head>' in html:
+            html = html.replace('</head>', _PREV_STEP_CSS + '\n</head>', 1)
+    except Exception as e:
+        QAnimLogger.warn("PrevStepInjector", f"CSS failed: {e}")
+
+    try:
+        next_btn_match = re.search(
+            r'<button[^>]*id=["\']btn-next["\'][^>]*>.*?</button>',
+            html, re.DOTALL | re.IGNORECASE,
+        )
+        if next_btn_match:
+            html = html[:next_btn_match.start()] + _PREV_STEP_BTN_HTML + '\n' + html[next_btn_match.start():]
+        else:
+            # btn-next wasn't found (unexpected Gemini formatting) — fall
+            # back to appending inside the .actions container by balanced
+            # tag scan rather than failing silently.
+            html, attached = _insert_before_container_close(
+                html, r'<div class="actions"[^>]*>', _PREV_STEP_BTN_HTML
+            )
+            if not attached:
+                QAnimLogger.warn("PrevStepInjector", "Could not locate Next Step button or .actions container")
+    except Exception as e:
+        QAnimLogger.warn("PrevStepInjector", f"Button insertion failed: {e}")
+
+    try:
+        prev_script = '<script id="qanim-js-prevstep">\n' + PREV_STEP_JS_MODULE + '\n</script>'
+        if '</body>' in html:
+            html = html.replace('</body>', prev_script + '\n</body>', 1)
+        else:
+            html += '\n' + prev_script
+        QAnimLogger.ok("PrevStepInjector", "Previous Step button injected")
+    except Exception as e:
+        QAnimLogger.warn("PrevStepInjector", f"JS module insertion failed: {e}")
+
+    return html
+
+
+# ===========================================================================
 #  MODULE 10.5 — Glossary Panel
 # ===========================================================================
 
@@ -2418,6 +2533,12 @@ REQUIRED_COMPONENTS = {
         "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn"],
         "js":   None,
     },
+    "PreviousStep": {
+        "data": None,
+        "css":  ["qanim-prevstep-styles"],
+        "dom":  ["btn-prev"],
+        "js":   ["qanim-js-prevstep"],
+    },
     "Glossary": {
         # Only required when there ARE glossary terms — see
         # PanelInjectionManager._optional_skip(). Skipped (not "failed")
@@ -2466,6 +2587,11 @@ STRIP_PATTERNS = {
     "Controls": [
         re.compile(r'<style[^>]*id=["\']qanim-controls-bar-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
         re.compile(r'<div id="qanim-controls-bar".*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
+    ],
+    "PreviousStep": [
+        re.compile(r'<style[^>]*id=["\']qanim-prevstep-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<button[^>]*id=["\']btn-prev["\'][^>]*>.*?</button>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<script[^>]*id=["\']qanim-js-prevstep["\'][^>]*>.*?</script>', re.DOTALL),
     ],
     "Glossary": [
         re.compile(r'<style[^>]*id=["\']qanim-glossary-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
@@ -2590,6 +2716,7 @@ class PanelInjectionManager:
         html = inject_notes_system(html)
         html = inject_answer_box_panel(html, ctx.answer_targets)
         html = inject_controls_bar(html)
+        html = inject_previous_step_button(html)
         html = inject_to_find_system(html, ctx.to_find_targets)
         html = inject_glossary_panel(html, ctx.glossary_terms)
         html = inject_nav_patch_and_scene_desc(html)
@@ -2610,6 +2737,7 @@ class PanelInjectionManager:
             "AnswerBox":      lambda h: inject_answer_box_panel(cls._strip(h, "AnswerBox"), ctx.answer_targets),
             "Notes":          lambda h: inject_notes_system(cls._strip(h, "Notes")),
             "Controls":       lambda h: inject_controls_bar(cls._strip(h, "Controls")),
+            "PreviousStep":   lambda h: inject_previous_step_button(cls._strip(h, "PreviousStep")),
             "Glossary":       lambda h: inject_glossary_panel(cls._strip(h, "Glossary"), ctx.glossary_terms),
             "Navigation":     lambda h: inject_nav_patch_and_scene_desc(cls._strip(h, "Navigation")),
             "StepController": lambda h: inject_step_controller(cls._strip(h, "StepController")),
