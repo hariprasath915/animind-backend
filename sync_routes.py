@@ -1489,9 +1489,10 @@ def delete_global_animation(
 # ════════════════════════════════════════════════════════════════
 
 LESSON_BUCKETS = {
-    "thumbnail": "lesson-thumbnails",
-    "animation": "lesson-videos",
-    "theory":    "lesson-html",
+    "thumbnail":  "lesson-thumbnails",
+    "animation":  "lesson-videos",
+    "theory":     "lesson-html",
+    "realworld":  "lesson-realworld",
 }
 
 
@@ -1543,11 +1544,11 @@ async def upload_lesson_file(
 
 
 class LessonCreate(BaseModel):
-    title:         str           = Field(..., min_length=1, max_length=200)
-    thumbnail_url: Optional[str] = None
-    theory_url:    Optional[str] = None
-    animation_url: Optional[str] = None
-    quiz_data:     list          = Field(default_factory=list)
+    title:             str           = Field(..., min_length=1, max_length=200)
+    thumbnail_url:     Optional[str] = None
+    theory_url:        Optional[str] = None
+    animation_url:     Optional[str] = None
+    realworld_images:  list          = Field(default_factory=list)
 
 
 @router.post("/lessons", status_code=201)
@@ -1556,13 +1557,13 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
     _require_admin(current_user)
     service_sb = _get_service_client()
     row = {
-        "title":         payload.title.strip(),
-        "thumbnail_url": payload.thumbnail_url or None,
-        "theory_url":    payload.theory_url    or None,
-        "animation_url": payload.animation_url or None,
-        "quiz_data":     payload.quiz_data,
-        "created_at":    _now(),
-        "updated_at":    _now(),
+        "title":            payload.title.strip(),
+        "thumbnail_url":    payload.thumbnail_url    or None,
+        "theory_url":       payload.theory_url       or None,
+        "animation_url":    payload.animation_url    or None,
+        "realworld_images": payload.realworld_images,
+        "created_at":       _now(),
+        "updated_at":       _now(),
     }
     try:
         res     = service_sb.table("lessons").insert(row).execute()
@@ -1580,7 +1581,7 @@ def list_lessons(current_user: dict = Depends(get_current_user)):
     try:
         res = (
             service_sb.table("lessons")
-            .select("id, title, thumbnail_url, theory_url, animation_url, quiz_data, created_at")
+            .select("id, title, thumbnail_url, theory_url, animation_url, realworld_images, created_at")
             .order("created_at", desc=False)
             .execute()
         )
@@ -1618,6 +1619,9 @@ def delete_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)
     _del_storage("lesson-thumbnails", lesson.get("thumbnail_url"))
     _del_storage("lesson-videos",     lesson.get("animation_url"))
     _del_storage("lesson-html",       lesson.get("theory_url"))
+    # Delete all Real-World Application images from storage
+    for img_url in (lesson.get("realworld_images") or []):
+        _del_storage("lesson-realworld", img_url)
 
     try:
         service_sb.table("lessons").delete().eq("id", lesson_id).execute()
