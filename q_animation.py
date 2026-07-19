@@ -141,7 +141,7 @@ MAX_TOK_CONCEPT = 16000
 #  MODULE 1 — QAnimLogger
 # ===========================================================================
 class QAnimLogger:
-    PREFIX = "[QAnim v1.0]"
+    PREFIX = "[QAnim v1.1]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -2160,11 +2160,30 @@ def inject_controls_bar(html):
 
 _PREV_STEP_CSS = """
 <style id="qanim-prevstep-styles">
-#btn-prev.qanim-prev-btn { background:transparent; color:#334155; border:1px solid #cbd5e1;
-  padding:10px 20px; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer;
-  transition:all .2s ease; margin-right:auto; }
-#btn-prev.qanim-prev-btn:hover:not(:disabled) { background:rgba(15,23,42,.05); color:#1e293b; }
-#btn-prev.qanim-prev-btn:disabled { opacity:.4; cursor:not-allowed; }
+#btn-prev.qanim-prev-btn {
+  background: #ffffff;
+  color: #64748b;
+  border: 1.5px solid #cbd5e1;
+  padding: 11px 20px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .2s ease, color .2s ease, border-color .2s ease,
+              transform .18s cubic-bezier(0.34,1.56,0.64,1), box-shadow .2s ease;
+  margin-right: auto;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+}
+#btn-prev.qanim-prev-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  color: #1e293b;
+  border-color: #94a3b8;
+  box-shadow: 0 2px 8px rgba(15,23,42,0.10);
+  transform: translateY(-1px);
+}
+#btn-prev.qanim-prev-btn:active:not(:disabled) { transform: translateY(0); }
+#btn-prev.qanim-prev-btn:disabled { opacity:.38; cursor:not-allowed; box-shadow:none; }
 </style>
 """
 
@@ -2954,7 +2973,6 @@ class PanelInjectionManager:
 #          "badges": [{"text": "...", "type": "cyan|orange|green"}],
 #          "components": ["component_id_1", "component_id_2"],
 #          "focus_component": "component_id or null",
-#          "to_find_label": "what this step reveals",
 #          "math_content": ""
 #        }, ...
 #      ],
@@ -2979,141 +2997,93 @@ class PanelInjectionManager:
 # STAGE A: GeminiSceneAnalyzer  — produces the scene script JSON
 # ---------------------------------------------------------------------------
 
-_SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer — a world-class educational animation director and physics visualisation expert.
+_SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer — a world-class educational animation director and content planner.
 
-Given a student question, produce a richly detailed, cinematically structured scene-by-scene animation script in JSON. Your output drives a premium SVG animation engine. Think like a director: every step must earn its place, reveal something new with visual drama, and leave the student genuinely understanding the mechanism.
+Given a student question, produce a cinematic, step-by-step animation script in JSON format that feels like a polished interactive textbook.
 
-═══ CINEMATIC ANIMATION PHILOSOPHY ═══
-• ONE COMPONENT PER STEP — never dump everything at once. Build tension and comprehension simultaneously.
-• MOTION IS MANDATORY — every component enters with physics-accurate animation:
-    - Rotating parts  → continuous requestAnimationFrame spin at the correct RPM/rad·s⁻¹
-    - Oscillating parts → sinusoidal motion driven by the real kinematic formula
-    - Tracing paths   → stroke-dashoffset reveal animating the actual trajectory
-    - Springs/beams   → elastic deformation via scaleY / translateY cycles
-    - Fluid/current   → animated stroke-dasharray pattern flowing in the correct direction
-• FOCUS CINEMATICS — when a new component enters, blur the background (blur-shield opacity 0.45),
-  then clear it when the overlay annotation appears. Creates a spotlight documentary feel.
-• ORCHESTRATED REVEAL — labels, dimension arrows, and value callouts appear 0.4 s AFTER the
-  component finishes its entrance animation (never simultaneously).
-• THE FINAL STEP IS THE PAYOFF — freeze at the exact solution state, show the complete annotated
-  system with all computed values displayed as crisp SVG callouts.
-• SPATIAL DESIGN — plan component positions deliberately across the 850×478 canvas:
-    - Avoid crowding: leave ≥ 40 px margin from any edge.
-    - Use the full canvas width. Spread components logically (input → output left → right or top → bottom).
-    - Reserve a clear annotation zone (bottom strip y 380–460 or right margin x 680–830).
+════════════════════════════════════════════════════════════
+ANIMATION PHILOSOPHY — CINEMATIC REVEAL
+════════════════════════════════════════════════════════════
+• Each step is a "scene": ONE new component enters the stage with purposeful, physically correct motion.
+• Scene order = physical assembly order (ground → frame → driver → driven → measurement).
+• When a new component appears, prior elements dim slightly via blur-shield (opacity 0.35–0.5) to direct the viewer's eye.
+• Labels, dimension arrows, and value callouts enter AFTER their component is visible — never before.
+• The final step is the "answer reveal": the mechanism freezes at the exact solution state; a clean annotation layer shows the computed result.
+• Motion must reflect real physics — a crank rotates continuously, a piston oscillates with sin/cos kinematics, gears mesh at correct speed ratios, belt traces its path, heat-flow pulses along the pipe.
+• Every step description is written like a great professor: conversational, precise, one "aha moment" per step.
 
-═══ COMPONENT VISUAL QUALITY MANDATES ═══
-Every svg_component description must specify:
-  • Exact pixel position and size anchored to the 850×478 canvas.
-  • Primary gradient: specify 2–3 stop colors for the component's fill (metallic, matte, or glowing).
-  • Stroke hierarchy: outer frame stroke-width 3, sub-components 2, labels 1.5, annotation lines 1.
-  • Shadow/glow: which SVG filter to apply (dropShadow, glowCyan, glowOrange, or glowGreen).
-  • Motion anchor: the exact SVG transform-origin or pivot point for animation.
-  • Label positions: exact x,y for each annotation so the builder places them without guessing.
+════════════════════════════════════════════════════════════
+VISUAL DESIGN INTENT (for the AnimationBuilder to follow)
+════════════════════════════════════════════════════════════
+• Light, airy canvas: soft blue-white radial gradient (#f0f5ff → #dce8f5 → #c8d8ed).
+• Structural parts: multi-stop metallic gradients in blue-grey (#e8f0fa → #b8cce0 → #6a8aaa).
+• Accent hierarchy: cyan #0891b2 (primary highlights), orange #ea8c00 (forces/motion), green #16a34a (results/measurements).
+• Drop-shadow filters on every major group (feDropShadow, stdDeviation 4–6).
+• Glow pulse on newly-revealed components (feGaussianBlur glow, cyan hue).
+• Stroke hierarchy: frame=2.5px, components=3px, dimension lines=1.5px (dashed), annotation arrows=1.5px.
+• Text: main labels #1e293b bold, secondary #475569, value callouts in rounded rect chips with accent fill.
 
-═══ SUBJECT-ADAPTIVE DESIGN ═══
-Match visual vocabulary to the question's domain:
-  MECHANICAL (gears, cranks, linkages): steel-blue metallic gradients, industrial feel,
-      CNC-style dimension arrows, RPM/velocity annotations in cyan badges.
-  THERMODYNAMICS / FLUID: warm amber-to-red heat gradients for hot elements, ice-blue for cold,
-      flowing dashed lines for heat flux, convection arrows, temperature callouts.
-  ELECTRICAL / CIRCUITS: glowing neon-teal wire traces on dark-ish panel, pulsing current dots,
-      component symbols drawn with precision (resistor zig-zag, capacitor plates, inductor loops).
-  STRUCTURAL / STATICS: neutral stone-grey beams with red stress concentration highlights,
-      reaction arrows in bold orange, bending moment diagram as an SVG path below the beam.
-  MATHEMATICS / ABSTRACT: clean geometric shapes with gradient fills, coordinate axes with
-      tick marks, animated curve tracing, formula callout boxes with white background.
-  BIOLOGY / CHEMISTRY: organic shapes with soft pastel fills, molecular bond animations,
-      reaction arrow sweeps, cell membrane cross-sections.
-
-OUTPUT: Return ONLY valid JSON, no markdown fences, no preamble, no commentary:
+════════════════════════════════════════════════════════════
+OUTPUT FORMAT — Return ONLY valid JSON, no markdown, no preamble
+════════════════════════════════════════════════════════════
 {
-  "title": "Precise 4-8 word title naming the mechanism and key quantity",
+  "title": "Concise descriptive title (max 60 chars)",
   "topic": "PHYSICS|MATH|CHEMISTRY|ENGINEERING|BIOLOGY|ABSTRACT",
-  "visual_theme": "MECHANICAL|THERMAL|ELECTRICAL|STRUCTURAL|MATHEMATICAL|BIOLOGICAL",
-  "canvas_layout": "Brief description of how components are spatially arranged across the 850x478 canvas",
-  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ...", "Step 4: ...", "Step 5: ..."],
-  "final_answer": "Complete computed answer: all variables, values, and units. Never leave empty.",
-  "key_insight": "One unforgettable sentence naming the core physical principle this question demonstrates.",
+  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
+  "final_answer": "Complete computed answer with all numerical values and units",
+  "key_insight": "One memorable, plain-English insight sentence",
   "steps": [
     {
       "step_number": 1,
-      "label": "3-5 word pill label (e.g. 'Crank & Pivot Setup')",
-      "title": "Step 1: Full title the info-box h3 will display",
-      "description": "3-4 sentence professor-level explanation. Name the component, describe its physical role, state any relevant given values, and explain why this step matters for reaching the answer.",
-      "badges": [
-        {"text": "symbol = value unit", "type": "cyan"},
-        {"text": "formula name", "type": "orange"}
-      ],
-      "components_visible": ["comp_id_already_shown", "comp_id_new"],
-      "components_new": ["comp_id_new"],
-      "focus_component": "comp_id_new",
+      "label": "3–5 word pill label for the step dot",
+      "title": "Step 1: Full descriptive title (max 55 chars)",
+      "description": "2–3 sentences. Conversational, like a professor thinking aloud. State what we see, what it means, what comes next.",
+      "badges": [{"text": "symbol = value unit", "type": "cyan|orange|green"}],
+      "components_visible": ["comp_id_1"],
+      "components_new": ["comp_id_1"],
+      "focus_component": "comp_id_1",
       "blur_background": true,
-      "entrance_motion": "Describe exactly how this component's entrance animation plays: e.g. 'crank rotates from 0° to 360° over 1.2 s then continues at 5 rad/s'",
-      "overlay_annotations": [
-        {"label": "label text", "x": 120, "y": 80, "type": "dimension|value|formula|arrow"},
-        {"label": "another label", "x": 300, "y": 200, "type": "value"}
-      ],
-      "camera_focus": "Describe which region of the canvas is spotlighted in this step"
+      "motion_emphasis": "Short phrase describing how this component moves when revealed, e.g. 'crank sweeps 360° at 300 RPM'"
     }
   ],
   "svg_components": {
     "comp_id": {
-      "description": "Exact visual: shape primitives, size in px, anchor position (cx,cy or x,y), color stops for gradient fill",
+      "description": "Precise SVG visual description: shape, fill, stroke, position in 850×478 coordinate space",
       "motion_type": "rotate|translate|oscillate|trace|pulse|flow|static",
-      "motion_description": "Precise physics: pivot point (x,y), angular velocity rad/s, amplitude px, frequency Hz, path description",
-      "gradient_stops": ["#startColor at 0%", "#midColor at 50%", "#endColor at 100%"],
-      "stroke_color": "#hexcolor",
-      "stroke_width": 2.5,
-      "filter": "dropShadow|glowCyan|glowOrange|glowGreen|none",
-      "accent_color": "#hexcolor",
-      "labels": [
-        {"text": "label", "x": 0, "y": 0, "anchor": "middle|start|end"}
-      ],
-      "z_order": 1
+      "motion_description": "Exact kinematic description, e.g. rotates around pivot (425,239), driven by θ(t)=ωt where ω=300RPM×2π/60",
+      "accent_color": "#0891b2",
+      "layer_order": 1,
+      "labels": ["primary label", "value label"]
     }
   }
 }
 
-═══ STRICT RULES ═══
-1. steps: MINIMUM 4 steps, MAXIMUM 6. Each step must introduce at least one new component OR a new
-   annotation layer on an existing component. Never pad with empty steps.
-2. Step 1 ALWAYS establishes the fixed frame/ground/reference with the static backdrop.
-3. Steps 2–N-1 each introduce ONE new animated component, building the mechanism progressively.
-4. Final step: freeze mechanism at the EXACT solution state. Show all computed values as SVG annotations.
-5. badges per step: minimum 1, maximum 3. Always include the key parameter being introduced that step.
-6. entrance_motion: be explicit — name the JS function type (requestAnimationFrame, setTimeout),
-   the mathematical formula used, and the numerical result from the question.
-7. overlay_annotations: for every step provide at least 2 annotation positions (x,y in 850×478 space).
-8. svg_components: describe EVERY physical element separately — frame, pivot pin, crank arm, connecting rod,
-   slider block, gear teeth outline, pulley rim, belt, spring coils, beam cross-section, etc.
-   Minimum 3 components, maximum 10. Position them so they fill the canvas without crowding.
-9. gradient_stops: every component MUST have a 3-stop gradient. No flat fills.
-10. final_answer: MUST be fully computed with real numbers and units. Never leave empty or vague.
-11. canvas_layout: think about the story the eye should follow across the canvas — plan it.
-12. motion_type: must match actual physics. "static" is only permitted for the fixed frame layer."""
+════════════════════════════════════════════════════════════
+STRICT RULES
+════════════════════════════════════════════════════════════
+1. steps: minimum 4, maximum 6. Always end with the solution/answer step.
+2. Step 1: establishes the fixed frame, ground, housing, or reference coordinate system.
+3. Steps 2–(N-1): each introduces exactly ONE new moving component with its physical motion.
+4. Last step: freezes mechanism at solution state. Shows answer annotation. NO calculation popup boxes.
+5. badge types: "cyan" = given data, "orange" = motion/force, "green" = result/answer.
+6. svg_components: name every physical part — frame, ground, pivots, cranks, connecting rods, pistons,
+   gears, pulleys, belts, springs, beams, coils, resistors, pipes, etc. Place all in 850×478 space.
+7. final_answer: MUST contain the computed numerical result with units. Never empty.
+8. motion_type: must accurately match the physical behavior of the component.
+9. layer_order: integer starting at 1 (lower = drawn first / behind)."""
 
-_SCENE_ANALYZER_USER = """Analyse this question and produce a cinema-quality animation scene script:
+_SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
 
 QUESTION: {question}
 
-DIRECTOR'S CHECKLIST before you write the JSON:
-1. IDENTIFY the domain (mechanical / thermal / electrical / structural / mathematical / biological) and
-   pick the matching visual_theme so the SVG builder can apply the right color palette and gradients.
-2. MAP the canvas (850×478) — sketch where every component sits. Input elements left, output right.
-   Allow annotation zones. No component should be smaller than 40×40 px or larger than 300×200 px.
-3. PLAN the motion for each component — name the exact animation type and the real physical formula
-   (e.g. "x_piston = r·cosθ + √(L²−r²·sin²θ)"). The builder will hard-code these formulae.
-4. COMPUTE the actual numerical answer from the question data. Include every value with units.
-5. DESIGN the step sequence as a visual story: each step must have dramatic clarity — the student
-   should feel a moment of "aha" as each component appears and moves.
-6. ANNOTATE richly — for every step provide at least 2 overlay annotations with exact pixel positions.
+Remember:
+- Plan the step-by-step visual reveal carefully.
+- Each step shows exactly ONE new component appearing with motion.
+- Components are drawn one by one in the correct physical order.
+- The final step freezes the mechanism at the solution state — NO calculations popup box.
+- Compute the actual numerical answer and include it in final_answer.
 
-QUALITY BAR: If your output could describe a generic "box and arrow" diagram, it is not good enough.
-Every component needs a shape, a color gradient, a position, a motion — and every step needs to feel
-like a deliberate cinematographic choice, not a bullet point.
-
-Return ONLY valid JSON. No markdown, no preamble, no commentary. Start with {{ and end with }}."""
+Return ONLY valid JSON."""
 
 
 class GeminiSceneAnalyzer:
@@ -3167,8 +3137,7 @@ class GeminiSceneAnalyzer:
                     "components_visible": ["frame"],
                     "components_new": ["frame"],
                     "focus_component": "frame",
-                    "blur_background": False,
-                    "to_find_label": "the system setup and given values"
+                    "blur_background": False
                 },
                 {
                     "step_number": 2,
@@ -3179,8 +3148,7 @@ class GeminiSceneAnalyzer:
                     "components_visible": ["frame", "solution"],
                     "components_new": ["solution"],
                     "focus_component": None,
-                    "blur_background": False,
-                    "to_find_label": "the final computed answer — please re-generate for detail"
+                    "blur_background": False
                 }
             ],
             "svg_components": {
@@ -3194,7 +3162,7 @@ class GeminiSceneAnalyzer:
                 "solution": {
                     "description": "Math solution box with calculation steps",
                     "motion_type": "static",
-                    "motion_description": "Clean 'To find:' label card appearing",
+                    "motion_description": "Solution summary card appearing",
                     "accent_color": "#97c459",
                     "labels": ["Solution"]
                 }
@@ -3206,622 +3174,625 @@ class GeminiSceneAnalyzer:
 # STAGE B: GeminiAnimationBuilder — generates the complete HTML animation
 # ---------------------------------------------------------------------------
 
-_ANIMATION_BUILDER_SYSTEM = """You are QAnim Animation Builder v2.0 — a world-class creative technologist who generates COMPLETE, SELF-CONTAINED, PREMIUM HTML animation pages for engineering and science education.
+_ANIMATION_BUILDER_SYSTEM = """You are QAnim Animation Builder v1.0 — a world-class specialist who generates COMPLETE, SELF-CONTAINED, VISUALLY POLISHED HTML animation pages for engineering and science education.
 
-You receive a scene script (JSON) and produce a polished, cinema-quality interactive animation. Your output must look and feel like a product built by a senior design-engineering team — not like a generated template.
+You receive a scene script (JSON) and must produce a premium interactive animation that feels like a professional educational platform (think Khan Academy × Brilliant × a high-end engineering textbook).
 
-═══ DESIGN PHILOSOPHY ═══
-VISUAL HIERARCHY FIRST. Every pixel must serve comprehension. The student's eye should always know exactly where to look. Achieve this through:
-  • SIZE contrast: the currently animating component is largest or brightest on canvas.
-  • COLOR contrast: active element glows or intensifies; inactive elements recede to 40% opacity.
-  • MOTION contrast: only the active component moves fluidly; completed components hold their solved state.
-  • LABEL hierarchy: primary values in 16px bold #1e293b; secondary in 13px #475569; units in 11px #64748b.
+════════════════════════════════════════════════════════════
+DESIGN PRINCIPLES
+════════════════════════════════════════════════════════════
+1. LIGHT, AIRY PALETTE — Never dark backgrounds. The page feels open and breathable.
+   Body: #eef2f9 (soft blue-grey). Dashboard card: #ffffff. Canvas: radial gradient #f0f5ff→#dce8f5→#c8d8ed.
+2. CLEAR VISUAL HIERARCHY — Every element has a purpose. No clutter.
+   Question banner → SVG canvas → control panel. No floating noise.
+3. SMOOTH, PURPOSEFUL MOTION — Every animation is physically correct and aesthetically satisfying.
+   Transitions use cubic-bezier(0.4, 0, 0.2, 1). Layer reveals use opacity + slight translateY (0→natural).
+4. LAYERED SVG DEPTH — Components exist in z-order. Shadows, gradients, and glow filters create depth.
+5. POLISHED TYPOGRAPHY — Font stack: 'Segoe UI', system-ui, -apple-system. Consistent sizing scale.
 
-POLISH IS MANDATORY. Every visible element must have:
-  • A multi-stop gradient fill (never a flat color).
-  • A feDropShadow or feGaussianBlur filter for depth.
-  • Smooth entrance: 600ms cubic-bezier(0.34, 1.56, 0.64, 1) spring easing on opacity transitions.
-  • Stroke hierarchy: frame outlines 2.5px, component bodies 2px, annotation lines 1.5px, tick marks 1px.
-
-MOTION QUALITY IS NON-NEGOTIABLE. Every animated component MUST:
-  • Use the real mathematical formula from the problem (not placeholder sine waves).
-  • Run inside a persistent requestAnimationFrame loop — motion never stops unless freezing is true.
-  • Have a smooth entry transition: components fade in while beginning their motion, not after.
-  • Use transform-origin set exactly at the component's physical pivot point.
-
-═══ EXACT CSS DESIGN SYSTEM ═══
-Use these precise tokens everywhere — never deviate:
-
-:root {
-  /* Palette */
-  --bg:          #eef2f9;          /* page background */
-  --surface:     #ffffff;          /* dashboard card */
-  --surface-2:   #f8faff;          /* info-box, inset areas */
-  --border:      #e2e8f0;          /* card borders */
-  --border-2:    #dde6f8;          /* info-box border */
-  --text-hi:     #0f172a;          /* headings */
-  --text-main:   #334155;          /* body text */
-  --text-sub:    #64748b;          /* secondary */
-  --text-muted:  #94a3b8;          /* placeholders */
-  /* Accents */
-  --cyan:        #0891b2;          /* primary accent */
-  --cyan-dark:   #0e7490;          /* hover / dim */
-  --cyan-xdark:  #0c5f73;          /* deepest */
-  --orange:      #ea8c00;          /* secondary accent */
-  --orange-dark: #b45309;
-  --green:       #16a34a;
-  --green-dark:  #15803d;
-  --red:         #dc2626;
-  --purple:      #7c3aed;
-  /* Shadows */
-  --shadow-card: 0 1px 3px rgba(15,23,42,.06), 0 8px 32px rgba(30,64,175,.09);
-  --shadow-hover:0 6px 24px rgba(8,145,178,.22);
-  --shadow-glow: 0 0 0 3px rgba(8,145,178,.18);
-  /* Radii */
-  --r-card:  16px;
-  --r-panel: 12px;
-  --r-badge: 20px;
-  --r-btn:   9px;
-}
-
-═══ MANDATORY HTML STRUCTURE ═══
-Build exactly this structure — no additions, no shortcuts:
+════════════════════════════════════════════════════════════
+REFERENCE OUTPUT STYLE (follow precisely)
+════════════════════════════════════════════════════════════
+The output must match this structure and CSS (light theme, visually rich):
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>[Exact title from scene script] — QAnim</title>
+  <title>[Title] — Interactive Animation</title>
   <style>
-    /* Full CSS using the design system above */
+    :root {
+      --bg-color: #eef2f9;
+      --panel-bg: #ffffff;
+      --text-main: #1e293b;
+      --text-sub: #64748b;
+      --text-muted: #94a3b8;
+      --accent-cyan: #0891b2;
+      --accent-cyan-dim: #0e7490;
+      --accent-cyan-light: rgba(8,145,178,0.10);
+      --accent-orange: #d97706;
+      --accent-green: #16a34a;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --border-radius: 16px;
+      --border-radius-sm: 10px;
+      --shadow-card: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08), 0 24px 48px rgba(15,23,42,0.04);
+      --shadow-hover: 0 4px 16px rgba(8,145,178,0.18);
+      --transition-smooth: 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+      --transition-spring: 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 28px 16px 130px;
+    }
+    /* ── Page header (above dashboard) ── */
+    .page-header {
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .page-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      background: rgba(8,145,178,0.10);
+      border: 1px solid rgba(8,145,178,0.22);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent-cyan-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .page-chip::before { content: '▶'; font-size: 8px; }
+    /* ── Dashboard Card ── */
+    .dashboard {
+      width: 100%;
+      max-width: 900px;
+      margin: 0 auto;
+      background: var(--panel-bg);
+      border-radius: var(--border-radius);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      position: relative;
+    }
+    /* Subtle top accent line */
+    .dashboard::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-cyan-dim) 0%, #7c3aed 50%, var(--accent-orange) 100%);
+      border-radius: var(--border-radius) var(--border-radius) 0 0;
+      z-index: 2;
+    }
+    /* ── Question Banner ── */
+    .question-banner {
+      padding: 22px 28px 18px;
+      background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 40%, #eef2f9 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+    .question-banner::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(100deg, rgba(8,145,178,0.05) 0%, transparent 55%);
+      pointer-events: none;
+    }
+    /* ── Question Banner Inner ── */
+    .q-label {
+      font-size: 10.5px;
+      font-weight: 800;
+      color: var(--accent-cyan-dim);
+      text-transform: uppercase;
+      letter-spacing: 1.8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .q-label::before {
+      content: '';
+      display: inline-block;
+      width: 16px; height: 16px;
+      border-radius: 5px;
+      background: linear-gradient(135deg, var(--accent-cyan-dim), var(--accent-cyan));
+      flex-shrink: 0;
+    }
+    .q-text {
+      font-size: 15px;
+      color: var(--text-main);
+      line-height: 1.6;
+      font-weight: 450;
+      max-width: 820px;
+    }
+    /* ── SVG Canvas ── */
+    .svg-container {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
+      position: relative;
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+    }
+    svg { display: block; width: 100%; height: 100%; }
+    /* Smooth, physically-weighted layer transitions */
+    .svg-layer {
+      transition: opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    /* ── Control Panel ── */
+    .control-panel {
+      padding: 22px 28px 26px;
+      background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+      border-top: 1px solid var(--border);
+    }
+    /* ── Step Indicator: pill-style dots ── */
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    /* Connector line between dots */
+    .step-connector {
+      flex: 0 0 18px;
+      height: 1.5px;
+      background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
+      border-radius: 2px;
+    }
+    .step-dot {
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: #f1f5f9;
+      border: 1.5px solid #e2e8f0;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #94a3b8;
+      cursor: pointer;
+      transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease,
+                  box-shadow 0.3s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+      white-space: nowrap;
+      user-select: none;
+      position: relative;
+    }
+    .step-dot:hover:not(.active) {
+      background: rgba(8,145,178,0.07);
+      border-color: rgba(8,145,178,0.3);
+      color: var(--accent-cyan-dim);
+    }
+    .step-dot.active {
+      background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%);
+      border-color: transparent;
+      color: #ffffff;
+      box-shadow: 0 3px 12px rgba(8,145,178,0.38), 0 1px 3px rgba(8,145,178,0.20);
+      transform: scale(1.07);
+    }
+    /* Completed step indicator */
+    .step-dot.done {
+      background: rgba(22,163,74,0.09);
+      border-color: rgba(22,163,74,0.28);
+      color: #15803d;
+    }
+    .step-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      margin-left: 6px;
+      flex: 1;
+      min-width: 0;
+    }
+    /* ── Info Box ── */
+    .info-box {
+      background: linear-gradient(135deg, #f8fbff 0%, #f4f8ff 100%);
+      border: 1px solid #dde8f8;
+      border-left: 4px solid var(--accent-cyan);
+      border-radius: var(--border-radius-sm);
+      padding: 20px 22px;
+      min-height: 130px;
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+      position: relative;
+      overflow: hidden;
+    }
+    .info-box::before {
+      content: '';
+      position: absolute;
+      top: 0; right: 0;
+      width: 120px; height: 120px;
+      background: radial-gradient(circle, rgba(8,145,178,0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .info-box h3 {
+      color: var(--text-main);
+      font-size: 16.5px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      line-height: 1.3;
+      letter-spacing: -0.2px;
+    }
+    .info-box h3::before {
+      content: '';
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      flex-shrink: 0;
+      box-shadow: 0 0 0 3px rgba(8,145,178,0.18);
+    }
+    /* ── Badges ── */
+    .badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+    .badge {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 11.5px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      letter-spacing: 0.1px;
+    }
+    .badge-cyan  { background: rgba(8,145,178,0.09);  border: 1px solid rgba(8,145,178,0.28);  color: #0e7490; }
+    .badge-orange{ background: rgba(217,119,6,0.09);  border: 1px solid rgba(217,119,6,0.28);  color: #92400e; }
+    .badge-green { background: rgba(22,163,74,0.09);  border: 1px solid rgba(22,163,74,0.28);  color: #15803d; }
+    /* ── Description ── */
+    .info-desc {
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-sub);
+      font-weight: 400;
+    }
+    /* ── Step progress bar ── */
+    .step-progress-wrap {
+      height: 3px;
+      background: #f1f5f9;
+      border-radius: 2px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .step-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #0e7490, #0891b2, #38bdf8);
+      border-radius: 2px;
+      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    /* ── Actions ── */
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    button {
+      padding: 11px 24px;
+      border-radius: 10px;
+      font-size: 13.5px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.22s ease, box-shadow 0.22s ease,
+                  transform 0.18s cubic-bezier(0.34,1.56,0.64,1),
+                  color 0.2s ease, border-color 0.2s ease;
+      border: none;
+      outline: none;
+      letter-spacing: 0.1px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(8,145,178,0.30), 0 1px 3px rgba(8,145,178,0.15);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #0c6680 0%, #0e7490 100%);
+      box-shadow: 0 6px 22px rgba(8,145,178,0.38);
+      transform: translateY(-2px);
+    }
+    .btn-primary:active { transform: translateY(0); box-shadow: 0 2px 6px rgba(8,145,178,0.20); }
+    .btn-secondary {
+      background: #ffffff;
+      color: var(--text-sub);
+      border: 1.5px solid var(--border-strong);
+      box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+    }
+    .btn-secondary:hover {
+      background: #f8fafc;
+      color: var(--text-main);
+      border-color: #94a3b8;
+      box-shadow: 0 2px 8px rgba(15,23,42,0.10);
+      transform: translateY(-1px);
+    }
+    .btn-secondary:active { transform: translateY(0); }
   </style>
 </head>
 <body>
+  <!-- Page header chip -->
+  <div class="page-header">
+    <div class="page-chip">Interactive Animation</div>
+  </div>
   <div class="dashboard">
-
-    <!-- 1. QUESTION BANNER — always at top -->
+    <!-- Question Banner -->
     <div class="question-banner">
-      <div class="q-eyebrow">
-        <span class="q-icon">⚙</span>   <!-- use domain-appropriate emoji: ⚙ 🔋 🌡 📐 ⚗ 🧬 -->
-        <span class="q-label">Problem Statement</span>
-        <span class="q-domain-badge">[DOMAIN]</span>   <!-- e.g. DYNAMICS / THERMODYNAMICS / CIRCUITS -->
-      </div>
-      <p class="q-text">[Full question text]</p>
+      <div class="q-label">Problem Statement</div>
+      <div class="q-text">[question text]</div>
     </div>
-
-    <!-- 2. SVG STAGE — the animated canvas -->
-    <div class="svg-container" id="svg-stage-wrap">
-      <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice"
-           xmlns="http://www.w3.org/2000/svg">
+    <!-- SVG Canvas -->
+    <div class="svg-container">
+      <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <!-- REQUIRED filters and gradients — see SVG DEFS section below -->
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" stroke-opacity="0.05" />
+          </pattern>
+          <!-- Metallic gradients, drop-shadow filters, glow filters, arrow markers -->
+          <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#e8f0fa" />
+            <stop offset="40%" stop-color="#b8cce0" />
+            <stop offset="100%" stop-color="#6a8aaa" />
+          </linearGradient>
+          <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="rgba(30,64,175,0.18)" />
+          </filter>
+          <filter id="glowCyan" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+          <marker id="arrowCyan" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#0891b2" />
+          </marker>
+          <marker id="arrowOrange" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#ea8c00" />
+          </marker>
+          <marker id="arrowGreen" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#16a34a" />
+          </marker>
         </defs>
-        <!-- Background fill -->
-        <rect width="850" height="478" fill="url(#bg-grad)" />
-        <rect width="850" height="478" fill="url(#grid-pat)" opacity="0.04" />
-
-        <!-- layer-frame: axis lines, reference marks, title text — ALWAYS VISIBLE -->
-        <g id="layer-frame" class="svg-layer"></g>
-
-        <!-- blur-shield: dims background during component focus -->
-        <rect id="blur-shield" width="850" height="478" fill="#b8cce4" opacity="0"
-              class="svg-layer" pointer-events="none" style="transition:opacity 0.5s ease;" />
-
-        <!-- One <g class="svg-layer"> per physical component, all start opacity:0 -->
-        <!-- <g class="svg-layer" id="layer-[compName]" style="opacity:0;"> ... </g> -->
-
-        <!-- One <g class="svg-layer"> per step overlay — annotations, callouts -->
-        <!-- <g class="svg-layer" id="overlay-step0" style="opacity:0;"> ... </g> -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+        <!-- Fixed background layer (always visible) -->
+        <g class="svg-layer" id="layer-frame"> ... </g>
+        <!-- blur-shield rect -->
+        <rect id="blur-shield" width="100%" height="100%" fill="#c7d8ed" opacity="0" pointer-events="none" />
+        <!-- Component layers (one per physical component, start opacity:0) -->
+        <g class="svg-layer" id="layer-[component]" style="opacity:0"> ... </g>
+        <!-- Overlay layers: labels and annotations per step -->
+        <g class="svg-layer" id="overlay-step0" style="opacity:0"> ... </g>
+        ...
       </svg>
-
-      <!-- Step progress bar across top of canvas -->
-      <div class="canvas-progress" id="canvas-progress">
-        <div class="cp-fill" id="cp-fill" style="width:0%"></div>
+    </div>
+    <!-- Control Panel -->
+    <div class="control-panel">
+      <div class="step-indicator" id="dots">
+        <!-- pill-style step dots: each dot shows the step label text -->
+        <div class="step-dot active">Step label text</div>
+        <div class="step-dot">Step label text</div>
+        <div class="step-label" id="step-label">Starting...</div>
+      </div>
+      <div class="info-box">
+        <h3 id="info-title">...</h3>
+        <div class="badges" id="info-badges"></div>
+        <div class="info-desc" id="info-desc">...</div>
+      </div>
+      <div class="actions">
+        <button class="btn-secondary" onclick="resetAnim()">↺ Restart</button>
+        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step ▶</button>
       </div>
     </div>
-
-    <!-- 3. CONTROL PANEL -->
-    <div class="control-panel">
-
-      <!-- Step navigation pills -->
-      <div class="step-track" id="step-track">
-        <!-- <div class="step-pill [active]" data-step="0">Label text</div> -->
-      </div>
-
-      <!-- Info card — animates content on step change -->
-      <div class="info-card" id="info-card">
-        <div class="info-card-accent" id="info-accent"></div>
-        <div class="info-card-body">
-          <h3 class="info-title" id="info-title">Loading…</h3>
-          <div class="info-badges" id="info-badges"></div>
-          <p class="info-desc" id="info-desc"></p>
-        </div>
-      </div>
-
-      <!-- Action row -->
-      <div class="action-row">
-        <button class="btn-ghost" id="btn-restart" onclick="resetAnim()">
-          <span>↺</span> Restart
-        </button>
-        <div class="step-counter" id="step-counter">Step 0 / N</div>
-        <button class="btn-primary" id="btn-next" onclick="nextStep()">
-          Next <span>▶</span>
-        </button>
-      </div>
-
-    </div><!-- end control-panel -->
-  </div><!-- end dashboard -->
-
-  <script>
-    /* Full animation JS — see JS ARCHITECTURE section */
-  </script>
+  </div>
+  <script> ... full animation JS ... </script>
 </body>
 </html>
 
-═══ PREMIUM CSS RULES ═══
-Body and dashboard:
-  body { background: var(--bg); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    display: flex; flex-direction: column; align-items: center; padding: 28px 16px 140px;
-    min-height: 100vh; color: var(--text-main); }
-  .dashboard { width: 100%; max-width: 920px; background: var(--surface);
-    border-radius: var(--r-card); box-shadow: var(--shadow-card);
-    border: 1px solid var(--border); overflow: hidden; }
+════════════════════════════════════════════════════════════
+SVG DESIGN RULES — HIGH-QUALITY LAYERED SVG
+════════════════════════════════════════════════════════════
+1. viewBox="0 0 850 478" (16:9). preserveAspectRatio="xMidYMid slice".
+2. Canvas background: <rect> with fill="url(#canvasBg)" using a radial gradient:
+   center light (#eef5ff), midpoint (#dce8f5), edge (#c8d9ed). Add subtle noise via feTurbulence.
+3. Grid pattern: id="grid", 40×40 units, stroke "#1e3a5f" opacity 0.04, strokeWidth 0.6.
+4. DEFS section must include ALL of:
+   a) Metallic gradient "steel": #e8f0fa → #c8d8e8 → #8aaac0 → #5a7a9a (4-stop, 135°)
+   b) Highlight gradient "steelHi": #f4f8fc → #d4e4f0 → #94b4c8 (lighter, for top-facing surfaces)
+   c) Accent glow filter "glowCyan": feGaussianBlur stdDeviation="6", feComposite over source
+   d) Accent glow filter "glowOrange": same, orange-tinted flood for force arrows
+   e) Drop shadow "shadow": feDropShadow dx=0 dy=3 stdDeviation=5, flood-color rgba(14,30,64,0.16)
+   f) Deep shadow "shadowDeep": feDropShadow dx=0 dy=6 stdDeviation=10, flood-color rgba(14,30,64,0.22)
+   g) Inner glow "innerGlow": feGaussianBlur in="SourceAlpha", feOffset, feComposite
+   h) Arrow marker "arrowCyan": fill #0891b2, markerWidth=8 markerHeight=8 refX=4 refY=4
+   i) Arrow marker "arrowOrange": fill #d97706
+   j) Arrow marker "arrowGreen": fill #16a34a
+   k) Arrow marker "arrowGrey": fill #94a3b8 (for dimension lines)
+5. LAYER STRUCTURE (strict order, top-to-bottom in source = back-to-front visually):
+   <g id="layer-canvas-bg">  — background rect + grid (always visible, opacity:1)
+   <rect id="blur-shield" …>  — dimming overlay between bg and components
+   <g class="svg-layer" id="layer-frame" …>   — fixed structure, always visible
+   <g class="svg-layer" id="layer-[comp1]" style="opacity:0"> — components in reveal order
+   <g class="svg-layer" id="layer-[comp2]" style="opacity:0">
+   …
+   <g class="svg-layer" id="overlay-step0" style="opacity:0"> — labels/arrows for step 0
+   <g class="svg-layer" id="overlay-step1" style="opacity:0"> — labels/arrows for step 1
+   …
+6. blur-shield: <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
+   Opacity range: 0 (no focus) → 0.38 (focused step) → 0 (final reveal step).
+7. STRUCTURAL COMPONENTS — use metallic fill="url(#steel)", stroke layering, filter="url(#shadow)":
+   - Frames/housings: rounded rect or path, fill="url(#steel)", stroke="#6a8aaa" strokeWidth=2.5
+   - Ground hatching: diagonal lines pattern, classic engineering style
+   - Pivots/bearings: concentric circles with metallic gradient, inner circle lighter
+8. MOVING COMPONENTS — each must have a distinct visual personality:
+   - Cranks: thick rounded bar, fill="url(#steel)", with pivot circle at both ends
+   - Connecting rods: tapered shape (wider at crank end, narrower at piston end)
+   - Pistons: rectangular with rounded ends, fill="url(#steelHi)", subtle chamfer lines
+   - Gears: proper involute-like teeth (use path or polygon approximation), fill="url(#steel)"
+   - Pulleys: circles with spoke detail, belt grooves visible
+   - Belts: thick stroke path, stroke="#334155", slightly textured with dash patterns
+   - Springs: zigzag path, stroke="#475569", strokeWidth=2.5
+   - Heat pipes: concentric circles or annular ring, fill gradient from hot to cool colors
+9. TEXT IN SVG — strict hierarchy:
+   - Component name labels: fontSize=13, fontWeight=800, fill="#1e293b", fontFamily="Segoe UI,system-ui,sans-serif"
+   - Value callout chips: <rect rx=5 fill="rgba(8,145,178,0.12)" stroke="rgba(8,145,178,0.25)"/> + <text> centered
+   - Dimension lines: stroke="#94a3b8", strokeWidth=1.5, strokeDasharray="5,3", with arrowGrey markers
+   - Annotation arrows (forces, velocities): stroke="#0891b2" or "#d97706", strokeWidth=2.5, with arrowCyan/Orange
+   - Secondary labels: fontSize=11, fill="#475569"
+10. ZERO text overlaps — plan all label positions. Every label must be ≥12px from any other element.
+11. Light-theme colors for components (NO dark/neon colors):
+    Primary structure: #4a6a8a, #6a8aaa, #8aaac4
+    Crank/driver: #2563eb (vibrant blue), stroke #1d4ed8
+    Driven: #0891b2 (cyan), stroke #0e7490
+    Forces/motion arrows: #d97706 (amber), stroke #b45309
+    Results/measurements: #16a34a (green), stroke #15803d
+    Danger/highlight: #dc2626 (red)
 
-Question banner (visually rich header):
-  .question-banner { padding: 20px 28px 18px;
-    background: linear-gradient(135deg, #eef6ff 0%, #e4effe 40%, #f0f5ff 100%);
-    border-bottom: 1px solid var(--border); position: relative; overflow: hidden; }
-  .question-banner::before { content:''; position:absolute; top:0; left:0; right:0; bottom:0;
-    background: linear-gradient(90deg, rgba(8,145,178,0.07) 0%, transparent 55%);
-    pointer-events: none; }
-  .question-banner::after { content:''; position:absolute; top:0; right:0; width:220px; height:100%;
-    background: radial-gradient(ellipse at 100% 50%, rgba(124,58,237,0.05) 0%, transparent 70%);
-    pointer-events: none; }
-  .q-eyebrow { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-  .q-icon { font-size:16px; }
-  .q-label { font-size:10px; font-weight:900; color:var(--cyan-dark); text-transform:uppercase;
-    letter-spacing:2px; }
-  .q-domain-badge { padding:2px 10px; border-radius:var(--r-badge);
-    background:rgba(8,145,178,0.10); border:1px solid rgba(8,145,178,0.25);
-    color:var(--cyan-dark); font-size:9.5px; font-weight:800; letter-spacing:1px;
-    text-transform:uppercase; margin-left:4px; }
-  .q-text { font-size:14px; color:var(--text-hi); line-height:1.6; font-weight:400;
-    max-width:800px; }
+════════════════════════════════════════════════════════════
+STEP DOT STRUCTURE
+════════════════════════════════════════════════════════════
+Step dots are PILL-SHAPED <div> elements with text labels. Between dots, add <div class="step-connector">.
+Example HTML structure in #dots:
+  <div class="step-dot active">Problem Setup</div>
+  <div class="step-connector"></div>
+  <div class="step-dot">Crank Motion</div>
+  <div class="step-connector"></div>
+  <div class="step-dot">Solution</div>
+  <div class="step-label" id="step-label">Step 1 of 3</div>
 
-SVG container:
-  .svg-container { position:relative; width:100%; aspect-ratio:16/9; overflow:hidden;
-    background: radial-gradient(ellipse at 35% 35%, #e8f2ff 0%, #d4e5f7 45%, #c0d4eb 100%); }
-  #stage { display:block; width:100%; height:100%; }
-  .svg-layer { transition: opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1); }
-  .canvas-progress { position:absolute; top:0; left:0; right:0; height:3px;
-    background:rgba(203,213,225,0.4); }
-  .cp-fill { height:100%; background:linear-gradient(90deg,var(--cyan-dark),var(--cyan));
-    transition:width 0.4s cubic-bezier(0.4,0,0.2,1); border-radius:0 2px 2px 0; }
+In applyStep(idx): add/remove "active" and "done" classes. Update step-label text. Update progress bar width.
 
-Step track (pill navigation):
-  .step-track { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-    padding:18px 24px 12px; }
-  .step-pill { padding:5px 15px; border-radius:var(--r-badge); font-size:11px; font-weight:700;
-    color:var(--text-muted); background:rgba(203,213,225,0.45); border:1.5px solid #cbd5e1;
-    cursor:pointer; transition:all 0.28s cubic-bezier(0.34,1.56,0.64,1); white-space:nowrap;
-    user-select:none; }
-  .step-pill:hover { background:rgba(8,145,178,0.08); border-color:rgba(8,145,178,0.35);
-    color:var(--cyan-dark); }
-  .step-pill.active { background:linear-gradient(135deg,var(--cyan-dark) 0%,var(--cyan) 100%);
-    border-color:var(--cyan); color:#fff; box-shadow:0 3px 12px rgba(8,145,178,0.38);
-    transform:scale(1.08) translateY(-1px); }
-  .step-pill.done { background:rgba(22,163,74,0.10); border-color:rgba(22,163,74,0.35);
-    color:var(--green-dark); }
+════════════════════════════════════════════════════════════
+ANIMATION RULES — REAL PHYSICS
+════════════════════════════════════════════════════════════
+Motion must be physically correct, not just decorative:
+- Rotating cranks/gears/pulleys: continuous requestAnimationFrame, angle=ω×t (real rpm)
+- Oscillating pistons/sliders: x=r×cos(θ)+√(l²-r²×sin²(θ)) (actual kinematic formula)
+- Gear trains: each gear's ω scaled by tooth ratio (ω₂/ω₁ = T₁/T₂)
+- Belt drives: pulley animations synchronized, belt path traces smoothly
+- Springs: translateY(amplitude×sin(ωt)) with correct stiffness-derived frequency
+- Heat flow / current flow: animated stroke-dashoffset on the path
+- Waveforms / signals: path d attribute updated each frame with sin/cos
+- Freezing mechanism: lerp angle toward solution angle over ~60 frames, then pause RAF
 
-Info card:
-  .info-card { margin:0 24px 16px; border-radius:var(--r-panel); background:var(--surface-2);
-    border:1px solid var(--border-2); border-left:5px solid var(--cyan);
-    display:flex; overflow:hidden; transition:border-left-color 0.35s ease; }
-  .info-card-accent { width:4px; flex-shrink:0; background:linear-gradient(180deg,
-    var(--cyan) 0%, var(--purple) 100%); }  /* hidden, handled by border-left */
-  .info-card-body { flex:1; padding:18px 22px; display:flex; flex-direction:column; gap:10px; }
-  .info-title { font-size:16px; font-weight:800; color:var(--text-hi); line-height:1.35;
-    display:flex; align-items:center; gap:10px; }
-  .info-title::before { content:''; width:7px; height:7px; border-radius:50%; flex-shrink:0;
-    background:var(--cyan); box-shadow:0 0 8px rgba(8,145,178,0.55); }
-  .info-badges { display:flex; gap:7px; flex-wrap:wrap; }
-  .badge { padding:3px 12px; border-radius:var(--r-badge); font-size:11.5px; font-weight:700;
-    display:inline-flex; align-items:center; gap:5px; font-family:'Courier New',monospace; }
-  .badge-cyan   { background:rgba(8,145,178,0.09);  border:1px solid rgba(8,145,178,0.28);
-    color:var(--cyan-dark); }
-  .badge-orange { background:rgba(234,140,0,0.09);  border:1px solid rgba(234,140,0,0.28);
-    color:var(--orange-dark); }
-  .badge-green  { background:rgba(22,163,74,0.09);  border:1px solid rgba(22,163,74,0.28);
-    color:var(--green-dark); }
-  .badge-purple { background:rgba(124,58,237,0.09); border:1px solid rgba(124,58,237,0.28);
-    color:var(--purple); }
-  .info-desc { font-size:13.5px; color:var(--text-sub); line-height:1.7; }
-
-Action row:
-  .action-row { display:flex; align-items:center; gap:12px; padding:14px 24px 22px;
-    justify-content:flex-end; }
-  .step-counter { font-size:12px; font-weight:700; color:var(--text-muted);
-    letter-spacing:0.5px; flex:1; text-align:center; }
-  .btn-ghost { padding:9px 20px; border-radius:var(--r-btn); background:transparent;
-    color:var(--text-sub); border:1.5px solid #cbd5e1; font-size:13px; font-weight:700;
-    font-family:inherit; cursor:pointer; display:flex; align-items:center; gap:6px;
-    transition:all 0.18s; }
-  .btn-ghost:hover { background:rgba(15,23,42,0.04); border-color:#94a3b8; color:var(--text-hi); }
-  .btn-primary { padding:10px 26px; border-radius:var(--r-btn);
-    background:linear-gradient(135deg, var(--cyan-dark) 0%, var(--cyan) 100%);
-    color:#fff; border:none; font-size:13.5px; font-weight:700; font-family:inherit;
-    cursor:pointer; display:flex; align-items:center; gap:7px;
-    box-shadow:0 4px 14px rgba(8,145,178,0.30);
-    transition:all 0.2s cubic-bezier(0.34,1.56,0.64,1); }
-  .btn-primary:hover { box-shadow:var(--shadow-hover); transform:translateY(-2px) scale(1.02); }
-  .btn-primary:active { transform:translateY(0) scale(0.99); box-shadow:none; }
-  #btn-next:disabled { opacity:0.4; cursor:not-allowed; transform:none; box-shadow:none; }
-
-═══ SVG DEFS — ALWAYS INCLUDE ALL OF THESE ═══
-Inside <defs> put exactly these, in this order:
-
-1. BACKGROUND GRADIENT (adapt colors to visual_theme from scene script):
-   MECHANICAL:     #e8f0f9 → #d0e2f3 → #b8cfe8
-   THERMAL:        #fff4e6 → #ffe8cc → #ffd4a8
-   ELECTRICAL:     #e8f5f9 → #d0eaf4 → #b8dced
-   STRUCTURAL:     #f0f0f5 → #e0e0ec → #cccce0
-   MATHEMATICAL:   #f0f4ff → #e4ecff → #d4e0ff
-   BIOLOGICAL:     #f0fff4 → #d4f5e0 → #b8eacc
-
-   <radialGradient id="bg-grad" cx="35%" cy="35%" r="70%" fx="35%" fy="35%">
-     <stop offset="0%"   stop-color="[light]" />
-     <stop offset="55%"  stop-color="[mid]" />
-     <stop offset="100%" stop-color="[dark]" />
-   </radialGradient>
-
-2. GRID PATTERN:
-   <pattern id="grid-pat" width="40" height="40" patternUnits="userSpaceOnUse">
-     <path d="M40 0 L0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.6"
-           stroke-opacity="0.07"/>
-   </pattern>
-
-3. METALLIC GRADIENT (for mechanical parts — blue-silver):
-   <linearGradient id="metal-blue" x1="0%" y1="0%" x2="100%" y2="100%">
-     <stop offset="0%"   stop-color="#e8f0fa" />
-     <stop offset="35%"  stop-color="#c0d4e8" />
-     <stop offset="70%"  stop-color="#8aaed2" />
-     <stop offset="100%" stop-color="#4a7099" />
-   </linearGradient>
-
-4. STEEL GRADIENT (darker structural):
-   <linearGradient id="metal-steel" x1="0%" y1="0%" x2="0%" y2="100%">
-     <stop offset="0%"   stop-color="#d8e8f4" />
-     <stop offset="50%"  stop-color="#a0b8cc" />
-     <stop offset="100%" stop-color="#607888" />
-   </linearGradient>
-
-5. ACCENT GRADIENTS (adapt to problem's key quantities):
-   <linearGradient id="grad-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
-     <stop offset="0%"   stop-color="#0ea5c9" />
-     <stop offset="100%" stop-color="#0e7490" />
-   </linearGradient>
-   <linearGradient id="grad-orange" x1="0%" y1="0%" x2="100%" y2="100%">
-     <stop offset="0%"   stop-color="#f59e0b" />
-     <stop offset="100%" stop-color="#b45309" />
-   </linearGradient>
-   <linearGradient id="grad-green" x1="0%" y1="0%" x2="100%" y2="100%">
-     <stop offset="0%"   stop-color="#22c55e" />
-     <stop offset="100%" stop-color="#15803d" />
-   </linearGradient>
-
-6. FILTERS:
-   <!-- Soft component shadow -->
-   <filter id="f-shadow" x="-25%" y="-25%" width="150%" height="150%">
-     <feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="rgba(15,40,80,0.20)" />
-   </filter>
-   <!-- Glow for active element (cyan) -->
-   <filter id="f-glow-cyan" x="-60%" y="-60%" width="220%" height="220%">
-     <feGaussianBlur stdDeviation="5" result="blur"/>
-     <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-   </filter>
-   <!-- Glow for secondary (orange) -->
-   <filter id="f-glow-orange" x="-60%" y="-60%" width="220%" height="220%">
-     <feGaussianBlur stdDeviation="4" result="blur"/>
-     <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-   </filter>
-   <!-- Glow for positive/answer (green) -->
-   <filter id="f-glow-green" x="-60%" y="-60%" width="220%" height="220%">
-     <feGaussianBlur stdDeviation="4" result="blur"/>
-     <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-   </filter>
-   <!-- Annotation card shadow -->
-   <filter id="f-card" x="-8%" y="-20%" width="116%" height="160%">
-     <feDropShadow dx="0" dy="4" stdDeviation="10" flood-color="rgba(8,100,160,0.15)"/>
-   </filter>
-   <!-- Inner shadow for recessed elements -->
-   <filter id="f-inset" x="-5%" y="-5%" width="110%" height="110%">
-     <feFlood flood-color="rgba(0,0,0,0.12)" result="color"/>
-     <feComposite in="color" in2="SourceGraphic" operator="in" result="shadow"/>
-     <feBlend in="SourceGraphic" in2="shadow" mode="multiply"/>
-   </filter>
-
-7. ARROW MARKERS (all three variants):
-   <marker id="arr-cyan" orient="auto" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5">
-     <path d="M0 0 L7 3.5 L0 7 Z" fill="#0891b2"/>
-   </marker>
-   <marker id="arr-orange" orient="auto" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5">
-     <path d="M0 0 L7 3.5 L0 7 Z" fill="#ea8c00"/>
-   </marker>
-   <marker id="arr-green" orient="auto" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5">
-     <path d="M0 0 L7 3.5 L0 7 Z" fill="#16a34a"/>
-   </marker>
-   <marker id="arr-red" orient="auto" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5">
-     <path d="M0 0 L7 3.5 L0 7 Z" fill="#dc2626"/>
-   </marker>
-
-═══ SVG LAYER ARCHITECTURE ═══
-1. layer-frame (id="layer-frame", always visible): Fixed canvas elements that never change:
-   - Horizontal/vertical reference axis lines (stroke:#b8c8e0, stroke-dasharray:8 6)
-   - Title text of the mechanism (centered, 20px bold, fill:#0e7490, filter:url(#f-glow-cyan))
-   - Ground hatching for fixed supports (if mechanical)
-   - Coordinate origin mark if mathematical
-   DO NOT animate anything in layer-frame.
-
-2. blur-shield (id="blur-shield"): sits between layer-frame and all component layers.
-   Default opacity:0. Set to 0.4–0.55 when introducing a new component (focus spotlight effect).
-   Use CSS transition: opacity 0.5s ease directly on the element.
-
-3. Component layers — one per physical component from the scene script:
-   id="layer-[compName]", class="svg-layer", initial style="opacity:0"
-   QUALITY RULES for each component:
-   • Use SVG primitive combinations, NOT single shapes: e.g. a gear is rim circle + tooth rects + bore hole + shadow
-   • Apply the appropriate gradient fill (never flat color)
-   • Apply filter (f-shadow minimum; f-glow-cyan for the step's focus component)
-   • Include engraved text/numbers where physically appropriate (bore diameter, tooth count)
-   • Stroke-width on outermost path: 2.5px for major components, 1.5px for sub-elements
-
-4. Overlay layers — one per step:
-   id="overlay-step[N]", class="svg-layer", initial style="opacity:0"
-   Each overlay contains crisp SVG annotation cards for that step:
-   ANNOTATION CARD TEMPLATE (use for every value callout):
-     <g transform="translate(x,y)">
-       <rect width="W" height="H" rx="10" fill="rgba(255,255,255,0.96)"
-             stroke="#0891b2" stroke-width="1.5" filter="url(#f-card)"/>
-       <text x="12" y="18" fill="#0e7490" font-size="9" font-weight="800"
-             letter-spacing="1.5" font-family="'Segoe UI',sans-serif">EYEBROW LABEL</text>
-       <text x="12" y="36" fill="#0f172a" font-size="14" font-weight="700"
-             font-family="'Segoe UI',sans-serif">VALUE + UNIT</text>
-     </g>
-   DIMENSION ARROW TEMPLATE (for length/angle callouts):
-     <line x1="..." y1="..." x2="..." y2="..." stroke="#0891b2" stroke-width="1.5"
-           marker-end="url(#arr-cyan)" marker-start="url(#arr-cyan)"/>
-     <text x="mid-x" y="mid-y" fill="#0e7490" font-size="11" font-weight="700"
-           text-anchor="middle" font-family="'Segoe UI',sans-serif">VALUE</text>
-
-═══ JS ARCHITECTURE ═══
-Write ONE self-contained <script> block. Follow these rules strictly:
-
-VARIABLES:
-  var stepsData = [ /* array of step objects */ ];
-  var currentStep = -1;
-  var animRunning = false;
-  var animId = null;
-  var t = 0;  /* global time in seconds */
-  var lastT = null;
-  var FREEZE = false;
-  var freezeAngle = 0;  /* target angle for freeze step */
-
-STEP OBJECT SHAPE:
+stepsData schema (one object per step, drives ALL state):
   {
-    label:    "Pill text",         // shown in .step-pill
-    blurOp:   0.45,                // blur-shield opacity for this step (0 = no blur)
-    layers:   { "layer-crank": 1, "layer-rod": 0.35 },  // explicit opacity for every layer
-    overlays: ["overlay-step1"],   // which overlay groups to show at opacity:1
-    title:    "Step N: ...",
-    badges:   '<span class="badge badge-cyan">N = 300 RPM</span>',
-    desc:     "...",
-    freeze:   false,               // true = snap to solution angle and pause
-    targetAngle: 0                 // radians — used when freeze:true
-  }
-
-CORE FUNCTIONS (use var, function declarations, no arrow functions, no const/let, no backticks):
-
-  function applyStep(idx) {
-    if (idx < 0 || idx >= stepsData.length) return;
-    var d = stepsData[idx];
-    // 1. Blur shield
-    document.getElementById('blur-shield').style.opacity = d.blurOp;
-    // 2. Layer opacities (use d.layers object — set every layer explicitly)
-    var layerIds = Object.keys(d.layers);
-    for (var i = 0; i < layerIds.length; i++) {
-      var el = document.getElementById(layerIds[i]);
-      if (el) el.style.opacity = d.layers[layerIds[i]];
-    }
-    // 3. Overlay visibility (hide all, show active)
-    var overlayEls = document.querySelectorAll('[id^="overlay-step"]');
-    for (var j = 0; j < overlayEls.length; j++) overlayEls[j].style.opacity = '0';
-    for (var k = 0; k < d.overlays.length; k++) {
-      var ov = document.getElementById(d.overlays[k]);
-      if (ov) ov.style.opacity = '1';
-    }
-    // 4. Info card
-    document.getElementById('info-title').textContent = d.title;
-    document.getElementById('info-badges').innerHTML = d.badges;
-    document.getElementById('info-desc').textContent = d.desc;
-    // 5. Step pills
-    var pills = document.querySelectorAll('.step-pill');
-    for (var p = 0; p < pills.length; p++) {
-      pills[p].classList.toggle('active', p === idx);
-      pills[p].classList.toggle('done', p < idx);
-    }
-    // 6. Progress bar
-    var pct = stepsData.length > 1 ? (idx / (stepsData.length - 1)) * 100 : 100;
-    document.getElementById('cp-fill').style.width = pct + '%';
-    // 7. Step counter
-    document.getElementById('step-counter').textContent = 'Step ' + (idx+1) + ' / ' + stepsData.length;
-    // 8. Next button state
-    document.getElementById('btn-next').disabled = (idx >= stepsData.length - 1);
-    // 9. Freeze
-    FREEZE = !!d.freeze;
-    if (d.targetAngle !== undefined) freezeAngle = d.targetAngle;
-    // 10. Restart animation loop if needed
-    if (!animRunning) { animRunning = true; lastT = null; requestAnimationFrame(animLoop); }
-  }
-
-  function nextStep() {
-    if (currentStep < stepsData.length - 1) { currentStep++; applyStep(currentStep); }
-  }
-
-  function resetAnim() {
-    currentStep = 0; t = 0; FREEZE = false; lastT = null;
-    applyStep(0);
-    if (!animRunning) { animRunning = true; requestAnimationFrame(animLoop); }
-  }
-
-  function animLoop(timestamp) {
-    animId = requestAnimationFrame(animLoop);
-    if (!lastT) { lastT = timestamp; }
-    var dt = Math.min((timestamp - lastT) / 1000, 0.05);  /* cap dt at 50ms */
-    lastT = timestamp;
-    if (!FREEZE) { t += dt; }
-    drawFrame(t);  /* implement drawFrame with all animation logic */
-  }
-
-  function drawFrame(t) {
-    /* IMPLEMENT: use real physics formulae from the problem.
-       Update SVG element positions via setAttribute or style.transform.
-       Example: crank.setAttribute('transform','rotate(' + (omega*t*180/Math.PI % 360) + ',425,239)');
-       Example: var xP = cx + r*Math.cos(omega*t) + Math.sqrt(L*L - r*r*Math.sin(omega*t)*Math.sin(omega*t));
-                slider.setAttribute('transform','translate(' + xP + ',0)'); */
-  }
-
-  /* Build step pills dynamically */
-  function buildPills() {
-    var track = document.getElementById('step-track');
-    track.innerHTML = '';
-    for (var i = 0; i < stepsData.length; i++) {
-      var pill = document.createElement('div');
-      pill.className = 'step-pill';
-      pill.textContent = stepsData[i].label;
-      pill.setAttribute('data-step', i);
-      (function(idx){ pill.addEventListener('click', function(){
-        currentStep = idx; applyStep(idx);
-      }); })(i);
-      track.appendChild(pill);
+    label: "3-5 word pill text",
+    blurOp: 0.0,                  // blur-shield opacity (0 = off, 0.38 = focus)
+    overlays: ["overlay-step0"],  // which overlay layers become visible
+    freezing: false,              // true = lerp to solution angle and pause
+    solutionAngle: null,          // target angle in radians for freeze step
+    title: "Step N: Full Title",
+    badges: '<span class="badge badge-cyan">r = 50 mm</span>',
+    desc: "Conversational 2-3 sentence description.",
+    layerOpacities: {             // explicit opacity for EVERY layer
+      "layer-frame": 1,
+      "layer-crank": 0,
+      ...
     }
   }
 
-  /* Init on load */
-  window.addEventListener('load', function() {
-    buildPills();
-    resetAnim();
-  });
+applyStep(idx) must:
+  1. Set blur-shield opacity from stepsData[idx].blurOp
+  2. Apply all layerOpacities (every layer, not just new ones)
+  3. Hide all overlays, then show only stepsData[idx].overlays
+  4. Update info-title, info-badges, info-desc
+  5. Update step dots (active/done classes)
+  6. Update step-label text ("Step N of M")
+  7. Update progress bar width (idx+1)/total × 100%
+  8. If freezing: trigger angle lerp and pause the RAF loop
 
-═══ COMPONENT DRAWING QUALITY STANDARDS ═══
-Every physical component must be drawn with CRAFT. Use these patterns:
+════════════════════════════════════════════════════════════
+CRITICAL CODE REQUIREMENTS
+════════════════════════════════════════════════════════════
+- NO backtick template literals — use string concatenation only
+- NO const/let — use var everywhere
+- NO arrow functions — use function() {} only
+- NO external scripts or CDN imports — fully self-contained
+- ALL JavaScript in one <script> block
+- requestAnimationFrame loop keeps running unless explicitly paused (freeze step)
+- Restart button resets angle, currentStep=0, resumes RAF, applies step 0
 
-SHAFT / AXLE:
-  Layered ellipses + rectangles with metal-blue gradient. Add a bore circle with a darker gradient.
-  Outer ring has a thin highlight line (stroke:#d0e8ff, stroke-width:1) at top edge.
+════════════════════════════════════════════════════════════
+POLISH CHECKLIST (every output must pass)
+════════════════════════════════════════════════════════════
+✓ Page has page-header chip above dashboard
+✓ Dashboard has ::before top accent gradient bar (3px)
+✓ Question banner has q-label with square icon + q-text at 15px
+✓ SVG canvas: all 4 gradient defs, shadow filters, glow filters, arrow markers
+✓ blur-shield rect present between background and component layers
+✓ Step dots are pills with text, connected by .step-connector divs
+✓ Progress bar (.step-progress-wrap + .step-progress-bar) updates each step
+✓ Info box has border-left:4px cyan, h3::before cyan dot with ring shadow
+✓ Badges have correct type: cyan=given, orange=motion, green=result
+✓ All buttons use CSS variables; .btn-primary has gradient + translateY hover
+✓ ZERO text-overlaps in SVG; all labels inside viewBox
+✓ All component layers start opacity:0 (except layer-frame)
+✓ Final step freezes mechanism at exact solution state + annotation overlay
 
-GEAR / SPROCKET:
-  Compute ~12–20 tooth rects rotated around the pitch circle using SVG transforms.
-  Pitch circle has metal-steel fill. Hub is a smaller circle with inset effect (filter:f-inset).
-  Tooth tips: fill:#c0d4e8. Add a subtle rotation animation in drawFrame.
+════════════════════════════════════════════════════════════
+OUTPUT
+════════════════════════════════════════════════════════════
+Return ONLY the complete <!DOCTYPE html>...</html> page as raw text.
+No JSON wrapper. No markdown. No fences. Pure HTML only."""
 
-PULLEY:
-  Two concentric circles (rim and hub) + 4 spoke lines. Rim: metal-blue gradient.
-  Hub: darker metal-steel. Add centre dot. Show belt contact arc in a contrasting color.
-
-CRANK ARM:
-  A tapered rectangle with rounded ends (rx=6). metal-blue fill. Length = r from problem data.
-  Pivot end has a pin circle (fill:#607888). Crank-pin end has a pin circle in orange.
-
-CONNECTING ROD / LINK:
-  Tapered path from large end (at crank pin) to small end (at slider pin).
-  Large end eye: circle r=10, metal-steel fill. Small end eye: circle r=7, orange fill.
-  Body: fill:url(#metal-blue), stroke:#5a7898, stroke-width:1.5.
-
-SLIDER / PISTON:
-  Rounded rectangle. Fill: linear gradient from #c8daea to #7a9ab8.
-  Add piston rings (thin horizontal lines). Slide along a guide channel (two parallel lines).
-
-BEAM / COLUMN (structural):
-  Solid rectangle with depth implied by gradient (lighter top, darker bottom).
-  Cross-hatching pattern for compressed zones (red diagonal lines).
-  Bending moment diagram as a filled SVG path below the beam (fill:#fde68a opacity:0.6).
-
-SPRING:
-  10–14 zig-zag path loops. Stroke:#6090b0, stroke-width:2, no fill.
-  Animate with scaleY driven by a sinusoidal deformation formula.
-
-CIRCUIT ELEMENTS:
-  Resistor: zig-zag line. Capacitor: two parallel rects. Inductor: 5 semi-circle arcs.
-  Wire: stroke:#0891b2, stroke-width:2. Active current: animated dashoffset.
-
-FLUID / HEAT ARROW:
-  Thick arrow with gradient fill (cold=blue, hot=red). Animated dashoffset for flow.
-  Temperature labels as annotation cards.
-
-═══ ANNOTATION CALLOUT STANDARDS ═══
-Each overlay-stepN must include 2–4 annotation elements chosen from:
-
-TYPE A — Value Card (white rounded rect with eyebrow + value):
-  Position: near the component being introduced, offset so it doesn't overlap.
-  Size: width = 10 * len(value_text) px (min 90, max 200), height 50px.
-
-TYPE B — Dimension Arrow (double-headed arrow + text):
-  Use marker-start AND marker-end = "url(#arr-cyan)".
-  Label the dimension in bold with units.
-
-TYPE C — Formula Label (italic formula in a teal box):
-  Rounded rect (rx=8, fill:rgba(8,145,178,0.08), stroke:rgba(8,145,178,0.35)).
-  Formula text in monospace 12px #0e7490.
-
-TYPE D — Angle Arc (SVG arc path + angle value):
-  Arc centered on the pivot. stroke:#ea8c00, fill:none. Label angle in orange.
-
-CRITICAL: No two annotations may overlap. Compute positions carefully.
-All annotation text must stay inside the 850×478 viewBox with ≥ 20px clearance from edge.
-
-═══ CRITICAL TECHNICAL REQUIREMENTS ═══
-• NO const / let — use var everywhere
-• NO arrow functions — use function() {} declarations
-• NO backtick template literals — use string concatenation with +
-• NO external scripts, CDN imports, or image URLs
-• ALL CSS and JS inline in the single HTML file
-• requestAnimationFrame loop MUST keep running (animRunning flag controls it)
-• Freeze mechanism: when FREEZE=true, interpolate current angle toward freezeAngle at 3 rad/s,
-  then hold exactly at freezeAngle — do not stop the loop, just stop incrementing t
-• Every layer id must be referenced in EVERY stepsData[i].layers object with an explicit opacity
-• The step-pill click handler must work (use closures correctly — see buildPills example above)
-• Pill text must come from stepsData[i].label exactly
-
-═══ OUTPUT ═══
-Return ONLY the complete <!DOCTYPE html>…</html> page as raw text.
-No JSON wrapper. No markdown fences. No preamble. No commentary after the closing tag.
-The file must open in a browser tab and work perfectly with no network access."""
-
-_ANIMATION_BUILDER_USER = """Generate the complete animation HTML page for this scene script.
+_ANIMATION_BUILDER_USER = """Generate the complete, polished animation HTML page for this scene script. This is a premium educational product — quality matters at every level.
 
 ORIGINAL QUESTION: {question}
 
 SCENE SCRIPT:
 {scene_script}
 
-CRITICAL REMINDERS:
-1. Follow the reference output style EXACTLY — light-blue-grey theme: bg=#eef2f9, panel=#ffffff, accent-cyan=#0891b2.
-2. QUESTION BANNER: use class="question-banner" with q-label "Problem Statement" and ::before pseudo-element gradient overlay.
-3. STEP DOTS: pill-shaped <div class="step-dot"> elements containing the step label TEXT (3-5 words each). First dot gets class "active". Update via add/remove "active" class in applyStep().
-4. INFO BOX: use border-left:4px solid var(--accent-cyan) style with h3::before cyan dot indicator.
-5. BUTTONS: .btn-primary uses linear-gradient(135deg, #0e7490, #0891b2) with hover translateY(-1px).
-6. Draw components ONE BY ONE in the correct physical order — component layers appear step by step.
-7. REAL PHYSICS: rotating crank uses real angle calculation, piston position uses kinematic formula.
-8. The blur-shield (fill="#c7d8ed") dims the background when focusing on a new component.
-9. Each component must visibly animate (rotate/translate/oscillate) when it first appears.
-10. Labels and annotations appear AFTER the component is shown (in the overlay group for that step).
-11. The LAST step snaps to the solution angle/state. Show ONLY the "To find:" pill (white card at bottom of SVG). NO calculations popup, NO formula dump box.
-12. SVG component colors: use light-theme–friendly bold colors (#2563eb, #0891b2, #dc2626, #16a34a, #b45309) — NOT neon dark-theme colors.
-13. Do NOT use const/let/arrow functions/backtick template literals.
-14. Every overlay-stepN MUST include the "To find:" pill with the toFind text from stepsData.
+════════════════════════════════════════════════════════════
+CRITICAL REMINDERS FOR THIS OUTPUT
+════════════════════════════════════════════════════════════
 
-Return the complete HTML page — nothing else."""
+STRUCTURE & LAYOUT:
+1. Body background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%) with background-attachment:fixed.
+2. Add page-header div with page-chip "Interactive Animation" ABOVE the .dashboard card.
+3. Dashboard has CSS ::before with 3px top gradient bar (cyan→purple→orange).
+4. Question banner: class="question-banner" — q-label with square icon box, q-text at 15px/1.6 line-height.
+
+SVG CANVAS:
+5. All defs: 4-stop steel gradient, steelHi gradient, glowCyan filter, glowOrange filter, shadow filter, shadowDeep filter, 3 color arrow markers + 1 grey marker for dimensions.
+6. blur-shield rect: fill="#c2d4e8", opacity="0", sits between layer-frame and component layers.
+7. Component colors MUST be light-theme friendly: structure=#4a6a8a, driver=#2563eb, driven=#0891b2, forces=#d97706, results=#16a34a.
+8. Value callout chips in overlays: rounded rect with rgba fill + centered text, NOT bare text floated in space.
+9. Dimension lines: dashed (#94a3b8), with arrowGrey markers on both ends.
+
+STEP CONTROL:
+10. Step dots are pills with text. Between every two dots add <div class="step-connector"></div>.
+11. Add <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar"></div></div> between step-indicator and info-box.
+12. applyStep(idx) must: set blur opacity, set all layer opacities, show correct overlays, update info box, update dots (active/done), update step-label "Step N of M", update progress bar width.
+
+PHYSICS & MOTION:
+13. Rotating parts (cranks, gears, pulleys): continuous RAF loop, angle=omega*elapsed_time. Use REAL RPM from the problem.
+14. Oscillating parts (pistons): x = r*cos(theta) + sqrt(L*L - r*r*sin(theta)*sin(theta)). Use REAL geometry.
+15. Final step: lerp angle to exact solution angle over ~60 frames, then cancel RAF and show annotation overlay.
+16. Each component animates on the FRAME it first becomes visible (triggered in applyStep).
+
+CODE QUALITY:
+17. NO const/let/arrow functions/backtick template literals anywhere.
+18. Use var for all variables. Use function() {} for all functions.
+19. Single <script> block. Zero external dependencies.
+
+Return the complete <!DOCTYPE html>...</html> page — nothing else."""
 
 
 class GeminiAnimationBuilder:
@@ -3951,8 +3922,7 @@ class GeminiAnimationBuilder:
                 badges_html += f'<span class="badge badge-{bt}">{html_module.escape(b.get("text",""))}</span> '
             math_lines = step.get("math_lines", [])       # kept for legacy compat only
             show_math  = step.get("show_math", False)      # kept for legacy compat only
-            to_find_label = step.get("to_find_label", "")
-            blur = 0.5 if step.get("blur_background") else 0
+            blur = 0.38 if step.get("blur_background") else 0
             step_num = step.get("step_number", 1) - 1
 
             # Escape strings for JS
@@ -3960,7 +3930,6 @@ class GeminiAnimationBuilder:
             title_js    = title_s.replace('"', '\\"')
             desc_js     = desc.replace('"', '\\"').replace('\n', ' ')
             badges_js   = badges_html.replace('"', '\\"').replace('\n', '')
-            to_find_js  = to_find_label.replace('"', '\\"')
 
             steps_js_parts.append(
                 "    {\n"
@@ -3969,8 +3938,7 @@ class GeminiAnimationBuilder:
                 f'      overlays: ["overlay-step{step_num}"],\n'
                 f'      title: "{title_js}",\n'
                 f'      badges: "{badges_js}",\n'
-                f'      desc: "{desc_js}",\n'
-                f'      toFind: "{to_find_js}"\n'
+                f'      desc: "{desc_js}"\n'
                 "    }"
             )
 
@@ -3979,41 +3947,23 @@ class GeminiAnimationBuilder:
         # Build overlay SVG groups
         overlay_groups = []
         for i, step in enumerate(steps):
-            to_find_label = step.get("to_find_label", "")
-            # Fallback: derive to_find_label from math_lines for legacy scene scripts
-            if not to_find_label:
-                ml = step.get("math_lines", [])
-                to_find_label = ml[-1] if ml else step.get("label", f"Step {i+1}")
-
-            pill_svg = ""
-            if to_find_label:
-                tfl_esc = html_module.escape(str(to_find_label))
-                pill_svg = (
-                    '<filter id="pillShadow' + str(i) + '" x="-5%" y="-20%" width="110%" height="160%">'
-                    '<feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/>'
-                    '</filter>'
-                    '<rect x="80" y="408" width="690" height="56" rx="14"'
-                    ' fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5"'
-                    f' filter="url(#pillShadow{i})"/>'
-                    '<text x="108" y="428" fill="#0e7490" font-size="10" font-weight="800"'
-                    ' letter-spacing="2" font-family="\'Segoe UI\',sans-serif">TO FIND</text>'
-                    f'<text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600"'
-                    f' font-family="\'Segoe UI\',sans-serif">{tfl_esc}</text>'
-                )
-
             overlay_groups.append(
-                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0">{pill_svg}</g>'
+                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0"></g>'
             )
         overlays_html = "\n                ".join(overlay_groups)
 
-        # Build pill-style dot elements with short step labels
+        # Build pill-style dot elements with step-connector divs between them
         dot_count = len(steps)
-        dots_html = "\n                ".join(
-            ['<div class="step-dot' + (' active' if i == 0 else '') + '">'
-             + html_module.escape(steps[i].get('label', f'Step {i+1}')[:22])
-             + '</div>'
-             for i in range(dot_count)]
-        )
+        dot_parts = []
+        for i in range(dot_count):
+            dot_parts.append(
+                '<div class="step-dot' + (' active' if i == 0 else '') + '">'
+                + html_module.escape(steps[i].get('label', f'Step {i+1}')[:24])
+                + '</div>'
+            )
+            if i < dot_count - 1:
+                dot_parts.append('<div class="step-connector"></div>')
+        dots_html = "\n                ".join(dot_parts)
 
         # Count overlays list for applyStep
         all_overlay_ids = [f"overlay-step{i}" for i in range(len(steps))]
@@ -4027,228 +3977,312 @@ class GeminiAnimationBuilder:
     <title>{title} — Interactive Animation</title>
     <style>
         :root {{
-            --bg-color: #eef2f9;
-            --panel-bg: #ffffff;
-            --text-main: #334155;
+            --bg: #eef2f9;
+            --panel: #ffffff;
+            --text: #1e293b;
             --text-sub: #64748b;
-            --accent-cyan: #0891b2;
-            --accent-cyan-dim: #0e7490;
-            --accent-orange: #ea8c00;
-            --accent-green: #16a34a;
+            --text-muted: #94a3b8;
+            --accent: #0891b2;
+            --accent-dim: #0e7490;
+            --accent-light: rgba(8,145,178,0.10);
+            --orange: #d97706;
+            --green: #16a34a;
             --border: #e2e8f0;
-            --border-radius: 14px;
-            --shadow-card: 0 4px 6px -1px rgba(30,64,175,0.07), 0 10px 30px rgba(30,64,175,0.10);
-            --shadow-hover: 0 6px 20px rgba(14,116,144,0.22);
+            --border-md: #cbd5e1;
+            --radius: 16px;
+            --radius-sm: 10px;
+            --shadow: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08);
         }}
         *, *::before, *::after {{ box-sizing:border-box; margin:0; padding:0; }}
         body {{
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-main);
+            font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
+            background-attachment: fixed;
+            color: var(--text);
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: flex-start;
             min-height: 100vh;
-            padding: 24px 16px 120px;
+            padding: 28px 16px 130px;
         }}
+        /* ── Page header chip ── */
+        .page-header {{
+            width: 100%;
+            max-width: 900px;
+            margin-bottom: 14px;
+        }}
+        .page-chip {{
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 13px;
+            border-radius: 20px;
+            background: rgba(8,145,178,0.10);
+            border: 1px solid rgba(8,145,178,0.22);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.9px;
+        }}
+        .page-chip::before {{ content: '▶'; font-size: 8px; }}
         /* ── Dashboard Card ── */
         .dashboard {{
             width: 100%;
             max-width: 900px;
-            margin: 0 auto;
-            background: var(--panel-bg);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-card);
+            background: var(--panel);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
             overflow: hidden;
             border: 1px solid var(--border);
+            position: relative;
+        }}
+        .dashboard::before {{
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-dim) 0%, #7c3aed 50%, var(--orange) 100%);
+            border-radius: var(--radius) var(--radius) 0 0;
+            z-index: 2;
         }}
         /* ── Question Banner ── */
         .question-banner {{
-            padding: 18px 24px 16px;
-            background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 50%, #eef2f9 100%);
+            padding: 22px 28px 18px;
+            background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 45%, #eef2f9 100%);
             border-bottom: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 8px;
             position: relative;
+            overflow: hidden;
         }}
         .question-banner::before {{
             content: '';
             position: absolute;
             inset: 0;
-            background: linear-gradient(90deg, rgba(8,145,178,0.06) 0%, transparent 60%);
+            background: linear-gradient(100deg, rgba(8,145,178,0.05) 0%, transparent 55%);
             pointer-events: none;
         }}
         .q-label {{
-            font-size: 11px;
+            font-size: 10.5px;
             font-weight: 800;
-            color: var(--accent-cyan-dim);
+            color: var(--accent-dim);
             text-transform: uppercase;
-            letter-spacing: 1.5px;
+            letter-spacing: 1.8px;
             display: flex;
             align-items: center;
-            gap: 7px;
+            gap: 8px;
         }}
-        .q-label::before {{ content: "❓"; font-size: 13px; }}
+        .q-label::before {{
+            content: '';
+            display: inline-block;
+            width: 16px; height: 16px;
+            border-radius: 5px;
+            background: linear-gradient(135deg, var(--accent-dim), var(--accent));
+            flex-shrink: 0;
+        }}
         .q-text {{
-            font-size: 14.5px;
-            color: #1e293b;
-            line-height: 1.55;
-            font-weight: 400;
+            font-size: 15px;
+            color: var(--text);
+            line-height: 1.62;
+            font-weight: 430;
             max-width: 820px;
         }}
         /* ── SVG Canvas ── */
         .svg-container {{
             width: 100%;
             aspect-ratio: 16 / 9;
-            background: radial-gradient(ellipse at 40% 40%, #f0f5ff 0%, #dce8f5 55%, #c8d8ed 100%);
+            background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
             position: relative;
             overflow: hidden;
+            border-bottom: 1px solid var(--border);
         }}
         svg {{ display: block; width: 100%; height: 100%; }}
-        .svg-layer {{ transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1); }}
+        .svg-layer {{ transition: opacity 0.52s cubic-bezier(0.4, 0, 0.2, 1); }}
         /* ── Control Panel ── */
         .control-panel {{
-            padding: 20px 24px 24px;
-            background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+            padding: 22px 28px 26px;
+            background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
             border-top: 1px solid var(--border);
         }}
-        /* ── Step Indicator (pill-style dots with label) ── */
+        /* ── Step Indicator ── */
         .step-indicator {{
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin-bottom: 18px;
+            gap: 6px;
+            margin-bottom: 8px;
             flex-wrap: wrap;
         }}
+        .step-connector {{
+            flex: 0 0 18px;
+            height: 1.5px;
+            background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
+            border-radius: 2px;
+        }}
         .step-dot {{
-            padding: 5px 13px;
+            padding: 6px 14px;
             border-radius: 20px;
-            background: rgba(203,213,225,0.5);
-            border: 1px solid #cbd5e1;
-            font-size: 11px;
+            background: #f1f5f9;
+            border: 1.5px solid var(--border);
+            font-size: 11.5px;
             font-weight: 700;
-            color: #94a3b8;
-            letter-spacing: 0.3px;
+            color: var(--text-muted);
             cursor: pointer;
-            transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
+            transition: background 0.28s ease, color 0.28s ease, border-color 0.28s ease,
+                        box-shadow 0.28s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
             white-space: nowrap;
+            user-select: none;
+        }}
+        .step-dot:hover:not(.active) {{
+            background: rgba(8,145,178,0.07);
+            border-color: rgba(8,145,178,0.30);
+            color: var(--accent-dim);
         }}
         .step-dot.active {{
-            background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
-            border-color: var(--accent-cyan);
-            color: #ffffff;
-            box-shadow: 0 2px 10px rgba(8,145,178,0.35);
-            transform: scale(1.06);
+            background: linear-gradient(135deg, #0e7490, #0891b2);
+            border-color: transparent;
+            color: #fff;
+            box-shadow: 0 3px 12px rgba(8,145,178,0.38);
+            transform: scale(1.07);
+        }}
+        .step-dot.done {{
+            background: rgba(22,163,74,0.09);
+            border-color: rgba(22,163,74,0.28);
+            color: #15803d;
         }}
         .step-label {{
-            font-size: 12px;
-            color: var(--text-sub);
+            font-size: 11px;
+            color: var(--text-muted);
             font-weight: 600;
-            letter-spacing: 0.4px;
+            letter-spacing: 0.6px;
             text-transform: uppercase;
-            margin-left: 4px;
+            margin-left: 8px;
             flex: 1;
-            min-width: 120px;
+        }}
+        /* ── Progress bar ── */
+        .step-progress-wrap {{
+            height: 3px;
+            background: #f1f5f9;
+            border-radius: 2px;
+            margin: 10px 0 18px;
+            overflow: hidden;
+        }}
+        .step-progress-bar {{
+            height: 100%;
+            background: linear-gradient(90deg, #0e7490, #0891b2, #38bdf8);
+            border-radius: 2px;
+            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 0%;
         }}
         /* ── Info Box ── */
         .info-box {{
-            background: #f8faff;
-            border: 1px solid #dde6f8;
-            border-left: 4px solid var(--accent-cyan);
-            border-radius: 10px;
-            padding: 18px 20px;
-            min-height: 120px;
+            background: linear-gradient(135deg, #f8fbff, #f4f8ff);
+            border: 1px solid #dde8f8;
+            border-left: 4px solid var(--accent);
+            border-radius: var(--radius-sm);
+            padding: 20px 22px;
+            min-height: 128px;
             display: flex;
             flex-direction: column;
-            gap: 10px;
-            transition: border-color 0.3s ease;
+            gap: 11px;
+            position: relative;
+            overflow: hidden;
+        }}
+        .info-box::before {{
+            content: '';
+            position: absolute;
+            top: 0; right: 0;
+            width: 110px; height: 110px;
+            background: radial-gradient(circle, rgba(8,145,178,0.06), transparent 70%);
+            pointer-events: none;
         }}
         .info-box h3 {{
-            color: #0f1e2e;
-            font-size: 16px;
+            color: var(--text);
+            font-size: 16.5px;
             font-weight: 800;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             line-height: 1.3;
+            letter-spacing: -0.2px;
         }}
         .info-box h3::before {{
             content: '';
             display: inline-block;
-            width: 6px;
-            height: 6px;
+            width: 8px; height: 8px;
             border-radius: 50%;
-            background: var(--accent-cyan);
+            background: var(--accent);
             flex-shrink: 0;
-            box-shadow: 0 0 6px rgba(8,145,178,0.5);
+            box-shadow: 0 0 0 3px rgba(8,145,178,0.18);
         }}
         /* ── Badges ── */
-        .badges {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+        .badges {{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; }}
         .badge {{
-            padding: 3px 11px;
+            padding: 4px 12px;
             border-radius: 20px;
-            font-size: 12px;
+            font-size: 11.5px;
             font-weight: 700;
             display: inline-flex;
             align-items: center;
             gap: 5px;
-            letter-spacing: 0.1px;
         }}
-        .badge-cyan  {{ background: rgba(8,145,178,0.08);  border: 1px solid rgba(8,145,178,0.3);  color: var(--accent-cyan-dim); }}
-        .badge-orange{{ background: rgba(234,140,0,0.08);  border: 1px solid rgba(234,140,0,0.3);  color: #b45309; }}
-        .badge-green {{ background: rgba(22,163,74,0.08);  border: 1px solid rgba(22,163,74,0.3);  color: #15803d; }}
-        /* ── Info Description ── */
-        .info-desc {{
-            font-size: 13.5px;
-            line-height: 1.65;
-            color: var(--text-sub);
-        }}
-        /* ── Action Buttons ── */
+        .badge-cyan   {{ background:rgba(8,145,178,0.09);  border:1px solid rgba(8,145,178,0.28);  color:#0e7490; }}
+        .badge-orange {{ background:rgba(217,119,6,0.09);  border:1px solid rgba(217,119,6,0.28);  color:#92400e; }}
+        .badge-green  {{ background:rgba(22,163,74,0.09);  border:1px solid rgba(22,163,74,0.28);  color:#15803d; }}
+        /* ── Description ── */
+        .info-desc {{ font-size:14px; line-height:1.7; color:var(--text-sub); }}
+        /* ── Actions ── */
         .actions {{
             display: flex;
             justify-content: flex-end;
             align-items: center;
             gap: 10px;
-            margin-top: 18px;
+            margin-top: 20px;
         }}
         button {{
-            padding: 10px 22px;
-            border-radius: 8px;
+            padding: 11px 24px;
+            border-radius: 10px;
             font-size: 13.5px;
             font-weight: 700;
             font-family: inherit;
             cursor: pointer;
-            transition: background 0.2s, box-shadow 0.2s, transform 0.15s, color 0.2s, border-color 0.2s;
+            transition: background 0.22s ease, box-shadow 0.22s ease,
+                        transform 0.18s cubic-bezier(0.34,1.56,0.64,1),
+                        color 0.2s ease;
             border: none;
             outline: none;
             letter-spacing: 0.1px;
         }}
         .btn-primary {{
-            background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
-            color: #ffffff;
-            box-shadow: 0 4px 12px rgba(8,145,178,0.28);
+            background: linear-gradient(135deg, #0e7490, #0891b2);
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(8,145,178,0.30);
         }}
         .btn-primary:hover {{
-            background: linear-gradient(135deg, #0369a1 0%, var(--accent-cyan-dim) 100%);
-            box-shadow: var(--shadow-hover);
-            transform: translateY(-1px);
+            background: linear-gradient(135deg, #0c6680, #0e7490);
+            box-shadow: 0 6px 22px rgba(8,145,178,0.38);
+            transform: translateY(-2px);
         }}
-        .btn-primary:active {{ transform: translateY(0); box-shadow: none; }}
+        .btn-primary:active {{ transform: translateY(0); }}
         .btn-secondary {{
-            background: transparent;
+            background: #fff;
             color: var(--text-sub);
-            border: 1.5px solid #cbd5e1;
+            border: 1.5px solid var(--border-md);
+            box-shadow: 0 1px 3px rgba(15,23,42,0.06);
         }}
         .btn-secondary:hover {{
-            background: rgba(15,23,42,0.04);
-            color: #1e293b;
+            background: #f8fafc;
+            color: var(--text);
             border-color: #94a3b8;
+            transform: translateY(-1px);
         }}
     </style>
 </head>
 <body>
+    <div class="page-header">
+        <div class="page-chip">Interactive Animation</div>
+    </div>
     <div class="dashboard">
         <!-- Question Banner -->
         <div class="question-banner">
@@ -4259,49 +4293,74 @@ class GeminiAnimationBuilder:
         <div class="svg-container">
             <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
                 <defs>
+                    <radialGradient id="canvasBg" cx="35%" cy="38%" r="70%">
+                        <stop offset="0%"   stop-color="#eef5ff" />
+                        <stop offset="45%"  stop-color="#dce8f5" />
+                        <stop offset="85%"  stop-color="#c8d9ed" />
+                        <stop offset="100%" stop-color="#b8ccdf" />
+                    </radialGradient>
                     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" stroke-opacity="0.05" />
+                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.6" stroke-opacity="0.04" />
                     </pattern>
                     <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stop-color="#ffffff" />
-                        <stop offset="30%" stop-color="#c8d5e8" />
-                        <stop offset="70%" stop-color="#7a90b0" />
-                        <stop offset="100%" stop-color="#3a4a60" />
+                        <stop offset="0%"   stop-color="#e8f0fa" />
+                        <stop offset="35%"  stop-color="#c8d8e8" />
+                        <stop offset="70%"  stop-color="#8aaac0" />
+                        <stop offset="100%" stop-color="#5a7a9a" />
                     </linearGradient>
-                    <linearGradient id="metalBlue" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="#e0eaf8" />
-                        <stop offset="50%" stop-color="#b8cce4" />
-                        <stop offset="100%" stop-color="#8aaed0" />
+                    <linearGradient id="steelHi" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%"   stop-color="#f4f8fc" />
+                        <stop offset="50%"  stop-color="#d4e4f0" />
+                        <stop offset="100%" stop-color="#94b4c8" />
                     </linearGradient>
-                    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="rgba(30,64,175,0.18)" />
+                    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="rgba(14,30,64,0.16)" />
+                    </filter>
+                    <filter id="shadowDeep" x="-25%" y="-25%" width="150%" height="150%">
+                        <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="rgba(14,30,64,0.22)" />
                     </filter>
                     <filter id="glowCyan" x="-50%" y="-50%" width="200%" height="200%">
-                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feGaussianBlur stdDeviation="6" result="blur" />
                         <feComposite in="SourceGraphic" in2="blur" operator="over" />
                     </filter>
                     <filter id="glowOrange" x="-50%" y="-50%" width="200%" height="200%">
-                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feGaussianBlur stdDeviation="5" result="blur" />
                         <feComposite in="SourceGraphic" in2="blur" operator="over" />
                     </filter>
-                    <marker id="arrowCyan" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#0891b2" />
+                    <marker id="arrowCyan" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
+                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#0891b2" />
                     </marker>
-                    <marker id="arrowOrange" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#ea8c00" />
+                    <marker id="arrowOrange" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
+                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#d97706" />
                     </marker>
-                    <marker id="arrowGreen" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#16a34a" />
+                    <marker id="arrowGreen" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
+                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#16a34a" />
+                    </marker>
+                    <marker id="arrowGrey" orient="auto" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5">
+                        <path d="M 0 1 L 6 3.5 L 0 6 Z" fill="#94a3b8" />
                     </marker>
                 </defs>
-                <rect width="100%" height="100%" fill="url(#grid)" />
+                <!-- Canvas background -->
+                <rect width="850" height="478" fill="url(#canvasBg)" />
+                <rect width="850" height="478" fill="url(#grid)" />
                 <!-- Frame layer — always visible -->
                 <g class="svg-layer" id="layer-frame">
-                    <line x1="80" y1="239" x2="770" y2="239" stroke="#b8c8e0" stroke-width="1" stroke-dasharray="8,6"/>
-                    <text x="425" y="46" fill="#0e7490" font-size="19" font-weight="bold" text-anchor="middle" font-family="'Segoe UI',sans-serif" filter="url(#glowCyan)">{html_module.escape(script.get('title', title))}</text>
+                    <line x1="90" y1="239" x2="760" y2="239"
+                          stroke="#b0c4de" stroke-width="1.2" stroke-dasharray="10,6" stroke-opacity="0.6"/>
+                    <text x="425" y="50"
+                          fill="#0e7490" font-size="20" font-weight="800"
+                          text-anchor="middle"
+                          font-family="'Segoe UI',system-ui,sans-serif"
+                          filter="url(#glowCyan)"
+                          letter-spacing="-0.3">{html_module.escape(script.get('title', title))}</text>
+                    <text x="425" y="72"
+                          fill="#64748b" font-size="12" font-weight="500"
+                          text-anchor="middle"
+                          font-family="'Segoe UI',system-ui,sans-serif">Interactive Step-by-Step Animation</text>
                 </g>
-                <!-- Blur shield -->
-                <rect id="blur-shield" width="100%" height="100%" fill="#c7d8ed" opacity="0" class="svg-layer" pointer-events="none" />
+                <!-- Blur shield (sits between frame and components) -->
+                <rect id="blur-shield" width="850" height="478"
+                      fill="#c2d4e8" opacity="0" pointer-events="none" />
                 <!-- Step overlays -->
                 {overlays_html}
             </svg>
@@ -4310,12 +4369,16 @@ class GeminiAnimationBuilder:
         <div class="control-panel">
             <div class="step-indicator" id="dots">
                 {dots_html}
-                <div class="step-label" id="step-label">Starting...</div>
+                <div class="step-label" id="step-label">Ready</div>
+            </div>
+            <!-- Progress bar -->
+            <div class="step-progress-wrap">
+                <div class="step-progress-bar" id="step-bar"></div>
             </div>
             <div class="info-box">
                 <h3 id="info-title">{title}</h3>
                 <div class="badges" id="info-badges"></div>
-                <div class="info-desc" id="info-desc">Click "Next Step" to begin the animation.</div>
+                <div class="info-desc" id="info-desc">Press "Next Step" to begin the animation.</div>
             </div>
             <div class="actions">
                 <button class="btn-secondary" onclick="resetAnim()">&#x21BA; Restart</button>
@@ -4327,34 +4390,61 @@ class GeminiAnimationBuilder:
 var stepsData = {steps_js};
 var allOverlays = {overlay_ids_js};
 var currentStep = -1;
+var totalSteps = stepsData.length;
 
 function applyStep(idx) {{
-    if(idx < 0 || idx >= stepsData.length) return;
+    if(idx < 0 || idx >= totalSteps) return;
     var data = stepsData[idx];
-    document.getElementById('blur-shield').style.opacity = data.blurOp;
-    allOverlays.forEach(function(oid) {{
-        var el = document.getElementById(oid);
-        if(el) el.style.opacity = data.overlays.includes(oid) ? '1' : '0';
-    }});
-    document.getElementById('step-label').innerText = data.label;
-    document.getElementById('info-title').innerText = data.title;
-    document.getElementById('info-badges').innerHTML = data.badges;
-    document.getElementById('info-desc').innerText = data.desc;
-    var dots = document.querySelectorAll('.step-dot');
-    dots.forEach(function(dot, i) {{
-        if(i === idx) dot.classList.add('active');
-        else dot.classList.remove('active');
-    }});
-    var btn = document.getElementById('btn-next');
-    if(idx === stepsData.length - 1) {{
-        btn.style.display = 'none';
-    }} else {{
-        btn.style.display = 'inline-block';
+
+    // Blur shield
+    var shield = document.getElementById('blur-shield');
+    if(shield) shield.style.opacity = data.blurOp || 0;
+
+    // Overlay visibility
+    for(var oi = 0; oi < allOverlays.length; oi++) {{
+        var el = document.getElementById(allOverlays[oi]);
+        if(!el) continue;
+        var show = false;
+        if(data.overlays) {{
+            for(var j = 0; j < data.overlays.length; j++) {{
+                if(data.overlays[j] === allOverlays[oi]) {{ show = true; break; }}
+            }}
+        }}
+        el.style.opacity = show ? '1' : '0';
     }}
+
+    // Info box
+    var elTitle = document.getElementById('info-title');
+    var elBadges = document.getElementById('info-badges');
+    var elDesc = document.getElementById('info-desc');
+    if(elTitle) elTitle.innerText = data.title || '';
+    if(elBadges) elBadges.innerHTML = data.badges || '';
+    if(elDesc) elDesc.innerText = data.desc || '';
+
+    // Step dots — active + done classes
+    var dots = document.querySelectorAll('.step-dot');
+    for(var di = 0; di < dots.length; di++) {{
+        dots[di].classList.remove('active');
+        dots[di].classList.remove('done');
+        if(di < idx) dots[di].classList.add('done');
+        if(di === idx) dots[di].classList.add('active');
+    }}
+
+    // Step label
+    var slabel = document.getElementById('step-label');
+    if(slabel) slabel.innerText = 'Step ' + (idx + 1) + ' of ' + totalSteps;
+
+    // Progress bar
+    var bar = document.getElementById('step-bar');
+    if(bar) bar.style.width = Math.round((idx + 1) / totalSteps * 100) + '%';
+
+    // Next button
+    var btn = document.getElementById('btn-next');
+    if(btn) btn.style.display = (idx === totalSteps - 1) ? 'none' : 'inline-block';
 }}
 
 function nextStep() {{
-    if(currentStep < stepsData.length - 1) {{
+    if(currentStep < totalSteps - 1) {{
         currentStep++;
         applyStep(currentStep);
     }}
@@ -4362,11 +4452,14 @@ function nextStep() {{
 
 function resetAnim() {{
     currentStep = 0;
+    var bar = document.getElementById('step-bar');
+    if(bar) bar.style.width = '0%';
     applyStep(0);
-    document.getElementById('btn-next').style.display = 'inline-block';
+    var btn = document.getElementById('btn-next');
+    if(btn) btn.style.display = 'inline-block';
 }}
 
-setTimeout(function() {{ resetAnim(); }}, 100);
+setTimeout(function() {{ resetAnim(); }}, 80);
 </script>
 </body>
 </html>"""
@@ -4651,7 +4744,7 @@ async def _run_generation_pipeline(question: str) -> dict:
         "glossary_terms":  glossary_result.get("terms", []),
         "category":        category,
         "n_scenes":        n_scenes,
-        "engine_version":  "v1.0-gemini",
+        "engine_version":  "v1.1-gemini",
         "render_status":   "ok" if injection_report["all_ok"] else "panels_incomplete",
         "panel_verification": injection_report,
     }
@@ -4686,7 +4779,7 @@ def _build_failure_result(question: str, reason: str) -> dict:
         "glossary_terms":         [],
         "category":               "UNKNOWN",
         "n_scenes":               4,
-        "engine_version":         "v1.0-gemini",
+        "engine_version":         "v1.1-gemini",
         "render_status":          "error",
     }
 
