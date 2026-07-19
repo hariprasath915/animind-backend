@@ -2954,7 +2954,6 @@ class PanelInjectionManager:
 #          "badges": [{"text": "...", "type": "cyan|orange|green"}],
 #          "components": ["component_id_1", "component_id_2"],
 #          "focus_component": "component_id or null",
-#          "to_find_label": "what this step reveals",
 #          "math_content": ""
 #        }, ...
 #      ],
@@ -3007,8 +3006,7 @@ OUTPUT: Return ONLY valid JSON, no markdown fences, no preamble:
       "components_visible": ["comp_id_1"],
       "components_new": ["comp_id_1"],
       "focus_component": "comp_id_1",
-      "blur_background": true,
-      "to_find_label": "the specific quantity this step reveals, e.g. 'belt velocity v = 14.14 m/s'"
+      "blur_background": true
     }
   ],
   "svg_components": {
@@ -3026,13 +3024,12 @@ RULES:
 1. steps: 3-5 steps minimum, always end with the main answer step.
 2. First step: establish the frame/ground/fixed structure.
 3. Each subsequent step: introduce ONE new moving/key component.
-4. Last step: freeze at the solution angle/state. Show a clean 'To find:' label for the main answer quantity — NO calculation popup.
+4. Last step: freeze at the solution angle/state. NO calculation popup.
 5. badges: use type "cyan", "orange", or "green".
 6. svg_components: describe every physical component: frame, pivot, crank, rod, piston,
    gears, pulleys, beams, coils, etc. Position everything in an 850x478 coordinate space.
 7. final_answer: MUST contain computed numerical answer with units. Never leave empty.
-8. to_find_label: for EVERY step, write the specific quantity being revealed or computed in that step (concise, e.g. 'belt velocity v', 'tension T1 in tight side', 'speed of driven pulley N2'). The last step's to_find_label must state the primary answer quantity with its computed value.
-9. motion_type: accurately describe what this component does physically."""
+8. motion_type: accurately describe what this component does physically."""
 
 _SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
 
@@ -3042,9 +3039,8 @@ Remember:
 - Plan the step-by-step visual reveal carefully.
 - Each step shows exactly ONE new component appearing with motion.
 - Components are drawn one by one in the correct physical order.
-- The final step freezes the mechanism at the solution state and shows a clean 'To find:' label — NO calculations popup box.
+- The final step freezes the mechanism at the solution state — NO calculations popup box.
 - Compute the actual numerical answer and include it in final_answer.
-- Every step must have a concise to_find_label.
 
 Return ONLY valid JSON."""
 
@@ -3100,8 +3096,7 @@ class GeminiSceneAnalyzer:
                     "components_visible": ["frame"],
                     "components_new": ["frame"],
                     "focus_component": "frame",
-                    "blur_background": False,
-                    "to_find_label": "the system setup and given values"
+                    "blur_background": False
                 },
                 {
                     "step_number": 2,
@@ -3112,8 +3107,7 @@ class GeminiSceneAnalyzer:
                     "components_visible": ["frame", "solution"],
                     "components_new": ["solution"],
                     "focus_component": None,
-                    "blur_background": False,
-                    "to_find_label": "the final computed answer — please re-generate for detail"
+                    "blur_background": False
                 }
             ],
             "svg_components": {
@@ -3127,7 +3121,7 @@ class GeminiSceneAnalyzer:
                 "solution": {
                     "description": "Math solution box with calculation steps",
                     "motion_type": "static",
-                    "motion_description": "Clean 'To find:' label card appearing",
+                    "motion_description": "Solution summary card appearing",
                     "accent_color": "#97c459",
                     "labels": ["Solution"]
                 }
@@ -3389,9 +3383,6 @@ The output must match this exact structure and CSS (light theme, visually rich):
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
-          <filter id="pillShadow" x="-5%" y="-20%" width="110%" height="160%">
-            <feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/>
-          </filter>
           <marker id="arrowCyan" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
             <path d="M 0 0 L 6 3 L 0 6 Z" fill="#0891b2" />
           </marker>
@@ -3409,7 +3400,7 @@ The output must match this exact structure and CSS (light theme, visually rich):
         <rect id="blur-shield" width="100%" height="100%" fill="#c7d8ed" opacity="0" pointer-events="none" />
         <!-- Component layers (one per physical component, start opacity:0) -->
         <g class="svg-layer" id="layer-[component]" style="opacity:0"> ... </g>
-        <!-- Overlay layers: labels + "To find:" pill per step -->
+        <!-- Overlay layers: labels and annotations per step -->
         <g class="svg-layer" id="overlay-step0" style="opacity:0"> ... </g>
         ...
       </svg>
@@ -3445,18 +3436,13 @@ The output must match this exact structure and CSS (light theme, visually rich):
 5. All component layers start with style="opacity:0" EXCEPT layer-frame (always visible).
 6. A <rect id="blur-shield"> sits BETWEEN the frame layer and component layers.
    fill="#c7d8ed" opacity="0" — gets set to 0.4–0.6 during focus steps to dim the background.
-7. Overlay groups <g class="svg-layer" id="overlay-stepN"> hold labels, dimension arrows, and the "To find:" pill. Start at opacity:0.
+7. Overlay groups <g class="svg-layer" id="overlay-stepN"> hold labels and dimension arrows. Start at opacity:0.
 8. METALLIC GRADIENTS: use multi-stop linearGradient in blue-grey tones for structural parts. Add feDropShadow filters for depth.
 9. GLOW FILTERS: feGaussianBlur glow for active/highlighted elements (use #0891b2 cyan for light theme).
 10. ARROW MARKERS: arrowCyan (#0891b2), arrowOrange (#ea8c00), arrowGreen (#16a34a) — matching light-theme accents.
-11. TO FIND PILL (every step overlay): Each overlay-stepN MUST contain a clean "To find:" pill at the bottom of the SVG:
-    - White rounded card: <rect x="80" y="408" width="690" height="56" rx="14" fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5" filter="url(#pillShadow)"/>
-    - "TO FIND" eyebrow: <text x="108" y="428" fill="#0e7490" font-size="10" font-weight="800" letter-spacing="2" font-family="'Segoe UI',sans-serif">TO FIND</text>
-    - Answer text: <text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600" font-family="'Segoe UI',sans-serif">[toFind text from stepsData]</text>
-    - NEVER show a "Calculations:" box or formula dump. Only show the "To find:" pill.
-12. ZERO text overlaps — compute positions carefully. Keep all labels inside the viewBox.
-13. SVG TEXT COLORS for light theme: use #1e293b for main labels, #0e7490 for highlight labels, #475569 for secondary labels.
-14. SVG component colors: use bold, saturated colors visible on light backgrounds — e.g. #2563eb, #0891b2, #16a34a, #dc2626, #b45309. No neon/dark-background colors.
+11. ZERO text overlaps — compute positions carefully. Keep all labels inside the viewBox.
+12. SVG TEXT COLORS for light theme: use #1e293b for main labels, #0e7490 for highlight labels, #475569 for secondary labels.
+13. SVG component colors: use bold, saturated colors visible on light backgrounds — e.g. #2563eb, #0891b2, #16a34a, #dc2626, #b45309. No neon/dark-background colors.
 
 ═══ STEP DOTS ═══
 IMPORTANT: Step dots are PILL-SHAPED with text labels, NOT small circles.
@@ -3486,7 +3472,6 @@ stepsData array drives everything:
     title: "Step N: ...",
     badges: '<span class="badge badge-cyan">...</span>',
     desc: "...",
-    toFind: "...",          // what this step reveals — displayed in the 'To find:' pill
     layerOpacities: { 'layer-frame': 1, 'layer-crank': 0, ... }
   }
 
@@ -3503,7 +3488,6 @@ nextStep() / resetAnim() manage currentStep.
 - Include question-banner div showing the original question
 - requestAnimationFrame loop must keep running for continuous motion
 - freezing mechanism: smoothly interpolate angle to solution angle, then pause
-- TO FIND PILL (mandatory): every step overlay MUST include the clean white pill at the bottom (y≈408). NO formula dumps, NO "Calculations:" box, NO dark popup containers.
 - POLISH: use feDropShadow filters on overlay cards, multi-stop metallic gradients in blue-grey tones, smooth cubic-bezier transitions (0.4s), consistent stroke-width hierarchy (frame=2, components=2.5–3, labels=1.5).
 - CENTERING: body uses { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:24px 16px 120px; }. .dashboard has { width:100%; max-width:900px; margin:0 auto; }. Never float or absolutely-position the dashboard.
 - STEP DOTS: must be pill-shaped divs with text (not empty circles). Apply "active" class to current step in applyStep().
@@ -3531,10 +3515,9 @@ CRITICAL REMINDERS:
 8. The blur-shield (fill="#c7d8ed") dims the background when focusing on a new component.
 9. Each component must visibly animate (rotate/translate/oscillate) when it first appears.
 10. Labels and annotations appear AFTER the component is shown (in the overlay group for that step).
-11. The LAST step snaps to the solution angle/state. Show ONLY the "To find:" pill (white card at bottom of SVG). NO calculations popup, NO formula dump box.
+11. The LAST step snaps to the solution angle/state. NO calculations popup, NO formula dump box.
 12. SVG component colors: use light-theme–friendly bold colors (#2563eb, #0891b2, #dc2626, #16a34a, #b45309) — NOT neon dark-theme colors.
 13. Do NOT use const/let/arrow functions/backtick template literals.
-14. Every overlay-stepN MUST include the "To find:" pill with the toFind text from stepsData.
 
 Return the complete HTML page — nothing else."""
 
@@ -3666,7 +3649,6 @@ class GeminiAnimationBuilder:
                 badges_html += f'<span class="badge badge-{bt}">{html_module.escape(b.get("text",""))}</span> '
             math_lines = step.get("math_lines", [])       # kept for legacy compat only
             show_math  = step.get("show_math", False)      # kept for legacy compat only
-            to_find_label = step.get("to_find_label", "")
             blur = 0.5 if step.get("blur_background") else 0
             step_num = step.get("step_number", 1) - 1
 
@@ -3675,7 +3657,6 @@ class GeminiAnimationBuilder:
             title_js    = title_s.replace('"', '\\"')
             desc_js     = desc.replace('"', '\\"').replace('\n', ' ')
             badges_js   = badges_html.replace('"', '\\"').replace('\n', '')
-            to_find_js  = to_find_label.replace('"', '\\"')
 
             steps_js_parts.append(
                 "    {\n"
@@ -3684,8 +3665,7 @@ class GeminiAnimationBuilder:
                 f'      overlays: ["overlay-step{step_num}"],\n'
                 f'      title: "{title_js}",\n'
                 f'      badges: "{badges_js}",\n'
-                f'      desc: "{desc_js}",\n'
-                f'      toFind: "{to_find_js}"\n'
+                f'      desc: "{desc_js}"\n'
                 "    }"
             )
 
@@ -3694,30 +3674,8 @@ class GeminiAnimationBuilder:
         # Build overlay SVG groups
         overlay_groups = []
         for i, step in enumerate(steps):
-            to_find_label = step.get("to_find_label", "")
-            # Fallback: derive to_find_label from math_lines for legacy scene scripts
-            if not to_find_label:
-                ml = step.get("math_lines", [])
-                to_find_label = ml[-1] if ml else step.get("label", f"Step {i+1}")
-
-            pill_svg = ""
-            if to_find_label:
-                tfl_esc = html_module.escape(str(to_find_label))
-                pill_svg = (
-                    '<filter id="pillShadow' + str(i) + '" x="-5%" y="-20%" width="110%" height="160%">'
-                    '<feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/>'
-                    '</filter>'
-                    '<rect x="80" y="408" width="690" height="56" rx="14"'
-                    ' fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5"'
-                    f' filter="url(#pillShadow{i})"/>'
-                    '<text x="108" y="428" fill="#0e7490" font-size="10" font-weight="800"'
-                    ' letter-spacing="2" font-family="\'Segoe UI\',sans-serif">TO FIND</text>'
-                    f'<text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600"'
-                    f' font-family="\'Segoe UI\',sans-serif">{tfl_esc}</text>'
-                )
-
             overlay_groups.append(
-                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0">{pill_svg}</g>'
+                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0"></g>'
             )
         overlays_html = "\n                ".join(overlay_groups)
 
