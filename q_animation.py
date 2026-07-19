@@ -3805,9 +3805,13 @@ class GeminiAnimationBuilder:
 
         QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {GEMINI_MODEL}...")
         script_json = json.dumps(scene_script, indent=2, ensure_ascii=False)
-        user_prompt = _ANIMATION_BUILDER_USER.format(
-            question=question[:500],
-            scene_script=script_json[:6000]
+        # Use str.replace() instead of .format() to avoid KeyError/IndexError when
+        # the JSON scene_script contains { } braces that .format() misinterprets as
+        # positional/named format placeholders ("Replacement index 0 out of range").
+        user_prompt = (
+            _ANIMATION_BUILDER_USER
+            .replace("{question}", question[:500])
+            .replace("{scene_script}", script_json[:6000])
         )
 
         try:
@@ -4476,14 +4480,15 @@ setTimeout(function() {{ resetAnim(); }}, 80);
 # ===========================================================================
 
 _GLOSSARY_SYSTEM_GEMINI = """Find DIFFICULT or TECHNICAL words in the question that could confuse a student.
-Return ONLY valid JSON:
+
+Return ONLY valid JSON with exactly this structure (no markdown, no fences, no extra text):
 {"terms": [{"term": "word", "meaning": "simple explanation in 15 words or less"}]}
 
 Rules:
 - Pick 2-8 genuinely hard/technical/jargon words only.
 - Write meanings in very simple, everyday English.
-- If no hard words found, return {"terms": []}.
-- Pure JSON only — no markdown, no fences."""
+- If no hard words found, return this exact JSON: {"terms": []}
+- CRITICAL: Your response must start with { and end with }. Raw JSON only."""
 
 
 class GeminiGlossaryAnalyzer:
