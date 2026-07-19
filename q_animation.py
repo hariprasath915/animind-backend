@@ -141,7 +141,7 @@ MAX_TOK_CONCEPT = 16000
 #  MODULE 1 — QAnimLogger
 # ===========================================================================
 class QAnimLogger:
-    PREFIX = "[QAnim v1.1]"
+    PREFIX = "[QAnim v1.0]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -2160,30 +2160,11 @@ def inject_controls_bar(html):
 
 _PREV_STEP_CSS = """
 <style id="qanim-prevstep-styles">
-#btn-prev.qanim-prev-btn {
-  background: #ffffff;
-  color: #64748b;
-  border: 1.5px solid #cbd5e1;
-  padding: 11px 20px;
-  border-radius: 10px;
-  font-size: 13.5px;
-  font-weight: 700;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background .2s ease, color .2s ease, border-color .2s ease,
-              transform .18s cubic-bezier(0.34,1.56,0.64,1), box-shadow .2s ease;
-  margin-right: auto;
-  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
-}
-#btn-prev.qanim-prev-btn:hover:not(:disabled) {
-  background: #f8fafc;
-  color: #1e293b;
-  border-color: #94a3b8;
-  box-shadow: 0 2px 8px rgba(15,23,42,0.10);
-  transform: translateY(-1px);
-}
-#btn-prev.qanim-prev-btn:active:not(:disabled) { transform: translateY(0); }
-#btn-prev.qanim-prev-btn:disabled { opacity:.38; cursor:not-allowed; box-shadow:none; }
+#btn-prev.qanim-prev-btn { background:transparent; color:#334155; border:1px solid #cbd5e1;
+  padding:10px 20px; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer;
+  transition:all .2s ease; margin-right:auto; }
+#btn-prev.qanim-prev-btn:hover:not(:disabled) { background:rgba(15,23,42,.05); color:#1e293b; }
+#btn-prev.qanim-prev-btn:disabled { opacity:.4; cursor:not-allowed; }
 </style>
 """
 
@@ -2997,80 +2978,58 @@ class PanelInjectionManager:
 # STAGE A: GeminiSceneAnalyzer  — produces the scene script JSON
 # ---------------------------------------------------------------------------
 
-_SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer — a world-class educational animation director and content planner.
+_SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer — an expert educational content planner.
 
-Given a student question, produce a cinematic, step-by-step animation script in JSON format that feels like a polished interactive textbook.
+Given a student question, produce a detailed scene-by-scene animation script in JSON.
 
-════════════════════════════════════════════════════════════
-ANIMATION PHILOSOPHY — CINEMATIC REVEAL
-════════════════════════════════════════════════════════════
-• Each step is a "scene": ONE new component enters the stage with purposeful, physically correct motion.
-• Scene order = physical assembly order (ground → frame → driver → driven → measurement).
-• When a new component appears, prior elements dim slightly via blur-shield (opacity 0.35–0.5) to direct the viewer's eye.
-• Labels, dimension arrows, and value callouts enter AFTER their component is visible — never before.
-• The final step is the "answer reveal": the mechanism freezes at the exact solution state; a clean annotation layer shows the computed result.
-• Motion must reflect real physics — a crank rotates continuously, a piston oscillates with sin/cos kinematics, gears mesh at correct speed ratios, belt traces its path, heat-flow pulses along the pipe.
-• Every step description is written like a great professor: conversational, precise, one "aha moment" per step.
+ANIMATION PHILOSOPHY:
+- Each step reveals ONE new component or concept — never everything at once.
+- Components appear with motion (rotating crank, tracing path, oscillating spring, flowing current).
+- When a new component is focused, previous components blur slightly (opacity drop + blur-shield).
+- Labels, arrows, and dimension annotations appear AFTER the component is drawn.
+- The final step always shows the complete system with the mathematical solution overlaid.
 
-════════════════════════════════════════════════════════════
-VISUAL DESIGN INTENT (for the AnimationBuilder to follow)
-════════════════════════════════════════════════════════════
-• Light, airy canvas: soft blue-white radial gradient (#f0f5ff → #dce8f5 → #c8d8ed).
-• Structural parts: multi-stop metallic gradients in blue-grey (#e8f0fa → #b8cce0 → #6a8aaa).
-• Accent hierarchy: cyan #0891b2 (primary highlights), orange #ea8c00 (forces/motion), green #16a34a (results/measurements).
-• Drop-shadow filters on every major group (feDropShadow, stdDeviation 4–6).
-• Glow pulse on newly-revealed components (feGaussianBlur glow, cyan hue).
-• Stroke hierarchy: frame=2.5px, components=3px, dimension lines=1.5px (dashed), annotation arrows=1.5px.
-• Text: main labels #1e293b bold, secondary #475569, value callouts in rounded rect chips with accent fill.
-
-════════════════════════════════════════════════════════════
-OUTPUT FORMAT — Return ONLY valid JSON, no markdown, no preamble
-════════════════════════════════════════════════════════════
+OUTPUT: Return ONLY valid JSON, no markdown fences, no preamble:
 {
-  "title": "Concise descriptive title (max 60 chars)",
+  "title": "Short descriptive title of the mechanism/problem",
   "topic": "PHYSICS|MATH|CHEMISTRY|ENGINEERING|BIOLOGY|ABSTRACT",
-  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
-  "final_answer": "Complete computed answer with all numerical values and units",
-  "key_insight": "One memorable, plain-English insight sentence",
+  "solution_steps": ["Step 1: ...", "Step 2: ...", ...],
+  "final_answer": "Complete computed answer with all values and units",
+  "key_insight": "One memorable insight sentence",
   "steps": [
     {
       "step_number": 1,
-      "label": "3–5 word pill label for the step dot",
-      "title": "Step 1: Full descriptive title (max 55 chars)",
-      "description": "2–3 sentences. Conversational, like a professor thinking aloud. State what we see, what it means, what comes next.",
-      "badges": [{"text": "symbol = value unit", "type": "cyan|orange|green"}],
+      "label": "Short label (3-5 words) for step-dot indicator",
+      "title": "Step 1: Full descriptive title",
+      "description": "2-3 sentence explanation shown in the info panel. Simple English, like a professor explaining out loud.",
+      "badges": [{"text": "param = value unit", "type": "cyan"}],
       "components_visible": ["comp_id_1"],
       "components_new": ["comp_id_1"],
       "focus_component": "comp_id_1",
-      "blur_background": true,
-      "motion_emphasis": "Short phrase describing how this component moves when revealed, e.g. 'crank sweeps 360° at 300 RPM'"
+      "blur_background": true
     }
   ],
   "svg_components": {
     "comp_id": {
-      "description": "Precise SVG visual description: shape, fill, stroke, position in 850×478 coordinate space",
-      "motion_type": "rotate|translate|oscillate|trace|pulse|flow|static",
-      "motion_description": "Exact kinematic description, e.g. rotates around pivot (425,239), driven by θ(t)=ωt where ω=300RPM×2π/60",
-      "accent_color": "#0891b2",
-      "layer_order": 1,
-      "labels": ["primary label", "value label"]
+      "description": "Precise visual description: shape, color, size, position in 850x478 canvas",
+      "motion_type": "rotate|translate|oscillate|trace|pulse|static",
+      "motion_description": "e.g. rotates around fixed pivot at (200,250) at 300 RPM",
+      "accent_color": "#66fcf1",
+      "labels": ["label text 1", "label text 2"]
     }
   }
 }
 
-════════════════════════════════════════════════════════════
-STRICT RULES
-════════════════════════════════════════════════════════════
-1. steps: minimum 4, maximum 6. Always end with the solution/answer step.
-2. Step 1: establishes the fixed frame, ground, housing, or reference coordinate system.
-3. Steps 2–(N-1): each introduces exactly ONE new moving component with its physical motion.
-4. Last step: freezes mechanism at solution state. Shows answer annotation. NO calculation popup boxes.
-5. badge types: "cyan" = given data, "orange" = motion/force, "green" = result/answer.
-6. svg_components: name every physical part — frame, ground, pivots, cranks, connecting rods, pistons,
-   gears, pulleys, belts, springs, beams, coils, resistors, pipes, etc. Place all in 850×478 space.
-7. final_answer: MUST contain the computed numerical result with units. Never empty.
-8. motion_type: must accurately match the physical behavior of the component.
-9. layer_order: integer starting at 1 (lower = drawn first / behind)."""
+RULES:
+1. steps: 3-5 steps minimum, always end with the main answer step.
+2. First step: establish the frame/ground/fixed structure.
+3. Each subsequent step: introduce ONE new moving/key component.
+4. Last step: freeze at the solution angle/state. NO calculation popup.
+5. badges: use type "cyan", "orange", or "green".
+6. svg_components: describe every physical component: frame, pivot, crank, rod, piston,
+   gears, pulleys, beams, coils, etc. Position everything in an 850x478 coordinate space.
+7. final_answer: MUST contain computed numerical answer with units. Never leave empty.
+8. motion_type: accurately describe what this component does physically."""
 
 _SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
 
@@ -3174,26 +3133,12 @@ class GeminiSceneAnalyzer:
 # STAGE B: GeminiAnimationBuilder — generates the complete HTML animation
 # ---------------------------------------------------------------------------
 
-_ANIMATION_BUILDER_SYSTEM = """You are QAnim Animation Builder v1.0 — a world-class specialist who generates COMPLETE, SELF-CONTAINED, VISUALLY POLISHED HTML animation pages for engineering and science education.
+_ANIMATION_BUILDER_SYSTEM = """You are QAnim Animation Builder v1.0 — a specialist who generates COMPLETE, SELF-CONTAINED HTML animation pages.
 
-You receive a scene script (JSON) and must produce a premium interactive animation that feels like a professional educational platform (think Khan Academy × Brilliant × a high-end engineering textbook).
+You receive a scene script (JSON) and must generate a premium educational animation HTML page.
 
-════════════════════════════════════════════════════════════
-DESIGN PRINCIPLES
-════════════════════════════════════════════════════════════
-1. LIGHT, AIRY PALETTE — Never dark backgrounds. The page feels open and breathable.
-   Body: #eef2f9 (soft blue-grey). Dashboard card: #ffffff. Canvas: radial gradient #f0f5ff→#dce8f5→#c8d8ed.
-2. CLEAR VISUAL HIERARCHY — Every element has a purpose. No clutter.
-   Question banner → SVG canvas → control panel. No floating noise.
-3. SMOOTH, PURPOSEFUL MOTION — Every animation is physically correct and aesthetically satisfying.
-   Transitions use cubic-bezier(0.4, 0, 0.2, 1). Layer reveals use opacity + slight translateY (0→natural).
-4. LAYERED SVG DEPTH — Components exist in z-order. Shadows, gradients, and glow filters create depth.
-5. POLISHED TYPOGRAPHY — Font stack: 'Segoe UI', system-ui, -apple-system. Consistent sizing scale.
-
-════════════════════════════════════════════════════════════
-REFERENCE OUTPUT STYLE (follow precisely)
-════════════════════════════════════════════════════════════
-The output must match this structure and CSS (light theme, visually rich):
+═══ REFERENCE OUTPUT STYLE (follow exactly) ═══
+The output must match this exact structure and CSS (light theme, visually rich):
 
 <!DOCTYPE html>
 <html lang="en">
@@ -3205,61 +3150,28 @@ The output must match this structure and CSS (light theme, visually rich):
     :root {
       --bg-color: #eef2f9;
       --panel-bg: #ffffff;
-      --text-main: #1e293b;
+      --text-main: #334155;
       --text-sub: #64748b;
-      --text-muted: #94a3b8;
       --accent-cyan: #0891b2;
       --accent-cyan-dim: #0e7490;
-      --accent-cyan-light: rgba(8,145,178,0.10);
-      --accent-orange: #d97706;
+      --accent-orange: #ea8c00;
       --accent-green: #16a34a;
       --border: #e2e8f0;
-      --border-strong: #cbd5e1;
-      --border-radius: 16px;
-      --border-radius-sm: 10px;
-      --shadow-card: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08), 0 24px 48px rgba(15,23,42,0.04);
-      --shadow-hover: 0 4px 16px rgba(8,145,178,0.18);
-      --transition-smooth: 0.45s cubic-bezier(0.4, 0, 0.2, 1);
-      --transition-spring: 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      --border-radius: 14px;
+      --shadow-card: 0 4px 6px -1px rgba(30,64,175,0.07), 0 10px 30px rgba(30,64,175,0.10);
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-      background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
-      background-attachment: fixed;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background-color: var(--bg-color);
       color: var(--text-main);
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: flex-start;
       min-height: 100vh;
-      padding: 28px 16px 130px;
+      padding: 24px 16px 120px;
     }
-    /* ── Page header (above dashboard) ── */
-    .page-header {
-      width: 100%;
-      max-width: 900px;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .page-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 12px;
-      border-radius: 20px;
-      background: rgba(8,145,178,0.10);
-      border: 1px solid rgba(8,145,178,0.22);
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--accent-cyan-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-    }
-    .page-chip::before { content: '▶'; font-size: 8px; }
-    /* ── Dashboard Card ── */
     .dashboard {
       width: 100%;
       max-width: 900px;
@@ -3269,271 +3181,182 @@ The output must match this structure and CSS (light theme, visually rich):
       box-shadow: var(--shadow-card);
       overflow: hidden;
       border: 1px solid var(--border);
-      position: relative;
-    }
-    /* Subtle top accent line */
-    .dashboard::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      background: linear-gradient(90deg, var(--accent-cyan-dim) 0%, #7c3aed 50%, var(--accent-orange) 100%);
-      border-radius: var(--border-radius) var(--border-radius) 0 0;
-      z-index: 2;
     }
     /* ── Question Banner ── */
     .question-banner {
-      padding: 22px 28px 18px;
-      background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 40%, #eef2f9 100%);
+      padding: 18px 24px 16px;
+      background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 50%, #eef2f9 100%);
       border-bottom: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
       position: relative;
-      overflow: hidden;
     }
     .question-banner::before {
       content: '';
       position: absolute;
       inset: 0;
-      background: linear-gradient(100deg, rgba(8,145,178,0.05) 0%, transparent 55%);
+      background: linear-gradient(90deg, rgba(8,145,178,0.06) 0%, transparent 60%);
       pointer-events: none;
     }
-    /* ── Question Banner Inner ── */
     .q-label {
-      font-size: 10.5px;
+      font-size: 11px;
       font-weight: 800;
       color: var(--accent-cyan-dim);
       text-transform: uppercase;
-      letter-spacing: 1.8px;
+      letter-spacing: 1.5px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
     }
-    .q-label::before {
-      content: '';
-      display: inline-block;
-      width: 16px; height: 16px;
-      border-radius: 5px;
-      background: linear-gradient(135deg, var(--accent-cyan-dim), var(--accent-cyan));
-      flex-shrink: 0;
-    }
+    .q-label::before { content: "❓"; font-size: 13px; }
     .q-text {
-      font-size: 15px;
-      color: var(--text-main);
-      line-height: 1.6;
-      font-weight: 450;
-      max-width: 820px;
+      font-size: 14.5px;
+      color: #1e293b;
+      line-height: 1.55;
     }
     /* ── SVG Canvas ── */
     .svg-container {
       width: 100%;
       aspect-ratio: 16 / 9;
-      background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
+      background: radial-gradient(ellipse at 40% 40%, #f0f5ff 0%, #dce8f5 55%, #c8d8ed 100%);
       position: relative;
       overflow: hidden;
-      border-bottom: 1px solid var(--border);
     }
     svg { display: block; width: 100%; height: 100%; }
-    /* Smooth, physically-weighted layer transitions */
-    .svg-layer {
-      transition: opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1);
-    }
+    .svg-layer { transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
     /* ── Control Panel ── */
     .control-panel {
-      padding: 22px 28px 26px;
-      background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+      padding: 20px 24px 24px;
+      background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
       border-top: 1px solid var(--border);
     }
     /* ── Step Indicator: pill-style dots ── */
     .step-indicator {
       display: flex;
       align-items: center;
-      gap: 6px;
-      margin-bottom: 20px;
+      gap: 8px;
+      margin-bottom: 18px;
       flex-wrap: wrap;
     }
-    /* Connector line between dots */
-    .step-connector {
-      flex: 0 0 18px;
-      height: 1.5px;
-      background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
-      border-radius: 2px;
-    }
     .step-dot {
-      padding: 6px 14px;
+      padding: 5px 13px;
       border-radius: 20px;
-      background: #f1f5f9;
-      border: 1.5px solid #e2e8f0;
-      font-size: 11.5px;
+      background: rgba(203,213,225,0.5);
+      border: 1px solid #cbd5e1;
+      font-size: 11px;
       font-weight: 700;
       color: #94a3b8;
       cursor: pointer;
-      transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease,
-                  box-shadow 0.3s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+      transition: background 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s, transform 0.2s;
       white-space: nowrap;
-      user-select: none;
-      position: relative;
-    }
-    .step-dot:hover:not(.active) {
-      background: rgba(8,145,178,0.07);
-      border-color: rgba(8,145,178,0.3);
-      color: var(--accent-cyan-dim);
     }
     .step-dot.active {
-      background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%);
-      border-color: transparent;
+      background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
+      border-color: var(--accent-cyan);
       color: #ffffff;
-      box-shadow: 0 3px 12px rgba(8,145,178,0.38), 0 1px 3px rgba(8,145,178,0.20);
-      transform: scale(1.07);
-    }
-    /* Completed step indicator */
-    .step-dot.done {
-      background: rgba(22,163,74,0.09);
-      border-color: rgba(22,163,74,0.28);
-      color: #15803d;
+      box-shadow: 0 2px 10px rgba(8,145,178,0.35);
+      transform: scale(1.06);
     }
     .step-label {
-      font-size: 11px;
-      color: var(--text-muted);
+      font-size: 12px;
+      color: var(--text-sub);
       font-weight: 600;
-      letter-spacing: 0.6px;
+      letter-spacing: 0.4px;
       text-transform: uppercase;
-      margin-left: 6px;
+      margin-left: 4px;
       flex: 1;
-      min-width: 0;
     }
     /* ── Info Box ── */
     .info-box {
-      background: linear-gradient(135deg, #f8fbff 0%, #f4f8ff 100%);
-      border: 1px solid #dde8f8;
+      background: #f8faff;
+      border: 1px solid #dde6f8;
       border-left: 4px solid var(--accent-cyan);
-      border-radius: var(--border-radius-sm);
-      padding: 20px 22px;
-      min-height: 130px;
+      border-radius: 10px;
+      padding: 18px 20px;
+      min-height: 120px;
       display: flex;
       flex-direction: column;
-      gap: 11px;
-      position: relative;
-      overflow: hidden;
-    }
-    .info-box::before {
-      content: '';
-      position: absolute;
-      top: 0; right: 0;
-      width: 120px; height: 120px;
-      background: radial-gradient(circle, rgba(8,145,178,0.06) 0%, transparent 70%);
-      pointer-events: none;
+      gap: 10px;
     }
     .info-box h3 {
-      color: var(--text-main);
-      font-size: 16.5px;
+      color: #0f1e2e;
+      font-size: 16px;
       font-weight: 800;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       line-height: 1.3;
-      letter-spacing: -0.2px;
     }
     .info-box h3::before {
       content: '';
       display: inline-block;
-      width: 8px; height: 8px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: var(--accent-cyan);
       flex-shrink: 0;
-      box-shadow: 0 0 0 3px rgba(8,145,178,0.18);
+      box-shadow: 0 0 6px rgba(8,145,178,0.5);
     }
     /* ── Badges ── */
-    .badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; }
     .badge {
-      padding: 4px 12px;
+      padding: 3px 11px;
       border-radius: 20px;
-      font-size: 11.5px;
+      font-size: 12px;
       font-weight: 700;
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      letter-spacing: 0.1px;
     }
-    .badge-cyan  { background: rgba(8,145,178,0.09);  border: 1px solid rgba(8,145,178,0.28);  color: #0e7490; }
-    .badge-orange{ background: rgba(217,119,6,0.09);  border: 1px solid rgba(217,119,6,0.28);  color: #92400e; }
-    .badge-green { background: rgba(22,163,74,0.09);  border: 1px solid rgba(22,163,74,0.28);  color: #15803d; }
+    .badge-cyan  { background: rgba(8,145,178,0.08);  border: 1px solid rgba(8,145,178,0.3);  color: var(--accent-cyan-dim); }
+    .badge-orange{ background: rgba(234,140,0,0.08);  border: 1px solid rgba(234,140,0,0.3);  color: #b45309; }
+    .badge-green { background: rgba(22,163,74,0.08);  border: 1px solid rgba(22,163,74,0.3);  color: #15803d; }
     /* ── Description ── */
-    .info-desc {
-      font-size: 14px;
-      line-height: 1.7;
-      color: var(--text-sub);
-      font-weight: 400;
-    }
-    /* ── Step progress bar ── */
-    .step-progress-wrap {
-      height: 3px;
-      background: #f1f5f9;
-      border-radius: 2px;
-      margin-bottom: 20px;
-      overflow: hidden;
-    }
-    .step-progress-bar {
-      height: 100%;
-      background: linear-gradient(90deg, #0e7490, #0891b2, #38bdf8);
-      border-radius: 2px;
-      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    }
+    .info-desc { font-size: 13.5px; line-height: 1.65; color: var(--text-sub); }
     /* ── Actions ── */
     .actions {
       display: flex;
       justify-content: flex-end;
       align-items: center;
       gap: 10px;
-      margin-top: 20px;
+      margin-top: 18px;
     }
     button {
-      padding: 11px 24px;
-      border-radius: 10px;
+      padding: 10px 22px;
+      border-radius: 8px;
       font-size: 13.5px;
       font-weight: 700;
       font-family: inherit;
       cursor: pointer;
-      transition: background 0.22s ease, box-shadow 0.22s ease,
-                  transform 0.18s cubic-bezier(0.34,1.56,0.64,1),
-                  color 0.2s ease, border-color 0.2s ease;
+      transition: background 0.2s, box-shadow 0.2s, transform 0.15s, color 0.2s, border-color 0.2s;
       border: none;
       outline: none;
-      letter-spacing: 0.1px;
     }
     .btn-primary {
-      background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%);
+      background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
       color: #ffffff;
-      box-shadow: 0 4px 14px rgba(8,145,178,0.30), 0 1px 3px rgba(8,145,178,0.15);
+      box-shadow: 0 4px 12px rgba(8,145,178,0.28);
     }
     .btn-primary:hover {
-      background: linear-gradient(135deg, #0c6680 0%, #0e7490 100%);
-      box-shadow: 0 6px 22px rgba(8,145,178,0.38);
-      transform: translateY(-2px);
-    }
-    .btn-primary:active { transform: translateY(0); box-shadow: 0 2px 6px rgba(8,145,178,0.20); }
-    .btn-secondary {
-      background: #ffffff;
-      color: var(--text-sub);
-      border: 1.5px solid var(--border-strong);
-      box-shadow: 0 1px 3px rgba(15,23,42,0.06);
-    }
-    .btn-secondary:hover {
-      background: #f8fafc;
-      color: var(--text-main);
-      border-color: #94a3b8;
-      box-shadow: 0 2px 8px rgba(15,23,42,0.10);
+      background: linear-gradient(135deg, #0369a1 0%, var(--accent-cyan-dim) 100%);
+      box-shadow: 0 6px 20px rgba(14,116,144,0.35);
       transform: translateY(-1px);
     }
-    .btn-secondary:active { transform: translateY(0); }
+    .btn-primary:active { transform: translateY(0); box-shadow: none; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-sub);
+      border: 1.5px solid #cbd5e1;
+    }
+    .btn-secondary:hover {
+      background: rgba(15,23,42,0.04);
+      color: #1e293b;
+      border-color: #94a3b8;
+    }
   </style>
 </head>
 <body>
-  <!-- Page header chip -->
-  <div class="page-header">
-    <div class="page-chip">Interactive Animation</div>
-  </div>
   <div class="dashboard">
     <!-- Question Banner -->
     <div class="question-banner">
@@ -3605,194 +3428,98 @@ The output must match this structure and CSS (light theme, visually rich):
 </body>
 </html>
 
-════════════════════════════════════════════════════════════
-SVG DESIGN RULES — HIGH-QUALITY LAYERED SVG
-════════════════════════════════════════════════════════════
-1. viewBox="0 0 850 478" (16:9). preserveAspectRatio="xMidYMid slice".
-2. Canvas background: <rect> with fill="url(#canvasBg)" using a radial gradient:
-   center light (#eef5ff), midpoint (#dce8f5), edge (#c8d9ed). Add subtle noise via feTurbulence.
-3. Grid pattern: id="grid", 40×40 units, stroke "#1e3a5f" opacity 0.04, strokeWidth 0.6.
-4. DEFS section must include ALL of:
-   a) Metallic gradient "steel": #e8f0fa → #c8d8e8 → #8aaac0 → #5a7a9a (4-stop, 135°)
-   b) Highlight gradient "steelHi": #f4f8fc → #d4e4f0 → #94b4c8 (lighter, for top-facing surfaces)
-   c) Accent glow filter "glowCyan": feGaussianBlur stdDeviation="6", feComposite over source
-   d) Accent glow filter "glowOrange": same, orange-tinted flood for force arrows
-   e) Drop shadow "shadow": feDropShadow dx=0 dy=3 stdDeviation=5, flood-color rgba(14,30,64,0.16)
-   f) Deep shadow "shadowDeep": feDropShadow dx=0 dy=6 stdDeviation=10, flood-color rgba(14,30,64,0.22)
-   g) Inner glow "innerGlow": feGaussianBlur in="SourceAlpha", feOffset, feComposite
-   h) Arrow marker "arrowCyan": fill #0891b2, markerWidth=8 markerHeight=8 refX=4 refY=4
-   i) Arrow marker "arrowOrange": fill #d97706
-   j) Arrow marker "arrowGreen": fill #16a34a
-   k) Arrow marker "arrowGrey": fill #94a3b8 (for dimension lines)
-5. LAYER STRUCTURE (strict order, top-to-bottom in source = back-to-front visually):
-   <g id="layer-canvas-bg">  — background rect + grid (always visible, opacity:1)
-   <rect id="blur-shield" …>  — dimming overlay between bg and components
-   <g class="svg-layer" id="layer-frame" …>   — fixed structure, always visible
-   <g class="svg-layer" id="layer-[comp1]" style="opacity:0"> — components in reveal order
-   <g class="svg-layer" id="layer-[comp2]" style="opacity:0">
-   …
-   <g class="svg-layer" id="overlay-step0" style="opacity:0"> — labels/arrows for step 0
-   <g class="svg-layer" id="overlay-step1" style="opacity:0"> — labels/arrows for step 1
-   …
-6. blur-shield: <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
-   Opacity range: 0 (no focus) → 0.38 (focused step) → 0 (final reveal step).
-7. STRUCTURAL COMPONENTS — use metallic fill="url(#steel)", stroke layering, filter="url(#shadow)":
-   - Frames/housings: rounded rect or path, fill="url(#steel)", stroke="#6a8aaa" strokeWidth=2.5
-   - Ground hatching: diagonal lines pattern, classic engineering style
-   - Pivots/bearings: concentric circles with metallic gradient, inner circle lighter
-8. MOVING COMPONENTS — each must have a distinct visual personality:
-   - Cranks: thick rounded bar, fill="url(#steel)", with pivot circle at both ends
-   - Connecting rods: tapered shape (wider at crank end, narrower at piston end)
-   - Pistons: rectangular with rounded ends, fill="url(#steelHi)", subtle chamfer lines
-   - Gears: proper involute-like teeth (use path or polygon approximation), fill="url(#steel)"
-   - Pulleys: circles with spoke detail, belt grooves visible
-   - Belts: thick stroke path, stroke="#334155", slightly textured with dash patterns
-   - Springs: zigzag path, stroke="#475569", strokeWidth=2.5
-   - Heat pipes: concentric circles or annular ring, fill gradient from hot to cool colors
-9. TEXT IN SVG — strict hierarchy:
-   - Component name labels: fontSize=13, fontWeight=800, fill="#1e293b", fontFamily="Segoe UI,system-ui,sans-serif"
-   - Value callout chips: <rect rx=5 fill="rgba(8,145,178,0.12)" stroke="rgba(8,145,178,0.25)"/> + <text> centered
-   - Dimension lines: stroke="#94a3b8", strokeWidth=1.5, strokeDasharray="5,3", with arrowGrey markers
-   - Annotation arrows (forces, velocities): stroke="#0891b2" or "#d97706", strokeWidth=2.5, with arrowCyan/Orange
-   - Secondary labels: fontSize=11, fill="#475569"
-10. ZERO text overlaps — plan all label positions. Every label must be ≥12px from any other element.
-11. Light-theme colors for components (NO dark/neon colors):
-    Primary structure: #4a6a8a, #6a8aaa, #8aaac4
-    Crank/driver: #2563eb (vibrant blue), stroke #1d4ed8
-    Driven: #0891b2 (cyan), stroke #0e7490
-    Forces/motion arrows: #d97706 (amber), stroke #b45309
-    Results/measurements: #16a34a (green), stroke #15803d
-    Danger/highlight: #dc2626 (red)
+═══ SVG DESIGN RULES ═══
+1. viewBox="0 0 850 478" (16:9 aspect ratio).
+2. Canvas background: radial-gradient(ellipse at 40% 40%, #f0f5ff 0%, #dce8f5 55%, #c8d8ed 100%) — a soft, airy blue-white.
+3. Grid pattern overlay with very low opacity (0.05), stroke color #1e3a5f.
+4. Each PHYSICAL COMPONENT gets its own <g class="svg-layer" id="layer-[name]"> group.
+5. All component layers start with style="opacity:0" EXCEPT layer-frame (always visible).
+6. A <rect id="blur-shield"> sits BETWEEN the frame layer and component layers.
+   fill="#c7d8ed" opacity="0" — gets set to 0.4–0.6 during focus steps to dim the background.
+7. Overlay groups <g class="svg-layer" id="overlay-stepN"> hold labels and dimension arrows. Start at opacity:0.
+8. METALLIC GRADIENTS: use multi-stop linearGradient in blue-grey tones for structural parts. Add feDropShadow filters for depth.
+9. GLOW FILTERS: feGaussianBlur glow for active/highlighted elements (use #0891b2 cyan for light theme).
+10. ARROW MARKERS: arrowCyan (#0891b2), arrowOrange (#ea8c00), arrowGreen (#16a34a) — matching light-theme accents.
+11. ZERO text overlaps — compute positions carefully. Keep all labels inside the viewBox.
+12. SVG TEXT COLORS for light theme: use #1e293b for main labels, #0e7490 for highlight labels, #475569 for secondary labels.
+13. SVG component colors: use bold, saturated colors visible on light backgrounds — e.g. #2563eb, #0891b2, #16a34a, #dc2626, #b45309. No neon/dark-background colors.
 
-════════════════════════════════════════════════════════════
-STEP DOT STRUCTURE
-════════════════════════════════════════════════════════════
-Step dots are PILL-SHAPED <div> elements with text labels. Between dots, add <div class="step-connector">.
-Example HTML structure in #dots:
+═══ STEP DOTS ═══
+IMPORTANT: Step dots are PILL-SHAPED with text labels, NOT small circles.
+Each <div class="step-dot"> contains the step's short label text (3-5 words from stepsData[i].label).
+Example:
   <div class="step-dot active">Problem Setup</div>
-  <div class="step-connector"></div>
-  <div class="step-dot">Crank Motion</div>
-  <div class="step-connector"></div>
-  <div class="step-dot">Solution</div>
-  <div class="step-label" id="step-label">Step 1 of 3</div>
+  <div class="step-dot">Crank Geometry</div>
+  <div class="step-dot">Velocity Analysis</div>
+In applyStep(idx), update dots by adding/removing the "active" class — do NOT change innerHTML.
 
-In applyStep(idx): add/remove "active" and "done" classes. Update step-label text. Update progress bar width.
+═══ ANIMATION RULES ═══
+Each component must have REAL MOTION matching its physical behavior:
+- Rotating parts (crank, gears, pulleys): continuous requestAnimationFrame loop
+- Oscillating parts (pistons, sliders): sinusoidal motion driven by math
+- Tracing paths (belt, wave): stroke-dashoffset animation
+- Springs: scale/compress animation
+- Flowing elements (current, fluid): animated dash pattern
+- All motion uses real mathematical formulae from the problem
 
-════════════════════════════════════════════════════════════
-ANIMATION RULES — REAL PHYSICS
-════════════════════════════════════════════════════════════
-Motion must be physically correct, not just decorative:
-- Rotating cranks/gears/pulleys: continuous requestAnimationFrame, angle=ω×t (real rpm)
-- Oscillating pistons/sliders: x=r×cos(θ)+√(l²-r²×sin²(θ)) (actual kinematic formula)
-- Gear trains: each gear's ω scaled by tooth ratio (ω₂/ω₁ = T₁/T₂)
-- Belt drives: pulley animations synchronized, belt path traces smoothly
-- Springs: translateY(amplitude×sin(ωt)) with correct stiffness-derived frequency
-- Heat flow / current flow: animated stroke-dashoffset on the path
-- Waveforms / signals: path d attribute updated each frame with sin/cos
-- Freezing mechanism: lerp angle toward solution angle over ~60 frames, then pause RAF
-
-stepsData schema (one object per step, drives ALL state):
+stepsData array drives everything:
   {
-    label: "3-5 word pill text",
-    blurOp: 0.0,                  // blur-shield opacity (0 = off, 0.38 = focus)
-    overlays: ["overlay-step0"],  // which overlay layers become visible
-    freezing: false,              // true = lerp to solution angle and pause
-    solutionAngle: null,          // target angle in radians for freeze step
-    title: "Step N: Full Title",
-    badges: '<span class="badge badge-cyan">r = 50 mm</span>',
-    desc: "Conversational 2-3 sentence description.",
-    layerOpacities: {             // explicit opacity for EVERY layer
-      "layer-frame": 1,
-      "layer-crank": 0,
-      ...
-    }
+    label: "...",           // pill-dot label text (3-5 words)
+    blurOp: 0,              // blur-shield opacity (0 = no blur, 0.4-0.6 = focus blur)
+    overlays: ['overlay-step0'],  // which overlay groups to show
+    freezing: false,        // true = snap motion to solution angle
+    startAnim: false,       // true = start/resume animation
+    title: "Step N: ...",
+    badges: '<span class="badge badge-cyan">...</span>',
+    desc: "...",
+    layerOpacities: { 'layer-frame': 1, 'layer-crank': 0, ... }
   }
 
-applyStep(idx) must:
-  1. Set blur-shield opacity from stepsData[idx].blurOp
-  2. Apply all layerOpacities (every layer, not just new ones)
-  3. Hide all overlays, then show only stepsData[idx].overlays
-  4. Update info-title, info-badges, info-desc
-  5. Update step dots (active/done classes)
-  6. Update step-label text ("Step N of M")
-  7. Update progress bar width (idx+1)/total × 100%
-  8. If freezing: trigger angle lerp and pause the RAF loop
+applyStep(idx) sets ALL opacities and overlays from stepsData[idx].
+nextStep() / resetAnim() manage currentStep.
 
-════════════════════════════════════════════════════════════
-CRITICAL CODE REQUIREMENTS
-════════════════════════════════════════════════════════════
-- NO backtick template literals — use string concatenation only
-- NO const/let — use var everywhere
-- NO arrow functions — use function() {} only
-- NO external scripts or CDN imports — fully self-contained
-- ALL JavaScript in one <script> block
-- requestAnimationFrame loop keeps running unless explicitly paused (freeze step)
-- Restart button resets angle, currentStep=0, resumes RAF, applies step 0
+═══ CRITICAL REQUIREMENTS ═══
+- NO backtick template literals — use string concatenation
+- NO const/let — use var
+- NO arrow functions — use function() {}
+- NO external scripts or CDN imports
+- ALL JavaScript inline in one <script> block
+- The page must work standalone with zero network requests
+- Include question-banner div showing the original question
+- requestAnimationFrame loop must keep running for continuous motion
+- freezing mechanism: smoothly interpolate angle to solution angle, then pause
+- POLISH: use feDropShadow filters on overlay cards, multi-stop metallic gradients in blue-grey tones, smooth cubic-bezier transitions (0.4s), consistent stroke-width hierarchy (frame=2, components=2.5–3, labels=1.5).
+- CENTERING: body uses { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:24px 16px 120px; }. .dashboard has { width:100%; max-width:900px; margin:0 auto; }. Never float or absolutely-position the dashboard.
+- STEP DOTS: must be pill-shaped divs with text (not empty circles). Apply "active" class to current step in applyStep().
+- INFO BOX: must use border-left:4px solid var(--accent-cyan) accent style, with h3 that has a ::before cyan dot indicator.
 
-════════════════════════════════════════════════════════════
-POLISH CHECKLIST (every output must pass)
-════════════════════════════════════════════════════════════
-✓ Page has page-header chip above dashboard
-✓ Dashboard has ::before top accent gradient bar (3px)
-✓ Question banner has q-label with square icon + q-text at 15px
-✓ SVG canvas: all 4 gradient defs, shadow filters, glow filters, arrow markers
-✓ blur-shield rect present between background and component layers
-✓ Step dots are pills with text, connected by .step-connector divs
-✓ Progress bar (.step-progress-wrap + .step-progress-bar) updates each step
-✓ Info box has border-left:4px cyan, h3::before cyan dot with ring shadow
-✓ Badges have correct type: cyan=given, orange=motion, green=result
-✓ All buttons use CSS variables; .btn-primary has gradient + translateY hover
-✓ ZERO text-overlaps in SVG; all labels inside viewBox
-✓ All component layers start opacity:0 (except layer-frame)
-✓ Final step freezes mechanism at exact solution state + annotation overlay
-
-════════════════════════════════════════════════════════════
-OUTPUT
-════════════════════════════════════════════════════════════
+═══ OUTPUT ═══
 Return ONLY the complete <!DOCTYPE html>...</html> page as raw text.
-No JSON wrapper. No markdown. No fences. Pure HTML only."""
+No JSON wrapper. No markdown. No fences. Just the pure HTML."""
 
-_ANIMATION_BUILDER_USER = """Generate the complete, polished animation HTML page for this scene script. This is a premium educational product — quality matters at every level.
+_ANIMATION_BUILDER_USER = """Generate the complete animation HTML page for this scene script.
 
 ORIGINAL QUESTION: {question}
 
 SCENE SCRIPT:
 {scene_script}
 
-════════════════════════════════════════════════════════════
-CRITICAL REMINDERS FOR THIS OUTPUT
-════════════════════════════════════════════════════════════
+CRITICAL REMINDERS:
+1. Follow the reference output style EXACTLY — light-blue-grey theme: bg=#eef2f9, panel=#ffffff, accent-cyan=#0891b2.
+2. QUESTION BANNER: use class="question-banner" with q-label "Problem Statement" and ::before pseudo-element gradient overlay.
+3. STEP DOTS: pill-shaped <div class="step-dot"> elements containing the step label TEXT (3-5 words each). First dot gets class "active". Update via add/remove "active" class in applyStep().
+4. INFO BOX: use border-left:4px solid var(--accent-cyan) style with h3::before cyan dot indicator.
+5. BUTTONS: .btn-primary uses linear-gradient(135deg, #0e7490, #0891b2) with hover translateY(-1px).
+6. Draw components ONE BY ONE in the correct physical order — component layers appear step by step.
+7. REAL PHYSICS: rotating crank uses real angle calculation, piston position uses kinematic formula.
+8. The blur-shield (fill="#c7d8ed") dims the background when focusing on a new component.
+9. Each component must visibly animate (rotate/translate/oscillate) when it first appears.
+10. Labels and annotations appear AFTER the component is shown (in the overlay group for that step).
+11. The LAST step snaps to the solution angle/state. NO calculations popup, NO formula dump box.
+12. SVG component colors: use light-theme–friendly bold colors (#2563eb, #0891b2, #dc2626, #16a34a, #b45309) — NOT neon dark-theme colors.
+13. Do NOT use const/let/arrow functions/backtick template literals.
 
-STRUCTURE & LAYOUT:
-1. Body background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%) with background-attachment:fixed.
-2. Add page-header div with page-chip "Interactive Animation" ABOVE the .dashboard card.
-3. Dashboard has CSS ::before with 3px top gradient bar (cyan→purple→orange).
-4. Question banner: class="question-banner" — q-label with square icon box, q-text at 15px/1.6 line-height.
-
-SVG CANVAS:
-5. All defs: 4-stop steel gradient, steelHi gradient, glowCyan filter, glowOrange filter, shadow filter, shadowDeep filter, 3 color arrow markers + 1 grey marker for dimensions.
-6. blur-shield rect: fill="#c2d4e8", opacity="0", sits between layer-frame and component layers.
-7. Component colors MUST be light-theme friendly: structure=#4a6a8a, driver=#2563eb, driven=#0891b2, forces=#d97706, results=#16a34a.
-8. Value callout chips in overlays: rounded rect with rgba fill + centered text, NOT bare text floated in space.
-9. Dimension lines: dashed (#94a3b8), with arrowGrey markers on both ends.
-
-STEP CONTROL:
-10. Step dots are pills with text. Between every two dots add <div class="step-connector"></div>.
-11. Add <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar"></div></div> between step-indicator and info-box.
-12. applyStep(idx) must: set blur opacity, set all layer opacities, show correct overlays, update info box, update dots (active/done), update step-label "Step N of M", update progress bar width.
-
-PHYSICS & MOTION:
-13. Rotating parts (cranks, gears, pulleys): continuous RAF loop, angle=omega*elapsed_time. Use REAL RPM from the problem.
-14. Oscillating parts (pistons): x = r*cos(theta) + sqrt(L*L - r*r*sin(theta)*sin(theta)). Use REAL geometry.
-15. Final step: lerp angle to exact solution angle over ~60 frames, then cancel RAF and show annotation overlay.
-16. Each component animates on the FRAME it first becomes visible (triggered in applyStep).
-
-CODE QUALITY:
-17. NO const/let/arrow functions/backtick template literals anywhere.
-18. Use var for all variables. Use function() {} for all functions.
-19. Single <script> block. Zero external dependencies.
-
-Return the complete <!DOCTYPE html>...</html> page — nothing else."""
+Return the complete HTML page — nothing else."""
 
 
 class GeminiAnimationBuilder:
@@ -3805,13 +3532,9 @@ class GeminiAnimationBuilder:
 
         QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {GEMINI_MODEL}...")
         script_json = json.dumps(scene_script, indent=2, ensure_ascii=False)
-        # Use str.replace() instead of .format() to avoid KeyError/IndexError when
-        # the JSON scene_script contains { } braces that .format() misinterprets as
-        # positional/named format placeholders ("Replacement index 0 out of range").
-        user_prompt = (
-            _ANIMATION_BUILDER_USER
-            .replace("{question}", question[:500])
-            .replace("{scene_script}", script_json[:6000])
+        user_prompt = _ANIMATION_BUILDER_USER.format(
+            question=question[:500],
+            scene_script=script_json[:6000]
         )
 
         try:
@@ -3926,7 +3649,7 @@ class GeminiAnimationBuilder:
                 badges_html += f'<span class="badge badge-{bt}">{html_module.escape(b.get("text",""))}</span> '
             math_lines = step.get("math_lines", [])       # kept for legacy compat only
             show_math  = step.get("show_math", False)      # kept for legacy compat only
-            blur = 0.38 if step.get("blur_background") else 0
+            blur = 0.5 if step.get("blur_background") else 0
             step_num = step.get("step_number", 1) - 1
 
             # Escape strings for JS
@@ -3956,18 +3679,14 @@ class GeminiAnimationBuilder:
             )
         overlays_html = "\n                ".join(overlay_groups)
 
-        # Build pill-style dot elements with step-connector divs between them
+        # Build pill-style dot elements with short step labels
         dot_count = len(steps)
-        dot_parts = []
-        for i in range(dot_count):
-            dot_parts.append(
-                '<div class="step-dot' + (' active' if i == 0 else '') + '">'
-                + html_module.escape(steps[i].get('label', f'Step {i+1}')[:24])
-                + '</div>'
-            )
-            if i < dot_count - 1:
-                dot_parts.append('<div class="step-connector"></div>')
-        dots_html = "\n                ".join(dot_parts)
+        dots_html = "\n                ".join(
+            ['<div class="step-dot' + (' active' if i == 0 else '') + '">'
+             + html_module.escape(steps[i].get('label', f'Step {i+1}')[:22])
+             + '</div>'
+             for i in range(dot_count)]
+        )
 
         # Count overlays list for applyStep
         all_overlay_ids = [f"overlay-step{i}" for i in range(len(steps))]
@@ -3981,312 +3700,228 @@ class GeminiAnimationBuilder:
     <title>{title} — Interactive Animation</title>
     <style>
         :root {{
-            --bg: #eef2f9;
-            --panel: #ffffff;
-            --text: #1e293b;
+            --bg-color: #eef2f9;
+            --panel-bg: #ffffff;
+            --text-main: #334155;
             --text-sub: #64748b;
-            --text-muted: #94a3b8;
-            --accent: #0891b2;
-            --accent-dim: #0e7490;
-            --accent-light: rgba(8,145,178,0.10);
-            --orange: #d97706;
-            --green: #16a34a;
+            --accent-cyan: #0891b2;
+            --accent-cyan-dim: #0e7490;
+            --accent-orange: #ea8c00;
+            --accent-green: #16a34a;
             --border: #e2e8f0;
-            --border-md: #cbd5e1;
-            --radius: 16px;
-            --radius-sm: 10px;
-            --shadow: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08);
+            --border-radius: 14px;
+            --shadow-card: 0 4px 6px -1px rgba(30,64,175,0.07), 0 10px 30px rgba(30,64,175,0.10);
+            --shadow-hover: 0 6px 20px rgba(14,116,144,0.22);
         }}
         *, *::before, *::after {{ box-sizing:border-box; margin:0; padding:0; }}
         body {{
-            font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-            background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
-            background-attachment: fixed;
-            color: var(--text);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: flex-start;
             min-height: 100vh;
-            padding: 28px 16px 130px;
+            padding: 24px 16px 120px;
         }}
-        /* ── Page header chip ── */
-        .page-header {{
-            width: 100%;
-            max-width: 900px;
-            margin-bottom: 14px;
-        }}
-        .page-chip {{
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            padding: 5px 13px;
-            border-radius: 20px;
-            background: rgba(8,145,178,0.10);
-            border: 1px solid rgba(8,145,178,0.22);
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--accent-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.9px;
-        }}
-        .page-chip::before {{ content: '▶'; font-size: 8px; }}
         /* ── Dashboard Card ── */
         .dashboard {{
             width: 100%;
             max-width: 900px;
-            background: var(--panel);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
+            margin: 0 auto;
+            background: var(--panel-bg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-card);
             overflow: hidden;
             border: 1px solid var(--border);
-            position: relative;
-        }}
-        .dashboard::before {{
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, var(--accent-dim) 0%, #7c3aed 50%, var(--orange) 100%);
-            border-radius: var(--radius) var(--radius) 0 0;
-            z-index: 2;
         }}
         /* ── Question Banner ── */
         .question-banner {{
-            padding: 22px 28px 18px;
-            background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 45%, #eef2f9 100%);
+            padding: 18px 24px 16px;
+            background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 50%, #eef2f9 100%);
             border-bottom: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
             position: relative;
-            overflow: hidden;
         }}
         .question-banner::before {{
             content: '';
             position: absolute;
             inset: 0;
-            background: linear-gradient(100deg, rgba(8,145,178,0.05) 0%, transparent 55%);
+            background: linear-gradient(90deg, rgba(8,145,178,0.06) 0%, transparent 60%);
             pointer-events: none;
         }}
         .q-label {{
-            font-size: 10.5px;
+            font-size: 11px;
             font-weight: 800;
-            color: var(--accent-dim);
+            color: var(--accent-cyan-dim);
             text-transform: uppercase;
-            letter-spacing: 1.8px;
+            letter-spacing: 1.5px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 7px;
         }}
-        .q-label::before {{
-            content: '';
-            display: inline-block;
-            width: 16px; height: 16px;
-            border-radius: 5px;
-            background: linear-gradient(135deg, var(--accent-dim), var(--accent));
-            flex-shrink: 0;
-        }}
+        .q-label::before {{ content: "❓"; font-size: 13px; }}
         .q-text {{
-            font-size: 15px;
-            color: var(--text);
-            line-height: 1.62;
-            font-weight: 430;
+            font-size: 14.5px;
+            color: #1e293b;
+            line-height: 1.55;
+            font-weight: 400;
             max-width: 820px;
         }}
         /* ── SVG Canvas ── */
         .svg-container {{
             width: 100%;
             aspect-ratio: 16 / 9;
-            background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
+            background: radial-gradient(ellipse at 40% 40%, #f0f5ff 0%, #dce8f5 55%, #c8d8ed 100%);
             position: relative;
             overflow: hidden;
-            border-bottom: 1px solid var(--border);
         }}
         svg {{ display: block; width: 100%; height: 100%; }}
-        .svg-layer {{ transition: opacity 0.52s cubic-bezier(0.4, 0, 0.2, 1); }}
+        .svg-layer {{ transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1); }}
         /* ── Control Panel ── */
         .control-panel {{
-            padding: 22px 28px 26px;
-            background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
+            padding: 20px 24px 24px;
+            background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
             border-top: 1px solid var(--border);
         }}
-        /* ── Step Indicator ── */
+        /* ── Step Indicator (pill-style dots with label) ── */
         .step-indicator {{
             display: flex;
             align-items: center;
-            gap: 6px;
-            margin-bottom: 8px;
+            gap: 8px;
+            margin-bottom: 18px;
             flex-wrap: wrap;
         }}
-        .step-connector {{
-            flex: 0 0 18px;
-            height: 1.5px;
-            background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
-            border-radius: 2px;
-        }}
         .step-dot {{
-            padding: 6px 14px;
+            padding: 5px 13px;
             border-radius: 20px;
-            background: #f1f5f9;
-            border: 1.5px solid var(--border);
-            font-size: 11.5px;
+            background: rgba(203,213,225,0.5);
+            border: 1px solid #cbd5e1;
+            font-size: 11px;
             font-weight: 700;
-            color: var(--text-muted);
+            color: #94a3b8;
+            letter-spacing: 0.3px;
             cursor: pointer;
-            transition: background 0.28s ease, color 0.28s ease, border-color 0.28s ease,
-                        box-shadow 0.28s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+            transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
             white-space: nowrap;
-            user-select: none;
-        }}
-        .step-dot:hover:not(.active) {{
-            background: rgba(8,145,178,0.07);
-            border-color: rgba(8,145,178,0.30);
-            color: var(--accent-dim);
         }}
         .step-dot.active {{
-            background: linear-gradient(135deg, #0e7490, #0891b2);
-            border-color: transparent;
-            color: #fff;
-            box-shadow: 0 3px 12px rgba(8,145,178,0.38);
-            transform: scale(1.07);
-        }}
-        .step-dot.done {{
-            background: rgba(22,163,74,0.09);
-            border-color: rgba(22,163,74,0.28);
-            color: #15803d;
+            background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
+            border-color: var(--accent-cyan);
+            color: #ffffff;
+            box-shadow: 0 2px 10px rgba(8,145,178,0.35);
+            transform: scale(1.06);
         }}
         .step-label {{
-            font-size: 11px;
-            color: var(--text-muted);
+            font-size: 12px;
+            color: var(--text-sub);
             font-weight: 600;
-            letter-spacing: 0.6px;
+            letter-spacing: 0.4px;
             text-transform: uppercase;
-            margin-left: 8px;
+            margin-left: 4px;
             flex: 1;
-        }}
-        /* ── Progress bar ── */
-        .step-progress-wrap {{
-            height: 3px;
-            background: #f1f5f9;
-            border-radius: 2px;
-            margin: 10px 0 18px;
-            overflow: hidden;
-        }}
-        .step-progress-bar {{
-            height: 100%;
-            background: linear-gradient(90deg, #0e7490, #0891b2, #38bdf8);
-            border-radius: 2px;
-            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-            width: 0%;
+            min-width: 120px;
         }}
         /* ── Info Box ── */
         .info-box {{
-            background: linear-gradient(135deg, #f8fbff, #f4f8ff);
-            border: 1px solid #dde8f8;
-            border-left: 4px solid var(--accent);
-            border-radius: var(--radius-sm);
-            padding: 20px 22px;
-            min-height: 128px;
+            background: #f8faff;
+            border: 1px solid #dde6f8;
+            border-left: 4px solid var(--accent-cyan);
+            border-radius: 10px;
+            padding: 18px 20px;
+            min-height: 120px;
             display: flex;
             flex-direction: column;
-            gap: 11px;
-            position: relative;
-            overflow: hidden;
-        }}
-        .info-box::before {{
-            content: '';
-            position: absolute;
-            top: 0; right: 0;
-            width: 110px; height: 110px;
-            background: radial-gradient(circle, rgba(8,145,178,0.06), transparent 70%);
-            pointer-events: none;
+            gap: 10px;
+            transition: border-color 0.3s ease;
         }}
         .info-box h3 {{
-            color: var(--text);
-            font-size: 16.5px;
+            color: #0f1e2e;
+            font-size: 16px;
             font-weight: 800;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
             line-height: 1.3;
-            letter-spacing: -0.2px;
         }}
         .info-box h3::before {{
             content: '';
             display: inline-block;
-            width: 8px; height: 8px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
-            background: var(--accent);
+            background: var(--accent-cyan);
             flex-shrink: 0;
-            box-shadow: 0 0 0 3px rgba(8,145,178,0.18);
+            box-shadow: 0 0 6px rgba(8,145,178,0.5);
         }}
         /* ── Badges ── */
-        .badges {{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; }}
+        .badges {{ display: flex; gap: 8px; flex-wrap: wrap; }}
         .badge {{
-            padding: 4px 12px;
+            padding: 3px 11px;
             border-radius: 20px;
-            font-size: 11.5px;
+            font-size: 12px;
             font-weight: 700;
             display: inline-flex;
             align-items: center;
             gap: 5px;
+            letter-spacing: 0.1px;
         }}
-        .badge-cyan   {{ background:rgba(8,145,178,0.09);  border:1px solid rgba(8,145,178,0.28);  color:#0e7490; }}
-        .badge-orange {{ background:rgba(217,119,6,0.09);  border:1px solid rgba(217,119,6,0.28);  color:#92400e; }}
-        .badge-green  {{ background:rgba(22,163,74,0.09);  border:1px solid rgba(22,163,74,0.28);  color:#15803d; }}
-        /* ── Description ── */
-        .info-desc {{ font-size:14px; line-height:1.7; color:var(--text-sub); }}
-        /* ── Actions ── */
+        .badge-cyan  {{ background: rgba(8,145,178,0.08);  border: 1px solid rgba(8,145,178,0.3);  color: var(--accent-cyan-dim); }}
+        .badge-orange{{ background: rgba(234,140,0,0.08);  border: 1px solid rgba(234,140,0,0.3);  color: #b45309; }}
+        .badge-green {{ background: rgba(22,163,74,0.08);  border: 1px solid rgba(22,163,74,0.3);  color: #15803d; }}
+        /* ── Info Description ── */
+        .info-desc {{
+            font-size: 13.5px;
+            line-height: 1.65;
+            color: var(--text-sub);
+        }}
+        /* ── Action Buttons ── */
         .actions {{
             display: flex;
             justify-content: flex-end;
             align-items: center;
             gap: 10px;
-            margin-top: 20px;
+            margin-top: 18px;
         }}
         button {{
-            padding: 11px 24px;
-            border-radius: 10px;
+            padding: 10px 22px;
+            border-radius: 8px;
             font-size: 13.5px;
             font-weight: 700;
             font-family: inherit;
             cursor: pointer;
-            transition: background 0.22s ease, box-shadow 0.22s ease,
-                        transform 0.18s cubic-bezier(0.34,1.56,0.64,1),
-                        color 0.2s ease;
+            transition: background 0.2s, box-shadow 0.2s, transform 0.15s, color 0.2s, border-color 0.2s;
             border: none;
             outline: none;
             letter-spacing: 0.1px;
         }}
         .btn-primary {{
-            background: linear-gradient(135deg, #0e7490, #0891b2);
-            color: #fff;
-            box-shadow: 0 4px 14px rgba(8,145,178,0.30);
+            background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(8,145,178,0.28);
         }}
         .btn-primary:hover {{
-            background: linear-gradient(135deg, #0c6680, #0e7490);
-            box-shadow: 0 6px 22px rgba(8,145,178,0.38);
-            transform: translateY(-2px);
+            background: linear-gradient(135deg, #0369a1 0%, var(--accent-cyan-dim) 100%);
+            box-shadow: var(--shadow-hover);
+            transform: translateY(-1px);
         }}
-        .btn-primary:active {{ transform: translateY(0); }}
+        .btn-primary:active {{ transform: translateY(0); box-shadow: none; }}
         .btn-secondary {{
-            background: #fff;
+            background: transparent;
             color: var(--text-sub);
-            border: 1.5px solid var(--border-md);
-            box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+            border: 1.5px solid #cbd5e1;
         }}
         .btn-secondary:hover {{
-            background: #f8fafc;
-            color: var(--text);
+            background: rgba(15,23,42,0.04);
+            color: #1e293b;
             border-color: #94a3b8;
-            transform: translateY(-1px);
         }}
     </style>
 </head>
 <body>
-    <div class="page-header">
-        <div class="page-chip">Interactive Animation</div>
-    </div>
     <div class="dashboard">
         <!-- Question Banner -->
         <div class="question-banner">
@@ -4297,74 +3932,49 @@ class GeminiAnimationBuilder:
         <div class="svg-container">
             <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
                 <defs>
-                    <radialGradient id="canvasBg" cx="35%" cy="38%" r="70%">
-                        <stop offset="0%"   stop-color="#eef5ff" />
-                        <stop offset="45%"  stop-color="#dce8f5" />
-                        <stop offset="85%"  stop-color="#c8d9ed" />
-                        <stop offset="100%" stop-color="#b8ccdf" />
-                    </radialGradient>
                     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.6" stroke-opacity="0.04" />
+                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" stroke-opacity="0.05" />
                     </pattern>
                     <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%"   stop-color="#e8f0fa" />
-                        <stop offset="35%"  stop-color="#c8d8e8" />
-                        <stop offset="70%"  stop-color="#8aaac0" />
-                        <stop offset="100%" stop-color="#5a7a9a" />
+                        <stop offset="0%" stop-color="#ffffff" />
+                        <stop offset="30%" stop-color="#c8d5e8" />
+                        <stop offset="70%" stop-color="#7a90b0" />
+                        <stop offset="100%" stop-color="#3a4a60" />
                     </linearGradient>
-                    <linearGradient id="steelHi" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%"   stop-color="#f4f8fc" />
-                        <stop offset="50%"  stop-color="#d4e4f0" />
-                        <stop offset="100%" stop-color="#94b4c8" />
+                    <linearGradient id="metalBlue" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#e0eaf8" />
+                        <stop offset="50%" stop-color="#b8cce4" />
+                        <stop offset="100%" stop-color="#8aaed0" />
                     </linearGradient>
-                    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="rgba(14,30,64,0.16)" />
-                    </filter>
-                    <filter id="shadowDeep" x="-25%" y="-25%" width="150%" height="150%">
-                        <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="rgba(14,30,64,0.22)" />
+                    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="rgba(30,64,175,0.18)" />
                     </filter>
                     <filter id="glowCyan" x="-50%" y="-50%" width="200%" height="200%">
-                        <feGaussianBlur stdDeviation="6" result="blur" />
+                        <feGaussianBlur stdDeviation="4" result="blur" />
                         <feComposite in="SourceGraphic" in2="blur" operator="over" />
                     </filter>
                     <filter id="glowOrange" x="-50%" y="-50%" width="200%" height="200%">
-                        <feGaussianBlur stdDeviation="5" result="blur" />
+                        <feGaussianBlur stdDeviation="4" result="blur" />
                         <feComposite in="SourceGraphic" in2="blur" operator="over" />
                     </filter>
-                    <marker id="arrowCyan" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
-                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#0891b2" />
+                    <marker id="arrowCyan" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#0891b2" />
                     </marker>
-                    <marker id="arrowOrange" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
-                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#d97706" />
+                    <marker id="arrowOrange" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#ea8c00" />
                     </marker>
-                    <marker id="arrowGreen" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
-                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#16a34a" />
-                    </marker>
-                    <marker id="arrowGrey" orient="auto" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5">
-                        <path d="M 0 1 L 6 3.5 L 0 6 Z" fill="#94a3b8" />
+                    <marker id="arrowGreen" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#16a34a" />
                     </marker>
                 </defs>
-                <!-- Canvas background -->
-                <rect width="850" height="478" fill="url(#canvasBg)" />
-                <rect width="850" height="478" fill="url(#grid)" />
+                <rect width="100%" height="100%" fill="url(#grid)" />
                 <!-- Frame layer — always visible -->
                 <g class="svg-layer" id="layer-frame">
-                    <line x1="90" y1="239" x2="760" y2="239"
-                          stroke="#b0c4de" stroke-width="1.2" stroke-dasharray="10,6" stroke-opacity="0.6"/>
-                    <text x="425" y="50"
-                          fill="#0e7490" font-size="20" font-weight="800"
-                          text-anchor="middle"
-                          font-family="'Segoe UI',system-ui,sans-serif"
-                          filter="url(#glowCyan)"
-                          letter-spacing="-0.3">{html_module.escape(script.get('title', title))}</text>
-                    <text x="425" y="72"
-                          fill="#64748b" font-size="12" font-weight="500"
-                          text-anchor="middle"
-                          font-family="'Segoe UI',system-ui,sans-serif">Interactive Step-by-Step Animation</text>
+                    <line x1="80" y1="239" x2="770" y2="239" stroke="#b8c8e0" stroke-width="1" stroke-dasharray="8,6"/>
+                    <text x="425" y="46" fill="#0e7490" font-size="19" font-weight="bold" text-anchor="middle" font-family="'Segoe UI',sans-serif" filter="url(#glowCyan)">{html_module.escape(script.get('title', title))}</text>
                 </g>
-                <!-- Blur shield (sits between frame and components) -->
-                <rect id="blur-shield" width="850" height="478"
-                      fill="#c2d4e8" opacity="0" pointer-events="none" />
+                <!-- Blur shield -->
+                <rect id="blur-shield" width="100%" height="100%" fill="#c7d8ed" opacity="0" class="svg-layer" pointer-events="none" />
                 <!-- Step overlays -->
                 {overlays_html}
             </svg>
@@ -4373,16 +3983,12 @@ class GeminiAnimationBuilder:
         <div class="control-panel">
             <div class="step-indicator" id="dots">
                 {dots_html}
-                <div class="step-label" id="step-label">Ready</div>
-            </div>
-            <!-- Progress bar -->
-            <div class="step-progress-wrap">
-                <div class="step-progress-bar" id="step-bar"></div>
+                <div class="step-label" id="step-label">Starting...</div>
             </div>
             <div class="info-box">
                 <h3 id="info-title">{title}</h3>
                 <div class="badges" id="info-badges"></div>
-                <div class="info-desc" id="info-desc">Press "Next Step" to begin the animation.</div>
+                <div class="info-desc" id="info-desc">Click "Next Step" to begin the animation.</div>
             </div>
             <div class="actions">
                 <button class="btn-secondary" onclick="resetAnim()">&#x21BA; Restart</button>
@@ -4394,61 +4000,34 @@ class GeminiAnimationBuilder:
 var stepsData = {steps_js};
 var allOverlays = {overlay_ids_js};
 var currentStep = -1;
-var totalSteps = stepsData.length;
 
 function applyStep(idx) {{
-    if(idx < 0 || idx >= totalSteps) return;
+    if(idx < 0 || idx >= stepsData.length) return;
     var data = stepsData[idx];
-
-    // Blur shield
-    var shield = document.getElementById('blur-shield');
-    if(shield) shield.style.opacity = data.blurOp || 0;
-
-    // Overlay visibility
-    for(var oi = 0; oi < allOverlays.length; oi++) {{
-        var el = document.getElementById(allOverlays[oi]);
-        if(!el) continue;
-        var show = false;
-        if(data.overlays) {{
-            for(var j = 0; j < data.overlays.length; j++) {{
-                if(data.overlays[j] === allOverlays[oi]) {{ show = true; break; }}
-            }}
-        }}
-        el.style.opacity = show ? '1' : '0';
-    }}
-
-    // Info box
-    var elTitle = document.getElementById('info-title');
-    var elBadges = document.getElementById('info-badges');
-    var elDesc = document.getElementById('info-desc');
-    if(elTitle) elTitle.innerText = data.title || '';
-    if(elBadges) elBadges.innerHTML = data.badges || '';
-    if(elDesc) elDesc.innerText = data.desc || '';
-
-    // Step dots — active + done classes
+    document.getElementById('blur-shield').style.opacity = data.blurOp;
+    allOverlays.forEach(function(oid) {{
+        var el = document.getElementById(oid);
+        if(el) el.style.opacity = data.overlays.includes(oid) ? '1' : '0';
+    }});
+    document.getElementById('step-label').innerText = data.label;
+    document.getElementById('info-title').innerText = data.title;
+    document.getElementById('info-badges').innerHTML = data.badges;
+    document.getElementById('info-desc').innerText = data.desc;
     var dots = document.querySelectorAll('.step-dot');
-    for(var di = 0; di < dots.length; di++) {{
-        dots[di].classList.remove('active');
-        dots[di].classList.remove('done');
-        if(di < idx) dots[di].classList.add('done');
-        if(di === idx) dots[di].classList.add('active');
-    }}
-
-    // Step label
-    var slabel = document.getElementById('step-label');
-    if(slabel) slabel.innerText = 'Step ' + (idx + 1) + ' of ' + totalSteps;
-
-    // Progress bar
-    var bar = document.getElementById('step-bar');
-    if(bar) bar.style.width = Math.round((idx + 1) / totalSteps * 100) + '%';
-
-    // Next button
+    dots.forEach(function(dot, i) {{
+        if(i === idx) dot.classList.add('active');
+        else dot.classList.remove('active');
+    }});
     var btn = document.getElementById('btn-next');
-    if(btn) btn.style.display = (idx === totalSteps - 1) ? 'none' : 'inline-block';
+    if(idx === stepsData.length - 1) {{
+        btn.style.display = 'none';
+    }} else {{
+        btn.style.display = 'inline-block';
+    }}
 }}
 
 function nextStep() {{
-    if(currentStep < totalSteps - 1) {{
+    if(currentStep < stepsData.length - 1) {{
         currentStep++;
         applyStep(currentStep);
     }}
@@ -4456,14 +4035,11 @@ function nextStep() {{
 
 function resetAnim() {{
     currentStep = 0;
-    var bar = document.getElementById('step-bar');
-    if(bar) bar.style.width = '0%';
     applyStep(0);
-    var btn = document.getElementById('btn-next');
-    if(btn) btn.style.display = 'inline-block';
+    document.getElementById('btn-next').style.display = 'inline-block';
 }}
 
-setTimeout(function() {{ resetAnim(); }}, 80);
+setTimeout(function() {{ resetAnim(); }}, 100);
 </script>
 </body>
 </html>"""
@@ -4480,15 +4056,14 @@ setTimeout(function() {{ resetAnim(); }}, 80);
 # ===========================================================================
 
 _GLOSSARY_SYSTEM_GEMINI = """Find DIFFICULT or TECHNICAL words in the question that could confuse a student.
-
-Return ONLY valid JSON with exactly this structure (no markdown, no fences, no extra text):
+Return ONLY valid JSON:
 {"terms": [{"term": "word", "meaning": "simple explanation in 15 words or less"}]}
 
 Rules:
 - Pick 2-8 genuinely hard/technical/jargon words only.
 - Write meanings in very simple, everyday English.
-- If no hard words found, return this exact JSON: {"terms": []}
-- CRITICAL: Your response must start with { and end with }. Raw JSON only."""
+- If no hard words found, return {"terms": []}.
+- Pure JSON only — no markdown, no fences."""
 
 
 class GeminiGlossaryAnalyzer:
@@ -4749,7 +4324,7 @@ async def _run_generation_pipeline(question: str) -> dict:
         "glossary_terms":  glossary_result.get("terms", []),
         "category":        category,
         "n_scenes":        n_scenes,
-        "engine_version":  "v1.1-gemini",
+        "engine_version":  "v1.0-gemini",
         "render_status":   "ok" if injection_report["all_ok"] else "panels_incomplete",
         "panel_verification": injection_report,
     }
@@ -4784,7 +4359,7 @@ def _build_failure_result(question: str, reason: str) -> dict:
         "glossary_terms":         [],
         "category":               "UNKNOWN",
         "n_scenes":               4,
-        "engine_version":         "v1.1-gemini",
+        "engine_version":         "v1.0-gemini",
         "render_status":          "error",
     }
 
