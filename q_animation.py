@@ -424,7 +424,7 @@ body {
   align-items: center !important;
   justify-content: flex-start !important;
   min-height: 100vh !important;
-  padding: 20px 20px 110px 20px !important;
+  padding: 24px 16px 120px !important;
   box-sizing: border-box !important;
 }
 .dashboard {
@@ -433,6 +433,78 @@ body {
   margin-left: auto !important;
   margin-right: auto !important;
   margin-bottom: 20px !important;
+}
+/* ── Ensure question banner uses the rich light-theme gradient style ── */
+.question-banner {
+  background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 50%, #eef2f9 100%) !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  position: relative;
+}
+.q-label {
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  color: #0e7490 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 1.5px !important;
+}
+/* ── Pill-style step dots upgrade ── */
+.step-dot {
+  padding: 5px 13px !important;
+  border-radius: 20px !important;
+  background: rgba(203,213,225,0.5) !important;
+  border: 1px solid #cbd5e1 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #94a3b8 !important;
+  cursor: pointer;
+  transition: background 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s, transform 0.2s !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  white-space: nowrap !important;
+  width: auto !important;
+  height: auto !important;
+}
+.step-dot.active {
+  background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%) !important;
+  border-color: #0891b2 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(8,145,178,0.35) !important;
+  transform: scale(1.06) !important;
+}
+/* ── Info box accent border ── */
+.info-box {
+  background: #f8faff !important;
+  border: 1px solid #dde6f8 !important;
+  border-left: 4px solid #0891b2 !important;
+  border-radius: 10px !important;
+  padding: 18px 20px !important;
+}
+/* ── Button polish ── */
+.btn-primary {
+  background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(8,145,178,0.28) !important;
+  border-radius: 8px !important;
+  font-weight: 700 !important;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s !important;
+  padding: 10px 22px !important;
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #0e7490 100%) !important;
+  box-shadow: 0 6px 20px rgba(14,116,144,0.35) !important;
+  transform: translateY(-1px) !important;
+}
+.btn-secondary {
+  background: transparent !important;
+  color: #64748b !important;
+  border: 1.5px solid #cbd5e1 !important;
+  border-radius: 8px !important;
+  font-weight: 700 !important;
+}
+.btn-secondary:hover {
+  background: rgba(15,23,42,0.04) !important;
+  color: #1e293b !important;
+  border-color: #94a3b8 !important;
 }
 </style>"""
 
@@ -493,19 +565,16 @@ html,body{{width:100%;height:100%;background:#eef2f9;
 BASE_PAGE_CSS = """<style>
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 :root {
-  --blue-deep:  #1e40af; --blue-mid: #3b5bdb; --blue-light: #60a5fa;
-  --sky: #e0f2fe; --sky-dark: #0ea5e9; --teal: #0d9488;
-  --green: #16a34a; --amber: #f59e0b; --rose: #e64980;
-  --slate-900: #0f172a; --slate-800: #1e293b; --slate-600: #475569;
-  --slate-400: #94a3b8; --slate-200: #e2e8f0; --slate-100: #f1f5f9;
-  --white: #ffffff; --bg: #f0f5ff; --card-bg: #ffffff;
-  --max-w: 1080px; --radius-xl: 18px; --radius-lg: 12px; --radius-md: 8px;
-  --shadow-lg: 0 8px 32px rgba(30,64,175,0.13),0 2px 8px rgba(0,0,0,0.07);
-  --shadow-md: 0 4px 16px rgba(30,64,175,0.10);
+  --bg-color: #eef2f9; --panel-bg: #ffffff;
+  --text-main: #334155; --text-sub: #64748b;
+  --accent-cyan: #0891b2; --accent-cyan-dim: #0e7490;
+  --accent-orange: #ea8c00; --accent-green: #16a34a;
+  --border: #e2e8f0; --border-radius: 14px;
+  --shadow-card: 0 4px 6px -1px rgba(30,64,175,0.07),0 10px 30px rgba(30,64,175,0.10);
   --font: 'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
 }
 html { overflow-x:hidden!important; overflow-y:auto!important; min-height:100vh; width:100%!important; }
-body { background:var(--bg); font-family:var(--font); min-height:100vh; width:100%;
+body { background:var(--bg-color); font-family:var(--font); min-height:100vh; width:100%;
   overflow-x:hidden!important; padding:0; display:flex; flex-direction:column; align-items:center; }
 svg { display:block; width:100%!important; height:auto!important; }
 </style>"""
@@ -995,34 +1064,13 @@ STEP_ANSWER_JS_MODULE = r"""
   }
 
   /* Step 2 – To Find */
-  /* Converts a to_find string to "symbol = ?" format.
-     - If it already contains '?', return as-is.
-     - If it matches "sym = <numeric_value>", strip the value → "sym = ?"
-     - If it has "sym = anything", strip rhs → "sym = ?"
-     - Otherwise append " = ?" */
-  function _toFindSymbol(raw){
-    if(!raw)return'? = ?';
-    var s=String(raw).trim();
-    if(s.indexOf('?')!==-1)return s;
-    // "sym = numeric_value [unit]" → "sym = ?"
-    var numRe=/^(.+?)\s*=\s*[-+]?\d[\d.,]*(?:\s*[xX\u00d7*]\s*10[\^]?[-+]?\d+)?(?:\s*[A-Za-z\u00b0\u00b2\u00b3\u00b5%\u00b7/]+(?:\s*[A-Za-z\u00b0\u00b2\u00b3\u00b5\u00b7/]+)*)?\s*$/;
-    var m=numRe.exec(s);
-    if(m)return m[1].trim()+' = ?';
-    // "sym = anything" → "sym = ?"
-    var eqRe=/^(.+?)\s*=\s*.+$/;
-    var m2=eqRe.exec(s);
-    if(m2)return m2[1].trim()+' = ?';
-    // no '=' at all
-    return s+' = ?';
-  }
-
   function _buildStep1(){
     var d=_loadData();
     var items=Array.isArray(d.to_find)?d.to_find:[];
     var ROMAN=['i','ii','iii','iv','v','vi','vii','viii','ix','x'];
     var h='<div class="sbs-step-desc">';
     for(var t=0;t<items.length;t++){
-      h+='<strong>'+_esc(ROMAN[t]||String(t+1))+') </strong>'+_esc(_toFindSymbol(items[t]))+'<br>';
+      h+='<strong>'+_esc(ROMAN[t]||String(t+1))+') </strong>'+_esc(items[t])+'<br>';
     }
     if(!items.length){h+='See the question for what to find';}
     h+='</div>';
@@ -1113,14 +1161,18 @@ STEP_ANSWER_JS_MODULE = r"""
   window.closeStepAnswer=function(){};
   window.toggleStepAnswer=function(){window.showInlineStepByStep();};
 
-  /* Wire up the "Step by Step Answer" ctrl-bar button to also trigger the inline section */
+  /* Wire up the "Step by Step Answer" ctrl-bar button to trigger the inline section */
   _onReady(function(){
+    var _wireTries=0;
     function wireBtn(){
       var btn=_el('stepans-ctrl-btn');
       if(btn){
         btn.removeAttribute('onclick');
         btn.addEventListener('click',function(e){e.stopPropagation();window.showInlineStepByStep();});
-      } else {setTimeout(wireBtn,80);}
+      } else if(_wireTries<40){
+        _wireTries++;
+        setTimeout(wireBtn,80);
+      }
     }
     wireBtn();
   });
@@ -1177,15 +1229,29 @@ def inject_step_answer_panel(html, gemini_sol):
 
     # 5. Patch the animation's nextStep() / applyStep() so that reaching the last
     #    animation step automatically reveals the inline solution section.
+    #    FIX: Use a polling loop instead of a single DOMContentLoaded check,
+    #    because Gemini-generated pages define applyStep/nextStep inside their own
+    #    <script> block that may execute AFTER this patch script runs.
     _ANIM_PATCH_JS = """
 <script id="qanim-laststep-patch">
 (function patchAnimLastStep(){
   'use strict';
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  _onReady(function(){
+  if(window.__qanimLastStepPatchDone)return;
+  window.__qanimLastStepPatchDone=true;
+
+  var _patched=false;
+
+  function _tryPatch(){
+    if(_patched)return;
+    var hasApply=typeof window.applyStep==='function';
+    var hasNext=typeof window.nextStep==='function';
+    if(!hasApply&&!hasNext)return; // functions not yet defined — poll will retry
+
+    _patched=true;
+
     /* Wrap applyStep to detect last step */
-    var _origApply=window.applyStep;
-    if(typeof _origApply==='function'){
+    if(hasApply){
+      var _origApply=window.applyStep;
       window.applyStep=function(idx){
         _origApply(idx);
         var total=Array.isArray(window.stepsData)?window.stepsData.length:0;
@@ -1196,9 +1262,10 @@ def inject_step_answer_panel(html, gemini_sol):
         }
       };
     }
-    /* Also wrap nextStep for Gemini-generated animations */
-    var _origNext=window.nextStep;
-    if(typeof _origNext==='function'){
+
+    /* Wrap nextStep for Gemini-generated animations */
+    if(hasNext){
+      var _origNext=window.nextStep;
       window.nextStep=function(){
         var total=Array.isArray(window.stepsData)?window.stepsData.length:0;
         var cur=typeof window.currentStep==='number'?window.currentStep:-1;
@@ -1211,7 +1278,21 @@ def inject_step_answer_panel(html, gemini_sol):
         }
       };
     }
-  });
+  }
+
+  /* Poll every 50 ms for up to 3 seconds until applyStep/nextStep exist */
+  var _pollCount=0;
+  var _pollTimer=setInterval(function(){
+    _tryPatch();
+    _pollCount++;
+    if(_patched||_pollCount>60){clearInterval(_pollTimer);}
+  },50);
+
+  /* Also try immediately and at DOMContentLoaded as belt-and-suspenders */
+  _tryPatch();
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',_tryPatch);
+  }
 })();
 </script>
 """
@@ -1244,9 +1325,9 @@ Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no ex
     "mu = 0.001 Pa.s"
   ],
   "to_find": [
-    "i) Re = ?",
-    "ii) h = ?",
-    "iii) Nu = ?"
+    "i) Reynolds number Re",
+    "ii) Heat transfer coefficient h",
+    "iii) Nusselt number Nu"
   ],
   "formulas": [
     {"text": "Re = rho x V x D / mu", "color": "blue"},
@@ -1267,13 +1348,13 @@ Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no ex
 
 STRICT RULES:
 - given_data: Extract EVERY numerical value stated in the question. Format each as \"symbol = value unit\". Minimum 2, maximum 12 items. Never leave empty.
-- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Each entry MUST be in "symbol = ?" format (e.g. "i) Re = ?", "ii) h = ?", "iii) Nu = ?"). NEVER include computed numerical values here — show only the unknown symbol with = ?. Never leave empty.
-- formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them.
+- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Never leave empty.
+- formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them. Never leave empty.
 - formula_note: Optional note about evaluation conditions (e.g. bulk temperature). Set to \"\" if not applicable.
-- substitution_steps: 3-5 numbered calculation steps. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown).
+- substitution_steps: 3-5 numbered calculation steps. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown). Never leave empty.
 - final_answer: Complete answer containing ALL computed numerical values with units. Must NEVER be empty.
-- key_insight: One clear memorable sentence about the core physics or mathematical concept.
-- Pure JSON only — no markdown, no backtick fences, no preamble."""
+- key_insight: One clear memorable sentence about the core physics or mathematical concept. Must NEVER be empty.
+- CRITICAL OUTPUT FORMAT: Your response MUST start with {{ and end with }}. No preamble, no explanation, no markdown fences. Raw JSON only. If you include anything before {{ or after }}, the response will be rejected."""
 
 
 class GeminiSolutionGenerator:
@@ -1315,14 +1396,37 @@ class GeminiSolutionGenerator:
             return cls._FALLBACK
 
         QAnimLogger.info("GeminiSolution", f"Generating solution via {GEMINI_MODEL}...")
-        user_prompt = f"Solve this question step by step:\n\nQUESTION: {question[:800]}\n\nReturn ONLY valid JSON."
+        user_prompt = (
+            f"Solve this question step by step:\n\n"
+            f"QUESTION: {question[:800]}\n\n"
+            f"Return ONLY valid JSON — no markdown, no preamble, no explanation. "
+            f"Start your response with {{ and end with }}."
+        )
 
-        try:
-            raw = cls._call_gemini(user_prompt, cls._solution_system_text(), max_tokens=4096)
-            return cls._parse(raw)
-        except Exception as e:
-            QAnimLogger.warn("GeminiSolution", f"Generation failed: {e} — using fallback")
-            return cls._FALLBACK
+        MAX_ATTEMPTS = 2
+        last_error = None
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                raw = cls._call_gemini(user_prompt, cls._solution_system_text(), max_tokens=4096)
+                result = cls._parse(raw)
+                # Validate the result is not the fallback (i.e. parse actually worked)
+                has_real_data = (
+                    bool(result.get("given_data")) and
+                    result.get("given_data") != cls._FALLBACK["given_data"] and
+                    bool(result.get("substitution_steps"))
+                )
+                if has_real_data:
+                    QAnimLogger.ok("GeminiSolution", f"Solution generated on attempt {attempt}")
+                    return result
+                else:
+                    QAnimLogger.warn("GeminiSolution", f"Attempt {attempt}: parsed result looks like fallback — retrying")
+                    last_error = "Result contained only fallback/placeholder content"
+            except Exception as e:
+                last_error = e
+                QAnimLogger.warn("GeminiSolution", f"Attempt {attempt} failed: {e}")
+
+        QAnimLogger.warn("GeminiSolution", f"All {MAX_ATTEMPTS} attempts failed ({last_error}) — using fallback")
+        return cls._FALLBACK
 
     @classmethod
     def _solution_system_text(cls):
@@ -1375,8 +1479,56 @@ class GeminiSolutionGenerator:
         raise RuntimeError("All Gemini retry attempts exhausted")
 
     @classmethod
+    def _extract_json_from_raw(cls, raw: str) -> str:
+        """
+        Robustly extract the JSON object from Gemini's raw response.
+        Handles: markdown fences, preamble text, trailing commentary,
+        thinking tags, and partial wrapping.
+        """
+        # 1. Strip markdown fences (```json ... ``` or ``` ... ```)
+        raw = re.sub(r'^```(?:json)?\s*\n?', '', raw.strip(), flags=re.IGNORECASE)
+        raw = re.sub(r'\n?```\s*$', '', raw, flags=re.IGNORECASE).strip()
+
+        # 2. Strip Gemini "thinking" tags if present (<thinking>...</thinking>)
+        raw = re.sub(r'<thinking>.*?</thinking>', '', raw, flags=re.DOTALL).strip()
+
+        # 3. If it already looks like clean JSON, return it
+        if raw.startswith('{') and raw.endswith('}'):
+            return raw
+
+        # 4. Try to find the outermost { ... } block via balanced-brace scan
+        start = raw.find('{')
+        if start == -1:
+            return raw  # No JSON object found — let json.loads raise the error
+
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i, ch in enumerate(raw[start:], start):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return raw[start:i + 1]
+
+        # Partial JSON — return from start to end and let json.loads try
+        return raw[start:]
+
+    @classmethod
     def _parse(cls, raw: str) -> dict:
-        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
+        raw = cls._extract_json_from_raw(raw)
         try:
             data = json.loads(raw)
 
@@ -1968,6 +2120,10 @@ _CONTROLS_BAR_DOM = """
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
+  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="See the full step-by-step solution">
+    <span>&#x1F4CB;</span><span class="ctrl-label">Step by Step</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="tofind-ctrl-btn" title="What are you asked to find?">
     <span>&#x1F50D;</span><span class="ctrl-label">To Find</span>
   </button>
@@ -2551,7 +2707,7 @@ REQUIRED_COMPONENTS = {
     "Controls": {
         "data": None,
         "css":  ["qanim-controls-bar-styles"],
-        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn"],
+        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn", "stepans-ctrl-btn"],
         "js":   None,
     },
     "PreviousStep": {
@@ -2852,7 +3008,7 @@ OUTPUT: Return ONLY valid JSON, no markdown fences, no preamble:
       "components_new": ["comp_id_1"],
       "focus_component": "comp_id_1",
       "blur_background": true,
-      "to_find_label": "symbol = ? (e.g. 'v = ?' or 'c = ?' or 'N2 = ?')"
+      "to_find_label": "the specific quantity this step reveals, e.g. 'belt velocity v = 14.14 m/s'"
     }
   ],
   "svg_components": {
@@ -2875,7 +3031,7 @@ RULES:
 6. svg_components: describe every physical component: frame, pivot, crank, rod, piston,
    gears, pulleys, beams, coils, etc. Position everything in an 850x478 coordinate space.
 7. final_answer: MUST contain computed numerical answer with units. Never leave empty.
-8. to_find_label: for EVERY step, write ONLY the unknown symbol followed by ' = ?' — never include the computed numerical answer. Examples: 'v = ?', 'c = ?', 'N2 = ?', 'T1 = ?', 'Re = ?'. The label shows WHAT is being sought, not the answer.
+8. to_find_label: for EVERY step, write the specific quantity being revealed or computed in that step (concise, e.g. 'belt velocity v', 'tension T1 in tight side', 'speed of driven pulley N2'). The last step's to_find_label must state the primary answer quantity with its computed value.
 9. motion_type: accurately describe what this component does physically."""
 
 _SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
@@ -2888,7 +3044,7 @@ Remember:
 - Components are drawn one by one in the correct physical order.
 - The final step freezes the mechanism at the solution state and shows a clean 'To find:' label — NO calculations popup box.
 - Compute the actual numerical answer and include it in final_answer.
-- Every step must have a to_find_label that shows ONLY the unknown symbol followed by ' = ?' (e.g. 'v = ?', 'c = ?', 'N2 = ?'). NEVER put the computed numeric answer in to_find_label.
+- Every step must have a concise to_find_label.
 
 Return ONLY valid JSON."""
 
@@ -2988,7 +3144,7 @@ _ANIMATION_BUILDER_SYSTEM = """You are QAnim Animation Builder v1.0 — a specia
 You receive a scene script (JSON) and must generate a premium educational animation HTML page.
 
 ═══ REFERENCE OUTPUT STYLE (follow exactly) ═══
-The output must match this exact structure:
+The output must match this exact structure and CSS (light theme, visually rich):
 
 <!DOCTYPE html>
 <html lang="en">
@@ -3001,42 +3157,271 @@ The output must match this exact structure:
       --bg-color: #eef2f9;
       --panel-bg: #ffffff;
       --text-main: #334155;
+      --text-sub: #64748b;
       --accent-cyan: #0891b2;
       --accent-cyan-dim: #0e7490;
       --accent-orange: #ea8c00;
       --accent-green: #16a34a;
-      --border-radius: 12px;
+      --border: #e2e8f0;
+      --border-radius: 14px;
+      --shadow-card: 0 4px 6px -1px rgba(30,64,175,0.07), 0 10px 30px rgba(30,64,175,0.10);
     }
-    /* ... full light-theme styles ... */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 24px 16px 120px;
+    }
+    .dashboard {
+      width: 100%;
+      max-width: 900px;
+      margin: 0 auto;
+      background: var(--panel-bg);
+      border-radius: var(--border-radius);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    /* ── Question Banner ── */
+    .question-banner {
+      padding: 18px 24px 16px;
+      background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 50%, #eef2f9 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+    }
+    .question-banner::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(8,145,178,0.06) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .q-label {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--accent-cyan-dim);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .q-label::before { content: "❓"; font-size: 13px; }
+    .q-text {
+      font-size: 14.5px;
+      color: #1e293b;
+      line-height: 1.55;
+    }
+    /* ── SVG Canvas ── */
+    .svg-container {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: radial-gradient(ellipse at 40% 40%, #f0f5ff 0%, #dce8f5 55%, #c8d8ed 100%);
+      position: relative;
+      overflow: hidden;
+    }
+    svg { display: block; width: 100%; height: 100%; }
+    .svg-layer { transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+    /* ── Control Panel ── */
+    .control-panel {
+      padding: 20px 24px 24px;
+      background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+      border-top: 1px solid var(--border);
+    }
+    /* ── Step Indicator: pill-style dots ── */
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+    .step-dot {
+      padding: 5px 13px;
+      border-radius: 20px;
+      background: rgba(203,213,225,0.5);
+      border: 1px solid #cbd5e1;
+      font-size: 11px;
+      font-weight: 700;
+      color: #94a3b8;
+      cursor: pointer;
+      transition: background 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s, transform 0.2s;
+      white-space: nowrap;
+    }
+    .step-dot.active {
+      background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
+      border-color: var(--accent-cyan);
+      color: #ffffff;
+      box-shadow: 0 2px 10px rgba(8,145,178,0.35);
+      transform: scale(1.06);
+    }
+    .step-label {
+      font-size: 12px;
+      color: var(--text-sub);
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      margin-left: 4px;
+      flex: 1;
+    }
+    /* ── Info Box ── */
+    .info-box {
+      background: #f8faff;
+      border: 1px solid #dde6f8;
+      border-left: 4px solid var(--accent-cyan);
+      border-radius: 10px;
+      padding: 18px 20px;
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .info-box h3 {
+      color: #0f1e2e;
+      font-size: 16px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      line-height: 1.3;
+    }
+    .info-box h3::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      flex-shrink: 0;
+      box-shadow: 0 0 6px rgba(8,145,178,0.5);
+    }
+    /* ── Badges ── */
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge {
+      padding: 3px 11px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .badge-cyan  { background: rgba(8,145,178,0.08);  border: 1px solid rgba(8,145,178,0.3);  color: var(--accent-cyan-dim); }
+    .badge-orange{ background: rgba(234,140,0,0.08);  border: 1px solid rgba(234,140,0,0.3);  color: #b45309; }
+    .badge-green { background: rgba(22,163,74,0.08);  border: 1px solid rgba(22,163,74,0.3);  color: #15803d; }
+    /* ── Description ── */
+    .info-desc { font-size: 13.5px; line-height: 1.65; color: var(--text-sub); }
+    /* ── Actions ── */
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    button {
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: 13.5px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.2s, box-shadow 0.2s, transform 0.15s, color 0.2s, border-color 0.2s;
+      border: none;
+      outline: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(8,145,178,0.28);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #0369a1 0%, var(--accent-cyan-dim) 100%);
+      box-shadow: 0 6px 20px rgba(14,116,144,0.35);
+      transform: translateY(-1px);
+    }
+    .btn-primary:active { transform: translateY(0); box-shadow: none; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-sub);
+      border: 1.5px solid #cbd5e1;
+    }
+    .btn-secondary:hover {
+      background: rgba(15,23,42,0.04);
+      color: #1e293b;
+      border-color: #94a3b8;
+    }
   </style>
 </head>
 <body>
   <div class="dashboard">
     <!-- Question Banner -->
     <div class="question-banner">
-      <div class="q-label">Question</div>
+      <div class="q-label">Problem Statement</div>
       <div class="q-text">[question text]</div>
     </div>
     <!-- SVG Canvas -->
     <div class="svg-container">
       <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
-        <defs> ... gradients, filters, markers ... </defs>
-        <!-- Base Canvas (grid pattern) -->
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" stroke-opacity="0.05" />
+          </pattern>
+          <!-- Metallic gradients, drop-shadow filters, glow filters, arrow markers -->
+          <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#e8f0fa" />
+            <stop offset="40%" stop-color="#b8cce0" />
+            <stop offset="100%" stop-color="#6a8aaa" />
+          </linearGradient>
+          <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="rgba(30,64,175,0.18)" />
+          </filter>
+          <filter id="glowCyan" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+          <filter id="pillShadow" x="-5%" y="-20%" width="110%" height="160%">
+            <feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/>
+          </filter>
+          <marker id="arrowCyan" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#0891b2" />
+          </marker>
+          <marker id="arrowOrange" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#ea8c00" />
+          </marker>
+          <marker id="arrowGreen" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#16a34a" />
+          </marker>
+        </defs>
         <rect width="100%" height="100%" fill="url(#grid)" />
-        <!-- Fixed background layer -->
+        <!-- Fixed background layer (always visible) -->
         <g class="svg-layer" id="layer-frame"> ... </g>
         <!-- blur-shield rect -->
-        <rect id="blur-shield" width="100%" height="100%" fill="#c7d2e0" opacity="0" pointer-events="none" />
-        <!-- Component layers (one per physical component) -->
+        <rect id="blur-shield" width="100%" height="100%" fill="#c7d8ed" opacity="0" pointer-events="none" />
+        <!-- Component layers (one per physical component, start opacity:0) -->
         <g class="svg-layer" id="layer-[component]" style="opacity:0"> ... </g>
-        <!-- Overlay layers (labels/annotations per step) -->
+        <!-- Overlay layers: labels + "To find:" pill per step -->
         <g class="svg-layer" id="overlay-step0" style="opacity:0"> ... </g>
         ...
       </svg>
     </div>
     <!-- Control Panel -->
     <div class="control-panel">
-      <div class="step-indicator" id="dots"> ... step-dots ... </div>
+      <div class="step-indicator" id="dots">
+        <!-- pill-style step dots: each dot shows the step label text -->
+        <div class="step-dot active">Step label text</div>
+        <div class="step-dot">Step label text</div>
+        <div class="step-label" id="step-label">Starting...</div>
+      </div>
       <div class="info-box">
         <h3 id="info-title">...</h3>
         <div class="badges" id="info-badges"></div>
@@ -3054,23 +3439,33 @@ The output must match this exact structure:
 
 ═══ SVG DESIGN RULES ═══
 1. viewBox="0 0 850 478" (16:9 aspect ratio).
-2. Soft light background: radial-gradient(circle at center, #f6f9fd 0%, #dbe4f0 100%).
-3. Grid pattern overlay with very low opacity (0.05).
+2. Canvas background: radial-gradient(ellipse at 40% 40%, #f0f5ff 0%, #dce8f5 55%, #c8d8ed 100%) — a soft, airy blue-white.
+3. Grid pattern overlay with very low opacity (0.05), stroke color #1e3a5f.
 4. Each PHYSICAL COMPONENT gets its own <g class="svg-layer" id="layer-[name]"> group.
 5. All component layers start with style="opacity:0" EXCEPT layer-frame (always visible).
 6. A <rect id="blur-shield"> sits BETWEEN the frame layer and component layers.
-   It starts with opacity="0" and gets set to 0.4-0.6 during focus steps to dim the background.
-7. Overlay groups <g class="svg-layer" id="overlay-stepN"> hold labels, arrows, and the "To find:" pill for each step. Start at opacity:0.
-8. METALLIC GRADIENTS: use multi-stop linearGradient for physical parts. Add feDropShadow filters for depth.
-9. GLOW FILTERS: feGaussianBlur glow for active/highlighted elements.
-10. ARROW MARKERS: at least arrowCyan (#66fcf1), arrowOrange (#fca311), arrowGreen (#97c459).
+   fill="#c7d8ed" opacity="0" — gets set to 0.4–0.6 during focus steps to dim the background.
+7. Overlay groups <g class="svg-layer" id="overlay-stepN"> hold labels, dimension arrows, and the "To find:" pill. Start at opacity:0.
+8. METALLIC GRADIENTS: use multi-stop linearGradient in blue-grey tones for structural parts. Add feDropShadow filters for depth.
+9. GLOW FILTERS: feGaussianBlur glow for active/highlighted elements (use #0891b2 cyan for light theme).
+10. ARROW MARKERS: arrowCyan (#0891b2), arrowOrange (#ea8c00), arrowGreen (#16a34a) — matching light-theme accents.
 11. TO FIND PILL (every step overlay): Each overlay-stepN MUST contain a clean "To find:" pill at the bottom of the SVG:
-    - White rounded card: <rect x="80" y="408" width="690" height="56" rx="14" fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5"/>
+    - White rounded card: <rect x="80" y="408" width="690" height="56" rx="14" fill="rgba(255,255,255,0.97)" stroke="#0891b2" stroke-width="1.5" filter="url(#pillShadow)"/>
     - "TO FIND" eyebrow: <text x="108" y="428" fill="#0e7490" font-size="10" font-weight="800" letter-spacing="2" font-family="'Segoe UI',sans-serif">TO FIND</text>
-    - Symbol text: <text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600" font-family="'Segoe UI',sans-serif">[toFind text from stepsData — MUST be symbol = ? format, e.g. "v = ?" or "c = ?"]</text>
-    - Drop shadow: add <filter id="pillShadow"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="rgba(8,145,178,0.18)"/></filter> and set filter="url(#pillShadow)" on the pill rect.
-    - NEVER show a "Calculations:" box, formula dump, or computed numeric answer in the pill. The pill shows ONLY the unknown symbol with = ? (e.g. "v = ?", "c = ?", "N2 = ?").
+    - Answer text: <text x="108" y="450" fill="#1e293b" font-size="14" font-weight="600" font-family="'Segoe UI',sans-serif">[toFind text from stepsData]</text>
+    - NEVER show a "Calculations:" box or formula dump. Only show the "To find:" pill.
 12. ZERO text overlaps — compute positions carefully. Keep all labels inside the viewBox.
+13. SVG TEXT COLORS for light theme: use #1e293b for main labels, #0e7490 for highlight labels, #475569 for secondary labels.
+14. SVG component colors: use bold, saturated colors visible on light backgrounds — e.g. #2563eb, #0891b2, #16a34a, #dc2626, #b45309. No neon/dark-background colors.
+
+═══ STEP DOTS ═══
+IMPORTANT: Step dots are PILL-SHAPED with text labels, NOT small circles.
+Each <div class="step-dot"> contains the step's short label text (3-5 words from stepsData[i].label).
+Example:
+  <div class="step-dot active">Problem Setup</div>
+  <div class="step-dot">Crank Geometry</div>
+  <div class="step-dot">Velocity Analysis</div>
+In applyStep(idx), update dots by adding/removing the "active" class — do NOT change innerHTML.
 
 ═══ ANIMATION RULES ═══
 Each component must have REAL MOTION matching its physical behavior:
@@ -3083,17 +3478,15 @@ Each component must have REAL MOTION matching its physical behavior:
 
 stepsData array drives everything:
   {
-    label: "...",           // dot label
-    // layer opacities
-    blurOp: 0,              // blur-shield opacity (0 = no blur, 0.5 = blur background)
+    label: "...",           // pill-dot label text (3-5 words)
+    blurOp: 0,              // blur-shield opacity (0 = no blur, 0.4-0.6 = focus blur)
     overlays: ['overlay-step0'],  // which overlay groups to show
     freezing: false,        // true = snap motion to solution angle
     startAnim: false,       // true = start/resume animation
     title: "Step N: ...",
-    badges: `<span class="badge badge-cyan">...</span>`,
+    badges: '<span class="badge badge-cyan">...</span>',
     desc: "...",
     toFind: "...",          // what this step reveals — displayed in the 'To find:' pill
-    // component opacities: each layer has an explicit opacity entry
     layerOpacities: { 'layer-frame': 1, 'layer-crank': 0, ... }
   }
 
@@ -3110,9 +3503,11 @@ nextStep() / resetAnim() manage currentStep.
 - Include question-banner div showing the original question
 - requestAnimationFrame loop must keep running for continuous motion
 - freezing mechanism: smoothly interpolate angle to solution angle, then pause
-- TO FIND PILL (mandatory, replaces math box): every step overlay MUST include the clean white pill at the bottom (y≈408) showing "TO FIND" eyebrow + the unknown symbol with = ? (e.g. "v = ?", "c = ?", "N2 = ?"). The pill NEVER shows computed numeric values — only the symbol being sought. NO formula dumps, NO "Calculations:" box, NO dark popup containers, NO numeric answers in the pill.
-- POLISH: use feDropShadow filters on overlay cards, multi-stop metallic gradients, smooth cubic-bezier transitions (0.4s), consistent stroke-width hierarchy (frame=2, components=2.5–3, labels=1.5).
-- CENTERING: body must use { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:20px; } so the .dashboard div is horizontally centred on the page. .dashboard must have { width:100%; max-width:900px; margin:0 auto; }. Never float or absolutely-position the dashboard to the right.
+- TO FIND PILL (mandatory): every step overlay MUST include the clean white pill at the bottom (y≈408). NO formula dumps, NO "Calculations:" box, NO dark popup containers.
+- POLISH: use feDropShadow filters on overlay cards, multi-stop metallic gradients in blue-grey tones, smooth cubic-bezier transitions (0.4s), consistent stroke-width hierarchy (frame=2, components=2.5–3, labels=1.5).
+- CENTERING: body uses { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:24px 16px 120px; }. .dashboard has { width:100%; max-width:900px; margin:0 auto; }. Never float or absolutely-position the dashboard.
+- STEP DOTS: must be pill-shaped divs with text (not empty circles). Apply "active" class to current step in applyStep().
+- INFO BOX: must use border-left:4px solid var(--accent-cyan) accent style, with h3 that has a ::before cyan dot indicator.
 
 ═══ OUTPUT ═══
 Return ONLY the complete <!DOCTYPE html>...</html> page as raw text.
@@ -3126,16 +3521,20 @@ SCENE SCRIPT:
 {scene_script}
 
 CRITICAL REMINDERS:
-1. Follow the reference output style EXACTLY (light, friendly dashboard, SVG canvas, control panel).
-2. Draw components ONE BY ONE in the correct physical order — component layers appear step by step.
-3. REAL PHYSICS: rotating crank uses real angle calculation, piston position uses kinematic formula.
-4. The blur-shield dims the background when focusing on a new component.
-5. Each component must visibly animate (rotate/translate/oscillate) when it first appears.
-6. Labels and annotations appear AFTER the component is shown (in the overlay group for that step).
-7. The LAST step snaps to the solution angle/state. Show ONLY the "To find:" pill (white card at bottom of SVG). NO calculations popup, NO formula dump box.
-8. Use the accent colors from the scene script for each component.
-9. Do NOT use const/let/arrow functions/backtick template literals.
-10. Every overlay-stepN MUST include the "To find:" pill with the toFind text from stepsData. Read the toFind field from stepsData[currentStep] and render it inside the pill dynamically. The toFind text MUST be in "symbol = ?" format (e.g. "v = ?", "c = ?"). NEVER render a computed numeric value inside the pill — it shows what is being sought, not the answer.
+1. Follow the reference output style EXACTLY — light-blue-grey theme: bg=#eef2f9, panel=#ffffff, accent-cyan=#0891b2.
+2. QUESTION BANNER: use class="question-banner" with q-label "Problem Statement" and ::before pseudo-element gradient overlay.
+3. STEP DOTS: pill-shaped <div class="step-dot"> elements containing the step label TEXT (3-5 words each). First dot gets class "active". Update via add/remove "active" class in applyStep().
+4. INFO BOX: use border-left:4px solid var(--accent-cyan) style with h3::before cyan dot indicator.
+5. BUTTONS: .btn-primary uses linear-gradient(135deg, #0e7490, #0891b2) with hover translateY(-1px).
+6. Draw components ONE BY ONE in the correct physical order — component layers appear step by step.
+7. REAL PHYSICS: rotating crank uses real angle calculation, piston position uses kinematic formula.
+8. The blur-shield (fill="#c7d8ed") dims the background when focusing on a new component.
+9. Each component must visibly animate (rotate/translate/oscillate) when it first appears.
+10. Labels and annotations appear AFTER the component is shown (in the overlay group for that step).
+11. The LAST step snaps to the solution angle/state. Show ONLY the "To find:" pill (white card at bottom of SVG). NO calculations popup, NO formula dump box.
+12. SVG component colors: use light-theme–friendly bold colors (#2563eb, #0891b2, #dc2626, #16a34a, #b45309) — NOT neon dark-theme colors.
+13. Do NOT use const/let/arrow functions/backtick template literals.
+14. Every overlay-stepN MUST include the "To find:" pill with the toFind text from stepsData.
 
 Return the complete HTML page — nothing else."""
 
@@ -3246,37 +3645,6 @@ class GeminiAnimationBuilder:
             QAnimLogger.error("AnimationBuilder", f"Repair failed: {e}")
             return RecoveryEngine.fallback_html(question, "Animation generation failed — please regenerate.")
 
-    @staticmethod
-    def _sanitize_to_find_label(label: str) -> str:
-        """
-        Ensure a to_find_label is in 'symbol = ?' format.
-        If the label already contains '?', return it as-is (already correct).
-        If it contains a numeric answer (digits after '='), strip the number and append '= ?'.
-        Otherwise, if it ends with '= <something>', replace the value with '?'.
-        Falls back to label + ' = ?' if no '=' found.
-        """
-        if not label:
-            return "? = ?"
-        # Already in symbol = ? form
-        if "?" in label:
-            return label.strip()
-        # Pattern: "sym = <numeric_value> unit"  → keep sym, replace value with ?
-        numeric_pattern = re.compile(
-            r'^(.+?)\s*=\s*[-+]?\d[\d.,]*(?:\s*[×x*]\s*10\^?[-+]?\d+)?(?:\s*[A-Za-z°²³µ/%·/]+(?:\s*[A-Za-z°²³µ·/]+)*)?\s*$'
-        )
-        m = numeric_pattern.match(label.strip())
-        if m:
-            sym = m.group(1).strip()
-            return sym + " = ?"
-        # Pattern: "sym = text_value" → replace rhs with ?
-        eq_pattern = re.compile(r'^(.+?)\s*=\s*.+$')
-        m2 = eq_pattern.match(label.strip())
-        if m2:
-            sym = m2.group(1).strip()
-            return sym + " = ?"
-        # No '=' at all: append = ?
-        return label.strip() + " = ?"
-
     @classmethod
     def _build_minimal_page(cls, question: str, script: dict) -> str:
         """Build a clean minimal animation page directly from the scene script (no AI needed)."""
@@ -3298,7 +3666,7 @@ class GeminiAnimationBuilder:
                 badges_html += f'<span class="badge badge-{bt}">{html_module.escape(b.get("text",""))}</span> '
             math_lines = step.get("math_lines", [])       # kept for legacy compat only
             show_math  = step.get("show_math", False)      # kept for legacy compat only
-            to_find_label = cls._sanitize_to_find_label(step.get("to_find_label", ""))
+            to_find_label = step.get("to_find_label", "")
             blur = 0.5 if step.get("blur_background") else 0
             step_num = step.get("step_number", 1) - 1
 
@@ -3326,13 +3694,11 @@ class GeminiAnimationBuilder:
         # Build overlay SVG groups
         overlay_groups = []
         for i, step in enumerate(steps):
-            raw_to_find = step.get("to_find_label", "")
+            to_find_label = step.get("to_find_label", "")
             # Fallback: derive to_find_label from math_lines for legacy scene scripts
-            if not raw_to_find:
+            if not to_find_label:
                 ml = step.get("math_lines", [])
-                raw_to_find = ml[-1] if ml else step.get("label", f"Step {i+1}")
-            # Always enforce symbol = ? format — never show computed numeric answers
-            to_find_label = cls._sanitize_to_find_label(raw_to_find)
+                to_find_label = ml[-1] if ml else step.get("label", f"Step {i+1}")
 
             pill_svg = ""
             if to_find_label:
@@ -3355,10 +3721,12 @@ class GeminiAnimationBuilder:
             )
         overlays_html = "\n                ".join(overlay_groups)
 
-        # Build dot elements
+        # Build pill-style dot elements with short step labels
         dot_count = len(steps)
         dots_html = "\n                ".join(
-            ['<div class="step-dot' + (' active' if i == 0 else '') + '"></div>'
+            ['<div class="step-dot' + (' active' if i == 0 else '') + '">'
+             + html_module.escape(steps[i].get('label', f'Step {i+1}')[:22])
+             + '</div>'
              for i in range(dot_count)]
         )
 
@@ -3377,83 +3745,283 @@ class GeminiAnimationBuilder:
             --bg-color: #eef2f9;
             --panel-bg: #ffffff;
             --text-main: #334155;
+            --text-sub: #64748b;
             --accent-cyan: #0891b2;
             --accent-cyan-dim: #0e7490;
             --accent-orange: #ea8c00;
             --accent-green: #16a34a;
-            --border-radius: 12px;
+            --border: #e2e8f0;
+            --border-radius: 14px;
+            --shadow-card: 0 4px 6px -1px rgba(30,64,175,0.07), 0 10px 30px rgba(30,64,175,0.10);
+            --shadow-hover: 0 6px 20px rgba(14,116,144,0.22);
         }}
-        * {{ box-sizing:border-box; margin:0; padding:0; font-family:'Segoe UI',system-ui,-apple-system,sans-serif; }}
-        body {{ background-color:var(--bg-color); color:var(--text-main); display:flex; flex-direction:column; align-items:center; min-height:100vh; padding:20px; }}
-        .dashboard {{ width:100%; max-width:850px; background:var(--panel-bg); border-radius:var(--border-radius); box-shadow:0 15px 35px rgba(30,64,175,0.12); overflow:hidden; border:1px solid #e2e8f0; }}
-        .question-banner {{ padding:18px 24px; background:linear-gradient(135deg,#f8fafc 0%,#eef2f9 100%); border-bottom:1px solid #e2e8f0; display:flex; flex-direction:column; gap:6px; }}
-        .q-label {{ font-size:12px; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:1px; }}
-        .q-text {{ font-size:15px; color:#1e293b; line-height:1.4; }}
-        .svg-container {{ width:100%; aspect-ratio:16/9; background:radial-gradient(circle at center,#f6f9fd 0%,#dbe4f0 100%); position:relative; overflow:hidden; }}
-        svg {{ display:block; width:100%; height:100%; }}
-        .svg-layer {{ transition:opacity 0.6s cubic-bezier(0.4,0,0.2,1); }}
-        .control-panel {{ padding:24px; background:linear-gradient(180deg,#ffffff 0%,#f4f7fb 100%); border-top:1px solid #e2e8f0; }}
-        .step-indicator {{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }}
-        .step-dot {{ width:10px; height:10px; border-radius:50%; background:#cbd5e1; transition:background 0.4s,transform 0.4s; }}
-        .step-dot.active {{ background:var(--accent-cyan); box-shadow:0 0 10px var(--accent-cyan); transform:scale(1.2); }}
-        .step-label {{ font-size:14px; color:#64748b; font-weight:500; letter-spacing:0.5px; text-transform:uppercase; }}
-        .info-box {{ background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; min-height:120px; display:flex; flex-direction:column; justify-content:center; }}
-        .info-box h3 {{ color:#1e293b; margin-bottom:12px; font-size:16px; display:flex; align-items:center; gap:8px; }}
-        .badges {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px; }}
-        .badge {{ padding:4px 12px; border-radius:20px; font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px; }}
-        .badge-cyan {{ background:rgba(8,145,178,0.1); border:1px solid var(--accent-cyan-dim); color:var(--accent-cyan); }}
-        .badge-orange {{ background:rgba(234,140,0,0.1); border:1px solid #c97600; color:var(--accent-orange); }}
-        .badge-green {{ background:rgba(22,163,74,0.1); border:1px solid #15803d; color:var(--accent-green); }}
-        .info-desc {{ font-size:14px; line-height:1.5; color:#64748b; }}
-        .actions {{ display:flex; justify-content:flex-end; gap:12px; margin-top:20px; }}
-        button {{ padding:10px 20px; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.2s; border:none; outline:none; }}
-        .btn-primary {{ background:var(--accent-cyan-dim); color:#fff; box-shadow:0 4px 10px rgba(14,116,144,0.3); }}
-        .btn-primary:hover {{ background:var(--accent-cyan); color:#fff; box-shadow:0 6px 15px rgba(8,145,178,0.4); }}
-        .btn-secondary {{ background:transparent; color:var(--text-main); border:1px solid #cbd5e1; }}
-        .btn-secondary:hover {{ background:rgba(15,23,42,0.05); color:#1e293b; }}
+        *, *::before, *::after {{ box-sizing:border-box; margin:0; padding:0; }}
+        body {{
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            padding: 24px 16px 120px;
+        }}
+        /* ── Dashboard Card ── */
+        .dashboard {{
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--panel-bg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-card);
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }}
+        /* ── Question Banner ── */
+        .question-banner {{
+            padding: 18px 24px 16px;
+            background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 50%, #eef2f9 100%);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            position: relative;
+        }}
+        .question-banner::before {{
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, rgba(8,145,178,0.06) 0%, transparent 60%);
+            pointer-events: none;
+        }}
+        .q-label {{
+            font-size: 11px;
+            font-weight: 800;
+            color: var(--accent-cyan-dim);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }}
+        .q-label::before {{ content: "❓"; font-size: 13px; }}
+        .q-text {{
+            font-size: 14.5px;
+            color: #1e293b;
+            line-height: 1.55;
+            font-weight: 400;
+            max-width: 820px;
+        }}
+        /* ── SVG Canvas ── */
+        .svg-container {{
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: radial-gradient(ellipse at 40% 40%, #f0f5ff 0%, #dce8f5 55%, #c8d8ed 100%);
+            position: relative;
+            overflow: hidden;
+        }}
+        svg {{ display: block; width: 100%; height: 100%; }}
+        .svg-layer {{ transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1); }}
+        /* ── Control Panel ── */
+        .control-panel {{
+            padding: 20px 24px 24px;
+            background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+            border-top: 1px solid var(--border);
+        }}
+        /* ── Step Indicator (pill-style dots with label) ── */
+        .step-indicator {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+        }}
+        .step-dot {{
+            padding: 5px 13px;
+            border-radius: 20px;
+            background: rgba(203,213,225,0.5);
+            border: 1px solid #cbd5e1;
+            font-size: 11px;
+            font-weight: 700;
+            color: #94a3b8;
+            letter-spacing: 0.3px;
+            cursor: pointer;
+            transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
+            white-space: nowrap;
+        }}
+        .step-dot.active {{
+            background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
+            border-color: var(--accent-cyan);
+            color: #ffffff;
+            box-shadow: 0 2px 10px rgba(8,145,178,0.35);
+            transform: scale(1.06);
+        }}
+        .step-label {{
+            font-size: 12px;
+            color: var(--text-sub);
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            margin-left: 4px;
+            flex: 1;
+            min-width: 120px;
+        }}
+        /* ── Info Box ── */
+        .info-box {{
+            background: #f8faff;
+            border: 1px solid #dde6f8;
+            border-left: 4px solid var(--accent-cyan);
+            border-radius: 10px;
+            padding: 18px 20px;
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            transition: border-color 0.3s ease;
+        }}
+        .info-box h3 {{
+            color: #0f1e2e;
+            font-size: 16px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            line-height: 1.3;
+        }}
+        .info-box h3::before {{
+            content: '';
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            flex-shrink: 0;
+            box-shadow: 0 0 6px rgba(8,145,178,0.5);
+        }}
+        /* ── Badges ── */
+        .badges {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+        .badge {{
+            padding: 3px 11px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            letter-spacing: 0.1px;
+        }}
+        .badge-cyan  {{ background: rgba(8,145,178,0.08);  border: 1px solid rgba(8,145,178,0.3);  color: var(--accent-cyan-dim); }}
+        .badge-orange{{ background: rgba(234,140,0,0.08);  border: 1px solid rgba(234,140,0,0.3);  color: #b45309; }}
+        .badge-green {{ background: rgba(22,163,74,0.08);  border: 1px solid rgba(22,163,74,0.3);  color: #15803d; }}
+        /* ── Info Description ── */
+        .info-desc {{
+            font-size: 13.5px;
+            line-height: 1.65;
+            color: var(--text-sub);
+        }}
+        /* ── Action Buttons ── */
+        .actions {{
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 10px;
+            margin-top: 18px;
+        }}
+        button {{
+            padding: 10px 22px;
+            border-radius: 8px;
+            font-size: 13.5px;
+            font-weight: 700;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.2s, box-shadow 0.2s, transform 0.15s, color 0.2s, border-color 0.2s;
+            border: none;
+            outline: none;
+            letter-spacing: 0.1px;
+        }}
+        .btn-primary {{
+            background: linear-gradient(135deg, var(--accent-cyan-dim) 0%, var(--accent-cyan) 100%);
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(8,145,178,0.28);
+        }}
+        .btn-primary:hover {{
+            background: linear-gradient(135deg, #0369a1 0%, var(--accent-cyan-dim) 100%);
+            box-shadow: var(--shadow-hover);
+            transform: translateY(-1px);
+        }}
+        .btn-primary:active {{ transform: translateY(0); box-shadow: none; }}
+        .btn-secondary {{
+            background: transparent;
+            color: var(--text-sub);
+            border: 1.5px solid #cbd5e1;
+        }}
+        .btn-secondary:hover {{
+            background: rgba(15,23,42,0.04);
+            color: #1e293b;
+            border-color: #94a3b8;
+        }}
     </style>
 </head>
 <body>
     <div class="dashboard">
+        <!-- Question Banner -->
         <div class="question-banner">
-            <div class="q-label">&#x2753; Question</div>
+            <div class="q-label">Problem Statement</div>
             <div class="q-text">{q_esc}</div>
         </div>
+        <!-- SVG Canvas -->
         <div class="svg-container">
             <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
                 <defs>
                     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5" stroke-opacity="0.05" />
+                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" stroke-opacity="0.05" />
                     </pattern>
                     <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
                         <stop offset="0%" stop-color="#ffffff" />
-                        <stop offset="30%" stop-color="#c0c0c0" />
-                        <stop offset="70%" stop-color="#707070" />
-                        <stop offset="100%" stop-color="#303030" />
+                        <stop offset="30%" stop-color="#c8d5e8" />
+                        <stop offset="70%" stop-color="#7a90b0" />
+                        <stop offset="100%" stop-color="#3a4a60" />
                     </linearGradient>
+                    <linearGradient id="metalBlue" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#e0eaf8" />
+                        <stop offset="50%" stop-color="#b8cce4" />
+                        <stop offset="100%" stop-color="#8aaed0" />
+                    </linearGradient>
+                    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="rgba(30,64,175,0.18)" />
+                    </filter>
                     <filter id="glowCyan" x="-50%" y="-50%" width="200%" height="200%">
                         <feGaussianBlur stdDeviation="4" result="blur" />
                         <feComposite in="SourceGraphic" in2="blur" operator="over" />
                     </filter>
+                    <filter id="glowOrange" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
                     <marker id="arrowCyan" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#66fcf1" />
+                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#0891b2" />
+                    </marker>
+                    <marker id="arrowOrange" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#ea8c00" />
                     </marker>
                     <marker id="arrowGreen" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#97c459" />
+                        <path d="M 0 0 L 6 3 L 0 6 Z" fill="#16a34a" />
                     </marker>
                 </defs>
                 <rect width="100%" height="100%" fill="url(#grid)" />
                 <!-- Frame layer — always visible -->
                 <g class="svg-layer" id="layer-frame">
-                    <line x1="100" y1="239" x2="750" y2="239" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="8,6"/>
-                    <text x="425" y="50" fill="#0e7490" font-size="20" font-weight="bold" text-anchor="middle" filter="url(#glowCyan)">{html_module.escape(script.get('title', title))}</text>
+                    <line x1="80" y1="239" x2="770" y2="239" stroke="#b8c8e0" stroke-width="1" stroke-dasharray="8,6"/>
+                    <text x="425" y="46" fill="#0e7490" font-size="19" font-weight="bold" text-anchor="middle" font-family="'Segoe UI',sans-serif" filter="url(#glowCyan)">{html_module.escape(script.get('title', title))}</text>
                 </g>
                 <!-- Blur shield -->
-                <rect id="blur-shield" width="100%" height="100%" fill="#c7d2e0" opacity="0" class="svg-layer" pointer-events="none" />
+                <rect id="blur-shield" width="100%" height="100%" fill="#c7d8ed" opacity="0" class="svg-layer" pointer-events="none" />
                 <!-- Step overlays -->
                 {overlays_html}
             </svg>
         </div>
+        <!-- Control Panel -->
         <div class="control-panel">
             <div class="step-indicator" id="dots">
                 {dots_html}
@@ -3685,9 +4253,25 @@ async def _run_generation_pipeline(question: str) -> dict:
     solution_task      = asyncio.ensure_future(GeminiSolutionGenerator.generate_async(ai_question))
     glossary_task      = asyncio.ensure_future(GeminiGlossaryAnalyzer.analyze_async(ai_question))
 
-    scene_script, gemini_sol, glossary_result = await asyncio.gather(
-        scene_script_task, solution_task, glossary_task
+    raw_results = await asyncio.gather(
+        scene_script_task, solution_task, glossary_task,
+        return_exceptions=True,
     )
+
+    # Safely unpack — any task that raised an exception returns the Exception
+    # object instead of a result. Replace failures with safe fallbacks so the
+    # rest of the pipeline can always proceed.
+    scene_script = raw_results[0] if isinstance(raw_results[0], dict) else GeminiSceneAnalyzer._fallback_script(ai_question)
+    gemini_sol   = raw_results[1] if isinstance(raw_results[1], dict) else GeminiSolutionGenerator._FALLBACK
+    glossary_result = raw_results[2] if isinstance(raw_results[2], dict) else {"terms": []}
+
+    if isinstance(raw_results[0], Exception):
+        QAnimLogger.error("Pipeline", f"SceneAnalyzer task failed: {raw_results[0]} — using fallback script")
+    if isinstance(raw_results[1], Exception):
+        QAnimLogger.error("Pipeline", f"SolutionGenerator task failed: {raw_results[1]} — using fallback solution")
+    if isinstance(raw_results[2], Exception):
+        QAnimLogger.error("Pipeline", f"GlossaryAnalyzer task failed: {raw_results[2]} — skipping glossary")
+
     QAnimLogger.ok("Pipeline", f"Analysis stages complete — {len(scene_script.get('steps',[]))} steps, {len(gemini_sol.get('steps',[]))} solution steps")
 
     # Merge solution into scene script for completeness
