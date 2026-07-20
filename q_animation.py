@@ -926,6 +926,31 @@ _STEP_ANSWER_CSS = """
   background:#eff6ff; border:2px solid #2563eb; color:#1d4ed8;
   font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:700;
   text-align:center; line-height:1.5; }
+/* ── Core Formula Scene ── */
+.cf-name-badge {
+  display:inline-block; padding:4px 14px; border-radius:20px;
+  background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px;
+  font-weight:800; letter-spacing:0.8px; text-transform:uppercase;
+  margin-bottom:14px; }
+.cf-scene-wrap { width:100%; }
+.cf-formula-stack { display:flex; flex-direction:column; align-items:center; gap:0; padding:4px 0 6px; }
+.cf-row { width:100%; display:flex; justify-content:center; }
+.cf-formula-pill {
+  width:100%; max-width:540px; padding:14px 22px; border-radius:12px;
+  border:2px solid #93c5fd; text-align:center; box-sizing:border-box;
+  font-family:'Courier New',Courier,monospace; font-size:15px; font-weight:700;
+  line-height:1.6; margin:0 auto; word-break:break-word; }
+.cf-formula-label { display:block; }
+.cf-arrow { display:flex; flex-direction:column; align-items:center; margin:0 auto; width:24px; padding:2px 0; }
+.cf-arrow-line { width:2px; height:22px; background:linear-gradient(to bottom,#93c5fd,#c084fc); }
+.cf-arrow-head { font-size:12px; color:#c084fc; margin-top:-2px; line-height:1; }
+.cf-info-card {
+  display:flex; align-items:flex-start; gap:10px; margin-top:14px; padding:12px 16px;
+  border-radius:10px; background:#fffbf0; border:1.5px solid #fde68a;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; }
+.cf-info-icon { font-size:17px; flex-shrink:0; margin-top:1px; }
+.cf-info-text { font-size:12.5px; color:#78350f; line-height:1.7; font-style:italic; }
 /* ── Legacy modal stubs (kept so old JS refs don't error) ── */
 #stepans-backdrop { display:none !important; }
 #stepans-panel { display:none !important; }
@@ -1077,22 +1102,138 @@ STEP_ANSWER_JS_MODULE = r"""
     return _buildCard(1,'What We Need to Find',h);
   }
 
-  /* Step 3 – Formulas flowchart */
+  /* Step 3 – Core Formula (symbolic only, no value substitution, no numeric result) */
   function _buildStep2(){
     var d=_loadData();
     var rows=Array.isArray(d.formulas)?d.formulas:[];
-    var fc='<div class="sbs-flowchart">';
-    for(var r=0;r<rows.length;r++){
-      var row=rows[r];
-      var clr=(typeof row==='object'&&row.color)?String(row.color):'blue';
-      var txt=(typeof row==='object'&&row.text)?String(row.text):String(row);
-      fc+='<div class="sbs-flow-box '+_esc(clr)+'">'+_esc(txt)+'</div>';
-      if(r<rows.length-1){fc+='<div class="sbs-flow-arrow"></div>';}
+
+    /* ── Derive a formula name from the first formula entry ── */
+    var firstName='Core Formula';
+    if(rows.length>0){
+      var firstText=(typeof rows[0]==='object'&&rows[0].text)?String(rows[0].text):String(rows[0]);
+      /* Extract the LHS symbol (everything before the first = sign) */
+      var eqIdx=firstText.indexOf('=');
+      if(eqIdx>0){
+        var lhs=firstText.substring(0,eqIdx).trim();
+        /* Keep only the first token (symbol), discard trailing noise */
+        var token=lhs.split(/[\s,(]/)[0];
+        if(token&&token.length<=12){firstName=token+' — Governing Equation';}
+        else{firstName='Core Formula';}
+      }
     }
-    if(!rows.length){fc+='<div class="sbs-flow-box blue">No formula available</div>';}
-    fc+='</div>';
-    if(d.formula_note){fc+='<div class="sbs-flow-note">'+_esc(d.formula_note)+'</div>';}
-    return _buildCard(2,'Formula / Core Formula',fc);
+
+    /* ── Sanitise formula text: keep only symbolic form.
+       Strip anything that looks like a substituted numeric expression
+       (sequences of digits, ×, decimal values, and equals-then-number chains)
+       so only the symbolic / variable form is shown.                      ── */
+    function _stripNumeric(txt){
+      /* Remove "= <number> <unit>" chain at the tail of expressions like
+         "Re = rho x V x D / mu = 100000" → "Re = rho x V x D / mu"       */
+      txt=txt.replace(/=\s*[-+]?\d[\d.,\s]*(?:[×xX*]\s*10\^?[-+]?\d+)?\s*[A-Za-z°²³µ/%]*\s*$/g,'');
+      /* Remove standalone numeric clusters that were substituted in-line   */
+      txt=txt.replace(/\(\s*[-+]?\d[\d.,]*\s*\)/g,'(…)');
+      return txt.trim().replace(/\s+/g,' ');
+    }
+
+    /* Build unique IDs for each element so setTimeout can target them */
+    var uid='cf2-'+Math.random().toString(36).slice(2,7);
+
+    /* ── Generate one row per formula (symbolic only) ── */
+    var COLOR_BORDER={blue:'#93c5fd',orange:'#fdba74',purple:'#d8b4fe',pink:'#fda4af',green:'#86efac',teal:'#5eead4'};
+    var COLOR_BG={blue:'#eff6ff',orange:'#fff7ed',purple:'#faf5ff',pink:'#fff1f2',green:'#f0fdf4',teal:'#f0fdfa'};
+    var COLOR_TEXT={blue:'#1d4ed8',orange:'#c2410c',purple:'#7c3aed',pink:'#be123c',green:'#15803d',teal:'#0f766e'};
+
+    var rows2=rows.length?rows:[{text:'Select the appropriate governing formula',color:'blue'}];
+    var rowHtml='';
+    for(var r=0;r<rows2.length;r++){
+      var row=rows2[r];
+      var clr=(typeof row==='object'&&row.color)?String(row.color):'blue';
+      var rawTxt=(typeof row==='object'&&row.text)?String(row.text):String(row);
+      var symTxt=_stripNumeric(rawTxt);
+      var bclr=COLOR_BORDER[clr]||COLOR_BORDER.blue;
+      var bgclr=COLOR_BG[clr]||COLOR_BG.blue;
+      var tclr=COLOR_TEXT[clr]||COLOR_TEXT.blue;
+      var arrowHtml=(r<rows2.length-1)
+        ?('<div class="cf-arrow" id="'+uid+'-arr'+r+'" style="opacity:0;">'
+          +'<div class="cf-arrow-line"></div>'
+          +'<div class="cf-arrow-head">&#9660;</div>'
+          +'</div>')
+        :'';
+      rowHtml+=(
+        '<div class="cf-row" id="'+uid+'-row'+r+'" style="opacity:0;">'
+          +'<div class="cf-formula-pill" style="border-color:'+bclr+';background:'+bgclr+';color:'+tclr+';">'
+            +'<span class="cf-formula-label">'+_esc(symTxt)+'</span>'
+          +'</div>'
+        +'</div>'
+        +arrowHtml
+      );
+    }
+
+    /* ── Info card (formula note, shown last) ── */
+    var noteHtml='';
+    if(d.formula_note){
+      noteHtml=(
+        '<div class="cf-info-card" id="'+uid+'-info" style="opacity:0;">'
+          +'<span class="cf-info-icon">&#128161;</span>'
+          +'<span class="cf-info-text">'+_esc(d.formula_note)+'</span>'
+        +'</div>'
+      );
+    }
+
+    /* ── Assemble the card inner HTML ── */
+    var inner=(
+      '<div class="cf-name-badge" id="'+uid+'-name" style="opacity:0;">'+_esc(firstName)+'</div>'
+      +'<div class="cf-scene-wrap" id="'+uid+'-scene">'
+        +'<div class="cf-formula-stack">'
+          +rowHtml
+        +'</div>'
+      +'</div>'
+      +noteHtml
+    );
+
+    /* ── setTimeout animation: arrows → labels/formula-pills → name badge → info card ── */
+    var animScript=(
+      '<script>'
+      +'(function(){'
+        +'var uid="'+uid+'";'
+        +'function show(id,delay){'
+          +'setTimeout(function(){'
+            +'var el=document.getElementById(id);'
+            +'if(el){'
+              +'el.style.transition="opacity 0.45s ease, transform 0.45s ease";'
+              +'el.style.transform="translateY(0)";'
+              +'el.style.opacity="1";'
+            +'}'
+          +'},delay);'
+        +'}'
+        /* rows: count from the JS context at call time */
+        +'var nRows='+rows2.length+';'
+        /* Step 1 — arrows first (200ms each) */
+        +'for(var r=0;r<nRows-1;r++){'
+          +'show(uid+"-arr"+r, 220+r*180);'
+        +'}'
+        /* Step 2 — formula pills (start after last arrow, stagger 220ms) */
+        +'var pillStart=220+(nRows>1?(nRows-1)*180:0)+160;'
+        +'for(var p=0;p<nRows;p++){'
+          +'(function(pp){'
+            +'var rowEl=document.getElementById(uid+"-row"+pp);'
+            +'if(rowEl){'
+              +'rowEl.style.transform="translateY(12px)";'
+            +'}'
+            +'show(uid+"-row"+pp, pillStart+pp*220);'
+          +'})(p);'
+        +'}'
+        /* Step 3 — formula name badge */
+        +'var nameStart=pillStart+nRows*220+200;'
+        +'show(uid+"-name", nameStart);'
+        /* Step 4 — info card */
+        +'var infoStart=nameStart+380;'
+        +'show(uid+"-info", infoStart);'
+      +'})();'
+      +'</script>'
+    );
+
+    return _buildCard(2,'Core Formula',inner+animScript);
   }
 
   /* Step 4 – Substitution & Calculation */
