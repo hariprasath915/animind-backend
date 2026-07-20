@@ -3221,7 +3221,9 @@ class GeminiSceneAnalyzer:
             return cls._fallback_script(question)
 
         QAnimLogger.info("SceneAnalyzer", f"Analysing question via {GEMINI_MODEL}...")
-        user_prompt = _SCENE_ANALYZER_USER.format(question=question[:1200])
+        # Use .replace() instead of .format() — question text may contain
+        # literal { } (e.g. set notation, LaTeX) that .format() misinterprets.
+        user_prompt = _SCENE_ANALYZER_USER.replace("{question}", question[:1200])
 
         try:
             raw = GeminiSolutionGenerator._call_gemini(
@@ -3931,9 +3933,14 @@ class GeminiAnimationBuilder:
 
         QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {GEMINI_MODEL}...")
         script_json = json.dumps(scene_script, indent=2, ensure_ascii=False)
-        user_prompt = _ANIMATION_BUILDER_USER.format(
-            question=question[:500],
-            scene_script=script_json[:6000]
+        # Use .replace() instead of .format() — the scene_script is JSON and
+        # contains many literal { } braces that .format() would misinterpret as
+        # positional/keyword placeholders, raising:
+        #   "Replacement index 0 out of range for positional args tuple"
+        user_prompt = (
+            _ANIMATION_BUILDER_USER
+            .replace("{question}", question[:500])
+            .replace("{scene_script}", script_json[:6000])
         )
 
         try:
