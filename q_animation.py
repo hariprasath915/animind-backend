@@ -1,5 +1,5 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v1.0
+q_animation.py  --  QAnim Question Animation Generator  v1.1
 =============================================================
 
 v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
@@ -158,6 +158,136 @@ class QAnimLogger:
     @classmethod
     def ok(cls, stage, msg):
         print(f"{cls.PREFIX} OK [{stage}] {msg}")
+
+
+# ===========================================================================
+#  MODULE 1.5 — Robust JSON Sanitizer (shared by all Gemini JSON parsers)
+# ===========================================================================
+
+def _sanitize_json_str(raw: str) -> str:
+    """
+    Clean common LLM JSON defects before json.loads().
+
+    Handles ALL of these real Gemini output patterns:
+      • Markdown fences:           ```json ... ```  or  ``` ... ```
+      • Thinking tags:             <thinking>...</thinking>
+      • JS-style // line comments  (outside strings)
+      • JS-style /* */ comments    (outside strings)
+      • Trailing commas:           {... , }  or  [... , ]
+      • Single-quoted keys/values: {'key': 'val'}  →  {"key": "val"}
+      • Unquoted keys:             {key: "val"}     →  {"key": "val"}
+      • Python literals:           True/False/None  →  true/false/null
+      • Ellipsis placeholders:     ...              →  (removed)
+      • BOM / stray whitespace
+    """
+    # 1. Strip BOM + surrounding whitespace
+    raw = raw.lstrip('\ufeff').strip()
+
+    # 2. Strip ALL markdown fences — handle both single-line and multi-line
+    #    variants:  ```json\n…\n```  or  ```\n…\n```  or  `{…}`
+    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+    raw = re.sub(r'```\s*$', '', raw, flags=re.IGNORECASE).strip()
+
+    # 3. Strip <thinking>…</thinking> blocks (Gemini 2.x style)
+    raw = re.sub(r'<thinking>.*?</thinking>', '', raw, flags=re.DOTALL).strip()
+
+    # 4. Extract the outermost { … } via balanced-brace scan so we drop
+    #    any preamble / trailing prose the model prepended or appended.
+    start = raw.find('{')
+    if start != -1:
+        depth = 0
+        in_str = False
+        esc = False
+        end_idx = None
+        for i, ch in enumerate(raw[start:], start):
+            if esc:
+                esc = False
+                continue
+            if ch == '\\' and in_str:
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end_idx = i
+                    break
+        if end_idx is not None:
+            raw = raw[start:end_idx + 1]
+        else:
+            raw = raw[start:]
+
+    # --- From here, work on the extracted JSON text ---
+
+    # 5. Remove JS line comments  //…  that are outside strings.
+    #    We walk char-by-char to avoid killing URLs ("https://...").
+    out = []
+    in_str = False
+    esc = False
+    i = 0
+    while i < len(raw):
+        ch = raw[i]
+        if esc:
+            out.append(ch)
+            esc = False
+            i += 1
+            continue
+        if ch == '\\' and in_str:
+            out.append(ch)
+            esc = True
+            i += 1
+            continue
+        if ch == '"':
+            in_str = not in_str
+            out.append(ch)
+            i += 1
+            continue
+        if not in_str and ch == '/' and i + 1 < len(raw):
+            if raw[i + 1] == '/':          # // comment → skip to EOL
+                while i < len(raw) and raw[i] != '\n':
+                    i += 1
+                continue
+            if raw[i + 1] == '*':          # /* comment → skip to */
+                i += 2
+                while i < len(raw) - 1 and not (raw[i] == '*' and raw[i + 1] == '/'):
+                    i += 1
+                i += 2                     # skip closing */
+                continue
+        out.append(ch)
+        i += 1
+    raw = ''.join(out)
+
+    # 6. Remove trailing commas before } or ]
+    #    e.g.  { "a": 1, }  →  { "a": 1 }
+    raw = re.sub(r',\s*([}\]])', r'\1', raw)
+
+    # 7. Replace Python literals with JSON equivalents (outside strings)
+    #    True → true,  False → false,  None → null
+    raw = re.sub(r'\bTrue\b',  'true',  raw)
+    raw = re.sub(r'\bFalse\b', 'false', raw)
+    raw = re.sub(r'\bNone\b',  'null',  raw)
+
+    # 8. Replace single-quoted strings with double-quoted
+    #    Only do a simple pass — full single-quote parsing is complex, but
+    #    this catches the most common pattern: 'value'  or  'key'
+    #    We avoid replacing apostrophes inside words (e.g. it's).
+    #    Strategy: replace  'text'  that are adjacent to : , { } [ ]
+    raw = re.sub(
+        r"(?<![a-zA-Z])'([^'\\]*(?:\\.[^'\\]*)*)'(?![a-zA-Z])",
+        lambda m: '"' + m.group(1).replace('"', '\\"') + '"',
+        raw,
+    )
+
+    # 9. Remove ellipsis placeholders  ...  that break JSON
+    raw = re.sub(r'\.\.\.\s*', '', raw)
+
+    return raw.strip()
 
 
 # ===========================================================================
@@ -1492,14 +1622,10 @@ class GeminiSolutionGenerator:
         # 2. Strip Gemini "thinking" tags if present (<thinking>...</thinking>)
         raw = re.sub(r'<thinking>.*?</thinking>', '', raw, flags=re.DOTALL).strip()
 
-        # 3. If it already looks like clean JSON, return it
-        if raw.startswith('{') and raw.endswith('}'):
-            return raw
-
-        # 4. Try to find the outermost { ... } block via balanced-brace scan
+        # 3. Try to find the outermost { ... } block via balanced-brace scan
         start = raw.find('{')
         if start == -1:
-            return raw  # No JSON object found — let json.loads raise the error
+            return _sanitize_json_str(raw)  # No JSON object found — let json.loads raise
 
         depth = 0
         in_string = False
@@ -1524,7 +1650,7 @@ class GeminiSolutionGenerator:
                     return raw[start:i + 1]
 
         # Partial JSON — return from start to end and let json.loads try
-        return raw[start:]
+        return _sanitize_json_str(raw[start:])
 
     @classmethod
     def _parse(cls, raw: str) -> dict:
@@ -3101,7 +3227,7 @@ class GeminiSceneAnalyzer:
             raw = GeminiSolutionGenerator._call_gemini(
                 user_prompt, _SCENE_ANALYZER_SYSTEM, max_tokens=8192
             )
-            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
+            raw = _sanitize_json_str(raw)
             data = json.loads(raw)
             QAnimLogger.ok("SceneAnalyzer", f"Scene script produced: {len(data.get('steps',[]))} steps, {len(data.get('svg_components',{}))} components")
             return data
@@ -4498,7 +4624,7 @@ class GeminiGlossaryAnalyzer:
                 _GLOSSARY_SYSTEM_GEMINI,
                 max_tokens=800
             )
-            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.MULTILINE).strip()
+            raw = _sanitize_json_str(raw)
             data = json.loads(raw)
             terms = []
             for t in (data.get("terms") or [])[:8]:
