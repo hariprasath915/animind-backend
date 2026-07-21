@@ -3376,6 +3376,48 @@ OUTPUT FORMAT — Return ONLY valid JSON, no markdown, no preamble
 }
 
 ════════════════════════════════════════════════════════════
+NOTATION RULES  (apply consistently across every scene)
+════════════════════════════════════════════════════════════
+Use these conventions for ALL labels, badges, symbols, and descriptions — never deviate mid-animation.
+
+GREEK LETTERS — always use the actual Unicode character, never spelled out:
+  α  β  γ  δ  ε  θ  λ  μ  ν  π  ρ  σ  τ  φ  ω  Ω  η  ξ  ζ  Φ  Ψ  Δ  Σ  Λ
+
+SUBSCRIPTS / SUFFIXES — use these exact Unicode subscript digits and letters wherever a subscript is needed:
+  Digits : ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉
+  Letters: ₐ ₑ ₒ ᵢ ₙ ₘ ₚ ₛ ₜ ᵥ
+  Examples: T₁  T₂  v₁  v₂  ω₁  ω₂  N₁  N₂  Pᵢ  Pₒ  Tₛ  hₒ  kₑ  μᵢ  ρ₀  A₁  A₂
+
+SUPERSCRIPTS — use Unicode superscript characters, NOT the caret ^:
+  ² ³ ⁴  (e.g., m² not m^2, m³ not m^3)
+  For general exponents use × 10ⁿ notation with Unicode superscript digits ⁰¹²³⁴⁵⁶⁷⁸⁹⁻
+
+COMMON ENGINEERING / PHYSICS UNITS — always written exactly as:
+  m, mm, cm, km  |  s, ms  |  kg, g  |  N, kN  |  Pa, kPa, MPa  |  J, kJ, MJ
+  W, kW, MW  |  °C, K  |  m/s, m/s²  |  rad/s  |  RPM  |  W/(m·K)  |  W/(m²·K)
+  N·m, kN·m  |  m³/s  |  kg/m³  |  Pa·s  |  m² (not m^2)
+
+MATHEMATICAL OPERATORS — use correct Unicode:
+  Multiplication: × (not x or *)
+  Division / ratio: / or ÷
+  Approximately equal: ≈
+  Not equal: ≠
+  Less/greater: < > ≤ ≥
+  Square root: √ followed by value, e.g. √(L²-r²·sin²θ)
+  Dot product / middle dot for units: · (U+00B7), e.g. N·m  W/(m·K)
+
+FORMULA / EXPRESSION STRINGS — for badge "text", step "label", info-box "description", and svg_component "labels":
+  • Always use subscript Unicode characters — NEVER write sub as plain letters appended: T1 → T₁, omega2 → ω₂
+  • Always use the actual Greek character — NEVER spell it out: omega → ω, theta → θ, rho → ρ, mu → μ
+  • Always use × for multiplication — NEVER x or *
+  • Always use ² ³ for powers — NEVER ^ or ^2
+  • Wrap in consistent phrasing: "symbol = value unit"  (e.g., "r = 50 mm", "ω₁ = 31.4 rad/s")
+
+CONSISTENCY RULE — if a symbol appears in step 1 badges, it must use IDENTICAL notation in every subsequent
+  step's badges, description, svg_component labels, and the final_answer. Never switch between T1 and T₁,
+  or between omega and ω, within the same animation.
+
+════════════════════════════════════════════════════════════
 STRICT RULES
 ════════════════════════════════════════════════════════════
 1. steps: minimum 4, maximum 6. Always end with the solution/answer step.
@@ -3385,9 +3427,10 @@ STRICT RULES
 5. badge types: "cyan" = given data, "orange" = motion/force, "green" = result/answer.
 6. svg_components: name every physical part — frame, ground, pivots, cranks, connecting rods, pistons,
    gears, pulleys, belts, springs, beams, coils, resistors, pipes, etc. Place all in 850×478 space.
-7. final_answer: MUST contain the computed numerical result with units. Never empty.
+7. final_answer: MUST contain the computed numerical result with units (using correct notation: ², ×, Greek chars, subscripts). Never empty.
 8. motion_type: must accurately match the physical behavior of the component.
-9. layer_order: integer starting at 1 (lower = drawn first / behind)."""
+9. layer_order: integer starting at 1 (lower = drawn first / behind).
+10. Apply the NOTATION RULES above to every string field in the JSON output."""
 
 _SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
 
@@ -3400,6 +3443,13 @@ Remember:
 - The final step freezes the mechanism at the solution state — NO calculations popup box, NO computed answer value in the diagram.
 - The final step SVG overlay must show: (1) "GIVEN" section listing each known symbol = value with a ✓ arrow, and (2) "TO FIND" section listing each unknown symbol = ? with a → arrow pointing to the relevant part of the diagram.
 - Compute the actual numerical answer and include it in final_answer (for the Answer Box panel only — NOT displayed in the diagram).
+
+NOTATION (mandatory — apply to every string in the JSON):
+- Greek letters as Unicode: ω θ ρ μ α β η φ Δ Σ — never spelled out (omega, theta, rho…)
+- Subscripts as Unicode subscript chars: T₁ T₂ ω₁ ω₂ v₁ v₂ — never T1 T2 omega1 omega2
+- Superscripts as Unicode: m² m³ — never m^2 m^3
+- Multiplication as ×  — never x or *
+- Units exactly: W/(m·K)  N·m  rad/s  RPM  m/s²  kg/m³  — middle dot · not period
 
 Return ONLY valid JSON."""
 
@@ -3924,6 +3974,69 @@ The output must match this structure and CSS (light theme, visually rich):
   <script> ... full animation JS ... </script>
 </body>
 </html>
+
+════════════════════════════════════════════════════════════
+NOTATION RULES  (mandatory — apply to EVERY label, badge, text, and string in the output)
+════════════════════════════════════════════════════════════
+These rules govern every piece of rendered text: SVG <text> elements, info-box content, badge HTML,
+step-dot labels, info-title, info-desc, overlay callouts, and all JavaScript string literals.
+
+1. GREEK LETTERS — always use the actual Unicode character, never the spelled-out word:
+   ω (omega)  θ (theta)  ρ (rho)  μ (mu)  α (alpha)  β (beta)  γ (gamma)
+   δ (delta)  φ (phi)   η (eta)  ξ (xi)  λ (lambda)  π (pi)   τ (tau)
+   Σ (Sigma)  Δ (Delta)  Ω (Omega)  Φ (Phi)  Ψ (Psi)  Λ (Lambda)
+
+2. SUBSCRIPTS — always use Unicode subscript digits/letters, NEVER plain digits appended:
+   Subscript digits : ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉
+   Subscript letters: ₐ ₑ ₒ ᵢ ₙ ₘ ₚ ₛ ₜ ᵥ
+   Required examples (WRONG → CORRECT):
+     T1 → T₁    T2 → T₂    v1 → v₁    v2 → v₂
+     omega1 → ω₁    omega2 → ω₂    N1 → N₁    N2 → N₂
+     Pi → Pᵢ    Po → Pₒ    Ts → Tₛ    ho → hₒ    mu_i → μᵢ
+     rho0 → ρ₀   A1 → A₁   A2 → A₂   ke → kₑ
+
+3. SUPERSCRIPTS — always use Unicode superscript chars, NEVER the caret ^ :
+   Superscript digits: ⁰ ¹ ² ³ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹   Superscript minus: ⁻
+   Required examples:
+     m^2 → m²    m^3 → m³    Re^0.8 → Re⁰·⁸    10^5 → 10⁵    m^-1 → m⁻¹
+
+4. MULTIPLICATION — always use × (U+00D7), NEVER x or * :
+     rho x V x D → ρ × V × D
+     0.023 x Re^0.8 → 0.023 × Re⁰·⁸
+
+5. UNIT FORMATTING — exact spelling and separator:
+   Middle dot · (U+00B7) between compound units — NEVER a period or space:
+     W/mK → W/(m·K)    N.m → N·m    Pa.s → Pa·s    kg/m3 → kg/m³
+   Degree symbol °: always attached — °C not ° C
+   Per: use / or the solidus — m/s  m/s²  rad/s  W/m²  kg/(m·s)
+   Common unit tokens:
+     mm, cm, m, km  |  ms, s, min, h  |  g, kg  |  N, kN  |  Pa, kPa, MPa, bar
+     J, kJ, MJ  |  W, kW, MW  |  °C, K  |  m/s, m/s²  |  rad, rad/s, RPM
+     W/(m·K)  W/(m²·K)  N·m  kN·m  m³/s  kg/m³  Pa·s
+
+6. SVG TEXT ELEMENTS — apply notation in every <text> tag:
+   Component name labels:   use Greek + subscripts, e.g. "ω₁ (Input)" not "omega1 (Input)"
+   Value callout chips:     "r = 50 mm"  "T₁ = 250 °C"  "ρ = 1000 kg/m³"
+   Dimension label text:    "L = 200 mm"  "D₁ = 300 mm"
+   Annotation text:         "v_p = r·ω·sin θ" rendered as "vₚ = r·ω·sin θ"
+   GIVEN overlay labels:    "r = 50 mm ✓"  "ω₁ = 31.4 rad/s ✓"
+   TO FIND overlay labels:  "vₚ = ?"  "Q = ?"  "T₂ = ?"
+
+7. BADGE HTML — inside the badges string for each stepsData entry:
+   <span class="badge badge-cyan">r = 50 mm</span>       ← given, cyan
+   <span class="badge badge-orange">ω = 31.4 rad/s</span> ← motion, orange
+   <span class="badge badge-green">vₚ = ?</span>          ← result placeholder, green
+   Use actual Unicode — HTML entities like &omega; are NOT acceptable.
+
+8. INFO-BOX TEXT — info-title, info-desc strings in stepsData:
+   Must use the same Unicode notation as the SVG labels.
+   Example: "The crank OA (r = 50 mm) rotates at ω = 31.4 rad/s (300 RPM)."
+   NOT:     "The crank OA (r = 50 mm) rotates at omega = 31.4 rad/s (300 RPM)."
+
+9. CONSISTENCY RULE — if a symbol is introduced in step 0, it must appear identically in every
+   subsequent step, the final overlay, all badge text, and all JS string literals.
+   Inconsistent example (WRONG): step 1 badge "omega = 300 RPM", step 3 overlay "ω = 31.4 rad/s"
+   Correct: use ω throughout and use the same numeric representation once converted.
 
 ════════════════════════════════════════════════════════════
 SVG DESIGN RULES — HIGH-QUALITY LAYERED SVG
