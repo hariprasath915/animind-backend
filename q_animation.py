@@ -2643,7 +2643,7 @@ STRICT RULES
 1. steps: minimum 4, maximum 6. Always end with the solution/answer step.
 2. Step 1: establishes the fixed frame, ground, housing, or reference coordinate system.
 3. Steps 2–(N-1): each introduces exactly ONE new moving component with its physical motion.
-4. Last step: freezes mechanism at solution state. Shows answer annotation. NO calculation popup boxes.
+4. Last step: freezes mechanism at solution state. Shows ONLY "Given" labels (with their known values) and "To Find" labels (with "= ?" placeholders and arrows pointing to the relevant parts of the diagram). Do NOT show the computed final answer value in the SVG diagram area. The answer is revealed separately via the Answer Box panel.
 5. badge types: "cyan" = given data, "orange" = motion/force, "green" = result/answer.
 6. svg_components: name every physical part — frame, ground, pivots, cranks, connecting rods, pistons,
    gears, pulleys, belts, springs, beams, coils, resistors, pipes, etc. Place all in 850×478 space.
@@ -2659,8 +2659,9 @@ Remember:
 - Plan the step-by-step visual reveal carefully.
 - Each step shows exactly ONE new component appearing with motion.
 - Components are drawn one by one in the correct physical order.
-- The final step freezes the mechanism at the solution state — NO calculations popup box.
-- Compute the actual numerical answer and include it in final_answer.
+- The final step freezes the mechanism at the solution state — NO calculations popup box, NO computed answer value in the diagram.
+- The final step SVG overlay must show: (1) "GIVEN" section listing each known symbol = value with a ✓ arrow, and (2) "TO FIND" section listing each unknown symbol = ? with a → arrow pointing to the relevant part of the diagram.
+- Compute the actual numerical answer and include it in final_answer (for the Answer Box panel only — NOT displayed in the diagram).
 
 Return ONLY valid JSON."""
 
@@ -3270,7 +3271,7 @@ Motion must be physically correct, not just decorative:
 - Springs: translateY(amplitude×sin(ωt)) with correct stiffness-derived frequency
 - Heat flow / current flow: animated stroke-dashoffset on the path
 - Waveforms / signals: path d attribute updated each frame with sin/cos
-- Freezing mechanism: lerp angle toward solution angle over ~60 frames, then pause RAF
+- Freezing mechanism: lerp angle toward solution angle over ~60 frames, then pause RAF and show the Given/ToFind overlay
 
 stepsData schema (one object per step, drives ALL state):
   {
@@ -3325,7 +3326,7 @@ POLISH CHECKLIST (every output must pass)
 ✓ All buttons use CSS variables; .btn-primary has gradient + translateY hover
 ✓ ZERO text-overlaps in SVG; all labels inside viewBox
 ✓ All component layers start opacity:0 (except layer-frame)
-✓ Final step freezes mechanism at exact solution state + annotation overlay
+✓ Final step freezes mechanism at exact solution state + Given/ToFind annotation overlay (NO computed answer values shown in the diagram — use "= ?" placeholders for all "to find" quantities)
 
 ════════════════════════════════════════════════════════════
 OUTPUT
@@ -3365,7 +3366,10 @@ STEP CONTROL:
 PHYSICS & MOTION:
 13. Rotating parts (cranks, gears, pulleys): continuous RAF loop, angle=omega*elapsed_time. Use REAL RPM from the problem.
 14. Oscillating parts (pistons): x = r*cos(theta) + sqrt(L*L - r*r*sin(theta)*sin(theta)). Use REAL geometry.
-15. Final step: lerp angle to exact solution angle over ~60 frames, then cancel RAF and show annotation overlay.
+15. Final step: lerp angle to exact solution angle over ~60 frames, then cancel RAF and show the Given/ToFind overlay in the SVG diagram area. The overlay MUST contain:
+    (a) A "GIVEN" section: for each known quantity, show a label like "symbol = value unit" with a ✓ checkmark and a cyan arrow pointing to the relevant component.
+    (b) A "TO FIND" section: for each unknown quantity, show a label like "symbol = ?" with a → arrow (orange) pointing to the relevant component in the diagram.
+    CRITICAL: Do NOT show any computed numerical answer values in the SVG diagram area on the final step. All "to find" items must show "= ?" as a placeholder. The actual answer is revealed only via the Answer Box panel.
 16. Each component animates on the FRAME it first becomes visible (triggered in applyStep).
 
 CODE QUALITY:
@@ -3531,11 +3535,92 @@ class GeminiAnimationBuilder:
         steps_js = "[\n" + ",\n".join(steps_js_parts) + "\n  ]"
 
         # Build overlay SVG groups
+        # For the last step, inject a Given / To Find annotation overlay instead of empty group
         overlay_groups = []
+        last_idx = len(steps) - 1
         for i, step in enumerate(steps):
-            overlay_groups.append(
-                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0"></g>'
-            )
+            if i == last_idx:
+                # Gather badge text for Given labels and build ToFind labels with "= ?"
+                given_badges = []
+                tofind_labels = []
+                for b in step.get("badges", []):
+                    bt = b.get("type", "cyan")
+                    txt = b.get("text", "").replace('"', '&quot;')
+                    if bt == "cyan":
+                        given_badges.append(txt)
+                    elif bt in ("orange", "green"):
+                        # Treat motion/result badges as to-find on last step
+                        sym = txt.split("=")[0].strip() if "=" in txt else txt
+                        tofind_labels.append(sym + " = ?")
+                # If no to-find labels from badges, use step description cues
+                if not tofind_labels:
+                    tofind_labels = ["Result = ?"]
+
+                # Build SVG elements for the overlay
+                svg_parts = []
+                # Background card
+                svg_parts.append(
+                    '<rect x="30" y="90" width="240" height="' +
+                    str(30 + len(given_badges) * 28 + 16 + len(tofind_labels) * 28 + 20) +
+                    '" rx="10" fill="rgba(255,255,255,0.92)" stroke="#e2e8f0" stroke-width="1"/>'
+                )
+                # "GIVEN" header
+                svg_parts.append(
+                    '<text x="50" y="116" fill="#0e7490" font-size="11" font-weight="800" '
+                    'font-family="Segoe UI,system-ui,sans-serif" letter-spacing="1.5">GIVEN</text>'
+                )
+                y = 138
+                for gl in given_badges:
+                    svg_parts.append(
+                        f'<line x1="50" y1="{y-6}" x2="62" y2="{y-6}" stroke="#0891b2" stroke-width="1.5" '
+                        f'marker-end="url(#arrowCyan)"/>'
+                    )
+                    svg_parts.append(
+                        f'<text x="70" y="{y}" fill="#1e293b" font-size="12" font-weight="600" '
+                        f'font-family="Segoe UI,system-ui,sans-serif">{html_module.escape(gl)}</text>'
+                    )
+                    y += 28
+
+                # Divider
+                y += 4
+                svg_parts.append(
+                    f'<line x1="42" y1="{y}" x2="258" y2="{y}" stroke="#e2e8f0" stroke-width="1"/>'
+                )
+                y += 16
+
+                # "TO FIND" header
+                svg_parts.append(
+                    f'<text x="50" y="{y}" fill="#d97706" font-size="11" font-weight="800" '
+                    f'font-family="Segoe UI,system-ui,sans-serif" letter-spacing="1.5">TO FIND</text>'
+                )
+                y += 22
+                for tf_label in tofind_labels:
+                    svg_parts.append(
+                        f'<line x1="50" y1="{y-6}" x2="62" y2="{y-6}" stroke="#d97706" stroke-width="1.5" '
+                        f'marker-end="url(#arrowOrange)"/>'
+                    )
+                    # Chip background for "= ?" label
+                    svg_parts.append(
+                        f'<rect x="68" y="{y-14}" width="' +
+                        str(max(60, len(tf_label) * 7 + 16)) +
+                        f'" height="20" rx="5" fill="rgba(217,119,6,0.10)" stroke="rgba(217,119,6,0.30)" stroke-width="1"/>'
+                    )
+                    svg_parts.append(
+                        f'<text x="76" y="{y}" fill="#92400e" font-size="12" font-weight="700" '
+                        f'font-family="Segoe UI,system-ui,sans-serif">{html_module.escape(tf_label)}</text>'
+                    )
+                    y += 28
+
+                overlay_content = "\n                    ".join(svg_parts)
+                overlay_groups.append(
+                    f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0">\n'
+                    f'                    {overlay_content}\n'
+                    f'                </g>'
+                )
+            else:
+                overlay_groups.append(
+                    f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0"></g>'
+                )
         overlays_html = "\n                ".join(overlay_groups)
 
         # Build pill-style dot elements with step-connector divs between them
