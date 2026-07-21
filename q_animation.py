@@ -2516,7 +2516,8 @@ def _build_scene7_html(big_idea: dict) -> str:
     chips_html = ""
     for idx, var in enumerate(variables[:6]):
         color_key = var.get("color", _VAR_COLOR_ORDER[idx % len(_VAR_COLOR_ORDER)])
-        if color_key not in _VAR_colors_css := _VAR_COLORS:
+        _VAR_colors_css = _VAR_COLORS
+        if color_key not in _VAR_colors_css:
             color_key = _VAR_COLOR_ORDER[idx % len(_VAR_COLOR_ORDER)]
         palette   = _VAR_COLORS[color_key]
         symbol    = html_module.escape(str(var.get("symbol", "?")))
