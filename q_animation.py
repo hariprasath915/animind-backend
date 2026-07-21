@@ -138,6 +138,25 @@ MAX_TOK_CONCEPT = 16000
 
 
 # ===========================================================================
+#  ORDINAL SUFFIX HELPER
+#  Returns the English ordinal string for a positive integer n:
+#    1 → "1st"   2 → "2nd"   3 → "3rd"   4 → "4th"  ...
+#  Used everywhere scene/step titles are built to ensure perfect notation
+#  suffixes across ALL scenes (fallback scripts, minimal page builder,
+#  solution-step list, JS applyStep label, and Gemini prompt examples).
+# ===========================================================================
+
+def _ordinal(n: int) -> str:
+    """Return the ordinal string for integer n (e.g. 1→'1st', 2→'2nd', 3→'3rd', 4→'4th')."""
+    n = int(n)
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return str(n) + suffix
+
+
+# ===========================================================================
 #  MODULE 1 — QAnimLogger
 # ===========================================================================
 class QAnimLogger:
@@ -980,11 +999,11 @@ class GeminiSolutionGenerator:
             {"title": "Substitute and Solve",   "expr": "Insert the known values and evaluate step by step."},
         ],
         "steps": [
-            "Step 1: Write down the given values from the question.",
-            "Step 2: Identify what needs to be found.",
-            "Step 3: Choose the correct governing formula.",
-            "Step 4: Substitute values and solve step by step.",
-            "Step 5: State the final answer with units.",
+            "1st Step: Write down the given values from the question.",
+            "2nd Step: Identify what needs to be found.",
+            "3rd Step: Choose the correct governing formula.",
+            "4th Step: Substitute values and solve step by step.",
+            "5th Step: State the final answer with units.",
         ],
         "final_answer": "Please re-generate for a detailed answer.",
         "key_insight":  "Always identify given values and the target quantity before selecting a formula.",
