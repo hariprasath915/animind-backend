@@ -335,84 +335,6 @@ class GenerationValidator:
 
 
 # ===========================================================================
-#  MODULE 1.6 — StepRevealValidator
-#  Detects the "everything dumped into layer-frame" failure mode, where the
-#  model ignores the layer-splitting instructions and the whole diagram
-#  appears fully formed on step 1 instead of building up component-by-
-#  component. When this happens the Next-Step button still works, but visually
-#  nothing changes except text overlays — i.e. the animation looks like it
-#  "renders directly" instead of step by step.
-# ===========================================================================
-class StepRevealValidator:
-
-    @classmethod
-    def check(cls, html: str) -> dict:
-        """
-        Returns {"ok": bool, "reason": str, "n_component_layers": int,
-                 "n_progressive_steps": int} describing whether the generated
-        page actually reveals components progressively across steps.
-        """
-        try:
-            # 1. Count distinct component layers (svg-layer groups other than
-            #    layer-frame / layer-canvas-bg / overlay-*).
-            layer_ids = set(re.findall(r'class="svg-layer"\s+id="([^"]+)"', html))
-            layer_ids |= set(re.findall(r'id="([^"]+)"\s+class="svg-layer"', html))
-            component_layers = {
-                lid for lid in layer_ids
-                if lid.startswith("layer-") and lid not in ("layer-frame", "layer-canvas-bg")
-            }
-
-            # 2. Pull out the stepsData array and inspect layerOpacities per step.
-            m = re.search(r'var\s+stepsData\s*=\s*(\[.*?\]);', html, re.DOTALL)
-            if not m:
-                return {"ok": False, "reason": "stepsData array not found",
-                        "n_component_layers": len(component_layers), "n_progressive_steps": 0}
-
-            steps_raw = _sanitize_json_str(m.group(1))
-            try:
-                steps = json.loads(steps_raw)
-            except Exception:
-                # stepsData often contains JS (not strict JSON) — fall back to a
-                # looser check: does layerOpacities differ at all between steps?
-                blocks = re.findall(r'layerOpacities\s*:\s*\{([^}]*)\}', html)
-                distinct = len(set(b.strip() for b in blocks))
-                ok = len(component_layers) >= 2 and distinct >= 2
-                return {"ok": ok, "reason": "" if ok else "layerOpacities identical/static across steps",
-                        "n_component_layers": len(component_layers), "n_progressive_steps": distinct}
-
-            # 3. Track, for every non-frame layer, whether it ever transitions 0 -> 1.
-            seen_off = {}
-            progressive_steps = 0
-            for step in steps:
-                lo = step.get("layerOpacities", {}) or {}
-                changed_this_step = False
-                for lid, op in lo.items():
-                    if lid in ("layer-frame", "layer-canvas-bg"):
-                        continue
-                    was_off = seen_off.get(lid, True)
-                    is_on = (isinstance(op, (int, float)) and op > 0)
-                    if was_off and is_on:
-                        changed_this_step = True
-                    seen_off[lid] = not is_on
-                if changed_this_step:
-                    progressive_steps += 1
-
-            n_steps = max(len(steps), 1)
-            ok = len(component_layers) >= 2 and progressive_steps >= max(1, n_steps - 2)
-            reason = "" if ok else (
-                f"only {len(component_layers)} component layer(s) and "
-                f"{progressive_steps}/{n_steps} step(s) reveal a new component — "
-                f"diagram likely appears all at once instead of step by step"
-            )
-            return {"ok": ok, "reason": reason,
-                    "n_component_layers": len(component_layers), "n_progressive_steps": progressive_steps}
-        except Exception as e:
-            # Never let the validator itself break the pipeline — treat as inconclusive/pass.
-            return {"ok": True, "reason": f"validator error (ignored): {e}",
-                    "n_component_layers": 0, "n_progressive_steps": 0}
-
-
-# ===========================================================================
 #  MODULE 2.5 — ToFindExtractor
 # ===========================================================================
 class ToFindExtractor:
@@ -1354,8 +1276,20 @@ STEP_ANSWER_JS_MODULE = r"""
     container.innerHTML=_buildStep0()+_buildStep1()+_buildStep2()+_buildStep3()+_buildStep4();
   }
 
-  /* Called when animation reaches last step */
+  /* Called when the animation reaches its last step (or when the
+     "Step by Step Answer" control-bar button is clicked).
+     v1.2 CHANGE: instead of revealing/scrolling to the old inline
+     scrollable section, route straight into the dedicated in-scene
+     panels -- Scene 6 (Main Formula / The Big Idea) followed by
+     Scene 7 (How We Solve It -- Step by Step), reached via the
+     "How We Solve It ▶" button inside Scene 6. The old scrollable
+     section is kept only as a fallback for templates that don't
+     have Scene 6 / Scene 7 (e.g. legacy or non-Gemini pages). */
   window.showInlineStepByStep=function(){
+    if(typeof window.qanim_showScene6==='function'){
+      window.qanim_showScene6();
+      return;
+    }
     buildInlineSection();
     var sec=_el('qanim-stepbystep-section');
     if(sec){
@@ -5130,28 +5064,13 @@ SVG DESIGN RULES — HIGH-QUALITY LAYERED SVG
 5. LAYER STRUCTURE (strict order, top-to-bottom in source = back-to-front visually):
    <g id="layer-canvas-bg">  — background rect + grid (always visible, opacity:1)
    <rect id="blur-shield" …>  — dimming overlay between bg and components
-   <g class="svg-layer" id="layer-frame" …>   — ONLY the truly static, non-highlightable
-        parts (ground hatching, fixed housing outline, base plate). NOTHING that a step
-        is "about" belongs here.
+   <g class="svg-layer" id="layer-frame" …>   — fixed structure, always visible
    <g class="svg-layer" id="layer-[comp1]" style="opacity:0"> — components in reveal order
    <g class="svg-layer" id="layer-[comp2]" style="opacity:0">
    …
    <g class="svg-layer" id="overlay-step0" style="opacity:0"> — labels/arrows for step 0
    <g class="svg-layer" id="overlay-step1" style="opacity:0"> — labels/arrows for step 1
    …
-
-   HARD RULE — DO NOT COLLAPSE COMPONENTS INTO layer-frame:
-   This is the single most common failure mode and it is NOT ACCEPTABLE. Every
-   mechanical/functional component that a step introduces or highlights (pulley,
-   belt, crank, gear, rod, piston, pipe, spring, wire, arrow, etc.) MUST be its own
-   "layer-<comp>" group starting at opacity:0, revealed by its own entry in each
-   step's layerOpacities. There must be AT LEAST as many "layer-<comp>" groups as
-   there are components mentioned in the scene script, and AT LEAST (n_steps - 1)
-   of them must go from 0 -> 1 across the step sequence (i.e. something new and
-   substantial appears on almost every step, not just text overlays). If everything
-   except labels is dumped into layer-frame at opacity 1 from the start, the
-   animation is broken — the whole diagram appears instantly instead of building up
-   step by step, and the output will be REJECTED.
 6. blur-shield: <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
    Opacity range: 0 (no focus) → 0.38 (focused step) → 0 (final reveal step).
 7. STRUCTURAL COMPONENTS — use metallic fill="url(#steel)", stroke layering, filter="url(#shadow)":
@@ -5261,11 +5180,7 @@ POLISH CHECKLIST (every output must pass)
 ✓ Badges have correct type: cyan=given, orange=motion, green=result
 ✓ All buttons use CSS variables; .btn-primary has gradient + translateY hover
 ✓ ZERO text-overlaps in SVG; all labels inside viewBox
-✓ All component layers start opacity:0 (except layer-frame, which holds ONLY
-  static/fixed background parts — no components, no belts/rods/pulleys/etc.)
-✓ At least (n_steps - 1) distinct "layer-<comp>" groups transition 0 -> 1 opacity
-  across the step sequence — the diagram visibly builds up piece by piece, it does
-  NOT appear fully formed on step 1
+✓ All component layers start opacity:0 (except layer-frame)
 ✓ Final step freezes mechanism at exact solution state + annotation overlay
 
 ════════════════════════════════════════════════════════════
@@ -5294,11 +5209,6 @@ STRUCTURE & LAYOUT:
 SVG CANVAS:
 5. All defs: 4-stop steel gradient, steelHi gradient, glowCyan filter, glowOrange filter, shadow filter, shadowDeep filter, 3 color arrow markers + 1 grey marker for dimensions.
 6. blur-shield rect: fill="#c2d4e8", opacity="0", sits between layer-frame and component layers.
-6b. DO NOT put components (pulleys, belts, cranks, gears, rods, arrows, pipes, etc.) inside
-    layer-frame. layer-frame is background-only. Every component gets its own
-    "layer-<comp>" group starting at opacity:0, and each step's layerOpacities must
-    turn ON at least one new component group so the diagram assembles progressively —
-    never render the full mechanism on step 1.
 7. Component colors MUST be light-theme friendly: structure=#4a6a8a, driver=#2563eb, driven=#0891b2, forces=#d97706, results=#16a34a.
 8. Value callout chips in overlays: rounded rect with rgba fill + centered text, NOT bare text floated in space.
 9. Dimension lines: dashed (#94a3b8), with arrowGrey markers on both ends.
@@ -5345,56 +5255,12 @@ class GeminiAnimationBuilder:
         try:
             raw = cls._call_gemini_large(user_prompt)
             html = cls._extract_html(raw)
-            if not (html and len(html) > 1000):
+            if html and len(html) > 1000:
+                QAnimLogger.ok("AnimationBuilder", f"Animation HTML generated: {len(html):,} chars")
+                return html
+            else:
                 QAnimLogger.warn("AnimationBuilder", f"Short/empty HTML ({len(html)} chars) — trying repair")
                 return cls._repair_or_fallback(question, raw, scene_script)
-
-            QAnimLogger.ok("AnimationBuilder", f"Animation HTML generated: {len(html):,} chars")
-
-            # ── Step-by-step reveal check ──
-            # Catches the case where Gemini ignores the layer-splitting rules and
-            # dumps the whole mechanism into layer-frame at opacity:1, so the
-            # animation "renders directly" instead of building up step by step.
-            check = StepRevealValidator.check(html)
-            if check["ok"]:
-                QAnimLogger.ok("AnimationBuilder",
-                    f"Step-reveal check passed ({check['n_component_layers']} component layer(s), "
-                    f"{check['n_progressive_steps']} progressive step(s))")
-                return html
-
-            QAnimLogger.warn("AnimationBuilder", f"Step-reveal check FAILED: {check['reason']} — regenerating once")
-            corrective_prompt = user_prompt + (
-                "\n\n════════════════════════════════════════════════════════════\n"
-                "REGENERATION NOTICE — PREVIOUS ATTEMPT REJECTED\n"
-                "════════════════════════════════════════════════════════════\n"
-                "Your previous output for this exact request collapsed the mechanism "
-                "into layer-frame (or otherwise kept it static), so the diagram appeared "
-                "fully formed immediately instead of revealing component-by-component. "
-                f"Validator diagnosis: {check['reason']}.\n"
-                "Fix this: give EVERY component (pulley, belt, crank, gear, rod, arrow, "
-                "pipe, etc.) its own <g class=\"svg-layer\" id=\"layer-<comp>\" style=\"opacity:0\"> "
-                "group, and make sure almost every step in stepsData turns a NEW one of "
-                "these groups from 0 to 1 in layerOpacities, so a student watching Next Step "
-                "sees the picture build up piece by piece, not all at once. layer-frame must "
-                "contain ONLY static background (ground/housing), never a movable or "
-                "highlightable component."
-            )
-            try:
-                raw2 = cls._call_gemini_large(corrective_prompt)
-                html2 = cls._extract_html(raw2)
-                if html2 and len(html2) > 1000:
-                    check2 = StepRevealValidator.check(html2)
-                    if check2["ok"]:
-                        QAnimLogger.ok("AnimationBuilder", "Regeneration fixed the step-reveal issue")
-                        return html2
-                    QAnimLogger.warn("AnimationBuilder",
-                        f"Regeneration still failed step-reveal check ({check2['reason']}) — "
-                        "shipping best available version")
-                    return html2
-            except Exception as e:
-                QAnimLogger.warn("AnimationBuilder", f"Corrective regeneration failed: {e} — shipping original")
-
-            return html
         except Exception as e:
             QAnimLogger.error("AnimationBuilder", f"Build failed: {e}")
             return RecoveryEngine.fallback_html(question, f"Animation build error: {e}")
