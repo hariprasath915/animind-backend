@@ -2246,7 +2246,7 @@ _CONTROLS_BAR_DOM = """
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="See the full step-by-step solution">
+  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="See the full step-by-step solution" onclick="if(typeof window.qanim_showScene6==='function'){window.qanim_showScene6();}">
     <span>&#x1F4CB;</span><span class="ctrl-label">Step by Step</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
@@ -4064,12 +4064,6 @@ REQUIRED_COMPONENTS = {
         "dom":  ["tofind-panel", "tofind-backdrop", "tofind-items-container", "tofind-ctrl-btn"],
         "js":   ["qanim-js-tofind"],
     },
-    "StepAnswer": {
-        "data": ["__step_answer_data__"],
-        "css":  ["qanim-stepans-styles"],
-        "dom":  ["qanim-stepbystep-section", "sbs-steps-container"],
-        "js":   ["qanim-js-stepanswer"],
-    },
     "AnswerBox": {
         "data": None,
         "css":  ["qanim-answerbox-styles"],
@@ -4134,7 +4128,7 @@ STRIP_PATTERNS = {
         re.compile(r'<div id="tofind-backdrop"[^>]*>\s*</div>\s*<aside id="tofind-panel".*?</aside>', re.DOTALL),
         re.compile(r'<script[^>]*id=["\']qanim-js-tofind["\'][^>]*>.*?</script>', re.DOTALL),
     ],
-    "StepAnswer": [
+    "_StepAnswerDeprecated": [
         re.compile(r'<script[^>]*id=["\']__step_answer_data__["\'][^>]*>.*?</script>', re.DOTALL),
         re.compile(r'<style[^>]*id=["\']qanim-stepans-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
         re.compile(r'<div id="qanim-stepbystep-section".*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
@@ -4290,7 +4284,12 @@ class PanelInjectionManager:
 
     @classmethod
     def _inject_all(cls, html, ctx):
-        html = inject_step_answer_panel(html, ctx.gemini_sol)
+        # NOTE: inject_step_answer_panel() (the scrollable "Inline Step-by-Step"
+        # section revealed below the fold on the last animation step) is
+        # intentionally NOT called anymore. Step 6 (Main Formula) and Step 7
+        # (Step-by-Step Solving) now handle this as proper in-animation scenes
+        # instead of a scrollable panel — see inject_scene6_big_idea /
+        # inject_scene7_how_we_solve_it below.
         html = inject_notes_system(html)
         html = inject_answer_box_panel(html, ctx.answer_targets)
         html = inject_controls_bar(html)
@@ -4314,7 +4313,6 @@ class PanelInjectionManager:
     def _repair(cls, html, ctx, missing_names, report):
         dispatch = {
             "ToFind":         lambda h: inject_to_find_system(cls._strip(h, "ToFind"), ctx.to_find_targets),
-            "StepAnswer":     lambda h: inject_step_answer_panel(cls._strip(h, "StepAnswer"), ctx.gemini_sol),
             "AnswerBox":      lambda h: inject_answer_box_panel(cls._strip(h, "AnswerBox"), ctx.answer_targets),
             "Notes":          lambda h: inject_notes_system(cls._strip(h, "Notes")),
             "Controls":       lambda h: inject_controls_bar(cls._strip(h, "Controls")),
