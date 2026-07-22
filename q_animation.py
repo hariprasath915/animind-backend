@@ -1903,7 +1903,7 @@ _ANSWER_BOX_DOM = """
     <div id="ab-alldone-card">
       <span class="ab-alldone-emoji">&#x1F389;</span>
       <div class="ab-alldone-title">All answers submitted!</div>
-      <div class="ab-alldone-sub">Great work! You have completed all answers.</div>
+      <div class="ab-alldone-sub">Great work! Open <strong>Step by Step Answer</strong> to review the full solution.</div>
     </div>
   </div>
 </div>
@@ -2244,6 +2244,10 @@ _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
+  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="See the full step-by-step solution">
+    <span>&#x1F4CB;</span><span class="ctrl-label">Step by Step</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="tofind-ctrl-btn" title="What are you asked to find?">
@@ -2594,19 +2598,22 @@ def inject_step_controller(html):
 
 
 # ===========================================================================
-#  MODULE 12.5 — Scene 6: "The Big Idea" injector
-#  Appends a new step to stepsData that shows the main formula/principle
-#  with variable labels and a short info card. Builds an SVG overlay panel
-#  injected into the existing stage SVG, and patches the JS stepsData array.
+#  MODULE 12.5 — Scene 6: "Main Formula" injector
+#  Appends a new overlay panel that shows the governing formula in a boxed
+#  card, with the formula's key symbols broken out into individual labeled
+#  component cards (connected back to the formula with dashed leader lines)
+#  and a highlighted output/result row — matching the reference "Core
+#  Formula" layout exactly (boxed formula -> fan-out variable cards -> unit
+#  callouts -> result box).
 # ===========================================================================
 
 _SCENE6_CSS = """
 <style id="qanim-scene6-styles">
-/* ── Scene 6: The Big Idea ── */
+/* -- Scene 6: Main Formula -- */
 #qanim-scene6-overlay {
   display: none;
   width: 100%;
-  max-width: 900px;
+  max-width: 960px;
   margin: 0 auto;
   box-sizing: border-box;
   padding-bottom: 20px;
@@ -2617,129 +2624,116 @@ _SCENE6_CSS = """
 .s6-card {
   background: #fff;
   border-radius: 18px;
-  box-shadow: 0 4px 32px rgba(8,145,178,.12), 0 1px 4px rgba(0,0,0,.06);
+  box-shadow: 0 4px 32px rgba(37,99,235,.10), 0 1px 4px rgba(0,0,0,.06);
   border: 1px solid #dde8f8;
   overflow: hidden;
   margin-top: 28px;
 }
 .s6-header {
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%);
-  border-bottom: 1px solid #bae6fd;
-  padding: 20px 28px 16px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
+  background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+  border-bottom: 1px solid #e0e7ff;
+  padding: 22px 28px 18px;
+  text-align: center;
 }
-.s6-icon {
-  width: 44px; height: 44px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #0e7490, #0891b2);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px;
-  flex-shrink: 0;
-  box-shadow: 0 3px 10px rgba(8,145,178,.30);
-}
-.s6-header-text h2 {
+.s6-header h2 {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 800;
-  color: #0c4a6e;
-  margin-bottom: 3px;
+  color: #1e1b4b;
 }
-.s6-header-text p {
+.s6-header p {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
   font-size: 12px;
-  color: #0369a1;
-  font-weight: 600;
-  letter-spacing: .3px;
+  color: #4338ca;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  margin-top: 4px;
 }
 .s6-body {
-  padding: 24px 28px 20px;
+  padding: 30px 32px 24px;
 }
-/* Formula display */
 .s6-formula-wrap {
-  background: linear-gradient(135deg, #f8fbff 0%, #f0f6ff 100%);
-  border: 2px solid #93c5fd;
-  border-radius: 14px;
-  padding: 20px 24px;
+  background: #fff;
+  border: 2.5px solid #2563eb;
+  border-radius: 16px;
+  padding: 26px 24px;
   text-align: center;
-  margin-bottom: 20px;
+  margin: 0 auto;
+  max-width: 640px;
+  box-shadow: 0 6px 20px rgba(37,99,235,.10);
   position: relative;
-  overflow: hidden;
-}
-.s6-formula-wrap::before {
-  content: '';
-  position: absolute;
-  top: -20px; right: -20px;
-  width: 90px; height: 90px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(8,145,178,.08), transparent 70%);
-  pointer-events: none;
-}
-.s6-formula-label {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: #0369a1;
-  margin-bottom: 12px;
 }
 .s6-formula-text {
   font-family: 'Courier New', Courier, monospace;
-  font-size: 20px;
+  font-size: 26px;
   font-weight: 800;
   color: #1e293b;
   letter-spacing: .5px;
-  line-height: 1.5;
   word-break: break-word;
 }
-/* Variables grid */
-.s6-vars-label {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  color: #64748b;
-  margin-bottom: 10px;
+.s6-connectors {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  height: 34px;
+  margin: 0 auto;
 }
 .s6-vars-grid {
   display: flex;
+  justify-content: center;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 20px;
+  gap: 16px;
+  margin-bottom: 22px;
 }
-.s6-var-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1.5px solid #e2e8f0;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+.s6-var-box {
+  flex: 1 1 150px;
+  max-width: 190px;
+  background: #fff;
+  border-radius: 12px;
+  border: 2px solid #cbd5e1;
+  padding: 14px 12px;
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(0,0,0,.05);
 }
-.s6-var-chip:nth-child(4n+1) { background:#eff6ff; border-color:#bfdbfe; }
-.s6-var-chip:nth-child(4n+2) { background:#f0fdf4; border-color:#bbf7d0; }
-.s6-var-chip:nth-child(4n+3) { background:#fefce8; border-color:#fde68a; }
-.s6-var-chip:nth-child(4n)   { background:#fdf4ff; border-color:#e9d5ff; }
 .s6-var-symbol {
   font-family: 'Courier New', Courier, monospace;
-  font-size: 14px;
-  font-weight: 800;
-  color: #1e293b;
-}
-.s6-var-arrow {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: 20px;
+  font-weight: 900;
+  margin-bottom: 6px;
 }
 .s6-var-meaning {
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #334155;
+  line-height: 1.35;
+  margin-bottom: 8px;
+  min-height: 30px;
 }
-/* Info card */
+.s6-var-unit {
+  display: inline-block;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 10.5px;
+  font-weight: 800;
+  border-radius: 6px;
+  padding: 2px 9px;
+}
+.s6-output-row {
+  display: flex;
+  justify-content: center;
+  margin: 6px 0 22px;
+}
+.s6-output-box {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  background: #f0fdf4;
+  border: 1.5px solid #86efac;
+  border-radius: 10px;
+  padding: 10px 22px;
+}
 .s6-insight-card {
   background: linear-gradient(135deg, #fffbeb 0%, #fef9c3 100%);
   border: 1.5px solid #fde68a;
@@ -2766,7 +2760,6 @@ _SCENE6_CSS = """
   line-height: 1.7;
   font-weight: 500;
 }
-/* Navigation row */
 .s6-nav-row {
   display: flex;
   justify-content: flex-end;
@@ -2783,19 +2776,18 @@ _SCENE6_DOM_TEMPLATE = """\
 <div id="qanim-scene6-overlay">
   <div class="s6-card">
     <div class="s6-header">
-      <div class="s6-icon">&#x1F4A1;</div>
-      <div class="s6-header-text">
-        <h2>Scene 6: The Big Idea</h2>
-        <p>Core principle &amp; formula that solves this problem</p>
-      </div>
+      <h2>Main Formula</h2>
+      <p>Core Formula</p>
     </div>
     <div class="s6-body">
-      <div class="s6-formula-label">Main Formula / Governing Principle</div>
       <div class="s6-formula-wrap">
         <div class="s6-formula-text" id="s6-formula-text">{formula}</div>
       </div>
-      <div class="s6-vars-label">Variable Key</div>
+      <svg class="s6-connectors" viewBox="0 0 100 34" preserveAspectRatio="none">{connector_svg}</svg>
       <div class="s6-vars-grid" id="s6-vars-grid">{vars_html}</div>
+      <div class="s6-output-row">
+        <div class="s6-output-box" id="s6-output-box">{output_html}</div>
+      </div>
       <div class="s6-insight-card">
         <div class="s6-insight-badge">&#x2728; Why This Works</div>
         <div class="s6-insight-text" id="s6-insight-text">{insight}</div>
@@ -2803,7 +2795,7 @@ _SCENE6_DOM_TEMPLATE = """\
     </div>
     <div class="s6-nav-row">
       <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back</button>
-      <button class="btn-primary" onclick="qanim_goToScene7()" id="s6-next-btn">How We Solve It &#x25B6;</button>
+      <button class="btn-primary" onclick="qanim_goToScene7()" id="s6-next-btn">Step-by-Step Solving &#x25B6;</button>
     </div>
   </div>
 </div>"""
@@ -2814,11 +2806,11 @@ _SCENE6_JS = r"""
   'use strict';
   if(window.__qanimScene6Init)return; window.__qanimScene6Init=true;
 
-  /* ── helpers ── */
+  /* -- helpers -- */
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
 
-  /* ── show / hide ── */
+  /* -- show / hide -- */
   window.qanim_showScene6 = function(){
     var ov=_el('qanim-scene6-overlay');
     if(ov) ov.classList.add('qanim-scene-visible');
@@ -2830,6 +2822,20 @@ _SCENE6_JS = r"""
     }
     /* update the dot bar to show Scene 6 active */
     _syncDots(5); /* 0-based index 5 = scene 6 */
+    /* animate the variable cards in */
+    var cards=document.querySelectorAll('.s6-var-box');
+    for(var i=0;i<cards.length;i++){
+      (function(card,idx){
+        card.style.opacity='0';
+        card.style.transform='translateY(10px)';
+        card.style.transition='none';
+        setTimeout(function(){
+          card.style.transition='opacity .28s ease,transform .28s ease';
+          card.style.opacity='1';
+          card.style.transform='translateY(0)';
+        },80+idx*90);
+      })(cards[i],i);
+    }
   };
 
   window.qanim_goToPrevScene = function(){
@@ -2868,7 +2874,7 @@ _SCENE6_JS = r"""
     if(bar) bar.style.width=Math.round((idx+1)/Math.max(dots.length,1)*100)+'%';
   }
 
-  /* ── wire the "Next Step" button on the last SVG step to show Scene 6 ── */
+  /* -- wire the "Next Step" button on the last SVG step to show Scene 6 -- */
   _onReady(function(){
     /* Intercept the existing nextStep() so after the last SVG step it opens Scene 6 */
     var _origNext=window.nextStep;
@@ -2895,47 +2901,133 @@ _SCENE6_JS = r"""
 </script>
 """
 
+# ---------------------------------------------------------------------------
+# Color palette used for the formula-component cards (border / symbol color,
+# and a matching light background for the unit chip). Cycled in formula
+# order — same visual language as the reference: each symbol gets its own
+# accent color.
+# ---------------------------------------------------------------------------
+_S6_PALETTE = [
+    ("#2563eb", "#eff6ff"),   # blue
+    ("#db2777", "#fdf2f8"),   # pink
+    ("#059669", "#ecfdf5"),   # green
+    ("#d97706", "#fffbeb"),   # amber
+    ("#7c3aed", "#f5f3ff"),   # purple
+    ("#0891b2", "#ecfeff"),   # cyan
+]
 
-def _build_s6_vars_html(gemini_sol, scene_script):
-    """Build variable-key chip HTML from solution / scene data."""
-    var_entries = []
 
-    # Try to pull structured variables from formulas key
+def _extract_formula_symbols(formula_text):
+    """Crude symbol extractor: split the formula on operators/parens, keep
+    alphanumeric (incl. subscript-style) tokens, drop pure numbers, cap at 4
+    boxes to match the reference layout."""
+    if not formula_text:
+        return []
+    text = re.sub(r'[=+\-*/×·()\[\]{}]', ' ', formula_text)
+    tokens = [t.strip() for t in text.split() if t.strip()]
+    seen, out = set(), []
+    for t in tokens:
+        if re.fullmatch(r'[\d.]+', t):
+            continue
+        key = t.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+    return out[:4]
+
+
+def _lookup_meaning_and_unit(symbol, gemini_sol, glossary_terms):
+    """Best-effort lookup of a formula symbol's plain-English meaning and
+    unit, using glossary terms first, then the given_data list."""
+    sym_l = symbol.lower()
+    for t in glossary_terms or []:
+        term = str(t.get("term", ""))
+        if term.lower() == sym_l or (len(sym_l) > 1 and sym_l in term.lower()):
+            meaning = t.get("definition") or t.get("meaning") or term
+            return str(meaning), ""
+    for g in gemini_sol.get("given_data") or []:
+        g_str = str(g)
+        m = re.search(re.escape(symbol) + r'\s*=\s*[\d.\-eE]+\s*([A-Za-zΩ°%/²³·µ]*)', g_str)
+        if m:
+            label = g_str.split(":")[0].strip() if ":" in g_str else symbol
+            return label, (m.group(1) or "")
+    return symbol, ""
+
+
+def _build_s6_formula_components(gemini_sol, scene_script, glossary_terms):
+    """Return (formula_text, [ {symbol, meaning, unit, color, bg}, ... ])."""
+    formula_text = ""
     formulas = gemini_sol.get("formulas") or []
-    for f in formulas[:1]:          # use first formula if available
-        text = f.get("text", "") if isinstance(f, dict) else str(f)
-        if text:
-            var_entries.append(("Formula", text))
+    for f in formulas[:1]:
+        formula_text = f.get("text", "") if isinstance(f, dict) else str(f)
+    if not formula_text:
+        for s in (gemini_sol.get("steps") or []):
+            s_str = str(s)
+            if "=" in s_str and len(s_str) < 120:
+                formula_text = s_str
+                break
+    if not formula_text:
+        formula_text = scene_script.get("key_insight") or "See solution steps below"
 
-    # From given_data if available
-    given = gemini_sol.get("given_data") or []
-    for g in given[:6]:
-        var_entries.append((str(g).split("=")[0].strip() if "=" in str(g) else "Given", str(g)))
+    symbols = _extract_formula_symbols(formula_text)
+    boxes = []
+    for i, sym in enumerate(symbols):
+        meaning, unit = _lookup_meaning_and_unit(sym, gemini_sol, glossary_terms)
+        color, bg = _S6_PALETTE[i % len(_S6_PALETTE)]
+        boxes.append({"symbol": sym, "meaning": meaning, "unit": unit, "color": color, "bg": bg})
+    return formula_text, boxes
 
-    # Fallback: use svg_components labels
-    if not var_entries:
-        components = scene_script.get("svg_components") or {}
-        for comp_id, comp in list(components.items())[:5]:
-            for lbl in (comp.get("labels") or [])[:1]:
-                var_entries.append((comp_id[:8], lbl))
 
-    chips = []
-    for sym, meaning in var_entries[:8]:
-        sym_e    = html_module.escape(str(sym)[:20])
-        mean_e   = html_module.escape(str(meaning)[:60])
-        chips.append(
-            '<div class="s6-var-chip">'
-            '<span class="s6-var-symbol">' + sym_e + '</span>'
-            '<span class="s6-var-arrow">→</span>'
-            '<span class="s6-var-meaning">' + mean_e + '</span>'
+def _build_s6_vars_html(boxes):
+    if not boxes:
+        return (
+            '<div class="s6-var-box"><div class="s6-var-meaning">'
+            'See question for variables</div></div>'
+        )
+    parts = []
+    for b in boxes:
+        sym_e   = html_module.escape(str(b["symbol"])[:14])
+        mean_e  = html_module.escape(str(b["meaning"])[:60])
+        unit_e  = html_module.escape(str(b["unit"])[:16]) or "&mdash;"
+        parts.append(
+            '<div class="s6-var-box" style="border-color:' + b["color"] + '">'
+            '<div class="s6-var-symbol" style="color:' + b["color"] + '">' + sym_e + '</div>'
+            '<div class="s6-var-meaning">' + mean_e + '</div>'
+            '<div class="s6-var-unit" style="color:' + b["color"] + ';background:' + b["bg"] + '">'
+            + unit_e + '</div>'
             '</div>'
         )
-    return "\n".join(chips) if chips else '<div class="s6-var-chip"><span class="s6-var-meaning">See question for variables</span></div>'
+    return "\n".join(parts)
 
 
-def inject_scene6_big_idea(html, gemini_sol, scene_script):
+def _build_s6_connector_svg(n):
+    """Dashed leader lines fanning from the bottom-center of the formula box
+    down to each variable card below it (percentage-based viewBox so it
+    scales with however many symbols were found)."""
+    n = max(n, 1)
+    lines = []
+    for i in range(n):
+        x = (i + 0.5) / n * 100
+        lines.append(
+            '<line x1="50" y1="0" x2="%.1f" y2="32" stroke="#94a3b8" '
+            'stroke-width="1.4" stroke-dasharray="3,3"/>' % x
+        )
+    return "\n".join(lines)
+
+
+def _build_s6_output_html(gemini_sol):
+    final_answer = str(gemini_sol.get("final_answer") or "").strip()
+    m = re.search(r'([A-Za-zΩ°%/²³·µ]+(?:/[A-Za-z²³·]+)*)\s*$', final_answer)
+    unit = m.group(1) if (m and 1 <= len(m.group(1)) <= 12) else ""
+    if unit:
+        return 'Result &#8594; ' + html_module.escape(unit)
+    return 'Result &#8594; Final Answer'
+
+
+def inject_scene6_big_idea(html, gemini_sol, scene_script, glossary_terms=None):
     """
-    Inject Scene 6 ("The Big Idea") as a standalone overlay panel that
+    Inject Scene 6 ("Main Formula") as a standalone overlay panel that
     appears AFTER the last SVG animation step when the user clicks Next.
 
     This function:
@@ -2943,21 +3035,7 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
       2. Injects the DOM panel right after <body>
       3. Injects the JS module (which patches nextStep/resetAnim) before </body>
     """
-    # Extract formula — try structured keys first, then fallback
-    formula_raw = ""
-    formulas = gemini_sol.get("formulas") or []
-    for f in formulas[:1]:
-        formula_raw = f.get("text", "") if isinstance(f, dict) else str(f)
-    if not formula_raw:
-        sol_steps = gemini_sol.get("steps") or []
-        # Look for a step that looks like a formula (contains = or variables)
-        for s in sol_steps:
-            s_str = str(s)
-            if "=" in s_str and len(s_str) < 120:
-                formula_raw = s_str
-                break
-    if not formula_raw:
-        formula_raw = scene_script.get("key_insight") or "See solution steps below"
+    formula_text, boxes = _build_s6_formula_components(gemini_sol, scene_script, glossary_terms or [])
 
     insight = (
         scene_script.get("key_insight")
@@ -2965,11 +3043,11 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
         or "This formula is the governing principle. Identify what is given, plug in the values, and compute the result systematically."
     )
 
-    vars_html = _build_s6_vars_html(gemini_sol, scene_script)
-
     dom = _SCENE6_DOM_TEMPLATE.format(
-        formula=html_module.escape(str(formula_raw)[:300]),
-        vars_html=vars_html,
+        formula=html_module.escape(str(formula_text)[:200]),
+        connector_svg=_build_s6_connector_svg(len(boxes)),
+        vars_html=_build_s6_vars_html(boxes),
+        output_html=_build_s6_output_html(gemini_sol),
         insight=html_module.escape(str(insight)[:400]),
     )
 
@@ -2998,24 +3076,27 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
     except Exception as e:
         QAnimLogger.warn("Scene6Injector", f"JS failed: {e}")
 
-    QAnimLogger.ok("Scene6Injector", "Scene 6 (The Big Idea) injected")
+    QAnimLogger.ok("Scene6Injector", "Scene 6 (Main Formula) injected")
     return html
 
 
 # ===========================================================================
-#  MODULE 12.6 — Scene 7: "How We Solve It — Step by Step" injector
-#  Appends a new overlay panel showing the solution method in 5–10
-#  numbered steps with descriptions and equations. Does NOT reveal the
-#  final numeric answer (that stays in the Answer Box panel).
+#  MODULE 12.6 — Scene 7: "Step-by-Step Solving" injector
+#  Appends a new overlay panel with the reference two-column layout: a
+#  left-hand visual recap of the given quantities (labeled colored blocks +
+#  a "Q/A ->" style flow arrow) and a right-hand info column with a "Given
+#  Parameters" bullet list followed by a numbered "Solution Approach" list.
+#  Does NOT reveal the final numeric answer (that stays in the Answer Box
+#  panel) — matches the reference's "See Final Answer panel..." footnote.
 # ===========================================================================
 
 _SCENE7_CSS = """
 <style id="qanim-scene7-styles">
-/* ── Scene 7: How We Solve It ── */
+/* -- Scene 7: Step-by-Step Solving -- */
 #qanim-scene7-overlay {
   display: none;
   width: 100%;
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto;
   box-sizing: border-box;
   padding-bottom: 32px;
@@ -3035,140 +3116,162 @@ _SCENE7_CSS = """
   background: linear-gradient(135deg, #f8fafc 0%, #f0f4ff 100%);
   border-bottom: 1px solid #e0e7ff;
   padding: 20px 28px 16px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
 }
-.s7-icon {
-  width: 44px; height: 44px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #4338ca, #7c3aed);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px;
-  flex-shrink: 0;
-  box-shadow: 0 3px 10px rgba(124,58,237,.30);
-}
-.s7-header-text h2 {
+.s7-header h2 {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
   font-size: 18px;
   font-weight: 800;
   color: #1e1b4b;
-  margin-bottom: 3px;
 }
-.s7-header-text p {
+.s7-header p {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
   font-size: 12px;
   color: #4338ca;
   font-weight: 600;
-  letter-spacing: .3px;
+  margin-top: 2px;
 }
-/* Steps container */
-.s7-steps-wrap {
-  padding: 24px 28px 8px;
+.s7-split {
+  display: flex;
+  align-items: stretch;
+}
+.s7-visual-panel {
+  flex: 0 0 38%;
+  max-width: 38%;
+  background: #f8fafc;
+  border-right: 1px solid #eef2f7;
+  padding: 26px 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-/* Individual method step */
-.s7-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 0;
-  border-radius: 14px;
-  border: 1.5px solid #e2e8f0;
-  overflow: hidden;
-  background: #fff;
-  transition: box-shadow .2s ease;
-}
-.s7-step:hover { box-shadow: 0 2px 12px rgba(37,99,235,.10); }
-.s7-step-num {
-  min-width: 52px;
-  display: flex;
   align-items: center;
   justify-content: center;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 20px;
-  font-weight: 900;
-  padding: 18px 0;
-  flex-shrink: 0;
+  gap: 14px;
 }
-.s7-step-body {
-  flex: 1;
-  padding: 16px 20px;
+.s7-visual-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
 }
-.s7-step-title {
+.s7-visual-block-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.s7-visual-block {
+  width: 46px;
+  border-radius: 6px 6px 0 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  color: #fff;
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13.5px;
+  font-size: 9.5px;
   font-weight: 800;
-  margin-bottom: 5px;
-  line-height: 1.4;
+  padding-top: 8px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
 }
-.s7-step-desc {
+.s7-visual-caption {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px;
+  font-size: 10.5px;
+  font-weight: 700;
   color: #475569;
-  line-height: 1.65;
-  margin-bottom: 0;
-}
-.s7-step-eq {
-  display: inline-block;
-  margin-top: 8px;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 13px;
-  font-weight: 700;
-  color: #1e293b;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  border-radius: 7px;
-  padding: 5px 12px;
-  word-break: break-word;
-}
-/* Step color themes — 10 variants cycling */
-.s7-step:nth-child(10n+1)  { border-color:#bfdbfe; background:#f8fbff; }
-.s7-step:nth-child(10n+1) .s7-step-num  { background:#dbeafe; color:#1d4ed8; }
-.s7-step:nth-child(10n+1) .s7-step-title { color:#1d4ed8; }
-.s7-step:nth-child(10n+2)  { border-color:#c7d2fe; background:#f9f8ff; }
-.s7-step:nth-child(10n+2) .s7-step-num  { background:#e0e7ff; color:#4338ca; }
-.s7-step:nth-child(10n+2) .s7-step-title { color:#4338ca; }
-.s7-step:nth-child(10n+3)  { border-color:#a7f3d0; background:#f8fffc; }
-.s7-step:nth-child(10n+3) .s7-step-num  { background:#d1fae5; color:#15803d; }
-.s7-step:nth-child(10n+3) .s7-step-title { color:#15803d; }
-.s7-step:nth-child(10n+4)  { border-color:#fca5a5; background:#fff8f8; }
-.s7-step:nth-child(10n+4) .s7-step-num  { background:#fee2e2; color:#dc2626; }
-.s7-step:nth-child(10n+4) .s7-step-title { color:#dc2626; }
-.s7-step:nth-child(10n+5)  { border-color:#fde68a; background:#fffdf0; }
-.s7-step:nth-child(10n+5) .s7-step-num  { background:#fef9c3; color:#b45309; }
-.s7-step:nth-child(10n+5) .s7-step-title { color:#b45309; }
-.s7-step:nth-child(10n+6)  { border-color:#99f6e4; background:#f0fdfa; }
-.s7-step:nth-child(10n+6) .s7-step-num  { background:#ccfbf1; color:#0f766e; }
-.s7-step:nth-child(10n+6) .s7-step-title { color:#0f766e; }
-.s7-step:nth-child(10n+7)  { border-color:#e9d5ff; background:#fdf4ff; }
-.s7-step:nth-child(10n+7) .s7-step-num  { background:#ede9fe; color:#7c3aed; }
-.s7-step:nth-child(10n+7) .s7-step-title { color:#7c3aed; }
-.s7-step:nth-child(10n+8)  { border-color:#fed7aa; background:#fff7ed; }
-.s7-step:nth-child(10n+8) .s7-step-num  { background:#ffedd5; color:#c2410c; }
-.s7-step:nth-child(10n+8) .s7-step-title { color:#c2410c; }
-.s7-step:nth-child(10n+9)  { border-color:#bfdbfe; background:#eff6ff; }
-.s7-step:nth-child(10n+9) .s7-step-num  { background:#dbeafe; color:#1e40af; }
-.s7-step:nth-child(10n+9) .s7-step-title { color:#1e40af; }
-.s7-step:nth-child(10n+10) { border-color:#bbf7d0; background:#f0fdf4; }
-.s7-step:nth-child(10n+10) .s7-step-num  { background:#dcfce7; color:#166534; }
-.s7-step:nth-child(10n+10) .s7-step-title { color:#166534; }
-/* CTA bar */
-.s7-cta-bar {
-  margin: 0 28px 0;
-  padding: 14px 20px;
-  border-radius: 12px;
-  background: #eff6ff;
-  border: 2px solid #2563eb;
-  color: #1d4ed8;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13.5px;
-  font-weight: 700;
   text-align: center;
+}
+.s7-visual-arrow {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #d97706;
+  text-align: center;
+}
+.s7-info-panel {
+  flex: 1;
+  padding: 24px 28px;
+  min-width: 0;
+}
+.s7-section-title {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  color: #1e1b4b;
+  margin-bottom: 10px;
+}
+.s7-given-list {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+}
+.s7-given-list li {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  color: #334155;
+  padding: 4px 0 4px 16px;
+  position: relative;
   line-height: 1.5;
 }
-/* Navigation row */
+.s7-given-list li::before {
+  content: '\\2022';
+  position: absolute;
+  left: 0;
+  color: #2563eb;
+  font-weight: 900;
+}
+.s7-divider {
+  border: none;
+  border-top: 1px solid #eef2f7;
+  margin: 4px 0 18px;
+}
+.s7-approach-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.s7-approach-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 7px 0;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.55;
+  opacity: 1;
+  transform: none;
+}
+.s7-approach-num {
+  flex-shrink: 0;
+  font-weight: 800;
+  color: #2563eb;
+  font-size: 14px;
+}
+.s7-approach-body { min-width: 0; }
+.s7-approach-eq {
+  display: inline-block;
+  margin-top: 3px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12.5px;
+  color: #0f172a;
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.s7-note {
+  margin-top: 16px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px;
+  color: #7c3aed;
+  font-weight: 600;
+}
+.s7-cta-bar {
+  background: #eff6ff;
+  border-top: 1px solid #dbeafe;
+  padding: 12px 28px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12.5px;
+  color: #1e3a8a;
+  font-weight: 600;
+}
 .s7-nav-row {
   display: flex;
   justify-content: space-between;
@@ -3177,7 +3280,10 @@ _SCENE7_CSS = """
   padding: 16px 28px 24px;
   border-top: 1px solid #f1f5f9;
   background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
-  margin-top: 20px;
+}
+@media (max-width: 720px) {
+  .s7-split { flex-direction: column; }
+  .s7-visual-panel { max-width: 100%; flex: none; border-right: none; border-bottom: 1px solid #eef2f7; }
 }
 </style>
 """
@@ -3186,20 +3292,25 @@ _SCENE7_DOM_TEMPLATE = """\
 <div id="qanim-scene7-overlay">
   <div class="s7-card">
     <div class="s7-header">
-      <div class="s7-icon">&#x1F4CB;</div>
-      <div class="s7-header-text">
-        <h2>Scene 7: How We Solve It</h2>
-        <p>Step-by-step solution method</p>
+      <h2>Step-by-Step Solving</h2>
+      <p>How to work through this problem, one step at a time</p>
+    </div>
+    <div class="s7-split">
+      <div class="s7-visual-panel" id="s7-visual-panel">{visual_html}</div>
+      <div class="s7-info-panel">
+        <div class="s7-section-title">Given Parameters</div>
+        <ul class="s7-given-list" id="s7-given-list">{given_html}</ul>
+        <hr class="s7-divider"/>
+        <div class="s7-section-title">Solution Approach</div>
+        <ol class="s7-approach-list" id="s7-steps-wrap">{steps_html}</ol>
+        <div class="s7-note">See Final Answer panel for computed values</div>
       </div>
     </div>
-    <div class="s7-steps-wrap" id="s7-steps-wrap">
-{steps_html}
-    </div>
-    <div class="s7-cta-bar" style="margin-top:20px;">
+    <div class="s7-cta-bar">
       &#x1F4A1; Try it yourself! Use the <strong>Answer Box</strong> to check your final answer.
     </div>
     <div class="s7-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to The Big Idea</button>
+      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Main Formula</button>
       <button class="btn-primary" onclick="qanim_goToPrevScene()">&#x21BA; Back to Animation</button>
     </div>
   </div>
@@ -3220,19 +3331,19 @@ _SCENE7_JS = r"""
     var ov6=_el('qanim-scene6-overlay');
     if(ov6) ov6.classList.remove('qanim-scene-visible');
     _syncDots(6); /* 0-based index 6 = scene 7 */
-    /* Animate step cards in */
-    var cards=document.querySelectorAll('.s7-step');
-    for(var i=0;i<cards.length;i++){
-      (function(card,idx){
-        card.style.opacity='0';
-        card.style.transform='translateY(14px)';
-        card.style.transition='none';
+    /* Animate step rows in */
+    var rows=document.querySelectorAll('.s7-approach-item');
+    for(var i=0;i<rows.length;i++){
+      (function(row,idx){
+        row.style.opacity='0';
+        row.style.transform='translateY(10px)';
+        row.style.transition='none';
         setTimeout(function(){
-          card.style.transition='opacity .28s ease,transform .28s ease';
-          card.style.opacity='1';
-          card.style.transform='translateY(0)';
+          row.style.transition='opacity .26s ease,transform .26s ease';
+          row.style.opacity='1';
+          row.style.transform='translateY(0)';
         },60+idx*70);
-      })(cards[i],i);
+      })(rows[i],i);
     }
   };
 
@@ -3258,12 +3369,59 @@ _SCENE7_JS = r"""
 </script>
 """
 
+_S7_BLOCK_COLORS = ["#ef4444", "#3b82f6", "#94a3b8", "#22c55e", "#f59e0b"]
+
+
+def _build_s7_given_html(gemini_sol):
+    """Given Parameters bullet list — rendered straight from the extracted
+    given_data (already 'Label: sym = value unit' strings), same as the
+    reference's plain bullet list."""
+    given = gemini_sol.get("given_data") or []
+    if not given:
+        return '<li>See question for given values</li>'
+    parts = []
+    for g in given[:10]:
+        parts.append('<li>' + html_module.escape(str(g)[:140]) + '</li>')
+    return "\n".join(parts)
+
+
+def _build_s7_visual_html(gemini_sol):
+    """Left-hand recap diagram: one labeled colored block per given-data
+    entry (capped at 3, like the reference's BRICK / INS. layers) plus a
+    'Q/A ->' style flow arrow, so the panel still reads as a compact visual
+    summary of the setup even for topics we can't hand-draw generically."""
+    given = gemini_sol.get("given_data") or []
+    entries = []
+    for g in given[:3]:
+        g_str = str(g)
+        label = (g_str.split(":")[0] if ":" in g_str else g_str.split(",")[0]).strip()
+        m = re.search(r'([A-Za-z_][A-Za-z0-9_]{0,5})\s*=\s*([\d.]+)', g_str)
+        tag = (m.group(1) + "=" + m.group(2)) if m else ""
+        entries.append((label[:12] or "Given", tag))
+    if not entries:
+        entries = [("Given", "")]
+
+    blocks = []
+    for i, (label, tag) in enumerate(entries):
+        c = _S7_BLOCK_COLORS[i % len(_S7_BLOCK_COLORS)]
+        blocks.append(
+            '<div class="s7-visual-block-col">'
+            '<div class="s7-visual-block" style="height:' + str(90 + i * 10) + 'px;background:' + c + '">'
+            + html_module.escape(label.upper()) + '</div>'
+            '<div class="s7-visual-caption">' + html_module.escape(tag) + '</div>'
+            '</div>'
+        )
+    row = '<div class="s7-visual-row">' + "".join(blocks) + '</div>'
+    arrow = '<div class="s7-visual-arrow">Q/A &#8594;</div>'
+    return row + arrow
+
 
 def _build_s7_steps_html(gemini_sol, scene_script):
     """
-    Build numbered step cards for Scene 7 from the solution data.
-    Steps are derived from the solution_steps / steps in gemini_sol.
-    Does NOT include the final numeric answer value — keeps method only.
+    Build the numbered "Solution Approach" list from the solution data,
+    matching the reference's circled-number rows (formula step title +
+    optional inline equation). Does NOT include the final numeric answer
+    value — keeps method only.
     """
     raw_steps = []
 
@@ -3283,7 +3441,6 @@ def _build_s7_steps_html(gemini_sol, scene_script):
         flat = gemini_sol.get("steps") or scene_script.get("solution_steps") or []
         for s in flat:
             s_str = str(s).strip()
-            # Split "Step N: title — equation" pattern if present
             m = re.match(r"^(?:Step\s*\d+[:\.]?\s*)?(.+?)(?:\s*[—:]\s*(.+))?$", s_str, re.IGNORECASE)
             if m:
                 title = m.group(1).strip() if m.group(1) else ""
@@ -3301,61 +3458,57 @@ def _build_s7_steps_html(gemini_sol, scene_script):
                 desc  = step.get("description", "")
                 raw_steps.append({"title": str(title)[:80], "eq": "", "desc": str(desc)[:200]})
 
-    # Cap at 10 steps; remove any step that reveals the final numeric answer
+    # Cap at 10 steps (reference-style circled numbers go up to (10));
+    # remove any step that reveals the final numeric answer
     final_ans = str(gemini_sol.get("final_answer") or "").strip()
     filtered  = []
     for s in raw_steps[:10]:
-        # Skip steps whose equation IS essentially the final answer (exact match)
         if final_ans and s.get("eq", "").strip() == final_ans:
             continue
         filtered.append(s)
 
     if not filtered:
         filtered = [
-            {"title": "Identify given values",      "eq": "",  "desc": "List all known quantities and their units."},
-            {"title": "State what to find",          "eq": "",  "desc": "Clearly define the unknown quantity."},
-            {"title": "Select the governing formula","eq": "",  "desc": "Choose the applicable law or equation."},
-            {"title": "Substitute values",           "eq": "",  "desc": "Plug the known values into the formula."},
-            {"title": "Simplify and solve",          "eq": "",  "desc": "Carry out the arithmetic step by step."},
+            {"title": "Identify given values",       "eq": "", "desc": ""},
+            {"title": "State what to find",          "eq": "", "desc": ""},
+            {"title": "Select the governing formula","eq": "", "desc": ""},
+            {"title": "Substitute values",            "eq": "", "desc": ""},
+            {"title": "Simplify and solve",           "eq": "", "desc": ""},
         ]
 
+    circled = ["\u2460","\u2461","\u2462","\u2463","\u2464","\u2465","\u2466","\u2467","\u2468","\u2469"]
     parts = []
-    for i, step in enumerate(filtered, start=1):
-        title_e = html_module.escape(str(step.get("title") or f"Step {i}")[:80])
-        desc_e  = html_module.escape(str(step.get("desc") or "")[:300])
+    for i, step in enumerate(filtered):
+        num = circled[i] if i < len(circled) else str(i + 1) + "."
+        title_e = html_module.escape(str(step.get("title") or f"Step {i+1}")[:90])
+        desc_e  = html_module.escape(str(step.get("desc") or "")[:200])
         eq_raw  = str(step.get("eq") or "").strip()
-        eq_html = (
-            '<div class="s7-step-eq">' + html_module.escape(eq_raw[:150]) + '</div>'
-            if eq_raw else ""
-        )
-        desc_html = (
-            '<div class="s7-step-desc">' + desc_e + '</div>' if desc_e else ""
-        )
+        text_e  = title_e + ((": " + desc_e) if desc_e and desc_e.lower() not in title_e.lower() else "")
+        eq_html = ('<span class="s7-approach-eq">' + html_module.escape(eq_raw[:150]) + '</span>') if eq_raw else ""
         parts.append(
-            '<div class="s7-step">'
-            '<div class="s7-step-num">' + str(i) + '</div>'
-            '<div class="s7-step-body">'
-            '<div class="s7-step-title">' + title_e + '</div>'
-            + desc_html + eq_html +
-            '</div></div>'
+            '<li class="s7-approach-item">'
+            '<span class="s7-approach-num">' + num + '</span>'
+            '<span class="s7-approach-body">' + text_e + (' ' + eq_html if eq_html else '') + '</span>'
+            '</li>'
         )
     return "\n".join(parts)
 
 
 def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
     """
-    Inject Scene 7 ("How We Solve It — Step by Step") as a standalone
-    overlay panel that appears when the user clicks "How We Solve It"
-    on Scene 6.
+    Inject Scene 7 ("Step-by-Step Solving") as a standalone overlay panel
+    that appears when the user clicks "Step-by-Step Solving" on Scene 6.
 
     This function:
       1. Injects CSS into <head>
       2. Injects the DOM panel right after <body>
       3. Injects the JS module before </body>
     """
-    steps_html = _build_s7_steps_html(gemini_sol, scene_script)
-
-    dom = _SCENE7_DOM_TEMPLATE.format(steps_html=steps_html)
+    dom = _SCENE7_DOM_TEMPLATE.format(
+        visual_html=_build_s7_visual_html(gemini_sol),
+        given_html=_build_s7_given_html(gemini_sol),
+        steps_html=_build_s7_steps_html(gemini_sol, scene_script),
+    )
 
     # 1. CSS
     try:
@@ -3382,8 +3535,9 @@ def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
     except Exception as e:
         QAnimLogger.warn("Scene7Injector", f"JS failed: {e}")
 
-    QAnimLogger.ok("Scene7Injector", f"Scene 7 (How We Solve It) injected ({len(steps_html)} chars of steps)")
+    QAnimLogger.ok("Scene7Injector", "Scene 7 (Step-by-Step Solving) injected")
     return html
+
 
 
 # ===========================================================================
@@ -3620,7 +3774,12 @@ REQUIRED_COMPONENTS = {
         "dom":  ["tofind-panel", "tofind-backdrop", "tofind-items-container", "tofind-ctrl-btn"],
         "js":   ["qanim-js-tofind"],
     },
-
+    "StepAnswer": {
+        "data": ["__step_answer_data__"],
+        "css":  ["qanim-stepans-styles"],
+        "dom":  ["qanim-stepbystep-section", "sbs-steps-container"],
+        "js":   ["qanim-js-stepanswer"],
+    },
     "AnswerBox": {
         "data": None,
         "css":  ["qanim-answerbox-styles"],
@@ -3636,7 +3795,7 @@ REQUIRED_COMPONENTS = {
     "Controls": {
         "data": None,
         "css":  ["qanim-controls-bar-styles"],
-        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn"],
+        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn", "stepans-ctrl-btn"],
         "js":   None,
     },
     "PreviousStep": {
@@ -3685,7 +3844,13 @@ STRIP_PATTERNS = {
         re.compile(r'<div id="tofind-backdrop"[^>]*>\s*</div>\s*<aside id="tofind-panel".*?</aside>', re.DOTALL),
         re.compile(r'<script[^>]*id=["\']qanim-js-tofind["\'][^>]*>.*?</script>', re.DOTALL),
     ],
-
+    "StepAnswer": [
+        re.compile(r'<script[^>]*id=["\']__step_answer_data__["\'][^>]*>.*?</script>', re.DOTALL),
+        re.compile(r'<style[^>]*id=["\']qanim-stepans-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="qanim-stepbystep-section".*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-stepanswer["\'][^>]*>.*?</script>', re.DOTALL),
+        re.compile(r'<script id="qanim-laststep-patch">.*?</script>', re.DOTALL),
+    ],
     "AnswerBox": [
         re.compile(r'<style[^>]*id=["\']qanim-answerbox-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
         re.compile(r'<div id="answerbox-backdrop"[^>]*>.*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
@@ -3835,6 +4000,7 @@ class PanelInjectionManager:
 
     @classmethod
     def _inject_all(cls, html, ctx):
+        html = inject_step_answer_panel(html, ctx.gemini_sol)
         html = inject_notes_system(html)
         html = inject_answer_box_panel(html, ctx.answer_targets)
         html = inject_controls_bar(html)
@@ -3844,7 +4010,7 @@ class PanelInjectionManager:
         html = inject_nav_patch_and_scene_desc(html)
         html = inject_step_controller(html)
         # Scene 6 & 7 — appended AFTER the core panels so they land last in <body>
-        html = inject_scene6_big_idea(html, ctx.gemini_sol, ctx.scene_script)
+        html = inject_scene6_big_idea(html, ctx.gemini_sol, ctx.scene_script, ctx.glossary_terms)
         html = inject_scene7_how_we_solve_it(html, ctx.gemini_sol, ctx.scene_script)
         return html
 
@@ -3858,6 +4024,7 @@ class PanelInjectionManager:
     def _repair(cls, html, ctx, missing_names, report):
         dispatch = {
             "ToFind":         lambda h: inject_to_find_system(cls._strip(h, "ToFind"), ctx.to_find_targets),
+            "StepAnswer":     lambda h: inject_step_answer_panel(cls._strip(h, "StepAnswer"), ctx.gemini_sol),
             "AnswerBox":      lambda h: inject_answer_box_panel(cls._strip(h, "AnswerBox"), ctx.answer_targets),
             "Notes":          lambda h: inject_notes_system(cls._strip(h, "Notes")),
             "Controls":       lambda h: inject_controls_bar(cls._strip(h, "Controls")),
@@ -3865,7 +4032,7 @@ class PanelInjectionManager:
             "Glossary":       lambda h: inject_glossary_panel(cls._strip(h, "Glossary"), ctx.glossary_terms),
             "Navigation":     lambda h: inject_nav_patch_and_scene_desc(cls._strip(h, "Navigation")),
             "StepController": lambda h: inject_step_controller(cls._strip(h, "StepController")),
-            "Scene6":         lambda h: inject_scene6_big_idea(cls._strip(h, "Scene6"), ctx.gemini_sol, ctx.scene_script),
+            "Scene6":         lambda h: inject_scene6_big_idea(cls._strip(h, "Scene6"), ctx.gemini_sol, ctx.scene_script, ctx.glossary_terms),
             "Scene7":         lambda h: inject_scene7_how_we_solve_it(cls._strip(h, "Scene7"), ctx.gemini_sol, ctx.scene_script),
         }
         for name in missing_names:
