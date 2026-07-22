@@ -1903,7 +1903,7 @@ _ANSWER_BOX_DOM = """
     <div id="ab-alldone-card">
       <span class="ab-alldone-emoji">&#x1F389;</span>
       <div class="ab-alldone-title">All answers submitted!</div>
-      <div class="ab-alldone-sub">Great work! Open <strong>Step by Step Answer</strong> to review the full solution.</div>
+      <div class="ab-alldone-sub">Great work! You have completed all answers.</div>
     </div>
   </div>
 </div>
@@ -2244,10 +2244,6 @@ _CONTROLS_BAR_DOM = """
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
-  </button>
-  <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="See the full step-by-step solution">
-    <span>&#x1F4CB;</span><span class="ctrl-label">Step by Step</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="tofind-ctrl-btn" title="What are you asked to find?">
@@ -2598,6 +2594,799 @@ def inject_step_controller(html):
 
 
 # ===========================================================================
+#  MODULE 12.5 — Scene 6: "The Big Idea" injector
+#  Appends a new step to stepsData that shows the main formula/principle
+#  with variable labels and a short info card. Builds an SVG overlay panel
+#  injected into the existing stage SVG, and patches the JS stepsData array.
+# ===========================================================================
+
+_SCENE6_CSS = """
+<style id="qanim-scene6-styles">
+/* ── Scene 6: The Big Idea ── */
+#qanim-scene6-overlay {
+  display: none;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding-bottom: 20px;
+}
+#qanim-scene6-overlay.qanim-scene-visible {
+  display: block !important;
+}
+.s6-card {
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 4px 32px rgba(8,145,178,.12), 0 1px 4px rgba(0,0,0,.06);
+  border: 1px solid #dde8f8;
+  overflow: hidden;
+  margin-top: 28px;
+}
+.s6-header {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%);
+  border-bottom: 1px solid #bae6fd;
+  padding: 20px 28px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.s6-icon {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #0e7490, #0891b2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+  box-shadow: 0 3px 10px rgba(8,145,178,.30);
+}
+.s6-header-text h2 {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  color: #0c4a6e;
+  margin-bottom: 3px;
+}
+.s6-header-text p {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px;
+  color: #0369a1;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+.s6-body {
+  padding: 24px 28px 20px;
+}
+/* Formula display */
+.s6-formula-wrap {
+  background: linear-gradient(135deg, #f8fbff 0%, #f0f6ff 100%);
+  border: 2px solid #93c5fd;
+  border-radius: 14px;
+  padding: 20px 24px;
+  text-align: center;
+  margin-bottom: 20px;
+  position: relative;
+  overflow: hidden;
+}
+.s6-formula-wrap::before {
+  content: '';
+  position: absolute;
+  top: -20px; right: -20px;
+  width: 90px; height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(8,145,178,.08), transparent 70%);
+  pointer-events: none;
+}
+.s6-formula-label {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #0369a1;
+  margin-bottom: 12px;
+}
+.s6-formula-text {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 20px;
+  font-weight: 800;
+  color: #1e293b;
+  letter-spacing: .5px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+/* Variables grid */
+.s6-vars-label {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #64748b;
+  margin-bottom: 10px;
+}
+.s6-vars-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.s6-var-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+}
+.s6-var-chip:nth-child(4n+1) { background:#eff6ff; border-color:#bfdbfe; }
+.s6-var-chip:nth-child(4n+2) { background:#f0fdf4; border-color:#bbf7d0; }
+.s6-var-chip:nth-child(4n+3) { background:#fefce8; border-color:#fde68a; }
+.s6-var-chip:nth-child(4n)   { background:#fdf4ff; border-color:#e9d5ff; }
+.s6-var-symbol {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 14px;
+  font-weight: 800;
+  color: #1e293b;
+}
+.s6-var-arrow {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.s6-var-meaning {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+/* Info card */
+.s6-insight-card {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef9c3 100%);
+  border: 1.5px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+.s6-insight-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #92400e;
+  margin-bottom: 8px;
+}
+.s6-insight-text {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13.5px;
+  color: #78350f;
+  line-height: 1.7;
+  font-weight: 500;
+}
+/* Navigation row */
+.s6-nav-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 28px 24px;
+  border-top: 1px solid #f1f5f9;
+  background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
+}
+</style>
+"""
+
+_SCENE6_DOM_TEMPLATE = """\
+<div id="qanim-scene6-overlay">
+  <div class="s6-card">
+    <div class="s6-header">
+      <div class="s6-icon">&#x1F4A1;</div>
+      <div class="s6-header-text">
+        <h2>Scene 6: The Big Idea</h2>
+        <p>Core principle &amp; formula that solves this problem</p>
+      </div>
+    </div>
+    <div class="s6-body">
+      <div class="s6-formula-label">Main Formula / Governing Principle</div>
+      <div class="s6-formula-wrap">
+        <div class="s6-formula-text" id="s6-formula-text">{formula}</div>
+      </div>
+      <div class="s6-vars-label">Variable Key</div>
+      <div class="s6-vars-grid" id="s6-vars-grid">{vars_html}</div>
+      <div class="s6-insight-card">
+        <div class="s6-insight-badge">&#x2728; Why This Works</div>
+        <div class="s6-insight-text" id="s6-insight-text">{insight}</div>
+      </div>
+    </div>
+    <div class="s6-nav-row">
+      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back</button>
+      <button class="btn-primary" onclick="qanim_goToScene7()" id="s6-next-btn">How We Solve It &#x25B6;</button>
+    </div>
+  </div>
+</div>"""
+
+_SCENE6_JS = r"""
+<script id="qanim-js-scene6">
+(function initScene6(){
+  'use strict';
+  if(window.__qanimScene6Init)return; window.__qanimScene6Init=true;
+
+  /* ── helpers ── */
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  /* ── show / hide ── */
+  window.qanim_showScene6 = function(){
+    var ov=_el('qanim-scene6-overlay');
+    if(ov) ov.classList.add('qanim-scene-visible');
+    var ov7=_el('qanim-scene7-overlay');
+    if(ov7) ov7.classList.remove('qanim-scene-visible');
+    /* freeze the SVG animation if running */
+    if(typeof window.rafId!=='undefined'&&window.rafId){
+      cancelAnimationFrame(window.rafId);window.rafId=null;
+    }
+    /* update the dot bar to show Scene 6 active */
+    _syncDots(5); /* 0-based index 5 = scene 6 */
+  };
+
+  window.qanim_goToPrevScene = function(){
+    /* hide both extra scenes, resume the SVG animation at last step */
+    var ov6=_el('qanim-scene6-overlay');
+    if(ov6) ov6.classList.remove('qanim-scene-visible');
+    var ov7=_el('qanim-scene7-overlay');
+    if(ov7) ov7.classList.remove('qanim-scene-visible');
+    /* go to the last SVG step */
+    if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){
+      var last=window.stepsData.length-1;
+      window.currentStep=last;
+      window.applyStep(last);
+    }
+    /* resume RAF if there was one */
+    if(typeof window.startRAF==='function') window.startRAF();
+    else if(typeof window.animate==='function') requestAnimationFrame(window.animate);
+  };
+
+  window.qanim_goToScene7 = function(){
+    var ov6=_el('qanim-scene6-overlay');
+    if(ov6) ov6.classList.remove('qanim-scene-visible');
+    if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
+  };
+
+  function _syncDots(idx){
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++){
+      dots[i].classList.remove('active','done');
+      if(i<idx) dots[i].classList.add('done');
+      if(i===idx) dots[i].classList.add('active');
+    }
+    var lbl=_el('step-label');
+    if(lbl) lbl.innerText='Scene 6 of '+(dots.length);
+    var bar=_el('step-bar');
+    if(bar) bar.style.width=Math.round((idx+1)/Math.max(dots.length,1)*100)+'%';
+  }
+
+  /* ── wire the "Next Step" button on the last SVG step to show Scene 6 ── */
+  _onReady(function(){
+    /* Intercept the existing nextStep() so after the last SVG step it opens Scene 6 */
+    var _origNext=window.nextStep;
+    window.nextStep=function(){
+      if(typeof window.stepsData!=='undefined'&&typeof window.currentStep!=='undefined'){
+        if(window.currentStep>=window.stepsData.length-1){
+          window.qanim_showScene6();
+          return;
+        }
+      }
+      if(typeof _origNext==='function') _origNext();
+    };
+    /* Also intercept resetAnim so it hides the overlay scenes */
+    var _origReset=window.resetAnim;
+    window.resetAnim=function(){
+      var ov6=_el('qanim-scene6-overlay');
+      if(ov6) ov6.classList.remove('qanim-scene-visible');
+      var ov7=_el('qanim-scene7-overlay');
+      if(ov7) ov7.classList.remove('qanim-scene-visible');
+      if(typeof _origReset==='function') _origReset();
+    };
+  });
+})();
+</script>
+"""
+
+
+def _build_s6_vars_html(gemini_sol, scene_script):
+    """Build variable-key chip HTML from solution / scene data."""
+    var_entries = []
+
+    # Try to pull structured variables from formulas key
+    formulas = gemini_sol.get("formulas") or []
+    for f in formulas[:1]:          # use first formula if available
+        text = f.get("text", "") if isinstance(f, dict) else str(f)
+        if text:
+            var_entries.append(("Formula", text))
+
+    # From given_data if available
+    given = gemini_sol.get("given_data") or []
+    for g in given[:6]:
+        var_entries.append((str(g).split("=")[0].strip() if "=" in str(g) else "Given", str(g)))
+
+    # Fallback: use svg_components labels
+    if not var_entries:
+        components = scene_script.get("svg_components") or {}
+        for comp_id, comp in list(components.items())[:5]:
+            for lbl in (comp.get("labels") or [])[:1]:
+                var_entries.append((comp_id[:8], lbl))
+
+    chips = []
+    for sym, meaning in var_entries[:8]:
+        sym_e    = html_module.escape(str(sym)[:20])
+        mean_e   = html_module.escape(str(meaning)[:60])
+        chips.append(
+            '<div class="s6-var-chip">'
+            '<span class="s6-var-symbol">' + sym_e + '</span>'
+            '<span class="s6-var-arrow">→</span>'
+            '<span class="s6-var-meaning">' + mean_e + '</span>'
+            '</div>'
+        )
+    return "\n".join(chips) if chips else '<div class="s6-var-chip"><span class="s6-var-meaning">See question for variables</span></div>'
+
+
+def inject_scene6_big_idea(html, gemini_sol, scene_script):
+    """
+    Inject Scene 6 ("The Big Idea") as a standalone overlay panel that
+    appears AFTER the last SVG animation step when the user clicks Next.
+
+    This function:
+      1. Injects CSS into <head>
+      2. Injects the DOM panel right after <body>
+      3. Injects the JS module (which patches nextStep/resetAnim) before </body>
+    """
+    # Extract formula — try structured keys first, then fallback
+    formula_raw = ""
+    formulas = gemini_sol.get("formulas") or []
+    for f in formulas[:1]:
+        formula_raw = f.get("text", "") if isinstance(f, dict) else str(f)
+    if not formula_raw:
+        sol_steps = gemini_sol.get("steps") or []
+        # Look for a step that looks like a formula (contains = or variables)
+        for s in sol_steps:
+            s_str = str(s)
+            if "=" in s_str and len(s_str) < 120:
+                formula_raw = s_str
+                break
+    if not formula_raw:
+        formula_raw = scene_script.get("key_insight") or "See solution steps below"
+
+    insight = (
+        scene_script.get("key_insight")
+        or gemini_sol.get("key_insight")
+        or "This formula is the governing principle. Identify what is given, plug in the values, and compute the result systematically."
+    )
+
+    vars_html = _build_s6_vars_html(gemini_sol, scene_script)
+
+    dom = _SCENE6_DOM_TEMPLATE.format(
+        formula=html_module.escape(str(formula_raw)[:300]),
+        vars_html=vars_html,
+        insight=html_module.escape(str(insight)[:400]),
+    )
+
+    # 1. CSS
+    try:
+        if "</head>" in html:
+            html = html.replace("</head>", _SCENE6_CSS + "\n</head>", 1)
+    except Exception as e:
+        QAnimLogger.warn("Scene6Injector", f"CSS failed: {e}")
+
+    # 2. DOM — insert right after <body ...>
+    try:
+        body_m = re.search(r"<body[^>]*>", html, re.IGNORECASE)
+        if body_m:
+            ins = body_m.end()
+            html = html[:ins] + "\n" + dom + html[ins:]
+    except Exception as e:
+        QAnimLogger.warn("Scene6Injector", f"DOM failed: {e}")
+
+    # 3. JS
+    try:
+        if "</body>" in html:
+            html = html.replace("</body>", _SCENE6_JS + "\n</body>", 1)
+        else:
+            html += "\n" + _SCENE6_JS
+    except Exception as e:
+        QAnimLogger.warn("Scene6Injector", f"JS failed: {e}")
+
+    QAnimLogger.ok("Scene6Injector", "Scene 6 (The Big Idea) injected")
+    return html
+
+
+# ===========================================================================
+#  MODULE 12.6 — Scene 7: "How We Solve It — Step by Step" injector
+#  Appends a new overlay panel showing the solution method in 5–10
+#  numbered steps with descriptions and equations. Does NOT reveal the
+#  final numeric answer (that stays in the Answer Box panel).
+# ===========================================================================
+
+_SCENE7_CSS = """
+<style id="qanim-scene7-styles">
+/* ── Scene 7: How We Solve It ── */
+#qanim-scene7-overlay {
+  display: none;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding-bottom: 32px;
+}
+#qanim-scene7-overlay.qanim-scene-visible {
+  display: block !important;
+}
+.s7-card {
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 4px 32px rgba(37,99,235,.10), 0 1px 4px rgba(0,0,0,.06);
+  border: 1px solid #e8eef8;
+  overflow: hidden;
+  margin-top: 28px;
+}
+.s7-header {
+  background: linear-gradient(135deg, #f8fafc 0%, #f0f4ff 100%);
+  border-bottom: 1px solid #e0e7ff;
+  padding: 20px 28px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.s7-icon {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4338ca, #7c3aed);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+  box-shadow: 0 3px 10px rgba(124,58,237,.30);
+}
+.s7-header-text h2 {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  color: #1e1b4b;
+  margin-bottom: 3px;
+}
+.s7-header-text p {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px;
+  color: #4338ca;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+/* Steps container */
+.s7-steps-wrap {
+  padding: 24px 28px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Individual method step */
+.s7-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  border-radius: 14px;
+  border: 1.5px solid #e2e8f0;
+  overflow: hidden;
+  background: #fff;
+  transition: box-shadow .2s ease;
+}
+.s7-step:hover { box-shadow: 0 2px 12px rgba(37,99,235,.10); }
+.s7-step-num {
+  min-width: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  padding: 18px 0;
+  flex-shrink: 0;
+}
+.s7-step-body {
+  flex: 1;
+  padding: 16px 20px;
+}
+.s7-step-title {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13.5px;
+  font-weight: 800;
+  margin-bottom: 5px;
+  line-height: 1.4;
+}
+.s7-step-desc {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.65;
+  margin-bottom: 0;
+}
+.s7-step-eq {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  padding: 5px 12px;
+  word-break: break-word;
+}
+/* Step color themes — 10 variants cycling */
+.s7-step:nth-child(10n+1)  { border-color:#bfdbfe; background:#f8fbff; }
+.s7-step:nth-child(10n+1) .s7-step-num  { background:#dbeafe; color:#1d4ed8; }
+.s7-step:nth-child(10n+1) .s7-step-title { color:#1d4ed8; }
+.s7-step:nth-child(10n+2)  { border-color:#c7d2fe; background:#f9f8ff; }
+.s7-step:nth-child(10n+2) .s7-step-num  { background:#e0e7ff; color:#4338ca; }
+.s7-step:nth-child(10n+2) .s7-step-title { color:#4338ca; }
+.s7-step:nth-child(10n+3)  { border-color:#a7f3d0; background:#f8fffc; }
+.s7-step:nth-child(10n+3) .s7-step-num  { background:#d1fae5; color:#15803d; }
+.s7-step:nth-child(10n+3) .s7-step-title { color:#15803d; }
+.s7-step:nth-child(10n+4)  { border-color:#fca5a5; background:#fff8f8; }
+.s7-step:nth-child(10n+4) .s7-step-num  { background:#fee2e2; color:#dc2626; }
+.s7-step:nth-child(10n+4) .s7-step-title { color:#dc2626; }
+.s7-step:nth-child(10n+5)  { border-color:#fde68a; background:#fffdf0; }
+.s7-step:nth-child(10n+5) .s7-step-num  { background:#fef9c3; color:#b45309; }
+.s7-step:nth-child(10n+5) .s7-step-title { color:#b45309; }
+.s7-step:nth-child(10n+6)  { border-color:#99f6e4; background:#f0fdfa; }
+.s7-step:nth-child(10n+6) .s7-step-num  { background:#ccfbf1; color:#0f766e; }
+.s7-step:nth-child(10n+6) .s7-step-title { color:#0f766e; }
+.s7-step:nth-child(10n+7)  { border-color:#e9d5ff; background:#fdf4ff; }
+.s7-step:nth-child(10n+7) .s7-step-num  { background:#ede9fe; color:#7c3aed; }
+.s7-step:nth-child(10n+7) .s7-step-title { color:#7c3aed; }
+.s7-step:nth-child(10n+8)  { border-color:#fed7aa; background:#fff7ed; }
+.s7-step:nth-child(10n+8) .s7-step-num  { background:#ffedd5; color:#c2410c; }
+.s7-step:nth-child(10n+8) .s7-step-title { color:#c2410c; }
+.s7-step:nth-child(10n+9)  { border-color:#bfdbfe; background:#eff6ff; }
+.s7-step:nth-child(10n+9) .s7-step-num  { background:#dbeafe; color:#1e40af; }
+.s7-step:nth-child(10n+9) .s7-step-title { color:#1e40af; }
+.s7-step:nth-child(10n+10) { border-color:#bbf7d0; background:#f0fdf4; }
+.s7-step:nth-child(10n+10) .s7-step-num  { background:#dcfce7; color:#166534; }
+.s7-step:nth-child(10n+10) .s7-step-title { color:#166534; }
+/* CTA bar */
+.s7-cta-bar {
+  margin: 0 28px 0;
+  padding: 14px 20px;
+  border-radius: 12px;
+  background: #eff6ff;
+  border: 2px solid #2563eb;
+  color: #1d4ed8;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.5;
+}
+/* Navigation row */
+.s7-nav-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 28px 24px;
+  border-top: 1px solid #f1f5f9;
+  background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
+  margin-top: 20px;
+}
+</style>
+"""
+
+_SCENE7_DOM_TEMPLATE = """\
+<div id="qanim-scene7-overlay">
+  <div class="s7-card">
+    <div class="s7-header">
+      <div class="s7-icon">&#x1F4CB;</div>
+      <div class="s7-header-text">
+        <h2>Scene 7: How We Solve It</h2>
+        <p>Step-by-step solution method</p>
+      </div>
+    </div>
+    <div class="s7-steps-wrap" id="s7-steps-wrap">
+{steps_html}
+    </div>
+    <div class="s7-cta-bar" style="margin-top:20px;">
+      &#x1F4A1; Try it yourself! Use the <strong>Answer Box</strong> to check your final answer.
+    </div>
+    <div class="s7-nav-row">
+      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to The Big Idea</button>
+      <button class="btn-primary" onclick="qanim_goToPrevScene()">&#x21BA; Back to Animation</button>
+    </div>
+  </div>
+</div>"""
+
+_SCENE7_JS = r"""
+<script id="qanim-js-scene7">
+(function initScene7(){
+  'use strict';
+  if(window.__qanimScene7Init)return; window.__qanimScene7Init=true;
+
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  window.qanim_showScene7 = function(){
+    var ov=_el('qanim-scene7-overlay');
+    if(ov) ov.classList.add('qanim-scene-visible');
+    var ov6=_el('qanim-scene6-overlay');
+    if(ov6) ov6.classList.remove('qanim-scene-visible');
+    _syncDots(6); /* 0-based index 6 = scene 7 */
+    /* Animate step cards in */
+    var cards=document.querySelectorAll('.s7-step');
+    for(var i=0;i<cards.length;i++){
+      (function(card,idx){
+        card.style.opacity='0';
+        card.style.transform='translateY(14px)';
+        card.style.transition='none';
+        setTimeout(function(){
+          card.style.transition='opacity .28s ease,transform .28s ease';
+          card.style.opacity='1';
+          card.style.transform='translateY(0)';
+        },60+idx*70);
+      })(cards[i],i);
+    }
+  };
+
+  window.qanim_goToScene6FromScene7 = function(){
+    var ov7=_el('qanim-scene7-overlay');
+    if(ov7) ov7.classList.remove('qanim-scene-visible');
+    if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
+  };
+
+  function _syncDots(idx){
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++){
+      dots[i].classList.remove('active','done');
+      if(i<idx) dots[i].classList.add('done');
+      if(i===idx) dots[i].classList.add('active');
+    }
+    var lbl=_el('step-label');
+    if(lbl) lbl.innerText='Scene 7 of '+(dots.length);
+    var bar=_el('step-bar');
+    if(bar) bar.style.width='100%';
+  }
+})();
+</script>
+"""
+
+
+def _build_s7_steps_html(gemini_sol, scene_script):
+    """
+    Build numbered step cards for Scene 7 from the solution data.
+    Steps are derived from the solution_steps / steps in gemini_sol.
+    Does NOT include the final numeric answer value — keeps method only.
+    """
+    raw_steps = []
+
+    # 1. Try structured substitution_steps (richer data)
+    sub_steps = gemini_sol.get("substitution_steps") or []
+    for s in sub_steps:
+        if isinstance(s, dict):
+            title = s.get("title", "") or s.get("name", "")
+            expr  = s.get("expr", "") or s.get("equation", "") or s.get("value", "")
+            desc  = s.get("description", "") or s.get("desc", "")
+            raw_steps.append({"title": str(title), "eq": str(expr), "desc": str(desc)})
+        else:
+            raw_steps.append({"title": "", "eq": str(s), "desc": ""})
+
+    # 2. Fallback to flat steps list if no substitution_steps
+    if not raw_steps:
+        flat = gemini_sol.get("steps") or scene_script.get("solution_steps") or []
+        for s in flat:
+            s_str = str(s).strip()
+            # Split "Step N: title — equation" pattern if present
+            m = re.match(r"^(?:Step\s*\d+[:\.]?\s*)?(.+?)(?:\s*[—:]\s*(.+))?$", s_str, re.IGNORECASE)
+            if m:
+                title = m.group(1).strip() if m.group(1) else ""
+                eq    = m.group(2).strip() if m.group(2) else ""
+                raw_steps.append({"title": title[:80], "eq": eq[:120], "desc": ""})
+            else:
+                raw_steps.append({"title": s_str[:80], "eq": "", "desc": ""})
+
+    # 3. Add explicit method steps from scene_script steps (skip final/freeze step)
+    if not raw_steps:
+        steps = scene_script.get("steps") or []
+        for step in steps:
+            if isinstance(step, dict):
+                title = step.get("title", "") or step.get("label", "")
+                desc  = step.get("description", "")
+                raw_steps.append({"title": str(title)[:80], "eq": "", "desc": str(desc)[:200]})
+
+    # Cap at 10 steps; remove any step that reveals the final numeric answer
+    final_ans = str(gemini_sol.get("final_answer") or "").strip()
+    filtered  = []
+    for s in raw_steps[:10]:
+        # Skip steps whose equation IS essentially the final answer (exact match)
+        if final_ans and s.get("eq", "").strip() == final_ans:
+            continue
+        filtered.append(s)
+
+    if not filtered:
+        filtered = [
+            {"title": "Identify given values",      "eq": "",  "desc": "List all known quantities and their units."},
+            {"title": "State what to find",          "eq": "",  "desc": "Clearly define the unknown quantity."},
+            {"title": "Select the governing formula","eq": "",  "desc": "Choose the applicable law or equation."},
+            {"title": "Substitute values",           "eq": "",  "desc": "Plug the known values into the formula."},
+            {"title": "Simplify and solve",          "eq": "",  "desc": "Carry out the arithmetic step by step."},
+        ]
+
+    parts = []
+    for i, step in enumerate(filtered, start=1):
+        title_e = html_module.escape(str(step.get("title") or f"Step {i}")[:80])
+        desc_e  = html_module.escape(str(step.get("desc") or "")[:300])
+        eq_raw  = str(step.get("eq") or "").strip()
+        eq_html = (
+            '<div class="s7-step-eq">' + html_module.escape(eq_raw[:150]) + '</div>'
+            if eq_raw else ""
+        )
+        desc_html = (
+            '<div class="s7-step-desc">' + desc_e + '</div>' if desc_e else ""
+        )
+        parts.append(
+            '<div class="s7-step">'
+            '<div class="s7-step-num">' + str(i) + '</div>'
+            '<div class="s7-step-body">'
+            '<div class="s7-step-title">' + title_e + '</div>'
+            + desc_html + eq_html +
+            '</div></div>'
+        )
+    return "\n".join(parts)
+
+
+def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
+    """
+    Inject Scene 7 ("How We Solve It — Step by Step") as a standalone
+    overlay panel that appears when the user clicks "How We Solve It"
+    on Scene 6.
+
+    This function:
+      1. Injects CSS into <head>
+      2. Injects the DOM panel right after <body>
+      3. Injects the JS module before </body>
+    """
+    steps_html = _build_s7_steps_html(gemini_sol, scene_script)
+
+    dom = _SCENE7_DOM_TEMPLATE.format(steps_html=steps_html)
+
+    # 1. CSS
+    try:
+        if "</head>" in html:
+            html = html.replace("</head>", _SCENE7_CSS + "\n</head>", 1)
+    except Exception as e:
+        QAnimLogger.warn("Scene7Injector", f"CSS failed: {e}")
+
+    # 2. DOM — insert right after <body ...>
+    try:
+        body_m = re.search(r"<body[^>]*>", html, re.IGNORECASE)
+        if body_m:
+            ins = body_m.end()
+            html = html[:ins] + "\n" + dom + html[ins:]
+    except Exception as e:
+        QAnimLogger.warn("Scene7Injector", f"DOM failed: {e}")
+
+    # 3. JS
+    try:
+        if "</body>" in html:
+            html = html.replace("</body>", _SCENE7_JS + "\n</body>", 1)
+        else:
+            html += "\n" + _SCENE7_JS
+    except Exception as e:
+        QAnimLogger.warn("Scene7Injector", f"JS failed: {e}")
+
+    QAnimLogger.ok("Scene7Injector", f"Scene 7 (How We Solve It) injected ({len(steps_html)} chars of steps)")
+    return html
+
+
+# ===========================================================================
 #  MODULE 13 — Nav Patch (kept for backward compat)
 # ===========================================================================
 
@@ -2831,12 +3620,7 @@ REQUIRED_COMPONENTS = {
         "dom":  ["tofind-panel", "tofind-backdrop", "tofind-items-container", "tofind-ctrl-btn"],
         "js":   ["qanim-js-tofind"],
     },
-    "StepAnswer": {
-        "data": ["__step_answer_data__"],
-        "css":  ["qanim-stepans-styles"],
-        "dom":  ["qanim-stepbystep-section", "sbs-steps-container"],
-        "js":   ["qanim-js-stepanswer"],
-    },
+
     "AnswerBox": {
         "data": None,
         "css":  ["qanim-answerbox-styles"],
@@ -2852,7 +3636,7 @@ REQUIRED_COMPONENTS = {
     "Controls": {
         "data": None,
         "css":  ["qanim-controls-bar-styles"],
-        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn", "stepans-ctrl-btn"],
+        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn"],
         "js":   None,
     },
     "PreviousStep": {
@@ -2878,6 +3662,18 @@ REQUIRED_COMPONENTS = {
         "data": None, "css": None, "dom": None,
         "js":   ["qanim-step-controller"],
     },
+    "Scene6": {
+        "data": None,
+        "css":  ["qanim-scene6-styles"],
+        "dom":  ["qanim-scene6-overlay", "s6-formula-text"],
+        "js":   ["qanim-js-scene6"],
+    },
+    "Scene7": {
+        "data": None,
+        "css":  ["qanim-scene7-styles"],
+        "dom":  ["qanim-scene7-overlay", "s7-steps-wrap"],
+        "js":   ["qanim-js-scene7"],
+    },
 }
 
 # Regex fragments used to strip a component's previous output before
@@ -2889,13 +3685,7 @@ STRIP_PATTERNS = {
         re.compile(r'<div id="tofind-backdrop"[^>]*>\s*</div>\s*<aside id="tofind-panel".*?</aside>', re.DOTALL),
         re.compile(r'<script[^>]*id=["\']qanim-js-tofind["\'][^>]*>.*?</script>', re.DOTALL),
     ],
-    "StepAnswer": [
-        re.compile(r'<script[^>]*id=["\']__step_answer_data__["\'][^>]*>.*?</script>', re.DOTALL),
-        re.compile(r'<style[^>]*id=["\']qanim-stepans-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
-        re.compile(r'<div id="qanim-stepbystep-section".*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
-        re.compile(r'<script[^>]*id=["\']qanim-js-stepanswer["\'][^>]*>.*?</script>', re.DOTALL),
-        re.compile(r'<script id="qanim-laststep-patch">.*?</script>', re.DOTALL),
-    ],
+
     "AnswerBox": [
         re.compile(r'<style[^>]*id=["\']qanim-answerbox-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
         re.compile(r'<div id="answerbox-backdrop"[^>]*>.*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
@@ -2925,6 +3715,16 @@ STRIP_PATTERNS = {
     ],
     "StepController": [
         re.compile(r'<script id="qanim-step-controller">.*?</script>', re.DOTALL),
+    ],
+    "Scene6": [
+        re.compile(r'<style[^>]*id=["\']qanim-scene6-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="qanim-scene6-overlay".*?</div>\s*(?=<div|<script|<style|</body)', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-scene6["\'][^>]*>.*?</script>', re.DOTALL),
+    ],
+    "Scene7": [
+        re.compile(r'<style[^>]*id=["\']qanim-scene7-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="qanim-scene7-overlay".*?</div>\s*(?=<div|<script|<style|</body)', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-scene7["\'][^>]*>.*?</script>', re.DOTALL),
     ],
 }
 
@@ -2966,11 +3766,12 @@ class PanelInjectionContext:
     """Bundles everything the individual injectors need so the orchestrator
     can call any of them (fresh injection OR targeted repair) uniformly."""
 
-    def __init__(self, gemini_sol, answer_targets, glossary_terms, to_find_targets):
+    def __init__(self, gemini_sol, answer_targets, glossary_terms, to_find_targets, scene_script=None):
         self.gemini_sol = gemini_sol
         self.answer_targets = answer_targets
         self.glossary_terms = glossary_terms or []
         self.to_find_targets = to_find_targets or []
+        self.scene_script = scene_script or {}
 
 
 class PanelInjectionManager:
@@ -3034,7 +3835,6 @@ class PanelInjectionManager:
 
     @classmethod
     def _inject_all(cls, html, ctx):
-        html = inject_step_answer_panel(html, ctx.gemini_sol)
         html = inject_notes_system(html)
         html = inject_answer_box_panel(html, ctx.answer_targets)
         html = inject_controls_bar(html)
@@ -3043,6 +3843,9 @@ class PanelInjectionManager:
         html = inject_glossary_panel(html, ctx.glossary_terms)
         html = inject_nav_patch_and_scene_desc(html)
         html = inject_step_controller(html)
+        # Scene 6 & 7 — appended AFTER the core panels so they land last in <body>
+        html = inject_scene6_big_idea(html, ctx.gemini_sol, ctx.scene_script)
+        html = inject_scene7_how_we_solve_it(html, ctx.gemini_sol, ctx.scene_script)
         return html
 
     @classmethod
@@ -3055,7 +3858,6 @@ class PanelInjectionManager:
     def _repair(cls, html, ctx, missing_names, report):
         dispatch = {
             "ToFind":         lambda h: inject_to_find_system(cls._strip(h, "ToFind"), ctx.to_find_targets),
-            "StepAnswer":     lambda h: inject_step_answer_panel(cls._strip(h, "StepAnswer"), ctx.gemini_sol),
             "AnswerBox":      lambda h: inject_answer_box_panel(cls._strip(h, "AnswerBox"), ctx.answer_targets),
             "Notes":          lambda h: inject_notes_system(cls._strip(h, "Notes")),
             "Controls":       lambda h: inject_controls_bar(cls._strip(h, "Controls")),
@@ -3063,6 +3865,8 @@ class PanelInjectionManager:
             "Glossary":       lambda h: inject_glossary_panel(cls._strip(h, "Glossary"), ctx.glossary_terms),
             "Navigation":     lambda h: inject_nav_patch_and_scene_desc(cls._strip(h, "Navigation")),
             "StepController": lambda h: inject_step_controller(cls._strip(h, "StepController")),
+            "Scene6":         lambda h: inject_scene6_big_idea(cls._strip(h, "Scene6"), ctx.gemini_sol, ctx.scene_script),
+            "Scene7":         lambda h: inject_scene7_how_we_solve_it(cls._strip(h, "Scene7"), ctx.gemini_sol, ctx.scene_script),
         }
         for name in missing_names:
             fn = dispatch.get(name)
@@ -4833,6 +5637,7 @@ async def _run_generation_pipeline(question: str) -> dict:
         answer_targets=answer_targets,
         glossary_terms=glossary_result.get("terms", []),
         to_find_targets=to_find_targets,
+        scene_script=scene_script,
     )
     html, injection_report = PanelInjectionManager.run(animation_html, panel_ctx)
 
