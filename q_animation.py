@@ -2606,33 +2606,44 @@ def inject_step_controller(html):
 
 _SCENE6_CSS = """
 <style id="qanim-scene6-styles">
-/* ── Scene 6: The Big Idea ── */
+/* ── Scene 6: Main Formula — rendered INSIDE the stage, no page scroll ── */
 #qanim-scene6-overlay {
   display: none;
+  position: absolute;
+  inset: 0;
   width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
+  height: 100%;
+  max-width: none;
+  margin: 0;
   box-sizing: border-box;
-  padding-bottom: 20px;
+  z-index: 45;
+  background: linear-gradient(180deg, #f8faff 0%, #eef2f9 100%);
 }
 #qanim-scene6-overlay.qanim-scene-visible {
-  display: block !important;
+  display: flex !important;
+  flex-direction: column;
 }
 .s6-card {
-  background: #fff;
-  border-radius: 18px;
-  box-shadow: 0 4px 32px rgba(8,145,178,.12), 0 1px 4px rgba(0,0,0,.06);
-  border: 1px solid #dde8f8;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
   overflow: hidden;
-  margin-top: 28px;
+  margin-top: 0;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .s6-header {
   background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%);
   border-bottom: 1px solid #bae6fd;
-  padding: 20px 28px 16px;
+  padding: 14px 22px 10px;
   display: flex;
   align-items: center;
   gap: 14px;
+  flex-shrink: 0;
 }
 .s6-icon {
   width: 44px; height: 44px;
@@ -2658,8 +2669,11 @@ _SCENE6_CSS = """
   letter-spacing: .3px;
 }
 .s6-body {
-  padding: 24px 28px 20px;
+  padding: 16px 24px 12px;
   background: #f8faff;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 /* ── Formula banner (big centered equation) ── */
 .s6-formula-banner {
@@ -2848,9 +2862,38 @@ _SCENE6_CSS = """
   justify-content: flex-end;
   align-items: center;
   gap: 10px;
-  padding: 16px 28px 24px;
+  padding: 12px 24px 14px;
   border-top: 1px solid #f1f5f9;
   background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
+  flex-shrink: 0;
+}
+/* ── Explanation card (elaborates what the formula means) ── */
+.s6-explain-card {
+  background: linear-gradient(135deg, #eff6ff 0%, #eef2ff 100%);
+  border: 1.5px solid #c7d2fe;
+  border-left: 4px solid #4f46e5;
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+.s6-explain-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #4338ca;
+  margin-bottom: 7px;
+}
+.s6-explain-text {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  color: #312e81;
+  line-height: 1.65;
+  font-weight: 500;
 }
 </style>
 """
@@ -2861,14 +2904,18 @@ _SCENE6_DOM_TEMPLATE = """\
     <div class="s6-header">
       <div class="s6-icon">&#x1F4A1;</div>
       <div class="s6-header-text">
-        <h2>The Big Idea</h2>
-        <p>Core formula &amp; principle that solves this problem</p>
+        <h2>Step 6 &middot; Main Formula</h2>
+        <p>The governing equation that solves this problem — explained term by term</p>
       </div>
     </div>
     <div class="s6-body">
       <div class="s6-formula-banner">
         <div class="s6-formula-sublabel">Main Formula / Governing Principle</div>
         <div class="s6-formula-big" id="s6-formula-text">{formula}</div>
+      </div>
+      <div class="s6-explain-card">
+        <div class="s6-explain-badge">&#x1F4D6; What This Formula Means</div>
+        <div class="s6-explain-text" id="s6-explain-text">{explanation}</div>
       </div>
       <div class="s6-vars-section">
         <div class="s6-vars-section-label">&#x1F4CC; Variable Key — each term explained</div>
@@ -2882,7 +2929,7 @@ _SCENE6_DOM_TEMPLATE = """\
     </div>
     <div class="s6-nav-row">
       <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back</button>
-      <button class="btn-primary" onclick="qanim_goToScene7()" id="s6-next-btn">How We Solve It &#x25B6;</button>
+      <button class="btn-primary" onclick="qanim_goToScene7()" id="s6-next-btn">Step 7: Substitution &#x25B6;</button>
     </div>
   </div>
 </div>"""
@@ -2896,6 +2943,14 @@ _SCENE6_JS = r"""
   /* ── helpers ── */
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  /* ── move the overlay INSIDE the animation stage box so it appears
+     "in the scene" instead of as a separate block below the page ── */
+  (function _reparentIntoStage(){
+    var ov=_el('qanim-scene6-overlay');
+    var host=document.querySelector('.svg-container');
+    if(ov&&host&&ov.parentNode!==host){ host.appendChild(ov); }
+  })();
 
   /* ── show / hide ── */
   window.qanim_showScene6 = function(){
@@ -2942,7 +2997,7 @@ _SCENE6_JS = r"""
       if(i===idx) dots[i].classList.add('active');
     }
     var lbl=_el('step-label');
-    if(lbl) lbl.innerText='Scene 6 of '+(dots.length);
+    if(lbl) lbl.innerText='Step 6: Main Formula';
     var bar=_el('step-bar');
     if(bar) bar.style.width=Math.round((idx+1)/Math.max(dots.length,1)*100)+'%';
   }
@@ -3153,10 +3208,28 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
         or "This formula is the governing principle. Identify what is given, plug in the values, and compute the result systematically."
     )
 
+    # Build an elaborated, plain-English explanation of the formula itself
+    # (what it computes, and how the pieces on the right build the answer on
+    # the left) — separate from the "why this works" physical-intuition card.
+    formula_note = str(gemini_sol.get("formula_note") or "").strip()
+    lhs, rhs = "", ""
+    if "=" in str(formula_raw):
+        parts = str(formula_raw).split("=", 1)
+        lhs, rhs = parts[0].strip(), parts[1].strip()
+    explanation_bits = []
+    if lhs and rhs:
+        explanation_bits.append(f"This formula solves for {lhs} by combining {rhs} exactly as written above.")
+    else:
+        explanation_bits.append("This is the governing equation for this problem — every quantity in it comes from the given data.")
+    if formula_note:
+        explanation_bits.append(formula_note)
+    explanation = " ".join(explanation_bits)
+
     circles_html, result_bar = _build_s6_circles_html(gemini_sol, scene_script)
 
     dom = _SCENE6_DOM_TEMPLATE.format(
         formula=html_module.escape(str(formula_raw)[:300]),
+        explanation=html_module.escape(str(explanation)[:500]),
         circles_html=circles_html,
         result_bar=html_module.escape(str(result_bar)[:200]),
         insight=html_module.escape(str(insight)[:400]),
@@ -3200,33 +3273,44 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
 
 _SCENE7_CSS = """
 <style id="qanim-scene7-styles">
-/* ── Scene 7: How We Solve It — Step by Step ── */
+/* ── Scene 7: Substitution — rendered INSIDE the stage, no page scroll ── */
 #qanim-scene7-overlay {
   display: none;
+  position: absolute;
+  inset: 0;
   width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
+  height: 100%;
+  max-width: none;
+  margin: 0;
   box-sizing: border-box;
-  padding-bottom: 32px;
+  z-index: 45;
+  background: linear-gradient(180deg, #f8faff 0%, #eef2f9 100%);
 }
 #qanim-scene7-overlay.qanim-scene-visible {
-  display: block !important;
+  display: flex !important;
+  flex-direction: column;
 }
 .s7-card {
-  background: #fff;
-  border-radius: 18px;
-  box-shadow: 0 4px 32px rgba(37,99,235,.10), 0 1px 4px rgba(0,0,0,.06);
-  border: 1px solid #e8eef8;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
   overflow: hidden;
-  margin-top: 28px;
+  margin-top: 0;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .s7-header {
   background: linear-gradient(135deg, #f8fafc 0%, #f0f4ff 100%);
   border-bottom: 1px solid #e0e7ff;
-  padding: 20px 28px 16px;
+  padding: 14px 22px 10px;
   display: flex;
   align-items: center;
   gap: 14px;
+  flex-shrink: 0;
 }
 .s7-icon {
   width: 44px; height: 44px;
@@ -3254,29 +3338,33 @@ _SCENE7_CSS = """
 /* ── Two-column layout: solution visual + steps panel ── */
 .s7-body-cols {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 0;
   padding: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 /* Left column: visual / given params summary */
 .s7-left-col {
   width: 42%;
   min-width: 200px;
   border-right: 1.5px solid #f0f2f8;
-  padding: 24px 20px 20px 28px;
+  padding: 14px 16px 14px 20px;
   background: linear-gradient(180deg, #f8fbff 0%, #f0f4ff 100%);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   align-self: stretch;
 }
 /* Right column: numbered steps */
 .s7-right-col {
   flex: 1;
-  padding: 24px 28px 20px 20px;
+  padding: 14px 20px 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 9px;
+  min-width: 0;
 }
 /* ── Given parameters panel (left column) ── */
 .s7-given-panel {
@@ -3464,17 +3552,18 @@ _SCENE7_CSS = """
 .s7-step:nth-child(10n+10) .s7-step-title { color:#166534; }
 /* CTA bar */
 .s7-cta-bar {
-  margin: 0 28px 0;
-  padding: 14px 20px;
+  margin: 0 22px 0;
+  padding: 10px 16px;
   border-radius: 12px;
   background: #eff6ff;
   border: 2px solid #2563eb;
   color: #1d4ed8;
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 700;
   text-align: center;
-  line-height: 1.5;
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 /* Navigation row */
 .s7-nav-row {
@@ -3482,10 +3571,11 @@ _SCENE7_CSS = """
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  padding: 16px 28px 24px;
+  padding: 10px 22px 12px;
   border-top: 1px solid #f1f5f9;
   background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
-  margin-top: 20px;
+  margin-top: 0;
+  flex-shrink: 0;
 }
 /* ── Responsive: stack columns on narrow viewports ── */
 @media (max-width: 600px) {
@@ -3501,15 +3591,15 @@ _SCENE7_DOM_TEMPLATE = """\
     <div class="s7-header">
       <div class="s7-icon">&#x1F4CB;</div>
       <div class="s7-header-text">
-        <h2>How We Solve It — Step by Step</h2>
-        <p>Solution method &amp; approach (5–10 steps, no final answer shown)</p>
+        <h2>Step 7 &middot; Substitution</h2>
+        <p>Plugging the given values into the formula — step by step to the answer</p>
       </div>
     </div>
     <div class="s7-body-cols">
       <!-- LEFT: Given parameters + formula result -->
       <div class="s7-left-col">
         <div class="s7-given-panel">
-          <div class="s7-given-title">&#x1F4CC; Given Parameters</div>
+          <div class="s7-given-title">&#x1F4CC; Given Values</div>
           <div class="s7-given-list" id="s7-given-list">{given_html}</div>
         </div>
         <div class="s7-approach-label">&#x1F9E0; Solution Approach</div>
@@ -3522,19 +3612,19 @@ _SCENE7_DOM_TEMPLATE = """\
           <div class="s7-formula-units" id="s7-units-hint">{units_hint}</div>
         </div>
       </div>
-      <!-- RIGHT: Numbered solution steps -->
+      <!-- RIGHT: Numbered substitution steps (real numbers plugged in) -->
       <div class="s7-right-col">
-        <div class="s7-steps-title">Solution Steps</div>
+        <div class="s7-steps-title">Substituting the Values — Step by Step</div>
         <div id="s7-steps-wrap">
 {steps_html}
         </div>
       </div>
     </div>
-    <div class="s7-cta-bar" style="margin:16px 28px 0;">
+    <div class="s7-cta-bar">
       &#x1F4A1; Try it yourself! Use the <strong>Answer Box</strong> to check your final answer.
     </div>
     <div class="s7-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to The Big Idea</button>
+      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Main Formula</button>
       <button class="btn-primary" onclick="qanim_goToPrevScene()">&#x21BA; Back to Animation</button>
     </div>
   </div>
@@ -3548,6 +3638,14 @@ _SCENE7_JS = r"""
 
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  /* ── move the overlay INSIDE the animation stage box so it appears
+     "in the scene" instead of as a separate block below the page ── */
+  (function _reparentIntoStage(){
+    var ov=_el('qanim-scene7-overlay');
+    var host=document.querySelector('.svg-container');
+    if(ov&&host&&ov.parentNode!==host){ host.appendChild(ov); }
+  })();
 
   window.qanim_showScene7 = function(){
     var ov=_el('qanim-scene7-overlay');
@@ -3586,7 +3684,7 @@ _SCENE7_JS = r"""
       if(i===idx) dots[i].classList.add('active');
     }
     var lbl=_el('step-label');
-    if(lbl) lbl.innerText='How We Solve It ('+(idx+1)+' of '+(total)+')';
+    if(lbl) lbl.innerText='Step 7: Substitution ('+(idx+1)+' of '+(total)+')';
     var bar=_el('step-bar');
     if(bar) bar.style.width='100%';
   }
