@@ -1276,20 +1276,8 @@ STEP_ANSWER_JS_MODULE = r"""
     container.innerHTML=_buildStep0()+_buildStep1()+_buildStep2()+_buildStep3()+_buildStep4();
   }
 
-  /* Called when the animation reaches its last step (or when the
-     "Step by Step Answer" control-bar button is clicked).
-     v1.2 CHANGE: instead of revealing/scrolling to the old inline
-     scrollable section, route straight into the dedicated in-scene
-     panels -- Scene 6 (Main Formula / The Big Idea) followed by
-     Scene 7 (How We Solve It -- Step by Step), reached via the
-     "How We Solve It ▶" button inside Scene 6. The old scrollable
-     section is kept only as a fallback for templates that don't
-     have Scene 6 / Scene 7 (e.g. legacy or non-Gemini pages). */
+  /* Called when animation reaches last step */
   window.showInlineStepByStep=function(){
-    if(typeof window.qanim_showScene6==='function'){
-      window.qanim_showScene6();
-      return;
-    }
     buildInlineSection();
     var sec=_el('qanim-stepbystep-section');
     if(sec){
