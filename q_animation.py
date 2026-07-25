@@ -5802,26 +5802,49 @@ class GeminiGlossaryAnalyzer:
     def analyze(cls, question: str) -> dict:
         if _gemini_client is None:
             return {"terms": []}
-        try:
-            raw = GeminiSolutionGenerator._call_gemini(
-                f"Question: {question[:800]}",
-                _GLOSSARY_SYSTEM_GEMINI,
-                max_tokens=800
-            )
-            raw = _sanitize_json_str(raw)
-            data = json.loads(raw)
-            terms = []
-            for t in (data.get("terms") or [])[:8]:
-                term    = str(t.get("term", "") or "").strip()
-                meaning = str(t.get("meaning", "") or "").strip()
-                if term and meaning:
-                    terms.append({"term": term, "meaning": meaning})
-            if terms:
-                QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s)")
-            return {"terms": terms}
-        except Exception as e:
-            QAnimLogger.warn("GlossaryAnalyzer", f"Failed: {e}")
-            return {"terms": []}
+        # This call runs CONCURRENTLY with the scene analyzer and solution
+        # generator (asyncio.gather in the pipeline), which makes it the
+        # most likely of the three to get rate-limited or come back
+        # truncated. The previous version had ZERO retries of its own --
+        # any single hiccup (a 429 that _call_gemini's own retries didn't
+        # fully absorb, or JSON truncated at the old 800-token budget)
+        # silently returned {"terms": []} and the button just never
+        # appeared, with no visibility into why. That's the actual root
+        # cause of the recurring "glossary missing" reports: it wasn't
+        # missing by design, it was failing silently and often.
+        MAX_ATTEMPTS = 3
+        last_raw = ""
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                raw = GeminiSolutionGenerator._call_gemini(
+                    f"Question: {question[:800]}",
+                    _GLOSSARY_SYSTEM_GEMINI,
+                    max_tokens=1536,  # was 800 -- too tight, caused truncated/invalid JSON
+                )
+                last_raw = raw
+                cleaned = _sanitize_json_str(raw)
+                data = json.loads(cleaned)
+                terms = []
+                for t in (data.get("terms") or [])[:8]:
+                    term    = str(t.get("term", "") or "").strip()
+                    meaning = str(t.get("meaning", "") or "").strip()
+                    if term and meaning:
+                        terms.append({"term": term, "meaning": meaning})
+                if terms:
+                    QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s) (attempt {attempt})")
+                else:
+                    QAnimLogger.info("GlossaryAnalyzer", f"Parsed OK, 0 difficult words (attempt {attempt}) — genuinely none for this question")
+                return {"terms": terms}
+            except Exception as e:
+                QAnimLogger.warn(
+                    "GlossaryAnalyzer",
+                    f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {e} — "
+                    f"raw response was: {last_raw[:300]!r}",
+                )
+                if attempt < MAX_ATTEMPTS:
+                    continue
+        QAnimLogger.error("GlossaryAnalyzer", f"All {MAX_ATTEMPTS} attempts failed — skipping glossary for this generation")
+        return {"terms": []}
 
     @classmethod
     async def analyze_async(cls, question: str) -> dict:
