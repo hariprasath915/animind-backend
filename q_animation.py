@@ -1890,10 +1890,6 @@ _CONTROLS_BAR_DOM = """
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="Jump to the Main Formula &amp; Solution walkthrough">
-    <span>&#x1F4CB;</span><span class="ctrl-label">Main Formula</span>
-  </button>
-  <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="tofind-ctrl-btn" title="What are you asked to find?">
     <span>&#x1F50D;</span><span class="ctrl-label">To Find</span>
   </button>
@@ -2250,17 +2246,42 @@ def inject_step_controller(html):
 
 _SCENE6_CSS = """
 <style id="qanim-scene6-styles">
-/* ── Scene 6: The Big Idea ── */
+/* ── Shared modal backdrop for Scene 6 / Scene 7 ── */
+#qanim-scene-modal-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 7400;
+  background: rgba(15,23,42,.45);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity .22s ease;
+}
+#qanim-scene-modal-backdrop.qanim-scene-visible {
+  display: block !important;
+  opacity: 1;
+}
+/* ── Scene 6: The Big Idea — centered modal card ── */
 #qanim-scene6-overlay {
   display: none;
-  width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-48%) scale(.97);
+  z-index: 7500;
+  width: min(900px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
   box-sizing: border-box;
-  padding-bottom: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s ease, transform .25s cubic-bezier(.34,1.56,.64,1);
 }
 #qanim-scene6-overlay.qanim-scene-visible {
   display: block !important;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
 }
 .s6-card {
   background: #fff;
@@ -2268,7 +2289,6 @@ _SCENE6_CSS = """
   box-shadow: 0 4px 32px rgba(8,145,178,.12), 0 1px 4px rgba(0,0,0,.06);
   border: 1px solid #dde8f8;
   overflow: hidden;
-  margin-top: 28px;
 }
 .s6-header {
   background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%);
@@ -2540,6 +2560,7 @@ _SCENE6_CSS = """
 """
 
 _SCENE6_DOM_TEMPLATE = """\
+<div id="qanim-scene-modal-backdrop"></div>
 <div id="qanim-scene6-overlay">
   <div class="s6-card">
     <div class="s6-header">
@@ -2667,6 +2688,8 @@ _SCENE6_JS = r"""
     if(ov) ov.classList.add('qanim-scene-visible');
     var ov7=_el('qanim-scene7-overlay');
     if(ov7) ov7.classList.remove('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');
+    if(bd) bd.classList.add('qanim-scene-visible');
     /* freeze the SVG animation if running */
     if(typeof window.rafId!=='undefined'&&window.rafId){
       cancelAnimationFrame(window.rafId);window.rafId=null;
@@ -2684,6 +2707,8 @@ _SCENE6_JS = r"""
     if(ov6) ov6.classList.remove('qanim-scene-visible');
     var ov7=_el('qanim-scene7-overlay');
     if(ov7) ov7.classList.remove('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');
+    if(bd) bd.classList.remove('qanim-scene-visible');
     /* go to the last SVG step */
     if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){
       var last=window.stepsData.length-1;
@@ -2734,22 +2759,11 @@ _SCENE6_JS = r"""
       if(ov6) ov6.classList.remove('qanim-scene-visible');
       var ov7=_el('qanim-scene7-overlay');
       if(ov7) ov7.classList.remove('qanim-scene-visible');
+      var bd=_el('qanim-scene-modal-backdrop');
+      if(bd) bd.classList.remove('qanim-scene-visible');
       s6Phase = -1;
       if(typeof _origReset==='function') _origReset();
     };
-    /* Repurposed controls-bar button: jump straight into the Main Formula scene */
-    var _wireTries=0;
-    function _wireCtrlBtn(){
-      var btn=_el('stepans-ctrl-btn');
-      if(btn){
-        btn.removeAttribute('onclick');
-        btn.addEventListener('click',function(e){e.stopPropagation();window.qanim_showScene6();});
-      } else if(_wireTries<40){
-        _wireTries++;
-        setTimeout(_wireCtrlBtn,80);
-      }
-    }
-    _wireCtrlBtn();
   });
 })();
 </script>
@@ -2997,17 +3011,27 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
 
 _SCENE7_CSS = """
 <style id="qanim-scene7-styles">
-/* ── Scene 7: How We Solve It — Step by Step ── */
+/* ── Scene 7: How We Solve It — Step by Step — centered modal card ── */
 #qanim-scene7-overlay {
   display: none;
-  width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-48%) scale(.97);
+  z-index: 7500;
+  width: min(900px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
   box-sizing: border-box;
-  padding-bottom: 32px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s ease, transform .25s cubic-bezier(.34,1.56,.64,1);
 }
 #qanim-scene7-overlay.qanim-scene-visible {
   display: block !important;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
 }
 .s7-card {
   background: #fff;
@@ -3015,7 +3039,6 @@ _SCENE7_CSS = """
   box-shadow: 0 4px 32px rgba(37,99,235,.10), 0 1px 4px rgba(0,0,0,.06);
   border: 1px solid #e8eef8;
   overflow: hidden;
-  margin-top: 28px;
 }
 .s7-header {
   background: linear-gradient(135deg, #f8fafc 0%, #f0f4ff 100%);
@@ -3497,6 +3520,8 @@ _SCENE7_JS = r"""
     if(ov) ov.classList.add('qanim-scene-visible');
     var ov6=_el('qanim-scene6-overlay');
     if(ov6) ov6.classList.remove('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');
+    if(bd) bd.classList.add('qanim-scene-visible');
     _syncDots(6); /* 0-based index 6 = scene 7 */
     /* always start the substitution walkthrough from the first step */
     s7Idx = 0;
@@ -3527,6 +3552,10 @@ _SCENE7_JS = r"""
     var _origReset=window.resetAnim;
     window.resetAnim=function(){
       s7Idx = 0;
+      var ov7=_el('qanim-scene7-overlay');
+      if(ov7) ov7.classList.remove('qanim-scene-visible');
+      var bd=_el('qanim-scene-modal-backdrop');
+      if(bd) bd.classList.remove('qanim-scene-visible');
       if(typeof _origReset==='function') _origReset();
     };
   });
@@ -3829,6 +3858,246 @@ def inject_nav_patch_and_scene_desc(html, scene_descriptions=None):
 
 
 # ===========================================================================
+#  MODULE 13.5 — Math Typography Engine
+#  ---------------------------------------------------------------------
+#  Converts raw ASCII/LaTeX-ish math text (R_A, 10^5, muC, theta, >=, sqrt(2),
+#  8.99*10^9, \(R_A=10\text{cm}\), ...) into proper textbook-style Unicode/HTML
+#  typography (Rₐ / R<sub>A</sub>, 10⁵, μC, θ, ≥, √2, 8.99 × 10⁹) EVERYWHERE
+#  text is rendered on the page — formula cards, badges, given values, Main
+#  Formula (Scene 6), Solution (Scene 7), Notes, Glossary, tooltips, labels —
+#  including content injected later (AI-generated dynamic values), because it
+#  runs as a live DOM text scanner + MutationObserver rather than a one-time
+#  string patch on any single panel.
+# ===========================================================================
+
+_MATH_TYPOGRAPHY_JS = r"""
+<script id="qanim-js-mathtypography">
+(function initMathTypography(){
+  'use strict';
+  if(window.__qanimMathTypoInit)return; window.__qanimMathTypoInit=true;
+
+  /* ── Unicode subscript / superscript character maps ──
+     Unicode has no true subscript glyph for every Latin letter; where one
+     doesn't exist we fall back to a real <sub>/<sup> HTML tag, which always
+     renders correctly regardless of font support. */
+  var SUB_MAP = {
+    '0':'\u2080','1':'\u2081','2':'\u2082','3':'\u2083','4':'\u2084','5':'\u2085',
+    '6':'\u2086','7':'\u2087','8':'\u2088','9':'\u2089',
+    '+':'\u208A','-':'\u208B','=':'\u208C','(':'\u208D',')':'\u208E',
+    'a':'\u2090','e':'\u2091','h':'\u2095','i':'\u1D62','j':'\u2C7C','k':'\u2096',
+    'l':'\u2097','m':'\u2098','n':'\u2099','o':'\u2092','p':'\u209A','r':'\u1D63',
+    's':'\u209B','t':'\u209C','u':'\u1D64','v':'\u1D65','x':'\u2093',
+    'b':'\u1D66' /* Greek subscript beta — closest visual stand-in, no true Latin "b" subscript exists */
+  };
+  var SUP_MAP = {
+    '0':'\u2070','1':'\u00B9','2':'\u00B2','3':'\u00B3','4':'\u2074','5':'\u2075',
+    '6':'\u2076','7':'\u2077','8':'\u2078','9':'\u2079',
+    '+':'\u207A','-':'\u207B','=':'\u207C','(':'\u207D',')':'\u207E',
+    'n':'\u207F','i':'\u2071'
+  };
+
+  function canMap(tok, map){
+    for(var i=0;i<tok.length;i++){ if(!map.hasOwnProperty(tok[i].toLowerCase())) return false; }
+    return true;
+  }
+  function applyMap(tok, map){
+    var out=''; for(var i=0;i<tok.length;i++){ out += map[tok[i].toLowerCase()] || tok[i]; } return out;
+  }
+
+  /* ── Greek letter names → symbols (word-boundary matched) ── */
+  var GREEK = {
+    'alpha':'\u03B1','Alpha':'\u0391','beta':'\u03B2','Beta':'\u0392',
+    'gamma':'\u03B3','Gamma':'\u0393','delta':'\u03B4','Delta':'\u0394',
+    'epsilon':'\u03B5','Epsilon':'\u0395','zeta':'\u03B6','Zeta':'\u0396',
+    'eta':'\u03B7','Eta':'\u0397','theta':'\u03B8','Theta':'\u0398',
+    'iota':'\u03B9','Iota':'\u0399','kappa':'\u03BA','Kappa':'\u039A',
+    'lambda':'\u03BB','Lambda':'\u039B','nu':'\u03BD','Nu':'\u039D',
+    'xi':'\u03BE','Xi':'\u039E','omicron':'\u03BF','Omicron':'\u039F',
+    'pi':'\u03C0','Pi':'\u03A0','rho':'\u03C1','Rho':'\u03A1',
+    'sigma':'\u03C3','Sigma':'\u03A3','tau':'\u03C4','Tau':'\u03A4',
+    'upsilon':'\u03C5','Upsilon':'\u03A5','phi':'\u03C6','Phi':'\u03A6',
+    'chi':'\u03C7','Chi':'\u03A7','psi':'\u03C8','Psi':'\u03A8',
+    'omega':'\u03C9','Omega':'\u03A9'
+    /* 'mu'/'Mu' handled separately below — needs to also match "muC" style
+       unit prefixes with no trailing word boundary. */
+  };
+
+  /* ── LaTeX macros AI-generated content sometimes contains ── */
+  var LATEX_MACROS = {
+    '\\times':'\u00D7', '\\cdot':'\u00B7', '\\pm':'\u00B1', '\\mp':'\u2213',
+    '\\geq':'\u2265', '\\leq':'\u2264', '\\neq':'\u2260', '\\approx':'\u2248',
+    '\\propto':'\u221D', '\\infty':'\u221E', '\\rightarrow':'\u2192', '\\to':'\u2192',
+    '\\angle':'\u2220', '\\parallel':'\u2225', '\\perp':'\u27C2', '\\in':'\u2208',
+    '\\subset':'\u2282', '\\cup':'\u222A', '\\cap':'\u2229', '\\int':'\u222B',
+    '\\sum':'\u2211', '\\deg':'\u00B0',
+    '\\mu':'\u03BC', '\\theta':'\u03B8', '\\pi':'\u03C0', '\\lambda':'\u03BB',
+    '\\alpha':'\u03B1', '\\beta':'\u03B2', '\\gamma':'\u03B3', '\\delta':'\u03B4',
+    '\\sigma':'\u03C3', '\\rho':'\u03C1', '\\phi':'\u03C6', '\\omega':'\u03C9',
+    '\\Omega':'\u03A9', '\\Delta':'\u0394', '\\Theta':'\u0398', '\\Lambda':'\u039B',
+    '\\Sigma':'\u03A3', '\\Phi':'\u03A6'
+  };
+
+  function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  /* ── The core text → typographic-HTML converter ──
+     Order matters: LaTeX cleanup → word/macro swaps → ASCII operators →
+     escape any remaining raw <, >, & → subscript/superscript (may add tags). */
+  function mathify(raw){
+    var text = String(raw);
+    if(!text || text.indexOf('_')===-1 && text.indexOf('^')===-1 && !/[A-Za-z]/.test(text) && text.indexOf('\\')===-1){
+      return null; /* nothing worth scanning (pure whitespace/punctuation) */
+    }
+
+    /* 1. LaTeX delimiter / wrapper cleanup */
+    text = text.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
+    text = text.replace(/\\text\{([^{}]*)\}/g, '$1');
+    text = text.replace(/\\mathrm\{([^{}]*)\}/g, '$1');
+    text = text.replace(/\\sqrt\{([^{}]*)\}/g, '\u221A($1)');
+    text = text.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1\u2044$2');
+
+    /* 2. LaTeX macros (longest-first isn't required — none of ours are prefixes of another) */
+    Object.keys(LATEX_MACROS).forEach(function(key){
+      var re = new RegExp(escapeRegExp(key), 'g');
+      text = text.replace(re, LATEX_MACROS[key]);
+    });
+    /* strip any leftover unrecognised LaTeX macro backslashes, e.g. "\phi" already handled above */
+    text = text.replace(/\\([a-zA-Z]+)/g, '$1');
+
+    /* 3. Greek word names (word-boundary) */
+    Object.keys(GREEK).forEach(function(word){
+      var re = new RegExp('\\b' + word + '\\b', 'g');
+      text = text.replace(re, GREEK[word]);
+    });
+    /* "mu"/"Mu" — also converts unit prefixes like "muC", "muF" with no space */
+    text = text.replace(/\bmu(?![a-z])/g, '\u03BC');
+    text = text.replace(/\bMu(?![a-zA-Z])/g, '\u03BC');
+
+    /* 4. Units & everyday math words */
+    text = text.replace(/\bohms?\b/g, '\u03A9');
+    text = text.replace(/\s*\bdegrees?\b/g, '\u00B0');
+    text = text.replace(/\bmicro\b/g, '\u03BC');
+    text = text.replace(/\binfinity\b/g, '\u221E');
+    text = text.replace(/\bapproximately\b/g, '\u2248');
+    text = text.replace(/\bproportional\b/g, '\u221D');
+    text = text.replace(/\bperpendicular\b/g, '\u27C2');
+    text = text.replace(/\bparallel\b/g, '\u2225');
+    text = text.replace(/\bangle\s+([A-Z]{2,5})\b/g, '\u2220$1');
+    text = text.replace(/sqrt\s*\(([^)]+)\)/gi, '\u221A($1)');
+    text = text.replace(/sqrt\s*([0-9]+(?:\.[0-9]+)?)/gi, '\u221A$1');
+
+    /* 5. Unambiguous ASCII comparison/operator sequences */
+    text = text.replace(/>=/g, '\u2265');
+    text = text.replace(/<=/g, '\u2264');
+    text = text.replace(/!=/g, '\u2260');
+    text = text.replace(/\+-/g, '\u00B1');
+
+    /* 6. Multiplication "*" → "×", but never touch markdown "**bold**" */
+    text = text.replace(/\*\*/g, '\u0000BOLD\u0000');
+    text = text.replace(/([A-Za-z0-9)\]])\s*\*\s*([A-Za-z0-9(])/g, '$1 \u00D7 $2');
+    text = text.replace(/\u0000BOLD\u0000/g, '**');
+
+    /* 7. Scientific "e" notation → × 10^exp (exponent turned into superscript below) */
+    text = text.replace(/(\d+(?:\.\d+)?)[eE]([+-]?\d+)\b/g, function(m, base, exp){
+      return base + ' \u00D7 10^' + exp;
+    });
+
+    /* 8. Escape any remaining literal HTML-sensitive characters before we
+       start inserting our own <sub>/<sup> tags. */
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    /* 9. Subscripts: base_sub or base_{sub} */
+    text = text.replace(/([A-Za-z0-9])_\{?([A-Za-z0-9+\-]+)\}?/g, function(m, base, sub){
+      return base + (canMap(sub, SUB_MAP) ? applyMap(sub, SUB_MAP) : '<sub>' + sub + '</sub>');
+    });
+
+    /* 10. Superscripts: base^exp or base^{exp} */
+    text = text.replace(/([A-Za-z0-9)\]])\^\{?(-?[A-Za-z0-9]+)\}?/g, function(m, base, exp){
+      return base + (canMap(exp, SUP_MAP) ? applyMap(exp, SUP_MAP) : '<sup>' + exp + '</sup>');
+    });
+
+    return text;
+  }
+
+  /* ── DOM walking: replace text nodes with their mathified HTML ── */
+  var SKIP_TAGS = {SCRIPT:1, STYLE:1, NOSCRIPT:1, TEXTAREA:1, SELECT:1, OPTION:1, INPUT:1};
+
+  function shouldSkip(el){
+    while(el){
+      if(el.nodeType===1){
+        if(SKIP_TAGS[el.tagName]) return true;
+        if(el.classList && el.classList.contains('qanim-no-mathify')) return true;
+      }
+      el = el.parentNode;
+    }
+    return false;
+  }
+
+  function processNode(root){
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var targets = [];
+    var n;
+    while((n = walker.nextNode())){
+      if(!n.nodeValue || !n.nodeValue.trim()) continue;
+      if(shouldSkip(n.parentNode)) continue;
+      targets.push(n);
+    }
+    for(var i=0;i<targets.length;i++){
+      var node = targets[i];
+      var out = mathify(node.nodeValue);
+      if(out===null || out===node.nodeValue) continue;
+      var tmp = document.createElement('span');
+      tmp.innerHTML = out;
+      var frag = document.createDocumentFragment();
+      while(tmp.firstChild) frag.appendChild(tmp.firstChild);
+      if(node.parentNode) node.parentNode.replaceChild(frag, node);
+    }
+  }
+
+  var observer = new MutationObserver(function(mutations){
+    observer.disconnect();
+    mutations.forEach(function(mut){
+      mut.addedNodes && mut.addedNodes.forEach(function(added){
+        if(added.nodeType===1 || added.nodeType===3) processNode(added.nodeType===3 ? added.parentNode : added);
+      });
+    });
+    observer.observe(document.body, {childList:true, subtree:true});
+  });
+
+  function start(){
+    processNode(document.body);
+    observer.observe(document.body, {childList:true, subtree:true});
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+})();
+</script>
+"""
+
+
+def inject_math_typography(html):
+    """
+    Injects the Math Typography Engine — a client-side script that rewrites
+    every raw-text math expression on the page (R_A, 10^5, muC, theta, >=,
+    sqrt(2), 8.99*10^9, LaTeX-ish \\(...\\) fragments, etc.) into proper
+    textbook-style Unicode/HTML typography (Rₐ, 10⁵, μC, θ, ≥, √2, 8.99 × 10⁹).
+
+    Runs last in the injection chain so it can scan the fully-assembled page
+    (all panels, Scene 6, Scene 7), and keeps watching via MutationObserver so
+    any later AI-generated / dynamically-added content is formatted too.
+    """
+    injection = _MATH_TYPOGRAPHY_JS + '\n'
+    if '</body>' in html:
+        html = html.replace('</body>', injection + '\n</body>', 1)
+    else:
+        html += '\n' + injection
+    QAnimLogger.ok("MathTypography", "Math typography engine injected")
+    return html
+
+
+# ===========================================================================
 #  MODULE 14 — PANEL RELIABILITY ENGINE
 #  ---------------------------------------------------------------------
 #  This is the fix for the "panels randomly missing" bug class. It does NOT
@@ -4048,7 +4317,7 @@ REQUIRED_COMPONENTS = {
     "Controls": {
         "data": None,
         "css":  ["qanim-controls-bar-styles"],
-        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn", "stepans-ctrl-btn"],
+        "dom":  ["qanim-controls-bar", "answerbox-ctrl-btn"],
         "js":   None,
     },
     "PreviousStep": {
@@ -4077,7 +4346,7 @@ REQUIRED_COMPONENTS = {
     "Scene6": {
         "data": None,
         "css":  ["qanim-scene6-styles"],
-        "dom":  ["qanim-scene6-overlay", "s6-formula-text"],
+        "dom":  ["qanim-scene6-overlay", "s6-formula-text", "qanim-scene-modal-backdrop"],
         "js":   ["qanim-js-scene6"],
     },
     "Scene7": {
@@ -4085,6 +4354,10 @@ REQUIRED_COMPONENTS = {
         "css":  ["qanim-scene7-styles"],
         "dom":  ["qanim-scene7-overlay", "s7-steps-wrap"],
         "js":   ["qanim-js-scene7"],
+    },
+    "MathTypography": {
+        "data": None, "css": None, "dom": None,
+        "js":   ["qanim-js-mathtypography"],
     },
 }
 
@@ -4129,6 +4402,7 @@ STRIP_PATTERNS = {
     ],
     "Scene6": [
         re.compile(r'<style[^>]*id=["\']qanim-scene6-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div id="qanim-scene-modal-backdrop"[^>]*>\s*</div>\s*', re.DOTALL),
         re.compile(r'<div id="qanim-scene6-overlay".*?</div>\s*(?=<div|<script|<style|</body)', re.DOTALL),
         re.compile(r'<script[^>]*id=["\']qanim-js-scene6["\'][^>]*>.*?</script>', re.DOTALL),
     ],
@@ -4136,6 +4410,9 @@ STRIP_PATTERNS = {
         re.compile(r'<style[^>]*id=["\']qanim-scene7-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
         re.compile(r'<div id="qanim-scene7-overlay".*?</div>\s*(?=<div|<script|<style|</body)', re.DOTALL),
         re.compile(r'<script[^>]*id=["\']qanim-js-scene7["\'][^>]*>.*?</script>', re.DOTALL),
+    ],
+    "MathTypography": [
+        re.compile(r'<script[^>]*id=["\']qanim-js-mathtypography["\'][^>]*>.*?</script>', re.DOTALL),
     ],
 }
 
@@ -4257,6 +4534,8 @@ class PanelInjectionManager:
         # Scene 6 & 7 — appended AFTER the core panels so they land last in <body>
         html = inject_scene6_big_idea(html, ctx.gemini_sol, ctx.scene_script)
         html = inject_scene7_how_we_solve_it(html, ctx.gemini_sol, ctx.scene_script)
+        # Math typography — runs LAST so it can scan the fully-assembled page
+        html = inject_math_typography(html)
         return html
 
     @classmethod
