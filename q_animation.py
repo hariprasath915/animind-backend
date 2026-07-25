@@ -2608,6 +2608,8 @@ _SCENE6_JS = r"""
   /* s6Phase: -1 = not started, 0 = formula revealed, 1..N = variable i
      being explained, N+1 = reassembled formula, N+2 = why-it-works insight */
   var s6Phase = -1;
+  var s6AutoAdvanceScheduled = false;
+  var s6AutoAdvanceTimer = null;
 
   function s6Render(){
     var groups = _groups();
@@ -2636,6 +2638,20 @@ _SCENE6_JS = r"""
     if(resultEl) resultEl.classList.toggle('s6-shown', reassembled);
     var showInsight = s6Phase >= n+2;
     if(insightEl) insightEl.classList.toggle('s6-shown', showInsight);
+
+    /* Main Formula is now 100% complete — automatically continue to the
+       Step-by-Step Solution shortly after, exactly once per visit. The
+       "Continue to Solution" button below still works immediately if the
+       student doesn't want to wait. */
+    if(showInsight && !s6AutoAdvanceScheduled){
+      s6AutoAdvanceScheduled = true;
+      s6AutoAdvanceTimer = setTimeout(function(){
+        var ov = _el('qanim-scene6-overlay');
+        if(ov && ov.classList.contains('qanim-scene-visible')){
+          window.qanim_goToScene7();
+        }
+      }, 2200);
+    }
 
     if(progressEl){
       if(s6Phase <= 0) progressEl.innerText = 'The Formula';
@@ -2698,6 +2714,8 @@ _SCENE6_JS = r"""
     _syncDots(5); /* 0-based index 5 = scene 6 */
     /* start the teaching sequence from the beginning every time we arrive */
     s6Phase = 0;
+    s6AutoAdvanceScheduled = false;
+    if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
     s6Render();
   };
 
@@ -2709,6 +2727,8 @@ _SCENE6_JS = r"""
     if(ov7) ov7.classList.remove('qanim-scene-visible');
     var bd=_el('qanim-scene-modal-backdrop');
     if(bd) bd.classList.remove('qanim-scene-visible');
+    if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
+    _restoreConceptStage();
     /* go to the last SVG step */
     if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){
       var last=window.stepsData.length-1;
@@ -2723,6 +2743,7 @@ _SCENE6_JS = r"""
   window.qanim_goToScene7 = function(){
     var ov6=_el('qanim-scene6-overlay');
     if(ov6) ov6.classList.remove('qanim-scene-visible');
+    if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
     if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
   };
 
@@ -2739,6 +2760,23 @@ _SCENE6_JS = r"""
     if(bar) bar.style.width=Math.round((idx+1)/Math.max(dots.length,1)*100)+'%';
   }
 
+  /* Pause briefly, then smoothly fade the concept-animation stage to black
+     before Main Formula appears — the "teacher steps back from the board"
+     beat between Concept Explanation and Main Formula. */
+  function _fadeOutConceptStage(onDone){
+    var stage = document.querySelector('.svg-container');
+    if(!stage){ onDone(); return; }
+    setTimeout(function(){
+      stage.style.transition = 'opacity .45s ease';
+      stage.style.opacity = '0';
+      setTimeout(onDone, 460);
+    }, 650); /* brief pause before the fade starts, per spec (~0.5-1s) */
+  }
+  function _restoreConceptStage(){
+    var stage = document.querySelector('.svg-container');
+    if(stage){ stage.style.opacity = '1'; }
+  }
+
   /* ── wire the "Next Step" button on the last SVG step to show Scene 6 ── */
   _onReady(function(){
     /* Intercept the existing nextStep() so after the last SVG step it opens Scene 6 */
@@ -2746,7 +2784,7 @@ _SCENE6_JS = r"""
     window.nextStep=function(){
       if(typeof window.stepsData!=='undefined'&&typeof window.currentStep!=='undefined'){
         if(window.currentStep>=window.stepsData.length-1){
-          window.qanim_showScene6();
+          _fadeOutConceptStage(function(){ window.qanim_showScene6(); });
           return;
         }
       }
@@ -2762,6 +2800,9 @@ _SCENE6_JS = r"""
       var bd=_el('qanim-scene-modal-backdrop');
       if(bd) bd.classList.remove('qanim-scene-visible');
       s6Phase = -1;
+      s6AutoAdvanceScheduled = false;
+      if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
+      _restoreConceptStage();
       if(typeof _origReset==='function') _origReset();
     };
   });
