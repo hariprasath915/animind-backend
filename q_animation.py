@@ -338,6 +338,111 @@ class GenerationValidator:
 
 
 # ===========================================================================
+#  MODULE 2.6 — JsSyntaxValidator
+# ===========================================================================
+class JsSyntaxValidator:
+    """Validates that every inline <script> block in the generated HTML is
+    syntactically valid JavaScript, and can auto-repair the #1 recurring
+    cause of "buttons don't work" reports.
+
+    ROOT CAUSE THIS EXISTS FOR:
+    Gemini sometimes writes prime notation (l', theta', i') as a raw
+    apostrophe inside a single-quoted JS string literal, e.g.:
+        badges: '<span ...>l' = 32 cm</span>',
+    That apostrophe closes the string early, which is a JS SYNTAX ERROR.
+    A syntax error anywhere in a <script> block prevents the ENTIRE block
+    from running -- not just that one line -- so nextStep(), applyStep(),
+    and window.onload silently never get defined. The page still *looks*
+    correct on load because step 1's text is hardcoded in the static HTML,
+    but every button wired to that block is then permanently dead, with
+    zero visible error to the user (only a console error in DevTools).
+    GenerationValidator/PanelInjectionManager never caught this because
+    they only check whether certain id strings are PRESENT in the HTML --
+    they never check whether the resulting JavaScript actually parses.
+    """
+
+    _SCRIPT_RE = re.compile(r'<script\b([^>]*)>(.*?)</script>', re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def find_errors(cls, html: str):
+        """Returns [(script_id, error_message), ...] for every inline
+        <script> block that fails to parse. Empty list = all good."""
+        errors = []
+        for attrs, body in cls._SCRIPT_RE.findall(html):
+            attrs_l = attrs.lower()
+            if 'application/json' in attrs_l or 'src=' in attrs_l:
+                continue  # data islands and external scripts aren't JS to parse here
+            if not body.strip():
+                continue
+            m = re.search(r'id=["\']([^"\']+)["\']', attrs)
+            script_id = m.group(1) if m else "(unnamed script)"
+            err = cls._check_syntax(body)
+            if err:
+                errors.append((script_id, err))
+        return errors
+
+    @classmethod
+    def _check_syntax(cls, code: str):
+        """Returns an error string if `code` is invalid JS, else None.
+        Tries Node's own engine first (exactly what the browser uses),
+        then falls back to a pure-Python parser (pip install esprima) if
+        Node isn't available on this host. If neither is available, logs
+        once and skips validation rather than failing the whole pipeline."""
+        try:
+            import subprocess, tempfile, os as _os
+            fd, path = tempfile.mkstemp(suffix='.js')
+            try:
+                with _os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(code)
+                proc = subprocess.run(
+                    ["node", "--check", path],
+                    capture_output=True, text=True, timeout=5,
+                )
+                return proc.stderr.strip()[:500] if proc.returncode != 0 else None
+            finally:
+                try:
+                    _os.unlink(path)
+                except OSError:
+                    pass
+        except FileNotFoundError:
+            pass  # node not on PATH -- fall through to esprima
+        except Exception:
+            pass
+
+        try:
+            import esprima
+            esprima.parseScript(code)
+            return None
+        except ImportError:
+            QAnimLogger.warn(
+                "JsSyntaxValidator",
+                "Neither `node` nor `esprima` is available -- JS syntax "
+                "validation skipped. Install one (`pip install esprima` "
+                "needs no system deps) to enable this safety net.",
+            )
+            return None
+        except Exception as e:
+            return str(e)[:500]
+
+    @classmethod
+    def auto_fix_stray_apostrophes(cls, html: str) -> str:
+        """Best-effort repair for the exact failure shape above: a raw
+        apostrophe sitting between '>' and the next '<' inside a
+        <script> block is HTML *text content* embedded in a JS string --
+        never a legitimate JS token boundary in this codebase's generated
+        output -- so it's safe to HTML-entity-encode automatically once
+        validation has already flagged that block as broken."""
+        def _fix_script(m):
+            attrs, body = m.group(1), m.group(2)
+            attrs_l = attrs.lower()
+            if 'application/json' in attrs_l or 'src=' in attrs_l:
+                return m.group(0)
+            fixed_body = re.sub(r"(>)'(?=[^<]*<)", r"\1&#39;", body)
+            return f"<script{attrs}>{fixed_body}</script>"
+        return cls._SCRIPT_RE.sub(_fix_script, html)
+
+
+# ===========================================================================
 #  MODULE 2.5 — ToFindExtractor
 # ===========================================================================
 class ToFindExtractor:
@@ -4917,6 +5022,17 @@ CRITICAL CODE REQUIREMENTS
 - ALL JavaScript in one <script> block
 - requestAnimationFrame loop keeps running unless explicitly paused (freeze step)
 - Restart button resets angle, currentStep=0, resumes RAF, applies step 0
+- NEVER put a raw apostrophe/single-quote character inside a single-quoted
+  JS string. ONE unescaped apostrophe silently breaks the ENTIRE <script>
+  block it's in — every function in that block (including nextStep and
+  window.onload) stops being defined, with no visible error on the page.
+  This happens constantly with prime notation (l', θ', i', v') and words
+  like "it's"/"cell's". Always write the HTML entity &#39; instead:
+    WRONG: badges: '<span class="badge">l' = 32 cm</span>',
+    RIGHT: badges: '<span class="badge">l&#39; = 32 cm</span>',
+  This applies to every string field: title, badges, desc, jockeyLabel,
+  glossary terms/meanings, and answer target labels — anywhere user-facing
+  text is embedded inside a single-quoted JS string.
 
 ════════════════════════════════════════════════════════════
 POLISH CHECKLIST (every output must pass)
@@ -5916,6 +6032,40 @@ async def _run_generation_pipeline(question: str) -> dict:
         GenerationValidator.validate(html, require_svg=True)
     except ValidationError as e:
         QAnimLogger.warn("FinalValidator", f"Post-injection: {e} — continuing")
+
+    # ── JS syntax gate ──────────────────────────────────────────────────
+    # Every earlier check only confirms certain id strings are PRESENT in
+    # the HTML. None of them confirm the JavaScript actually parses. One
+    # stray apostrophe in stepsData (prime notation like l', theta', i')
+    # is enough to silently kill nextStep/applyStep/window.onload for the
+    # WHOLE page while it still looks fine on first load. Catch that here.
+    js_errors = JsSyntaxValidator.find_errors(html)
+    if js_errors:
+        QAnimLogger.warn(
+            "JsSyntaxValidator",
+            f"{len(js_errors)} broken <script> block(s) found: {js_errors}",
+        )
+        repaired = JsSyntaxValidator.auto_fix_stray_apostrophes(html)
+        remaining = JsSyntaxValidator.find_errors(repaired)
+        if not remaining:
+            QAnimLogger.ok(
+                "JsSyntaxValidator",
+                "Auto-repaired stray apostrophe(s) in JS string literal(s)",
+            )
+            html = repaired
+        else:
+            QAnimLogger.error(
+                "JsSyntaxValidator",
+                f"Could not auto-repair {len(remaining)} script block(s) "
+                f"({remaining}) — serving the safe fallback page instead "
+                f"of shipping one with dead buttons.",
+            )
+            html = RecoveryEngine.fallback_html(
+                question, "Generated animation had unrecoverable JavaScript errors."
+            )
+            concept_html = html
+    else:
+        QAnimLogger.ok("JsSyntaxValidator", "All inline <script> blocks parse cleanly")
 
     result = {
         "title":                  scene_script.get("title", question[:60]),
