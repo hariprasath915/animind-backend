@@ -1053,14 +1053,23 @@ Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no ex
     {"text": "h = Nu x k / D",          "color": "pink"}
   ],
   "formula_note": "Evaluate all properties at bulk mean temperature T_bulk = (T_in + T_out)/2",
+  "formula_why": "One clear sentence on WHY this is the governing formula/principle for this exact problem (what physical law it comes from and when it applies).",
+  "variable_meanings": [
+    {"symbol": "rho", "meaning": "Fluid density", "unit": "kg/m3", "value": "1000"},
+    {"symbol": "V",   "meaning": "Flow velocity",  "unit": "m/s",   "value": "2"},
+    {"symbol": "D",   "meaning": "Pipe diameter",  "unit": "m",     "value": "0.05"},
+    {"symbol": "mu",  "meaning": "Dynamic viscosity", "unit": "Pa.s", "value": "0.001"}
+  ],
   "substitution_steps": [
-    {"title": "Calculate Reynolds Number",      "expr": "Re = (1000 x 2 x 0.05) / 0.001 = 100000"},
-    {"title": "Calculate Prandtl Number",       "expr": "Pr = (0.001 x 4200) / 0.6 = 7"},
-    {"title": "Apply Dittus-Boelter Equation",  "expr": "Nu = 0.023 x (100000)^0.8 x (7)^0.4 = 365"},
-    {"title": "Find Heat Transfer Coefficient", "expr": "h = 365 x 0.6 / 0.05 = 4380 W/(m2.K)"}
+    {"title": "Calculate Reynolds Number",      "expr": "Re = (1000 x 2 x 0.05) / 0.001 = 100000", "description": "We substitute the known density, velocity, diameter and viscosity to check the flow regime."},
+    {"title": "Calculate Prandtl Number",       "expr": "Pr = (0.001 x 4200) / 0.6 = 7", "description": "Pr compares momentum diffusivity to thermal diffusivity and is needed for the Nusselt correlation."},
+    {"title": "Apply Dittus-Boelter Equation",  "expr": "Nu = 0.023 x (100000)^0.8 x (7)^0.4 = 365", "description": "With Re and Pr known, the empirical correlation gives the dimensionless heat transfer number."},
+    {"title": "Find Heat Transfer Coefficient", "expr": "h = 365 x 0.6 / 0.05 = 4380 W/(m2.K)", "description": "Multiplying Nu by the fluid conductivity and dividing by the diameter converts back to a physical coefficient."}
   ],
   "final_answer": "h = 4380 W/(m2.K),  Re = 100000,  Nu = 365",
-  "key_insight": "Higher flow velocity raises Re, which boosts h through the 0.8-power relationship."
+  "final_answer_unit": "W/(m2.K)",
+  "key_insight": "Higher flow velocity raises Re, which boosts h through the 0.8-power relationship.",
+  "real_world_note": "One short optional sentence on where this result matters in practice (e.g. heat exchanger sizing). Set to \"\" if not meaningful."
 }
 
 STRICT RULES:
@@ -1068,9 +1077,21 @@ STRICT RULES:
 - to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Never leave empty.
 - formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them. Never leave empty.
 - formula_note: Optional note about evaluation conditions (e.g. bulk temperature). Set to \"\" if not applicable.
-- substitution_steps: 3-5 numbered calculation steps. Each MUST have \"title\" (what this step computes) and \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown). Never leave empty.
+- formula_why: One sentence, plain English, explaining why THIS formula/principle is the correct one to reach for. Never leave empty.
+- variable_meanings: ONE entry per distinct symbol used in given_data/formulas. Each entry MUST have \"symbol\", \"meaning\" (what the variable physically represents), \"unit\" (correct SI or given unit), and \"value\" (the given numerical value, or \"?\" if it is the unknown being solved for). This is used to teach the formula variable-by-variable — never leave empty, never invent a variable that is not actually in the formula.
+- substitution_steps: 3-6 numbered calculation steps. Each MUST have \"title\" (what this step computes), \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown), and \"description\" (ONE short sentence explaining WHY this step is done and what it accomplishes — the reasoning a teacher would say aloud, not just a restatement of the math). Never leave empty.
 - final_answer: Complete answer containing ALL computed numerical values with units. Must NEVER be empty.
+- final_answer_unit: The correct SI (or standard) unit of the primary requested quantity, written cleanly (e.g. \"W/(m2.K)\", \"m/s\", \"N\"). Must NEVER be empty.
 - key_insight: One clear memorable sentence about the core physics or mathematical concept. Must NEVER be empty.
+- real_world_note: One short optional real-world interpretation of the result. Set to \"\" (empty string) if nothing meaningful applies — never fabricate a forced example.
+
+ACCURACY REQUIREMENTS — NON-NEGOTIABLE:
+- The formula(s) you select MUST be the mathematically and physically correct ones for exactly what this question asks — verify the governing principle before writing anything down.
+- NEVER approximate, round prematurely, or substitute a similar-but-wrong formula. NEVER hallucinate a constant, property value, or relationship that was not given or is not a standard, correct physical constant.
+- Use correct SI units throughout (or the unit system explicitly given in the question) and correct standard variable notation for the subject (e.g. rho for density, mu for dynamic viscosity).
+- Every number in substitution_steps must be traceable to either a given value or a previously-computed intermediate result in this same solution — never introduce an unexplained number.
+- If you are not fully certain a value or formula is correct, prefer the standard textbook form for that topic rather than guessing.
+
 - CRITICAL OUTPUT FORMAT: Your response MUST start with {{ and end with }}. No preamble, no explanation, no markdown fences. Raw JSON only. If you include anything before {{ or after }}, the response will be rejected."""
 
 
@@ -1089,10 +1110,12 @@ class GeminiSolutionGenerator:
             {"text": "Compute the result",                      "color": "green"},
         ],
         "formula_note": "",
+        "formula_why": "This formula directly connects the given quantities to the unknown asked for in the question.",
+        "variable_meanings": [],
         "substitution_steps": [
-            {"title": "Identify Given Values",  "expr": "List all values from the question with their units."},
-            {"title": "Select Formula",         "expr": "Choose the correct governing equation for this problem type."},
-            {"title": "Substitute and Solve",   "expr": "Insert the known values and evaluate step by step."},
+            {"title": "Identify Given Values",  "expr": "List all values from the question with their units.", "description": "We start by writing down everything we already know, with correct units, before touching the formula."},
+            {"title": "Select Formula",         "expr": "Choose the correct governing equation for this problem type.", "description": "The right formula connects the given quantities to the one we need to find."},
+            {"title": "Substitute and Solve",   "expr": "Insert the known values and evaluate step by step.", "description": "Plugging in the numbers and simplifying carefully avoids arithmetic and unit errors."},
         ],
         "steps": [
             "Step 1: Write down the given values from the question.",
@@ -1102,7 +1125,9 @@ class GeminiSolutionGenerator:
             "Step 5: State the final answer with units.",
         ],
         "final_answer": "Please re-generate for a detailed answer.",
+        "final_answer_unit": "",
         "key_insight":  "Always identify given values and the target quantity before selecting a formula.",
+        "real_world_note": "",
         "raw": "",
     }
 
@@ -1281,6 +1306,20 @@ class GeminiSolutionGenerator:
                     norm_formulas.append({"text": str(f), "color": COLORS[idx % len(COLORS)]})
 
             formula_note = str(data.get("formula_note", "") or "")
+            formula_why  = str(data.get("formula_why",  "") or "")
+
+            variable_meanings = data.get("variable_meanings", [])
+            if not isinstance(variable_meanings, list):
+                variable_meanings = []
+            norm_var_meanings = []
+            for v in variable_meanings:
+                if isinstance(v, dict):
+                    norm_var_meanings.append({
+                        "symbol":  str(v.get("symbol",  "") or ""),
+                        "meaning": str(v.get("meaning", "") or ""),
+                        "unit":    str(v.get("unit",    "") or ""),
+                        "value":   str(v.get("value",   "") or ""),
+                    })
 
             substitution_steps = data.get("substitution_steps", [])
             if not isinstance(substitution_steps, list):
@@ -1289,14 +1328,17 @@ class GeminiSolutionGenerator:
             for s in substitution_steps:
                 if isinstance(s, dict):
                     norm_subs.append({
-                        "title": str(s.get("title", "") or ""),
-                        "expr":  str(s.get("expr", "") or ""),
+                        "title":       str(s.get("title", "") or ""),
+                        "expr":        str(s.get("expr", "") or ""),
+                        "description": str(s.get("description", "") or s.get("desc", "") or ""),
                     })
                 else:
-                    norm_subs.append({"title": "Calculation", "expr": str(s)})
+                    norm_subs.append({"title": "Calculation", "expr": str(s), "description": ""})
 
-            final_answer = str(data.get("final_answer", "") or "")
-            key_insight  = str(data.get("key_insight",  "") or "")
+            final_answer      = str(data.get("final_answer", "") or "")
+            final_answer_unit = str(data.get("final_answer_unit", "") or "")
+            key_insight       = str(data.get("key_insight",  "") or "")
+            real_world_note   = str(data.get("real_world_note", "") or "")
 
             # ── Backward-compat flat steps list ──────────────────────
             steps = data.get("steps", [])
@@ -1314,10 +1356,14 @@ class GeminiSolutionGenerator:
                 "to_find":            to_find,
                 "formulas":           norm_formulas,
                 "formula_note":       formula_note,
+                "formula_why":        formula_why,
+                "variable_meanings":  norm_var_meanings,
                 "substitution_steps": norm_subs,
                 "steps":              steps,
                 "final_answer":       final_answer,
+                "final_answer_unit":  final_answer_unit,
                 "key_insight":        key_insight,
+                "real_world_note":    real_world_note,
                 "raw":                raw,
             }
         except Exception as e:
@@ -1501,7 +1547,7 @@ _ANSWER_BOX_DOM = """
     <div id="ab-alldone-card">
       <span class="ab-alldone-emoji">&#x1F389;</span>
       <div class="ab-alldone-title">All answers submitted!</div>
-      <div class="ab-alldone-sub">Great work! Continue the animation to review the <strong>Main Formula</strong> and <strong>Substitution</strong> walkthrough.</div>
+      <div class="ab-alldone-sub">Great work! Continue the animation to review the <strong>Main Formula</strong> and <strong>Solution</strong> walkthrough.</div>
     </div>
   </div>
 </div>
@@ -1844,7 +1890,7 @@ _CONTROLS_BAR_DOM = """
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
-  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="Jump to the Main Formula &amp; Substitution walkthrough">
+  <button class="qanim-ctrl-btn" id="stepans-ctrl-btn" title="Jump to the Main Formula &amp; Solution walkthrough">
     <span>&#x1F4CB;</span><span class="ctrl-label">Main Formula</span>
   </button>
   <div class="qanim-ctrl-sep"></div>
@@ -2598,7 +2644,7 @@ _SCENE6_JS = r"""
 
     if(nextBtn){
       if(s6Phase >= n+2){
-        nextBtn.innerText = 'Continue to Substitution \u25B6';
+        nextBtn.innerText = 'Continue to Solution \u25B6';
         nextBtn.onclick = function(){ window.qanim_goToScene7(); };
       } else {
         nextBtn.innerText = 'Next \u25B6';
@@ -2730,6 +2776,16 @@ def _build_s6_circles_html(gemini_sol, scene_script):
     # Each entry: {"sym": "F", "val": "8 kg/s", "meaning": "Mass flow rate"}
     var_entries = []
 
+    # Build a symbol -> {meaning, unit} lookup from the richer variable_meanings
+    # table (Step 6 "teach the formula" data), when the model provided one.
+    meaning_lookup = {}
+    for v in (gemini_sol.get("variable_meanings") or []):
+        if isinstance(v, dict) and v.get("symbol"):
+            key = str(v["symbol"]).strip().lower()
+            mean = str(v.get("meaning", "") or "")
+            unit = str(v.get("unit", "") or "")
+            meaning_lookup[key] = (mean + (" (" + unit + ")" if unit else "")).strip()
+
     # Prefer structured given_data from solution generator
     given_raw = gemini_sol.get("given_data") or []
     for g in given_raw[:6]:
@@ -2738,7 +2794,8 @@ def _build_s6_circles_html(gemini_sol, scene_script):
             parts = g_str.split("=", 1)
             sym     = parts[0].strip()[:12]
             val_raw = parts[1].strip()[:30]
-            var_entries.append({"sym": sym, "val": val_raw, "meaning": ""})
+            meaning = meaning_lookup.get(sym.lower(), "")
+            var_entries.append({"sym": sym, "val": val_raw, "meaning": meaning})
         else:
             var_entries.append({"sym": g_str[:10], "val": "", "meaning": ""})
 
@@ -2806,7 +2863,7 @@ def _build_s6_circles_html(gemini_sol, scene_script):
         theme = _S6_CIRCLE_THEMES[i % len(_S6_CIRCLE_THEMES)]
         sym_e  = html_module.escape(str(entry.get("sym","?"))[:12])
         val_e  = html_module.escape(str(entry.get("val",""))[:25])
-        mean_e = html_module.escape(str(entry.get("meaning",""))[:30])
+        mean_e = html_module.escape(str(entry.get("meaning",""))[:42])
 
         # Circle group: circle + meaning label below
         circle_inner = (
@@ -2883,10 +2940,15 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
         formula_raw = scene_script.get("key_insight") or "See solution steps below"
 
     insight = (
-        scene_script.get("key_insight")
+        gemini_sol.get("formula_why")
+        or scene_script.get("key_insight")
         or gemini_sol.get("key_insight")
         or "This formula is the governing principle. Identify what is given, plug in the values, and compute the result systematically."
     )
+    # Every formula-teaching scene should end with an explicit confirmation,
+    # matching how a teacher reassures the class before moving on.
+    if "correct formula" not in str(insight).lower():
+        insight = str(insight).rstrip(". ") + ". This is the correct formula for solving this problem."
 
     circles_html, result_bar = _build_s6_circles_html(gemini_sol, scene_script)
 
@@ -3299,6 +3361,13 @@ _SCENE7_CSS = """
   border-radius: 10px;
   animation: s7FinalPop .5s cubic-bezier(0.34,1.56,0.64,1);
 }
+.s7-final-unit {
+  margin-top: 10px;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px;
+  color: #15803d;
+  font-weight: 600;
+}
 .s7-final-insight {
   margin-top: 12px;
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
@@ -3320,7 +3389,7 @@ _SCENE7_DOM_TEMPLATE = """\
     <div class="s7-header">
       <div class="s7-icon">&#x1F4CB;</div>
       <div class="s7-header-text">
-        <h2>Step 7: Substitution</h2>
+        <h2>Step 7: Solution</h2>
         <p>Watch the values go in and the answer come out, one line at a time</p>
       </div>
     </div>
@@ -3343,7 +3412,7 @@ _SCENE7_DOM_TEMPLATE = """\
       </div>
       <!-- RIGHT: One substitution step at a time -->
       <div class="s7-right-col">
-        <div class="s7-steps-title">Substitution — Step <span id="s7-step-cur">1</span> of <span id="s7-step-total">1</span></div>
+        <div class="s7-steps-title">Solution — Step <span id="s7-step-cur">1</span> of <span id="s7-step-total">1</span></div>
         <div class="s7-step-progress" id="s7-step-progress"></div>
         <div id="s7-steps-wrap">
 {steps_html}
@@ -3449,7 +3518,7 @@ _SCENE7_JS = r"""
       if(i===idx) dots[i].classList.add('active');
     }
     var lbl=_el('step-label');
-    if(lbl) lbl.innerText='Step 7: Substitution';
+    if(lbl) lbl.innerText='Step 7: Solution';
     var bar=_el('step-bar');
     if(bar) bar.style.width='100%';
   }
@@ -3633,13 +3702,18 @@ def _build_s7_final_html(gemini_sol):
     the user has stepped through every substitution/simplification line.
     """
     final_answer = html_module.escape(str(gemini_sol.get("final_answer") or "See the complete calculation above")[:200])
+    unit         = html_module.escape(str(gemini_sol.get("final_answer_unit") or "")[:40])
     key_insight  = html_module.escape(str(gemini_sol.get("key_insight") or "")[:240])
+    real_world   = html_module.escape(str(gemini_sol.get("real_world_note") or "")[:240])
+
+    unit_html = ('<div class="s7-final-unit">SI Unit: <strong>' + unit + '</strong></div>') if unit else ""
     insight_html = ('<div class="s7-final-insight">&#x1F4A1; ' + key_insight + '</div>') if key_insight else ""
+    real_world_html = ('<div class="s7-final-insight">&#x1F30D; ' + real_world + '</div>') if real_world else ""
     return (
         '<div class="s7-step s7-final-card">'
         '<div class="s7-final-badge">&#x2705; Final Answer</div>'
         '<div class="s7-final-value">' + final_answer + '</div>'
-        + insight_html +
+        + unit_html + insight_html + real_world_html +
         '</div>'
     )
 
@@ -4269,15 +4343,17 @@ _SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer — a world-class educa
 Given a student question, produce a cinematic, step-by-step animation script in JSON format that feels like a polished interactive textbook.
 
 ════════════════════════════════════════════════════════════
-ANIMATION PHILOSOPHY — CINEMATIC REVEAL
+ANIMATION PHILOSOPHY — CINEMATIC REVEAL, TAUGHT LIKE A CLASSROOM TEACHER
 ════════════════════════════════════════════════════════════
-• Each step is a "scene": ONE new component enters the stage with purposeful, physically correct motion.
+• This is the "Step-by-Step Concept Animation" phase of the lesson (it builds toward, then completes, the concept — think of it as the teacher drawing on the board piece by piece, not flipping on a finished diagram). NOTHING should appear instantly or all at once.
+• Each step is a "scene": ONE new component enters the stage with purposeful, physically correct motion — never more than one new idea per step.
+• Every step must implicitly answer, in order across the sequence: What is happening? Why is it happening? What changes? What should the student observe? What can they conclude?
 • Scene order = physical assembly order (ground → frame → driver → driven → measurement).
-• When a new component appears, prior elements dim slightly via blur-shield (opacity 0.35–0.5) to direct the viewer's eye.
-• Labels, dimension arrows, and value callouts enter AFTER their component is visible — never before.
-• The final step is the "answer reveal": the mechanism freezes at the exact solution state; a clean annotation layer shows the computed result.
+• When a new component appears, prior elements dim slightly via blur-shield (opacity 0.35–0.5) so the viewer's eye is pulled — like a spotlight — to the one active thing. Inactive parts stay visibly faded, never fully hidden, so context is never lost.
+• Labels, dimension arrows, and value callouts enter AFTER their component is visible — never before. Treat each step as: reveal → (implicit pause) → explain (description) → highlight (focus_component + blur_background) → the next step continues.
+• The final step is the "answer reveal" / Concept Completion: the mechanism freezes at the exact solution state; a clean annotation layer shows the computed result. This concludes the concept phase before Main Formula and Solution take over.
 • Motion must reflect real physics — a crank rotates continuously, a piston oscillates with sin/cos kinematics, gears mesh at correct speed ratios, belt traces its path, heat-flow pulses along the pipe.
-• Every step description is written like a great professor: conversational, precise, one "aha moment" per step.
+• Every step description is written like a great professor thinking aloud: conversational, precise, one "aha moment" per step — never a wall of information.
 
 ════════════════════════════════════════════════════════════
 VISUAL DESIGN INTENT (for the AnimationBuilder to follow)
@@ -4328,7 +4404,7 @@ OUTPUT FORMAT — Return ONLY valid JSON, no markdown, no preamble
 ════════════════════════════════════════════════════════════
 STRICT RULES
 ════════════════════════════════════════════════════════════
-1. steps: minimum 5, maximum 8. Always end with the solution/answer step.
+1. steps: minimum 5, maximum 10 — use more, smaller steps rather than fewer, crowded ones whenever the concept has several moving parts. Always end with the solution/answer step.
 2. Step 1: establishes the fixed frame, ground, housing, or reference coordinate system.
 3. Steps 2–(N-1): each introduces exactly ONE new moving component with its physical motion.
 4. Last step: freezes mechanism at solution state. Shows answer annotation. NO calculation popup boxes.
@@ -4344,7 +4420,7 @@ _SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene 
 QUESTION: {question}
 
 Remember:
-- Plan the step-by-step visual reveal carefully (5–8 steps total).
+- Plan the step-by-step visual reveal carefully (5–10 steps total, one idea per step, teacher-on-a-board pacing — never reveal everything at once).
 - Each step shows exactly ONE new component appearing with motion.
 - Components are drawn one by one in the correct physical order.
 - The final step freezes the mechanism at the solution state — NO calculations popup box.
