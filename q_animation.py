@@ -1187,8 +1187,19 @@ class GeminiSolutionGenerator:
                     return response.text.strip()
             except Exception as e:
                 err_str = str(e)
-                is_429 = "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
-                if is_429 and attempt < MAX_RETRIES:
+                # 429 = rate limit. 503/UNAVAILABLE/"high demand"/"overloaded"
+                # = the model itself is transiently overloaded on Google's
+                # side. Both are self-resolving if you wait and retry — but
+                # only 429 was being retried before, so every 503 (which
+                # Gemini returns fairly often at peak load) went straight to
+                # "Animation Could Not Render" on attempt 1 with no retry at
+                # all. Treat both as retryable.
+                is_retryable = (
+                    "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
+                    or "503" in err_str or "UNAVAILABLE" in err_str or "overloaded" in err_str.lower()
+                    or "high demand" in err_str.lower()
+                )
+                if is_retryable and attempt < MAX_RETRIES:
                     _time.sleep(RETRY_DELAYS[attempt - 1])
                     continue
                 raise
@@ -5175,9 +5186,14 @@ class GeminiAnimationBuilder:
 
             except Exception as e:
                 err_str = str(e)
-                is_429 = "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
-                if is_429 and attempt < MAX_RETRIES:
-                    QAnimLogger.warn("AnimationBuilder", f"429 rate limit — waiting {RETRY_DELAYS[attempt-1]}s...")
+                is_retryable = (
+                    "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
+                    or "503" in err_str or "UNAVAILABLE" in err_str or "overloaded" in err_str.lower()
+                    or "high demand" in err_str.lower()
+                )
+                if is_retryable and attempt < MAX_RETRIES:
+                    reason = "429 rate limit" if "429" in err_str else "503 model overloaded"
+                    QAnimLogger.warn("AnimationBuilder", f"{reason} — waiting {RETRY_DELAYS[attempt-1]}s...")
                     _time.sleep(RETRY_DELAYS[attempt - 1])
                     continue
                 raise
