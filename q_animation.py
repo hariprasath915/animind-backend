@@ -2252,30 +2252,30 @@ _SCENE6_CSS = """
   position: fixed;
   inset: 0;
   z-index: 7400;
-  background: rgba(15,23,42,.45);
-  backdrop-filter: blur(4px);
+  background: rgba(15,23,42,.50);
+  backdrop-filter: blur(6px);
   opacity: 0;
-  transition: opacity .22s ease;
+  transition: opacity .25s ease;
 }
 #qanim-scene-modal-backdrop.qanim-scene-visible {
   display: block !important;
   opacity: 1;
 }
-/* ── Scene 6: The Big Idea — centered modal card ── */
+/* ── Scene 6: Main Formula — centered modal card ── */
 #qanim-scene6-overlay {
   display: none;
   position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%,-48%) scale(.97);
+  transform: translate(-50%,-50%) scale(.95);
   z-index: 7500;
-  width: min(900px, 94vw);
-  max-height: 88vh;
+  width: min(860px, 96vw);
+  max-height: 92vh;
   overflow-y: auto;
   box-sizing: border-box;
   opacity: 0;
   pointer-events: none;
-  transition: opacity .25s ease, transform .25s cubic-bezier(.34,1.56,.64,1);
+  transition: opacity .3s ease, transform .3s cubic-bezier(.34,1.56,.64,1);
 }
 #qanim-scene6-overlay.qanim-scene-visible {
   display: block !important;
@@ -2283,279 +2283,230 @@ _SCENE6_CSS = """
   pointer-events: auto;
   transform: translate(-50%,-50%) scale(1);
 }
+/* ── Main card ── */
 .s6-card {
   background: #fff;
-  border-radius: 18px;
-  box-shadow: 0 4px 32px rgba(8,145,178,.12), 0 1px 4px rgba(0,0,0,.06);
+  border-radius: 20px;
+  box-shadow: 0 8px 48px rgba(8,145,178,.14), 0 2px 8px rgba(0,0,0,.08);
   border: 1px solid #dde8f8;
   overflow: hidden;
-}
-.s6-header {
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%);
-  border-bottom: 1px solid #bae6fd;
-  padding: 20px 28px 16px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-.s6-icon {
-  width: 44px; height: 44px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #0e7490, #0891b2);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px;
-  flex-shrink: 0;
-  box-shadow: 0 3px 10px rgba(8,145,178,.30);
-}
-.s6-header-text h2 {
   font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 18px;
-  font-weight: 800;
-  color: #0c4a6e;
-  margin-bottom: 3px;
 }
-.s6-header-text p {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12px;
-  color: #0369a1;
-  font-weight: 600;
-  letter-spacing: .3px;
-}
-.s6-body {
-  padding: 24px 28px 20px;
-  background: #f8faff;
-}
-/* ── Formula banner (big centered equation) ── */
-.s6-formula-banner {
-  background: linear-gradient(135deg, #f0f9ff 0%, #e8f4ff 100%);
-  border: 2px solid #93c5fd;
-  border-radius: 16px;
-  padding: 18px 24px 14px;
+/* ── Title bar ── */
+.s6-title-bar {
   text-align: center;
-  margin-bottom: 24px;
-  position: relative;
-  overflow: hidden;
+  padding: 22px 28px 18px;
+  background: #fff;
+  border-bottom: 1px solid #e8eef8;
 }
-.s6-formula-banner::before {
+.s6-title-bar h2 {
+  font-size: 20px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -0.3px;
+  margin-bottom: 0;
+}
+/* ── Body ── */
+.s6-body {
+  padding: 28px 32px 24px;
+  background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
+}
+/* ── Large formula box (top, centered, blue border) ── */
+.s6-formula-box {
+  background: #fff;
+  border: 2.5px solid #3b82f6;
+  border-radius: 18px;
+  padding: 20px 32px 16px;
+  text-align: center;
+  margin-bottom: 10px;
+  position: relative;
+}
+.s6-formula-main {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 28px;
+  font-weight: 900;
+  color: #1d4ed8;
+  letter-spacing: 1px;
+  line-height: 1.4;
+  word-break: break-word;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .5s ease, transform .5s ease;
+}
+.s6-formula-main.s6-shown { opacity: 1; transform: translateY(0); }
+.s6-formula-sublabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6366f1;
+  letter-spacing: 0.3px;
+  margin-top: 8px;
+  opacity: 0;
+  transition: opacity .4s ease .2s;
+}
+.s6-formula-sublabel.s6-shown { opacity: 1; }
+/* ── Arrows section: formula → variable boxes ── */
+.s6-vars-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+/* Each variable box */
+.s6-var-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  min-width: 120px;
+  max-width: 160px;
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity .45s cubic-bezier(0.4,0,0.2,1), transform .4s cubic-bezier(0.34,1.56,0.64,1);
+}
+.s6-var-box.s6-shown { opacity: 1; transform: translateY(0); }
+/* Arrow from formula down to box */
+.s6-var-arrow {
+  width: 2px;
+  height: 24px;
+  position: relative;
+  margin-bottom: 0;
+}
+.s6-var-arrow::before {
   content: '';
   position: absolute;
-  top: -24px; right: -24px;
-  width: 110px; height: 110px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(8,145,178,.10), transparent 70%);
-  pointer-events: none;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 0;
+  width: 2px;
+  height: 18px;
+  border-radius: 1px;
 }
-.s6-formula-sublabel {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.6px;
-  color: #0369a1;
-  margin-bottom: 10px;
+.s6-var-arrow::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
 }
-.s6-formula-big {
+/* Color themes for variable boxes */
+.s6-var-box.s6v-red   .s6-var-inner { border-color:#f43f5e; background:#fff1f2; }
+.s6-var-box.s6v-red   .s6-var-sym   { color:#be123c; }
+.s6-var-box.s6v-red   .s6-var-arrow::before { background:#f43f5e; }
+.s6-var-box.s6v-red   .s6-var-arrow::after  { border-top:8px solid #f43f5e; }
+.s6-var-box.s6v-orange .s6-var-inner { border-color:#f59e0b; background:#fff7ed; }
+.s6-var-box.s6v-orange .s6-var-sym   { color:#d97706; }
+.s6-var-box.s6v-orange .s6-var-arrow::before { background:#f59e0b; }
+.s6-var-box.s6v-orange .s6-var-arrow::after  { border-top:8px solid #f59e0b; }
+.s6-var-box.s6v-blue  .s6-var-inner { border-color:#3b82f6; background:#eff6ff; }
+.s6-var-box.s6v-blue  .s6-var-sym   { color:#1d4ed8; }
+.s6-var-box.s6v-blue  .s6-var-arrow::before { background:#3b82f6; }
+.s6-var-box.s6v-blue  .s6-var-arrow::after  { border-top:8px solid #3b82f6; }
+.s6-var-box.s6v-green .s6-var-inner { border-color:#22c55e; background:#f0fdf4; }
+.s6-var-box.s6v-green .s6-var-sym   { color:#15803d; }
+.s6-var-box.s6v-green .s6-var-arrow::before { background:#22c55e; }
+.s6-var-box.s6v-green .s6-var-arrow::after  { border-top:8px solid #22c55e; }
+.s6-var-box.s6v-purple .s6-var-inner { border-color:#a855f7; background:#faf5ff; }
+.s6-var-box.s6v-purple .s6-var-sym   { color:#7c3aed; }
+.s6-var-box.s6v-purple .s6-var-arrow::before { background:#a855f7; }
+.s6-var-box.s6v-purple .s6-var-arrow::after  { border-top:8px solid #a855f7; }
+.s6-var-box.s6v-teal  .s6-var-inner { border-color:#14b8a6; background:#f0fdfa; }
+.s6-var-box.s6v-teal  .s6-var-sym   { color:#0f766e; }
+.s6-var-box.s6v-teal  .s6-var-arrow::before { background:#14b8a6; }
+.s6-var-box.s6v-teal  .s6-var-arrow::after  { border-top:8px solid #14b8a6; }
+/* Inner box container */
+.s6-var-inner {
+  border: 2px solid;
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  text-align: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+.s6-var-sym {
   font-family: 'Courier New', Courier, monospace;
   font-size: 22px;
-  font-weight: 800;
-  color: #1e3a5f;
-  letter-spacing: .5px;
-  line-height: 1.5;
-  word-break: break-word;
-}
-/* ── Variable circles row (like reference: colored circles with symbol + value) ── */
-.s6-vars-section {
-  margin-bottom: 20px;
-}
-.s6-vars-section-label {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10.5px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.4px;
-  color: #64748b;
-  margin-bottom: 14px;
-}
-.s6-circles-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 0;
-  margin-bottom: 10px;
-}
-.s6-circle-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  min-width: 100px;
-  max-width: 140px;
-}
-.s6-circle {
-  width: 84px; height: 84px;
-  border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  border: 2.5px solid;
-  box-shadow: 0 3px 14px rgba(0,0,0,0.10);
-}
-/* Circle color themes — 6 variants */
-.s6-circle.s6c-blue   { background:#eff6ff; border-color:#3b82f6; }
-.s6-circle.s6c-orange { background:#fff7ed; border-color:#f59e0b; }
-.s6-circle.s6c-pink   { background:#fff1f2; border-color:#fb7185; }
-.s6-circle.s6c-green  { background:#f0fdf4; border-color:#22c55e; }
-.s6-circle.s6c-purple { background:#faf5ff; border-color:#a855f7; }
-.s6-circle.s6c-teal   { background:#f0fdfa; border-color:#14b8a6; }
-.s6c-blue   .s6-circle-sym { color:#1d4ed8; }
-.s6c-orange .s6-circle-sym { color:#d97706; }
-.s6c-pink   .s6-circle-sym { color:#be123c; }
-.s6c-green  .s6-circle-sym { color:#15803d; }
-.s6c-purple .s6-circle-sym { color:#7c3aed; }
-.s6c-teal   .s6-circle-sym { color:#0f766e; }
-.s6c-blue   .s6-circle-val { color:#2563eb; }
-.s6c-orange .s6-circle-val { color:#92400e; }
-.s6c-pink   .s6-circle-val { color:#9f1239; }
-.s6c-green  .s6-circle-val { color:#166534; }
-.s6c-purple .s6-circle-val { color:#6d28d9; }
-.s6c-teal   .s6-circle-val { color:#115e59; }
-.s6-circle-sym {
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 16px;
   font-weight: 900;
   line-height: 1;
+  display: block;
+  margin-bottom: 5px;
 }
-.s6-circle-val {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-  text-align: center;
-  padding: 0 6px;
-}
-.s6-circle-meaning {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+.s6-var-name {
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 700;
   color: #475569;
-  text-align: center;
-  line-height: 1.3;
-  padding: 0 4px;
+  line-height: 1.35;
+  display: block;
 }
-/* Operator tokens between circles */
-.s6-circle-op {
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 22px;
-  font-weight: 800;
+.s6-var-val {
+  font-size: 10.5px;
+  font-weight: 600;
   color: #94a3b8;
-  padding: 0 6px;
-  padding-bottom: 28px; /* align vertically with circle centres */
-  flex-shrink: 0;
+  margin-top: 3px;
+  display: block;
 }
-/* = equals badge */
-.s6-circle-eq {
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 20px;
-  font-weight: 800;
-  color: #334155;
-  padding: 0 10px;
-  padding-bottom: 28px;
-  flex-shrink: 0;
-}
-/* Result equation bar */
-.s6-result-bar {
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border: 2px solid #86efac;
-  border-radius: 12px;
-  padding: 14px 20px;
-  text-align: center;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 16px;
-  font-weight: 800;
-  color: #15803d;
-  margin-top: 4px;
-}
-/* ── Info card — "Why This Works" ── */
-.s6-insight-card {
-  background: linear-gradient(135deg, #fffbeb 0%, #fef9c3 100%);
-  border: 1.5px solid #fde68a;
-  border-left: 4px solid #f59e0b;
-  border-radius: 12px;
-  padding: 16px 20px;
-  margin-top: 4px;
-}
-.s6-insight-badge {
-  display: inline-flex;
+/* ── Fourth-power note bar (like the ⚡ note in Image 1) ── */
+.s6-note-bar {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 22px;
+  padding: 12px 20px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1.5px solid #fde68a;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .45s ease, transform .45s ease;
+}
+.s6-note-bar.s6-shown { opacity: 1; transform: translateY(0); }
+.s6-note-icon { font-size: 16px; flex-shrink: 0; }
+.s6-note-text {
+  font-size: 13px;
+  font-weight: 700;
   color: #92400e;
-  margin-bottom: 8px;
 }
-.s6-insight-text {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13.5px;
-  color: #78350f;
-  line-height: 1.7;
-  font-weight: 500;
-}
-/* Navigation row */
+/* ── Navigation row ── */
 .s6-nav-row {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   gap: 10px;
-  padding: 16px 28px 24px;
-  border-top: 1px solid #f1f5f9;
-  background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
+  padding: 16px 32px 22px;
+  border-top: 1px solid #e8eef8;
+  background: #fff;
 }
-/* ── Piece-by-piece teaching phases ── */
+/* ── Phase progress label ── */
 .s6-phase-progress {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
   font-size: 10.5px;
   font-weight: 800;
   letter-spacing: 1.2px;
   text-transform: uppercase;
   color: #0891b2;
   text-align: center;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   min-height: 14px;
 }
 .s6-phase-caption {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
-  color: #0c4a6e;
+  color: #334155;
   text-align: center;
-  min-height: 20px;
-  margin: 0 0 18px;
+  margin-bottom: 20px;
+  line-height: 1.5;
+  min-height: 18px;
   transition: opacity .3s ease;
 }
-.s6-formula-big { opacity: 0; transform: translateY(6px); transition: opacity .5s ease, transform .5s ease; }
-.s6-formula-big.s6-shown { opacity: 1; transform: translateY(0); }
-.s6-circle-group {
-  opacity: 1;
-  transform: scale(1);
-  transition: opacity .45s cubic-bezier(0.4,0,0.2,1), transform .35s cubic-bezier(0.34,1.56,0.64,1), filter .45s ease;
+/* highlight active var box */
+.s6-var-box.s6-active .s6-var-inner {
+  box-shadow: 0 0 0 4px rgba(8,145,178,.20), 0 4px 16px rgba(8,145,178,.22);
+  transform: scale(1.05);
+  transition: transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .3s ease;
 }
-.s6-circle-group.s6-dim { opacity: .22; filter: grayscale(75%); transform: scale(0.94); }
-.s6-circle-group.s6-active .s6-circle {
-  box-shadow: 0 0 0 7px rgba(8,145,178,.16), 0 4px 18px rgba(8,145,178,.28);
-  transform: scale(1.10);
-}
-.s6-result-bar, .s6-insight-card {
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity .45s ease, transform .45s ease;
-}
-.s6-result-bar.s6-shown, .s6-insight-card.s6-shown { opacity: 1; transform: translateY(0); }
 </style>
 """
 
@@ -2563,32 +2514,27 @@ _SCENE6_DOM_TEMPLATE = """\
 <div id="qanim-scene-modal-backdrop"></div>
 <div id="qanim-scene6-overlay">
   <div class="s6-card">
-    <div class="s6-header">
-      <div class="s6-icon">&#x1F4A1;</div>
-      <div class="s6-header-text">
-        <h2>Step 6: Main Formula</h2>
-        <p>Why this formula, what each symbol means, and how it fits together</p>
-      </div>
+    <div class="s6-title-bar">
+      <h2 id="s6-card-title">Main Formula</h2>
     </div>
     <div class="s6-body">
-      <div class="s6-formula-banner">
-        <div class="s6-formula-sublabel">Main Formula / Governing Principle</div>
-        <div class="s6-formula-big" id="s6-formula-text">{formula}</div>
+      <div class="s6-phase-progress" id="s6-phase-progress">Step 1 of 3 &mdash; The Formula</div>
+      <div class="s6-phase-caption" id="s6-phase-caption">This is the governing formula for this problem.</div>
+      <!-- Large formula box at top (like image 1) -->
+      <div class="s6-formula-box">
+        <div class="s6-formula-main" id="s6-formula-text">{formula}</div>
+        <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_label}</div>
       </div>
-      <div class="s6-phase-progress" id="s6-phase-progress"></div>
-      <div class="s6-phase-caption" id="s6-phase-caption">Meet each part of this formula, one piece at a time.</div>
-      <div class="s6-vars-section">
-        <div class="s6-vars-section-label">&#x1F4CC; Variable Key — each term explained</div>
-        <div class="s6-circles-row" id="s6-circles-row">{circles_html}</div>
-        <div class="s6-result-bar" id="s6-result-bar">{result_bar}</div>
-      </div>
-      <div class="s6-insight-card" id="s6-insight-card">
-        <div class="s6-insight-badge">&#x26A1; Why This Formula Solves It</div>
-        <div class="s6-insight-text" id="s6-insight-text">{insight}</div>
+      <!-- Variable boxes with arrows (revealed step by step) -->
+      <div class="s6-vars-row" id="s6-vars-row">{var_boxes_html}</div>
+      <!-- Key insight note bar (like ⚡ note in image 1) -->
+      <div class="s6-note-bar" id="s6-note-bar">
+        <span class="s6-note-icon">&#x26A1;</span>
+        <span class="s6-note-text" id="s6-note-text">{insight}</span>
       </div>
     </div>
     <div class="s6-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back</button>
+      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back to Animation</button>
       <button class="btn-primary" onclick="qanim_s6Advance()" id="s6-next-btn">Next &#x25B6;</button>
     </div>
   </div>
@@ -2603,97 +2549,103 @@ _SCENE6_JS = r"""
   /* ── helpers ── */
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  function _groups(){return document.querySelectorAll('#s6-circles-row .s6-circle-group');}
+  function _varBoxes(){return document.querySelectorAll('#s6-vars-row .s6-var-box');}
 
-  /* s6Phase: -1 = not started, 0 = formula revealed, 1..N = variable i
-     being explained, N+1 = reassembled formula, N+2 = why-it-works insight */
+  /* s6Phase:
+       -1 = not started (overlay hidden)
+        0 = formula revealed (large box shown, vars hidden)
+        1..N = variable box i-1 revealed (step-by-step)
+        N+1 = note bar / insight revealed — final state */
   var s6Phase = -1;
   var s6AutoAdvanceScheduled = false;
   var s6AutoAdvanceTimer = null;
+  var S6_TOTAL_VAR_PHASES = 0; // set on first render
 
   function s6Render(){
-    var groups = _groups();
-    var n = groups.length;
+    var boxes = _varBoxes();
+    var n = boxes.length;
+    S6_TOTAL_VAR_PHASES = n;
+    var totalPhases = n + 1; // 0=formula, 1..n=vars, n+1=note
+
     var formulaEl  = _el('s6-formula-text');
+    var sublabelEl = _el('s6-formula-sublabel');
     var captionEl  = _el('s6-phase-caption');
     var progressEl = _el('s6-phase-progress');
-    var resultEl   = _el('s6-result-bar');
-    var insightEl  = _el('s6-insight-card');
+    var noteEl     = _el('s6-note-bar');
     var nextBtn    = _el('s6-next-btn');
 
+    /* Phase 0+: reveal the formula box */
     if(formulaEl) formulaEl.classList.add('s6-shown');
+    if(sublabelEl) sublabelEl.classList.add('s6-shown');
 
+    /* Reveal variable boxes step by step */
     for(var i=0;i<n;i++){
-      var g = groups[i];
-      g.classList.remove('s6-dim','s6-active');
-      if(s6Phase < 1 || (s6Phase-1) < i){
-        g.classList.add('s6-dim');
-      } else if((s6Phase-1) === i){
-        g.classList.add('s6-active');
+      var b = boxes[i];
+      b.classList.remove('s6-active');
+      if(s6Phase >= i+1){
+        b.classList.add('s6-shown');
+        if(s6Phase === i+1) b.classList.add('s6-active');
       }
-      /* (s6Phase-1) > i: already explained, stays fully visible */
     }
 
-    var reassembled = s6Phase >= n+1;
-    if(resultEl) resultEl.classList.toggle('s6-shown', reassembled);
-    var showInsight = s6Phase >= n+2;
-    if(insightEl) insightEl.classList.toggle('s6-shown', showInsight);
+    /* Note bar appears on final phase */
+    var showNote = s6Phase >= n+1;
+    if(noteEl) noteEl.classList.toggle('s6-shown', showNote);
 
-    /* Main Formula is now 100% complete — automatically continue to the
-       Step-by-Step Solution shortly after, exactly once per visit. The
-       "Continue to Solution" button below still works immediately if the
-       student doesn't want to wait. */
-    if(showInsight && !s6AutoAdvanceScheduled){
+    /* Auto-advance to Scene 7 once note bar appears */
+    if(showNote && !s6AutoAdvanceScheduled){
       s6AutoAdvanceScheduled = true;
       s6AutoAdvanceTimer = setTimeout(function(){
         var ov = _el('qanim-scene6-overlay');
         if(ov && ov.classList.contains('qanim-scene-visible')){
           window.qanim_goToScene7();
         }
-      }, 2200);
+      }, 2800);
     }
 
+    /* Progress label */
     if(progressEl){
-      if(s6Phase <= 0) progressEl.innerText = 'The Formula';
-      else if(s6Phase <= n) progressEl.innerText = 'Term '+s6Phase+' of '+n;
-      else if(!showInsight) progressEl.innerText = 'Putting It Together';
-      else progressEl.innerText = 'Why It Works';
+      if(s6Phase <= 0) progressEl.innerText = 'Step 1 of '+(n+2)+' \u2014 The Formula';
+      else if(s6Phase <= n) progressEl.innerText = 'Step '+(s6Phase+1)+' of '+(n+2)+' \u2014 Variable '+(s6Phase)+' of '+n;
+      else progressEl.innerText = 'Step '+(n+2)+' of '+(n+2)+' \u2014 Key Insight';
     }
 
+    /* Caption text */
     if(captionEl){
-      var cap = 'Meet each part of this formula, one piece at a time.';
-      if(s6Phase>=1 && s6Phase<=n){
-        var g2 = groups[s6Phase-1];
-        var symEl  = g2 ? g2.querySelector('.s6-circle-sym') : null;
-        var valEl  = g2 ? g2.querySelector('.s6-circle-val') : null;
-        var meanEl = g2 ? g2.querySelector('.s6-circle-meaning') : null;
+      var cap = 'This is the governing formula. Click \u201CNext\u201D to explore each variable.';
+      if(s6Phase >= 1 && s6Phase <= n){
+        var b2 = boxes[s6Phase-1];
+        var symEl  = b2 ? b2.querySelector('.s6-var-sym')  : null;
+        var nameEl = b2 ? b2.querySelector('.s6-var-name') : null;
+        var valEl  = b2 ? b2.querySelector('.s6-var-val')  : null;
         var symTxt  = symEl  ? symEl.innerText  : '';
-        var meanTxt = meanEl ? meanEl.innerText : 'a quantity this formula depends on';
+        var nameTxt = nameEl ? nameEl.innerText : 'a key variable';
         var valTxt  = valEl  ? valEl.innerText  : '';
-        cap = symTxt + ' represents ' + meanTxt + (valTxt ? ('. Here, ' + symTxt + ' = ' + valTxt) : '') + '.';
-      } else if(s6Phase === n+1){
-        cap = 'Now put every piece back together into the complete formula.';
-      } else if(s6Phase >= n+2){
-        cap = 'Here is why this particular formula is the right tool for this problem.';
+        cap = symTxt + ' \u2014 ' + nameTxt + (valTxt ? (' (' + valTxt + ')') : '') + '.';
+      } else if(s6Phase >= n+1){
+        cap = 'All variables identified. See the key insight below, then continue to the step-by-step solution.';
       }
       captionEl.innerText = cap;
     }
 
+    /* Next button label */
     if(nextBtn){
-      if(s6Phase >= n+2){
+      if(s6Phase >= n+1){
         nextBtn.innerText = 'Continue to Solution \u25B6';
+        nextBtn.style.background = 'linear-gradient(135deg,#4338ca,#7c3aed)';
         nextBtn.onclick = function(){ window.qanim_goToScene7(); };
       } else {
         nextBtn.innerText = 'Next \u25B6';
+        nextBtn.style.background = '';
         nextBtn.onclick = function(){ window.qanim_s6Advance(); };
       }
     }
   }
 
-  /* Reveal the next piece of the formula (called by the Next button) */
+  /* Reveal the next variable box (called by the Next button) */
   window.qanim_s6Advance = function(){
-    var n = _groups().length;
-    var max = n + 2;
+    var n = _varBoxes().length;
+    var max = n + 1;
     if(s6Phase < max) s6Phase++;
     s6Render();
   };
@@ -2777,20 +2729,9 @@ _SCENE6_JS = r"""
     if(stage){ stage.style.opacity = '1'; }
   }
 
-  /* ── wire the "Next Step" button on the last SVG step to show Scene 6 ── */
+  /* ── wire resetAnim to hide overlays when restarting ── */
   _onReady(function(){
-    /* Intercept the existing nextStep() so after the last SVG step it opens Scene 6 */
-    var _origNext=window.nextStep;
-    window.nextStep=function(){
-      if(typeof window.stepsData!=='undefined'&&typeof window.currentStep!=='undefined'){
-        if(window.currentStep>=window.stepsData.length-1){
-          _fadeOutConceptStage(function(){ window.qanim_showScene6(); });
-          return;
-        }
-      }
-      if(typeof _origNext==='function') _origNext();
-    };
-    /* Also intercept resetAnim so it hides the overlay scenes */
+    /* Intercept resetAnim so it hides the overlay scenes when restarting */
     var _origReset=window.resetAnim;
     window.resetAnim=function(){
       var ov6=_el('qanim-scene6-overlay');
@@ -2811,28 +2752,26 @@ _SCENE6_JS = r"""
 """
 
 
-_S6_CIRCLE_THEMES = [
-    "s6c-blue",
-    "s6c-orange",
-    "s6c-pink",
-    "s6c-green",
-    "s6c-purple",
-    "s6c-teal",
+_S6_VAR_THEMES = [
+    "s6v-red",
+    "s6v-orange",
+    "s6v-blue",
+    "s6v-green",
+    "s6v-purple",
+    "s6v-teal",
 ]
 
-def _build_s6_circles_html(gemini_sol, scene_script):
+def _build_s6_var_boxes_html(gemini_sol, scene_script):
     """
-    Build the visual circle-based variable display for Scene 6.
-    Returns (circles_html, result_bar_html) tuple.
-    Mimics the reference-image style: colored circles with symbol + given value inside,
-    meaning label underneath, operator tokens (=, ×, +, −) between circles.
+    Build Image-1-style variable boxes with arrows for Scene 6.
+    Returns (var_boxes_html, formula_label, insight_text) tuple.
+    Each box: colored border box with symbol (large), name, and value underneath.
+    Boxes start hidden and are revealed one-by-one via JS.
     """
     # ── 1. Collect variable entries ──
-    # Each entry: {"sym": "F", "val": "8 kg/s", "meaning": "Mass flow rate"}
     var_entries = []
 
-    # Build a symbol -> {meaning, unit} lookup from the richer variable_meanings
-    # table (Step 6 "teach the formula" data), when the model provided one.
+    # Build a symbol -> meaning lookup from variable_meanings
     meaning_lookup = {}
     for v in (gemini_sol.get("variable_meanings") or []):
         if isinstance(v, dict) and v.get("symbol"):
@@ -2847,14 +2786,19 @@ def _build_s6_circles_html(gemini_sol, scene_script):
         g_str = str(g).strip()
         if "=" in g_str:
             parts = g_str.split("=", 1)
-            sym     = parts[0].strip()[:12]
-            val_raw = parts[1].strip()[:30]
+            sym     = parts[0].strip()[:14]
+            val_raw = parts[1].strip()[:35]
             meaning = meaning_lookup.get(sym.lower(), "")
-            var_entries.append({"sym": sym, "val": val_raw, "meaning": meaning})
+            var_entries.append({"sym": sym, "val": val_raw, "name": meaning})
         else:
-            var_entries.append({"sym": g_str[:10], "val": "", "meaning": ""})
+            var_entries.append({"sym": g_str[:10], "val": "", "name": ""})
 
-    # Try badges from the last animation step (solution step often has all badges)
+    # Enrich names from meaning_lookup for entries that don't have one
+    for e in var_entries:
+        if not e.get("name"):
+            e["name"] = meaning_lookup.get(e["sym"].lower(), "")
+
+    # Fallback: try badges from last step
     if not var_entries:
         steps = scene_script.get("steps") or []
         for step in reversed(steps):
@@ -2863,34 +2807,24 @@ def _build_s6_circles_html(gemini_sol, scene_script):
                 text = b.get("text","") if isinstance(b,dict) else str(b)
                 if "=" in text:
                     parts = text.split("=",1)
-                    sym = parts[0].strip()[:12]
-                    val = parts[1].strip()[:30]
-                    # avoid duplicates
+                    sym = parts[0].strip()[:14]
+                    val = parts[1].strip()[:35]
                     if not any(e["sym"] == sym for e in var_entries):
-                        var_entries.append({"sym": sym, "val": val, "meaning": ""})
+                        var_entries.append({"sym": sym, "val": val, "name": meaning_lookup.get(sym.lower(),"")})
             if var_entries:
                 break
 
-    # Try svg_components labels as last resort
-    if not var_entries:
-        components = scene_script.get("svg_components") or {}
-        for comp_id, comp in list(components.items())[:5]:
-            for lbl in (comp.get("labels") or [])[:1]:
-                var_entries.append({"sym": comp_id[:6], "val": lbl[:20], "meaning": ""})
-
-    # If still nothing useful, provide a generic placeholder
+    # Final fallback
     if not var_entries:
         var_entries = [
-            {"sym": "LHS", "val": "?", "meaning": "Left-hand side"},
-            {"sym": "RHS", "val": "...", "meaning": "Right-hand side"},
+            {"sym": "Q", "val": "?", "name": "Quantity to find"},
+            {"sym": "X", "val": "given", "name": "Given variable"},
         ]
 
-    # Cap at 5 variables (more than 5 circles looks crowded)
+    # Cap at 5
     var_entries = var_entries[:5]
 
-    # ── 2. Build circle HTML ──
-    # Infer a simple operator between circles (×  is most common; override to
-    # + or − if addition/subtraction context is obvious from formula text)
+    # ── 2. Build formula label ──
     formula_raw = ""
     formulas = gemini_sol.get("formulas") or []
     for f in formulas[:1]:
@@ -2903,80 +2837,57 @@ def _build_s6_circles_html(gemini_sol, scene_script):
                 formula_raw = s_str
                 break
 
-    # Choose separator operator token from the formula
-    op_token = "&#xD7;"   # × default
-    if formula_raw:
-        rhs = formula_raw.split("=", 1)[-1] if "=" in formula_raw else formula_raw
-        rhs_stripped = re.sub(r'\([^)]*\)', '', rhs)  # strip parentheses content
-        if "+" in rhs_stripped:
-            op_token = "+"
-        elif "−" in rhs_stripped or " - " in rhs_stripped:
-            op_token = "&#x2212;"
+    # Derive a human-readable formula label (subtitle under formula)
+    formula_label = scene_script.get("title", "Governing Equation") or "Governing Equation"
+    if "formula_label" in (gemini_sol or {}):
+        formula_label = str(gemini_sol["formula_label"])[:80]
 
-    circle_parts = []
+    # ── 3. Build var box HTML ──
+    box_parts = []
     for i, entry in enumerate(var_entries):
-        theme = _S6_CIRCLE_THEMES[i % len(_S6_CIRCLE_THEMES)]
-        sym_e  = html_module.escape(str(entry.get("sym","?"))[:12])
-        val_e  = html_module.escape(str(entry.get("val",""))[:25])
-        mean_e = html_module.escape(str(entry.get("meaning",""))[:42])
+        theme  = _S6_VAR_THEMES[i % len(_S6_VAR_THEMES)]
+        sym_e  = html_module.escape(str(entry.get("sym","?"))[:14])
+        name_e = html_module.escape(str(entry.get("name",""))[:55])
+        val_e  = html_module.escape(str(entry.get("val",""))[:35])
 
-        # Circle group: circle + meaning label below
-        circle_inner = (
-            '<div class="s6-circle ' + theme + '">'
-            '<span class="s6-circle-sym">' + sym_e + '</span>'
-            + ('<span class="s6-circle-val">' + val_e + '</span>' if val_e else '') +
+        # Arrow div (colored per theme)
+        arrow_html = '<div class="s6-var-arrow"></div>'
+
+        # Inner box content
+        inner_html = (
+            '<div class="s6-var-inner">'
+            '<span class="s6-var-sym">' + sym_e + '</span>'
+            + ('<span class="s6-var-name">' + name_e + '</span>' if name_e else '')
+            + ('<span class="s6-var-val">' + val_e + '</span>' if val_e else '')
+            + '</div>'
+        )
+
+        box_html = (
+            '<div class="s6-var-box ' + theme + '" data-idx="' + str(i) + '">'
+            + arrow_html + inner_html +
             '</div>'
-            + ('<div class="s6-circle-meaning">' + mean_e + '</div>' if mean_e else '')
         )
-        group_html = (
-            '<div class="s6-circle-group">' + circle_inner + '</div>'
-        )
+        box_parts.append(box_html)
 
-        # Add "= " before the first circle, then operator tokens between circles
-        if i == 0:
-            # The first circle gets an "= " on its left (the result variable = ...)
-            circle_parts.append(group_html)
-        else:
-            # Operator token before each subsequent circle
-            circle_parts.append(
-                '<div class="s6-circle-op">' + op_token + '</div>'
-                + group_html
-            )
-
-    # Prepend "LHS = " separator to make it look like: F = (dm/dt) × v
-    # i.e. show the formula result variable as a separate circle on the left
-    # We don't rebuild — the assembly already starts with the first variable on the left.
-    # We just wrap with an "=" between index 0 and 1 (replace the first op with =)
-    if len(var_entries) > 1:
-        # Replace the operator before the 2nd circle (index 1 in the parts list)
-        # circle_parts[1] starts with the op token div — replace it with "="
-        circle_parts[1] = (
-            '<div class="s6-circle-eq">&#x3D;</div>'
-            + circle_parts[1].split('</div>', 1)[1]  # strip the op token
-            if circle_parts[1].startswith('<div class="s6-circle-op">') else circle_parts[1]
-        )
-
-    circles_html = "\n".join(circle_parts) if circle_parts else ""
-
-    # ── 3. Build result bar ──
-    # Show "formula = ?" style bar using formula_raw
-    if formula_raw:
-        result_bar = html_module.escape(str(formula_raw)[:160]) + " = ?"
-    else:
-        result_bar = "Plug in values → compute the result"
-
-    return circles_html, result_bar
+    var_boxes_html = "\n".join(box_parts) if box_parts else ""
+    return var_boxes_html, html_module.escape(str(formula_label)[:80])
 
 
 def inject_scene6_big_idea(html, gemini_sol, scene_script):
     """
-    Inject Scene 6 ("The Big Idea") as a standalone overlay panel that
-    appears AFTER the last SVG animation step when the user clicks Next.
+    Inject Scene 6 ("Main Formula") as a standalone overlay panel that
+    appears AFTER the last SVG animation step when the user clicks "View Formula".
+
+    Layout matches Image 1:
+      - Title bar at top
+      - Large formula in bordered box
+      - Colored variable boxes with arrows, revealed one-by-one
+      - Key insight note bar at bottom
 
     This function:
       1. Injects CSS into <head>
       2. Injects the DOM panel right after <body>
-      3. Injects the JS module (which patches nextStep/resetAnim) before </body>
+      3. Injects the JS module before </body>
     """
     # Extract formula — try structured keys first, then fallback
     formula_raw = ""
@@ -2985,14 +2896,13 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
         formula_raw = f.get("text", "") if isinstance(f, dict) else str(f)
     if not formula_raw:
         sol_steps = gemini_sol.get("steps") or []
-        # Look for a step that looks like a formula (contains = or variables)
         for s in sol_steps:
             s_str = str(s)
             if "=" in s_str and len(s_str) < 120:
                 formula_raw = s_str
                 break
     if not formula_raw:
-        formula_raw = scene_script.get("key_insight") or "See solution steps below"
+        formula_raw = scene_script.get("key_insight") or "See formula below"
 
     insight = (
         gemini_sol.get("formula_why")
@@ -3000,18 +2910,20 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
         or gemini_sol.get("key_insight")
         or "This formula is the governing principle. Identify what is given, plug in the values, and compute the result systematically."
     )
-    # Every formula-teaching scene should end with an explicit confirmation,
-    # matching how a teacher reassures the class before moving on.
     if "correct formula" not in str(insight).lower():
         insight = str(insight).rstrip(". ") + ". This is the correct formula for solving this problem."
 
-    circles_html, result_bar = _build_s6_circles_html(gemini_sol, scene_script)
+    # Build variable boxes (Image 1 style: colored boxes with arrows)
+    var_boxes_html, formula_label = _build_s6_var_boxes_html(gemini_sol, scene_script)
+
+    # Card title = topic/title from scene_script
+    card_title = scene_script.get("title", "Main Formula") or "Main Formula"
 
     dom = _SCENE6_DOM_TEMPLATE.format(
         formula=html_module.escape(str(formula_raw)[:300]),
-        circles_html=circles_html,
-        result_bar=html_module.escape(str(result_bar)[:200]),
-        insight=html_module.escape(str(insight)[:400]),
+        formula_label=formula_label,
+        var_boxes_html=var_boxes_html,
+        insight=html_module.escape(str(insight)[:300]),
     )
 
     # 1. CSS
@@ -3039,7 +2951,7 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
     except Exception as e:
         QAnimLogger.warn("Scene6Injector", f"JS failed: {e}")
 
-    QAnimLogger.ok("Scene6Injector", "Scene 6 (The Big Idea) injected")
+    QAnimLogger.ok("Scene6Injector", "Scene 6 (Main Formula — Image 1 style) injected")
     return html
 
 
@@ -3052,21 +2964,21 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
 
 _SCENE7_CSS = """
 <style id="qanim-scene7-styles">
-/* ── Scene 7: How We Solve It — Step by Step — centered modal card ── */
+/* ── Scene 7: Complete System — Solution Summary — centered modal card ── */
 #qanim-scene7-overlay {
   display: none;
   position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%,-48%) scale(.97);
+  transform: translate(-50%,-50%) scale(.95);
   z-index: 7500;
-  width: min(900px, 94vw);
-  max-height: 88vh;
+  width: min(900px, 96vw);
+  max-height: 92vh;
   overflow-y: auto;
   box-sizing: border-box;
   opacity: 0;
   pointer-events: none;
-  transition: opacity .25s ease, transform .25s cubic-bezier(.34,1.56,.64,1);
+  transition: opacity .3s ease, transform .3s cubic-bezier(.34,1.56,.64,1);
 }
 #qanim-scene7-overlay.qanim-scene-visible {
   display: block !important;
@@ -3074,97 +2986,109 @@ _SCENE7_CSS = """
   pointer-events: auto;
   transform: translate(-50%,-50%) scale(1);
 }
+/* ── Card — matches Image 2 white card style ── */
 .s7-card {
   background: #fff;
-  border-radius: 18px;
-  box-shadow: 0 4px 32px rgba(37,99,235,.10), 0 1px 4px rgba(0,0,0,.06);
+  border-radius: 20px;
+  box-shadow: 0 8px 48px rgba(37,99,235,.12), 0 2px 8px rgba(0,0,0,.07);
   border: 1px solid #e8eef8;
   overflow: hidden;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
 }
-.s7-header {
-  background: linear-gradient(135deg, #f8fafc 0%, #f0f4ff 100%);
-  border-bottom: 1px solid #e0e7ff;
+/* ── Title bar ── */
+.s7-title-bar {
+  text-align: center;
   padding: 20px 28px 16px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
+  border-bottom: 1px solid #e8eef8;
+  background: #fff;
 }
-.s7-icon {
-  width: 44px; height: 44px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #4338ca, #7c3aed);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px;
-  flex-shrink: 0;
-  box-shadow: 0 3px 10px rgba(124,58,237,.30);
+.s7-title-bar h2 {
+  font-size: 20px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -0.3px;
 }
-.s7-header-text h2 {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 18px;
-  font-weight: 800;
-  color: #1e1b4b;
-  margin-bottom: 3px;
-}
-.s7-header-text p {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12px;
-  color: #4338ca;
-  font-weight: 600;
-  letter-spacing: .3px;
-}
-/* ── Two-column layout: solution visual + steps panel ── */
+/* ── Two-column body ── */
 .s7-body-cols {
   display: flex;
   align-items: flex-start;
   gap: 0;
-  padding: 0;
+  min-height: 320px;
 }
-/* Left column: visual / given params summary */
+/* LEFT column — light blue bg like Image 2 left panel */
 .s7-left-col {
-  width: 42%;
+  width: 44%;
   min-width: 200px;
-  border-right: 1.5px solid #f0f2f8;
-  padding: 24px 20px 20px 28px;
-  background: linear-gradient(180deg, #f8fbff 0%, #f0f4ff 100%);
+  border-right: 1.5px solid #e8eef8;
+  padding: 22px 20px 22px 26px;
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
   align-self: stretch;
 }
-/* Right column: numbered steps */
-.s7-right-col {
-  flex: 1;
-  padding: 24px 28px 20px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-/* ── Given parameters panel (left column) ── */
-.s7-given-panel {
-  background: #fff;
-  border-radius: 14px;
-  border: 1.5px solid #dde6f8;
-  overflow: hidden;
-}
-.s7-given-title {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 11.5px;
+/* Physical system label at top of left col */
+.s7-system-label {
+  font-size: 10.5px;
   font-weight: 800;
   color: #1d4ed8;
   text-transform: uppercase;
   letter-spacing: 1px;
-  padding: 12px 16px 8px;
-  border-bottom: 1px solid #e8eef8;
-  background: linear-gradient(135deg, #eff6ff 0%, #e0eaff 100%);
+  margin-bottom: 10px;
 }
-.s7-given-list {
-  padding: 12px 16px;
+/* System visual placeholder (gradient box like Image 2 plate) */
+.s7-system-visual {
+  background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%);
+  border-radius: 12px;
+  padding: 16px 14px 14px;
+  margin-bottom: 16px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.s7-system-visual-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #1e3a5f;
+  margin-bottom: 6px;
+}
+.s7-system-arrows {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 8px 0;
+  font-size: 20px;
+  color: #d97706;
+}
+.s7-system-label2 {
+  font-size: 10px;
+  font-weight: 600;
+  color: #1e40af;
+  margin-top: 4px;
+}
+/* RIGHT column — white, with given params + solution approach */
+.s7-right-col {
+  flex: 1;
+  padding: 22px 26px 20px 20px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 16px;
+}
+/* Given Parameters section (matches Image 2 right panel header) */
+.s7-given-section-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #1d4ed8;
+  margin-bottom: 8px;
+  letter-spacing: -0.1px;
+}
+.s7-given-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
 }
 .s7-given-item {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
   font-size: 12.5px;
   color: #334155;
   line-height: 1.5;
@@ -3179,163 +3103,46 @@ _SCENE7_CSS = """
   flex-shrink: 0;
   margin-top: 1px;
 }
-.s7-given-item strong {
-  font-weight: 700;
-  color: #1e293b;
-}
-/* ── Solution approach title ── */
-.s7-approach-label {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 11.5px;
-  font-weight: 800;
+.s7-given-item strong { font-weight: 700; color: #1e293b; }
+/* Solution Approach section (matches Image 2) */
+.s7-approach-section-title {
+  font-size: 13px;
+  font-weight: 900;
   color: #7c3aed;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-top: 4px;
-  margin-bottom: 2px;
+  margin-bottom: 8px;
+  letter-spacing: -0.1px;
 }
-/* ── Formula result bar in left column ── */
-.s7-formula-result {
+.s7-approach-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+.s7-approach-item {
+  font-size: 12.5px;
+  color: #1e293b;
+  line-height: 1.5;
+}
+/* Formula result bar (green, at bottom of right col — matches Image 2) */
+.s7-formula-result-bar {
   background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
   border: 2px solid #86efac;
   border-radius: 12px;
   padding: 12px 16px;
-  margin-top: 4px;
-}
-.s7-formula-result-label {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  color: #15803d;
-  margin-bottom: 6px;
 }
 .s7-formula-result-text {
   font-family: 'Courier New', Courier, monospace;
-  font-size: 13px;
-  font-weight: 800;
-  color: #1e293b;
-  line-height: 1.6;
-  word-break: break-all;
-}
-.s7-formula-units {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 11px;
-  color: #15803d;
-  margin-top: 5px;
-  font-style: italic;
-}
-/* ── Right column: step title ── */
-.s7-steps-title {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 15px;
-  font-weight: 800;
-  color: #1a1a2e;
-  margin-bottom: 4px;
-}
-/* Individual method step */
-.s7-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 0;
-  border-radius: 13px;
-  border: 1.5px solid #e2e8f0;
-  overflow: hidden;
-  background: #fff;
-  transition: box-shadow .2s ease, transform .18s ease;
-}
-.s7-step:hover {
-  box-shadow: 0 2px 12px rgba(37,99,235,.10);
-  transform: translateX(2px);
-}
-.s7-step-num {
-  min-width: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 900;
-  padding: 16px 0;
-  flex-shrink: 0;
-}
-.s7-step-body {
-  flex: 1;
-  padding: 14px 18px;
-  border-left: 1px solid rgba(0,0,0,0.04);
-}
-.s7-step-title {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13px;
-  font-weight: 800;
-  margin-bottom: 4px;
-  line-height: 1.4;
-}
-.s7-step-desc {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12.5px;
-  color: #475569;
-  line-height: 1.6;
-  margin-bottom: 0;
-}
-.s7-step-eq {
-  display: inline-block;
-  margin-top: 7px;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 12px;
-  font-weight: 700;
-  color: #1e293b;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  border-radius: 7px;
-  padding: 4px 10px;
+  color: #15803d;
+  line-height: 1.5;
   word-break: break-word;
 }
-/* Step color themes — 10 variants cycling */
-.s7-step:nth-child(10n+1)  { border-color:#bfdbfe; background:#f8fbff; }
-.s7-step:nth-child(10n+1) .s7-step-num  { background:#dbeafe; color:#1d4ed8; }
-.s7-step:nth-child(10n+1) .s7-step-title { color:#1d4ed8; }
-.s7-step:nth-child(10n+2)  { border-color:#c7d2fe; background:#f9f8ff; }
-.s7-step:nth-child(10n+2) .s7-step-num  { background:#e0e7ff; color:#4338ca; }
-.s7-step:nth-child(10n+2) .s7-step-title { color:#4338ca; }
-.s7-step:nth-child(10n+3)  { border-color:#a7f3d0; background:#f8fffc; }
-.s7-step:nth-child(10n+3) .s7-step-num  { background:#d1fae5; color:#15803d; }
-.s7-step:nth-child(10n+3) .s7-step-title { color:#15803d; }
-.s7-step:nth-child(10n+4)  { border-color:#fca5a5; background:#fff8f8; }
-.s7-step:nth-child(10n+4) .s7-step-num  { background:#fee2e2; color:#dc2626; }
-.s7-step:nth-child(10n+4) .s7-step-title { color:#dc2626; }
-.s7-step:nth-child(10n+5)  { border-color:#fde68a; background:#fffdf0; }
-.s7-step:nth-child(10n+5) .s7-step-num  { background:#fef9c3; color:#b45309; }
-.s7-step:nth-child(10n+5) .s7-step-title { color:#b45309; }
-.s7-step:nth-child(10n+6)  { border-color:#99f6e4; background:#f0fdfa; }
-.s7-step:nth-child(10n+6) .s7-step-num  { background:#ccfbf1; color:#0f766e; }
-.s7-step:nth-child(10n+6) .s7-step-title { color:#0f766e; }
-.s7-step:nth-child(10n+7)  { border-color:#e9d5ff; background:#fdf4ff; }
-.s7-step:nth-child(10n+7) .s7-step-num  { background:#ede9fe; color:#7c3aed; }
-.s7-step:nth-child(10n+7) .s7-step-title { color:#7c3aed; }
-.s7-step:nth-child(10n+8)  { border-color:#fed7aa; background:#fff7ed; }
-.s7-step:nth-child(10n+8) .s7-step-num  { background:#ffedd5; color:#c2410c; }
-.s7-step:nth-child(10n+8) .s7-step-title { color:#c2410c; }
-.s7-step:nth-child(10n+9)  { border-color:#bfdbfe; background:#eff6ff; }
-.s7-step:nth-child(10n+9) .s7-step-num  { background:#dbeafe; color:#1e40af; }
-.s7-step:nth-child(10n+9) .s7-step-title { color:#1e40af; }
-.s7-step:nth-child(10n+10) { border-color:#bbf7d0; background:#f0fdf4; }
-.s7-step:nth-child(10n+10) .s7-step-num  { background:#dcfce7; color:#166534; }
-.s7-step:nth-child(10n+10) .s7-step-title { color:#166534; }
-/* CTA bar */
-.s7-cta-bar {
-  margin: 0 28px 0;
-  padding: 14px 20px;
-  border-radius: 12px;
-  background: #eff6ff;
-  border: 2px solid #2563eb;
-  color: #1d4ed8;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 13.5px;
-  font-weight: 700;
-  text-align: center;
-  line-height: 1.5;
+.s7-formula-units {
+  font-size: 11px;
+  color: #166534;
+  margin-top: 4px;
+  font-style: italic;
 }
 /* Navigation row */
 .s7-nav-row {
@@ -3343,102 +3150,71 @@ _SCENE7_CSS = """
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  padding: 16px 28px 24px;
-  border-top: 1px solid #f1f5f9;
-  background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
-  margin-top: 20px;
+  padding: 16px 26px 22px;
+  border-top: 1px solid #e8eef8;
+  background: #fff;
 }
-/* ── Responsive: stack columns on narrow viewports ── */
+/* Responsive */
 @media (max-width: 600px) {
   .s7-body-cols { flex-direction: column; }
-  .s7-left-col { width: 100%; border-right: none; border-bottom: 1.5px solid #f0f2f8; }
+  .s7-left-col { width: 100%; border-right: none; border-bottom: 1.5px solid #e8eef8; }
 }
-/* ── Sequential substitution stepper (one step visible at a time) ── */
-.s7-step-progress {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10.5px;
+/* ── Step-by-step approach items (numbered, like Image 2) ── */
+.s7-approach-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #1e293b;
+  line-height: 1.5;
+  margin-bottom: 3px;
+}
+.s7-approach-step-num {
   font-weight: 800;
-  letter-spacing: 1.2px;
+  color: #7c3aed;
+  flex-shrink: 0;
+  min-width: 18px;
+}
+.s7-approach-step-eq {
+  display: block;
+  margin-top: 4px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #dc2626;
+  background: #fff7ed;
+  border-radius: 6px;
+  padding: 2px 8px;
+  word-break: break-word;
+}
+/* Final answer card in right col */
+.s7-final-answer-card {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 2px solid #86efac;
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.s7-final-answer-label {
+  font-size: 10.5px;
+  font-weight: 900;
   text-transform: uppercase;
-  color: #4338ca;
+  letter-spacing: 1.2px;
+  color: #15803d;
   margin-bottom: 8px;
 }
-.s7-step {
-  display: none;
-  opacity: 0;
-  transform: translateY(10px);
-  transition: opacity .4s cubic-bezier(0.4,0,0.2,1), transform .4s cubic-bezier(0.4,0,0.2,1);
-}
-.s7-step.s7-step-active { display: flex; }
-.s7-step.s7-step-shown { opacity: 1; transform: translateY(0); }
-.s7-micro-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  margin-top: 14px;
-}
-.s7-micro-btn {
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12.5px;
-  font-weight: 700;
-  color: #4338ca;
-  background: #f0f4ff;
-  border: 1.5px solid #d8d4ff;
-  border-radius: 9px;
-  padding: 8px 14px;
-  cursor: pointer;
-  transition: background .2s ease, transform .15s ease;
-}
-.s7-micro-btn:hover { background: #e0e7ff; transform: translateY(-1px); }
-.s7-micro-btn:disabled { opacity: .35; cursor: default; transform: none; }
-/* ── Final Answer card (concluding step of the substitution walkthrough) ── */
-.s7-final-card {
-  flex-direction: column;
-  align-items: stretch;
-  border-radius: 14px;
-  border: 2px solid #86efac;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  padding: 18px 20px;
-}
-.s7-final-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 10.5px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  color: #15803d;
-  margin-bottom: 10px;
-}
-.s7-final-value {
+.s7-final-answer-value {
   font-family: 'Courier New', Courier, monospace;
   font-size: 15px;
-  font-weight: 800;
+  font-weight: 900;
   color: #1e293b;
-  line-height: 1.8;
-  padding: 12px 14px;
-  background: #fff;
-  border: 1.5px solid #bbf7d0;
-  border-radius: 10px;
-  animation: s7FinalPop .5s cubic-bezier(0.34,1.56,0.64,1);
-}
-.s7-final-unit {
-  margin-top: 10px;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12px;
-  color: #15803d;
-  font-weight: 600;
-}
-.s7-final-insight {
-  margin-top: 12px;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-  font-size: 12.5px;
-  color: #166534;
   line-height: 1.7;
-  font-weight: 500;
+  word-break: break-word;
+}
+.s7-final-answer-unit {
+  font-size: 11px;
+  color: #15803d;
+  margin-top: 5px;
+  font-style: italic;
 }
 @keyframes s7FinalPop {
   0%   { transform: scale(0.92); opacity: 0; }
@@ -3450,46 +3226,41 @@ _SCENE7_CSS = """
 _SCENE7_DOM_TEMPLATE = """\
 <div id="qanim-scene7-overlay">
   <div class="s7-card">
-    <div class="s7-header">
-      <div class="s7-icon">&#x1F4CB;</div>
-      <div class="s7-header-text">
-        <h2>Step 7: Solution</h2>
-        <p>Watch the values go in and the answer come out, one line at a time</p>
-      </div>
+    <div class="s7-title-bar">
+      <h2>Complete System &mdash; Solution Summary</h2>
     </div>
     <div class="s7-body-cols">
-      <!-- LEFT: Given parameters + formula result -->
+      <!-- LEFT column: system visual (like Image 2 left panel) -->
       <div class="s7-left-col">
-        <div class="s7-given-panel">
-          <div class="s7-given-title">&#x1F4CC; Given Parameters</div>
-          <div class="s7-given-list" id="s7-given-list">{given_html}</div>
+        <div class="s7-system-label">System Diagram</div>
+        <div class="s7-system-visual">
+          <div class="s7-system-visual-title" id="s7-system-title">{system_title}</div>
+          <div class="s7-system-arrows">&#x2191; &#x2191; &#x2191;</div>
+          <div class="s7-system-label2" id="s7-system-label2">{system_label}</div>
         </div>
-        <div class="s7-approach-label">&#x1F9E0; Solution Approach</div>
-        <div class="s7-given-panel">
-          <div class="s7-given-list" id="s7-approach-list">{approach_html}</div>
-        </div>
-        <div class="s7-formula-result">
-          <div class="s7-formula-result-label">&#x1F3AF; Formula / Method</div>
+        <!-- Formula result bar (green) -->
+        <div class="s7-formula-result-bar">
           <div class="s7-formula-result-text" id="s7-formula-result">{formula_result}</div>
           <div class="s7-formula-units" id="s7-units-hint">{units_hint}</div>
         </div>
       </div>
-      <!-- RIGHT: One substitution step at a time -->
+      <!-- RIGHT column: given params + solution approach -->
       <div class="s7-right-col">
-        <div class="s7-steps-title">Solution — Step <span id="s7-step-cur">1</span> of <span id="s7-step-total">1</span></div>
-        <div class="s7-step-progress" id="s7-step-progress"></div>
-        <div id="s7-steps-wrap">
-{steps_html}
-{final_html}
+        <div>
+          <div class="s7-given-section-title">Given Parameters</div>
+          <div class="s7-given-list" id="s7-given-list">{given_html}</div>
         </div>
-        <div class="s7-micro-nav">
-          <button type="button" class="s7-micro-btn" id="s7-prev-micro" onclick="qanim_s7Prev()">&#x25C0; Prev</button>
-          <button type="button" class="s7-micro-btn" id="s7-next-micro" onclick="qanim_s7Next()">Next &#x25B6;</button>
+        <div>
+          <div class="s7-approach-section-title">Solution Approach</div>
+          <div class="s7-approach-list" id="s7-approach-list">{approach_html}</div>
+        </div>
+        <!-- Final answer card -->
+        <div class="s7-final-answer-card" id="s7-final-card">
+          <div class="s7-final-answer-label">&#x2705; Result</div>
+          <div class="s7-final-answer-value" id="s7-final-value">{formula_result} &rarr; Result in W</div>
+          <div class="s7-final-answer-unit" id="s7-final-unit">{units_hint}</div>
         </div>
       </div>
-    </div>
-    <div class="s7-cta-bar" style="margin:16px 28px 0;">
-      &#x1F4A1; Try it yourself! Use the <strong>Answer Box</strong> to check your final answer.
     </div>
     <div class="s7-nav-row">
       <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Main Formula</button>
@@ -3506,56 +3277,8 @@ _SCENE7_JS = r"""
 
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  function _steps(){return document.querySelectorAll('#s7-steps-wrap .s7-step');}
 
-  var s7Idx = 0;
-
-  function s7Render(){
-    var steps = _steps();
-    var n = steps.length;
-    if(n===0) return;
-    if(s7Idx<0) s7Idx=0;
-    if(s7Idx>n-1) s7Idx=n-1;
-
-    for(var i=0;i<n;i++){
-      var card = steps[i];
-      card.classList.remove('s7-step-active','s7-step-shown');
-      if(i===s7Idx){
-        card.classList.add('s7-step-active');
-        /* allow the browser to apply display:flex before animating in */
-        setTimeout((function(c){ return function(){ c.classList.add('s7-step-shown'); }; })(card), 20);
-      }
-    }
-
-    var curEl = _el('s7-step-cur');
-    var totEl = _el('s7-step-total');
-    if(curEl) curEl.innerText = String(s7Idx+1);
-    if(totEl) totEl.innerText = String(n);
-
-    var progEl = _el('s7-step-progress');
-    if(progEl){
-      var isFinal = steps[s7Idx].classList.contains('s7-final-card');
-      progEl.innerText = isFinal ? 'Final Answer' : 'Substituting values, one step at a time';
-    }
-
-    var prevBtn = _el('s7-prev-micro');
-    var nextBtn = _el('s7-next-micro');
-    if(prevBtn) prevBtn.disabled = (s7Idx===0);
-    if(nextBtn){
-      nextBtn.disabled = false;
-      nextBtn.innerText = (s7Idx>=n-1) ? 'Done \u2713' : 'Next \u25B6';
-      if(s7Idx>=n-1) nextBtn.disabled = true;
-    }
-  }
-
-  window.qanim_s7Next = function(){
-    var n=_steps().length;
-    if(s7Idx < n-1){ s7Idx++; s7Render(); }
-  };
-  window.qanim_s7Prev = function(){
-    if(s7Idx > 0){ s7Idx--; s7Render(); }
-  };
-
+  /* Show Scene 7 — called from Scene 6 "Continue to Solution" */
   window.qanim_showScene7 = function(){
     var ov=_el('qanim-scene7-overlay');
     if(ov) ov.classList.add('qanim-scene-visible');
@@ -3563,10 +3286,13 @@ _SCENE7_JS = r"""
     if(ov6) ov6.classList.remove('qanim-scene-visible');
     var bd=_el('qanim-scene-modal-backdrop');
     if(bd) bd.classList.add('qanim-scene-visible');
-    _syncDots(6); /* 0-based index 6 = scene 7 */
-    /* always start the substitution walkthrough from the first step */
-    s7Idx = 0;
-    s7Render();
+    /* Mark all dots done, progress 100% */
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++) dots[i].classList.add('done');
+    var lbl=_el('step-label');
+    if(lbl) lbl.innerText='Solution Summary';
+    var bar=_el('step-bar');
+    if(bar) bar.style.width='100%';
   };
 
   window.qanim_goToScene6FromScene7 = function(){
@@ -3575,24 +3301,10 @@ _SCENE7_JS = r"""
     if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
   };
 
-  function _syncDots(idx){
-    var dots=document.querySelectorAll('.step-dot');
-    var total=dots.length;
-    for(var i=0;i<total;i++){
-      dots[i].classList.remove('active','done');
-      if(i<idx) dots[i].classList.add('done');
-      if(i===idx) dots[i].classList.add('active');
-    }
-    var lbl=_el('step-label');
-    if(lbl) lbl.innerText='Step 7: Solution';
-    var bar=_el('step-bar');
-    if(bar) bar.style.width='100%';
-  }
-
+  /* resetAnim also hides Scene 7 */
   _onReady(function(){
     var _origReset=window.resetAnim;
     window.resetAnim=function(){
-      s7Idx = 0;
       var ov7=_el('qanim-scene7-overlay');
       if(ov7) ov7.classList.remove('qanim-scene-visible');
       var bd=_el('qanim-scene-modal-backdrop');
@@ -3730,37 +3442,43 @@ def _build_s7_given_html(gemini_sol, scene_script):
 
 def _build_s7_approach_html(gemini_sol, scene_script):
     """
-    Build a short 'Solution Approach' list (3-5 high-level steps) for the
-    left column of Scene 7. These are the broad steps, not the detailed ones.
+    Build the 'Solution Approach' numbered steps for the right column of Scene 7.
+    Matches Image 2: "Step 1: Identify Newton's Law of Cooling", with inline
+    equation in a red/orange pill, then plain text steps below.
     """
-    # Try to derive 3-5 headline steps from the full solution steps
     flat = gemini_sol.get("steps") or scene_script.get("solution_steps") or []
     headlines = []
     for s in flat[:5]:
         s_str = str(s).strip()
-        # Strip leading "Step N:" prefix
         s_str = re.sub(r"^Step\s*\d+[:\.]?\s*", "", s_str, flags=re.IGNORECASE).strip()
-        # Take only the part before a dash/colon if there is one
-        short = re.split(r"\s*[—:\|]\s*", s_str, 1)[0].strip()
-        if short and len(short) > 4:
-            headlines.append(short[:70])
+        # Split title — equation at first dash/colon
+        parts = re.split(r"\s*[—:\|]\s*", s_str, 1)
+        title = parts[0].strip()[:80]
+        eq    = parts[1].strip()[:60] if len(parts) > 1 else ""
+        if title and len(title) > 4:
+            headlines.append({"title": title, "eq": eq})
 
-    # Generic fallback
     if not headlines:
         headlines = [
-            "Identify Newton's Law / governing formula",
-            "Compute intermediate quantities",
-            "Substitute all known values",
-            "Simplify to get the result",
+            {"title": "Identify governing formula",    "eq": ""},
+            {"title": "Compute \u0394T = T_s \u2212 T_fluid", "eq": ""},
+            {"title": "Substitute h, A, and \u0394T",         "eq": ""},
+            {"title": "Multiply to get Q in Watts",    "eq": ""},
         ]
 
     parts = []
     for i, h in enumerate(headlines[:5], start=1):
-        h_e = html_module.escape(h)
+        title_e = html_module.escape(h["title"])
+        eq_e    = html_module.escape(h["eq"])
+        eq_span = (
+            '<span class="s7-approach-step-eq">' + eq_e + '</span>'
+            if eq_e else ""
+        )
         parts.append(
-            '<div class="s7-given-item">'
-            '<span style="font-weight:800;color:#7c3aed;margin-right:4px;">Step ' + str(i) + ':</span>'
-            + h_e + '</div>'
+            '<div class="s7-approach-step">'
+            '<span class="s7-approach-step-num">Step ' + str(i) + ':</span>'
+            '<span>' + title_e + eq_span + '</span>'
+            '</div>'
         )
     return "\n".join(parts)
 
@@ -3790,25 +3508,22 @@ def _build_s7_final_html(gemini_sol):
 
 def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
     """
-    Inject Scene 7 ("Substitution") as a standalone overlay panel that
-    appears when the user clicks "Continue to Substitution" on Scene 6.
+    Inject Scene 7 ("Complete System — Solution Summary") as a standalone
+    overlay panel that appears when the user clicks "Continue to Solution" on Scene 6.
 
-    Unlike the old static two-column dump, the right-hand column now
-    reveals one substitution step at a time (Prev/Next), concluding on a
-    Final Answer card — matching a teacher solving the problem live rather
-    than presenting every line at once.
+    Layout matches Image 2:
+      LEFT col: System diagram (gradient box with arrows) + formula result bar
+      RIGHT col: Given Parameters list + Solution Approach steps + Final answer card
 
     This function:
       1. Injects CSS into <head>
       2. Injects the DOM panel right after <body>
       3. Injects the JS module before </body>
     """
-    steps_html   = _build_s7_steps_html(gemini_sol, scene_script)
-    final_html   = _build_s7_final_html(gemini_sol)
-    given_html   = _build_s7_given_html(gemini_sol, scene_script)
+    given_html    = _build_s7_given_html(gemini_sol, scene_script)
     approach_html = _build_s7_approach_html(gemini_sol, scene_script)
 
-    # Build formula result text for the left column
+    # Build formula result text for the green bar
     formula_result = ""
     formulas = gemini_sol.get("formulas") or []
     for f in formulas[:1]:
@@ -3821,23 +3536,35 @@ def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
                 formula_result = s_str
                 break
     if not formula_result:
-        formula_result = scene_script.get("key_insight") or "Apply the governing formula"
+        formula_result = "Q = h \u00B7 A \u00B7 \u0394T"
 
-    # Units hint (e.g. "(W/m²·K) × m² × K = Watts ✓")
+    # Units hint
     units_hint = str(gemini_sol.get("units_check") or gemini_sol.get("units") or "").strip()
     if not units_hint:
-        # Try to extract from key_insight or last step
         ki = str(scene_script.get("key_insight") or "").strip()
         if "=" in ki and len(ki) < 120:
             units_hint = ki
+        else:
+            units_hint = "Units: check dimensional consistency"
+
+    # System title and label for the left column visual (derived from scene script)
+    system_title = scene_script.get("title", "Physical System") or "Physical System"
+    # Try to get surface/object description from given data
+    given_raw = gemini_sol.get("given_data") or []
+    system_label_parts = []
+    for g in given_raw[:2]:
+        g_str = str(g).strip()
+        if "=" in g_str:
+            system_label_parts.append(g_str.split("=")[0].strip() + " = " + g_str.split("=")[1].strip())
+    system_label = ", ".join(system_label_parts) if system_label_parts else "Given conditions"
 
     dom = _SCENE7_DOM_TEMPLATE.format(
-        steps_html=steps_html,
-        final_html=final_html,
         given_html=given_html,
         approach_html=approach_html,
         formula_result=html_module.escape(str(formula_result)[:200]),
         units_hint=html_module.escape(str(units_hint)[:160]),
+        system_title=html_module.escape(str(system_title)[:60]),
+        system_label=html_module.escape(str(system_label)[:80]),
     )
 
     # 1. CSS
@@ -3865,7 +3592,7 @@ def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
     except Exception as e:
         QAnimLogger.warn("Scene7Injector", f"JS failed: {e}")
 
-    QAnimLogger.ok("Scene7Injector", f"Scene 7 (How We Solve It) injected ({len(steps_html)} chars of steps)")
+    QAnimLogger.ok("Scene7Injector", f"Scene 7 (Solution Summary — Image 2 style) injected")
     return html
 
 
@@ -6160,15 +5887,38 @@ function applyStep(idx) {{
     var bar = document.getElementById('step-bar');
     if(bar) bar.style.width = Math.round((idx + 1) / totalSteps * 100) + '%';
 
-    // Next button
+    // Next button — keep visible on last step but change label to "View Formula →"
     var btn = document.getElementById('btn-next');
-    if(btn) btn.style.display = (idx === totalSteps - 1) ? 'none' : 'inline-block';
+    if(btn) {{
+        btn.style.display = 'inline-block';
+        if(idx === totalSteps - 1) {{
+            btn.textContent = 'View Formula \u25B6';
+            btn.style.background = 'linear-gradient(135deg,#4338ca,#7c3aed)';
+            btn.style.boxShadow = '0 4px 14px rgba(124,58,237,0.35)';
+        }} else {{
+            btn.textContent = 'Next Step \u25B6';
+            btn.style.background = '';
+            btn.style.boxShadow = '';
+        }}
+    }}
 }}
 
 function nextStep() {{
     if(currentStep < totalSteps - 1) {{
         currentStep++;
         applyStep(currentStep);
+    }} else {{
+        // Animation complete — open Scene 6 (Main Formula)
+        if(typeof window.qanim_showScene6 === 'function') {{
+            var svgCont = document.querySelector('.svg-container');
+            if(svgCont) {{
+                svgCont.style.transition = 'opacity .45s ease';
+                svgCont.style.opacity = '0';
+                setTimeout(function(){{ window.qanim_showScene6(); }}, 460);
+            }} else {{
+                window.qanim_showScene6();
+            }}
+        }}
     }}
 }}
 
@@ -6176,9 +5926,17 @@ function resetAnim() {{
     currentStep = 0;
     var bar = document.getElementById('step-bar');
     if(bar) bar.style.width = '0%';
+    // Restore svg container opacity if it was faded
+    var svgCont = document.querySelector('.svg-container');
+    if(svgCont) {{ svgCont.style.opacity = '1'; }}
     applyStep(0);
     var btn = document.getElementById('btn-next');
-    if(btn) btn.style.display = 'inline-block';
+    if(btn) {{
+        btn.style.display = 'inline-block';
+        btn.textContent = 'Next Step \u25B6';
+        btn.style.background = '';
+        btn.style.boxShadow = '';
+    }}
 }}
 
 setTimeout(function() {{ resetAnim(); }}, 80);
