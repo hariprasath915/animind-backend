@@ -4193,7 +4193,7 @@ REQUIRED_COMPONENTS = {
     "Scene7": {
         "data": None,
         "css":  ["qanim-scene7-styles"],
-        "dom":  ["qanim-scene7-overlay", "s7-steps-wrap"],
+        "dom":  ["qanim-scene7-overlay", "s7-given-list"],
         "js":   ["qanim-js-scene7"],
     },
     "MathTypography": {
@@ -4244,12 +4244,16 @@ STRIP_PATTERNS = {
     "Scene6": [
         re.compile(r'<style[^>]*id=["\']qanim-scene6-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
         re.compile(r'<div id="qanim-scene-modal-backdrop"[^>]*>\s*</div>\s*', re.DOTALL),
-        re.compile(r'<div id="qanim-scene6-overlay".*?</div>\s*(?=<div|<script|<style|</body)', re.DOTALL),
+        # NOTE: DOM removal for #qanim-scene6-overlay is handled by
+        # _strip_balanced_div() (balanced tag counting), not regex --
+        # nested <div>s can't be matched reliably with a lookahead.
         re.compile(r'<script[^>]*id=["\']qanim-js-scene6["\'][^>]*>.*?</script>', re.DOTALL),
     ],
     "Scene7": [
         re.compile(r'<style[^>]*id=["\']qanim-scene7-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
-        re.compile(r'<div id="qanim-scene7-overlay".*?</div>\s*(?=<div|<script|<style|</body)', re.DOTALL),
+        # NOTE: DOM removal for #qanim-scene7-overlay is handled by
+        # _strip_balanced_div() (balanced tag counting), not regex --
+        # nested <div>s can't be matched reliably with a lookahead.
         re.compile(r'<script[^>]*id=["\']qanim-js-scene7["\'][^>]*>.*?</script>', re.DOTALL),
     ],
     "MathTypography": [
@@ -4382,10 +4386,47 @@ class PanelInjectionManager:
         html = inject_math_typography(html)
         return html
 
+    @staticmethod
+    def _strip_balanced_div(html, id_):
+        """
+        Remove a <div id="id_" ...> ... </div> block by counting nested
+        <div> / </div> tags to find the TRUE matching close tag, rather
+        than guessing via a regex lookahead. Regex cannot reliably match
+        balanced/nested tags -- a lookahead like (?=<div|<script|</body)
+        can stop at the wrong nested </div> whenever a comment or other
+        sibling markup sits in between, leaving most of the old block
+        behind and causing duplicate content on repair/re-injection.
+        Safe no-op if the id isn't found.
+        """
+        m = re.search(r'<div[^>]*\bid=["\']' + re.escape(id_) + r'["\'][^>]*>', html)
+        if not m:
+            return html
+        start = m.start()
+        pos = m.end()
+        depth = 1
+        for tag_m in re.finditer(r'<div\b[^>]*>|</div\s*>', html[pos:]):
+            if tag_m.group(0).startswith('</div'):
+                depth -= 1
+            else:
+                depth += 1
+            if depth == 0:
+                end = pos + tag_m.end()
+                return html[:start] + html[end:]
+        # Unbalanced / not found -- leave html untouched rather than
+        # risk corrupting the document.
+        return html
+
     @classmethod
     def _strip(cls, html, name):
         for pattern in STRIP_PATTERNS.get(name, []):
             html = pattern.sub('', html)
+        # Balanced-match strip for the components whose DOM root is a
+        # <div> containing further nested <div>s -- regex lookaheads
+        # aren't reliable for these (see _strip_balanced_div docstring).
+        if name == "Scene6":
+            html = cls._strip_balanced_div(html, "qanim-scene6-overlay")
+        elif name == "Scene7":
+            html = cls._strip_balanced_div(html, "qanim-scene7-overlay")
         return html
 
     @classmethod
