@@ -2955,6 +2955,79 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
     return html
 
 
+_SCENE6_AUTOTRIGGER_JS = """
+<script id="qanim-js-scene6-autotrigger">
+(function(){
+  'use strict';
+  if(window.__qanimScene6AutoTrigger)return;window.__qanimScene6AutoTrigger=true;
+  /* Deterministic safety net: rather than trusting the freely-generated
+     base animation's own nextStep()/applyStep() to remember to call
+     window.qanim_showScene6() on the final step (Gemini does not always
+     include this), watch the #btn-next button's own state instead. The
+     base animation always disables it / relabels it once the last step
+     is reached (that behaviour is required and validated separately),
+     so this works regardless of what Gemini named its internal
+     variables or how it structured its step logic. */
+  var _shown=false;
+  function _tryTrigger(){
+    if(_shown)return;
+    var btn=document.getElementById('btn-next');
+    if(!btn)return;
+    var label=(btn.textContent||btn.innerText||'').trim().toLowerCase();
+    var isFinished = btn.disabled || label.indexOf('finish')!==-1;
+    if(isFinished && typeof window.qanim_showScene6==='function'){
+      _shown=true;
+      var svgCont=document.querySelector('.svg-container');
+      var doShow=function(){ window.qanim_showScene6(); };
+      if(svgCont){
+        svgCont.style.transition='opacity .45s ease';
+        svgCont.style.opacity='0';
+        setTimeout(doShow,460);
+      } else {
+        setTimeout(doShow,120);
+      }
+    }
+  }
+  function _wireBtn(){
+    var btn=document.getElementById('btn-next');
+    if(!btn||btn.__qanimAutoWired)return;
+    btn.__qanimAutoWired=true;
+    btn.addEventListener('click',function(){ setTimeout(_tryTrigger,30); });
+  }
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  _onReady(function(){
+    _wireBtn();
+    var origReset=window.resetAnim;
+    window.resetAnim=function(){
+      _shown=false;
+      if(typeof origReset==='function')origReset();
+    };
+  });
+})();
+</script>
+"""
+
+
+def inject_scene6_autotrigger(html):
+    """
+    Deterministic post-processing patch (Module 12.5b): guarantees Scene 6
+    ("Main Formula") opens once the base animation reaches its final step,
+    independent of whether Gemini's own generated nextStep() remembered to
+    call window.qanim_showScene6() itself. Fixes the class of bug where the
+    Main Formula / Solution walkthrough never appears because the LLM wrote
+    a nextStep() that just disables the Next button on the last step.
+    """
+    try:
+        if "</body>" in html:
+            html = html.replace("</body>", _SCENE6_AUTOTRIGGER_JS + "\n</body>", 1)
+        else:
+            html += "\n" + _SCENE6_AUTOTRIGGER_JS
+        QAnimLogger.ok("Scene6AutoTrigger", "Autotrigger patch injected")
+    except Exception as e:
+        QAnimLogger.warn("Scene6AutoTrigger", f"Injection failed: {e}")
+    return html
+
+
 # ===========================================================================
 #  MODULE 12.6 — Scene 7: "How We Solve It — Step by Step" injector
 #  Appends a new overlay panel showing the solution method in 5–10
@@ -4302,6 +4375,9 @@ class PanelInjectionManager:
         # Scene 6 & 7 — appended AFTER the core panels so they land last in <body>
         html = inject_scene6_big_idea(html, ctx.gemini_sol, ctx.scene_script)
         html = inject_scene7_how_we_solve_it(html, ctx.gemini_sol, ctx.scene_script)
+        # Deterministic safety net — do not rely on Gemini's own nextStep()
+        # to remember to open Scene 6; watch button state instead.
+        html = inject_scene6_autotrigger(html)
         # Math typography — runs LAST so it can scan the fully-assembled page
         html = inject_math_typography(html)
         return html
@@ -4399,6 +4475,7 @@ ANIMATION PHILOSOPHY — CINEMATIC REVEAL, TAUGHT LIKE A CLASSROOM TEACHER
 • When a new component appears, prior elements dim slightly via blur-shield (opacity 0.35–0.5) so the viewer's eye is pulled — like a spotlight — to the one active thing. Inactive parts stay visibly faded, never fully hidden, so context is never lost.
 • Labels, dimension arrows, and value callouts enter AFTER their component is visible — never before. Treat each step as: reveal → (implicit pause) → explain (description) → highlight (focus_component + blur_background) → the next step continues.
 • The final step is the "answer reveal" / Concept Completion: the mechanism freezes at the exact solution state; a clean annotation layer shows the computed result. This concludes the concept phase before Main Formula and Solution take over.
+• CRITICAL — DO NOT SOLVE THE PROBLEM IN THE LAST STEP: the last step's "description" and "badges" must NOT state the governing formula, walk through substitution, or restate the numeric derivation — say only that the system has reached its solved state (e.g. "The system settles here, with every quantity in place."). A dedicated Main Formula scene and a dedicated step-by-step Solution scene are appended automatically right after this animation ends; if the last step already explains the formula and the calculation, that same explanation will then be shown two more times back-to-back, which is a defect, not a feature. Save all formula/derivation content for those two scenes.
 • Motion must reflect real physics — a crank rotates continuously, a piston oscillates with sin/cos kinematics, gears mesh at correct speed ratios, belt traces its path, heat-flow pulses along the pipe.
 • Every step description is written like a great professor thinking aloud: conversational, precise, one "aha moment" per step — never a wall of information.
 
