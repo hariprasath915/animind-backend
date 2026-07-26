@@ -31,6 +31,7 @@ import io
 import os
 import asyncio
 import json
+import uuid
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
@@ -246,7 +247,7 @@ async def health(request: Request):
             },
             "ai": {
                 "animation":          "POST /generate-animation",
-                "question_animation": "POST /generate-question-animation",
+                "question_animation": "POST /generate-question-animation (returns job_id) -> GET /generate-question-animation/status/{job_id}",
                 "book_mode":          "POST /generate-from-book",
                 "topic_content":      "POST /generate-topic-content",
             },
@@ -277,6 +278,59 @@ class SkillContentRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# QUESTION-ANIMATION JOB QUEUE
+# ══════════════════════════════════════════════════════════════════════════════
+# generate_question_animation() can legitimately run past the ~120s timeout
+# that Vercel enforces on the /api/* rewrite proxying to this service
+# (see vercel.json — "rewrites" -> that proxy has a hard, non-configurable
+# 120s ceiling). Running it inline in the POST handler means any request
+# that crosses that line gets killed upstream, and Railway logs it as a 499
+# (client closed the connection) even though generation was still working.
+#
+# Fix: the POST handler only ENQUEUES the job and returns a job_id in
+# milliseconds. The actual generation runs as a background asyncio task,
+# completely outside of any request that passes through the Vercel proxy.
+# The frontend then polls /generate-question-animation/status/{job_id},
+# and each poll is a cheap, near-instant call that can never hit that
+# ceiling either.
+#
+# NOTE: this in-memory dict works because this service currently runs as a
+# single Railway instance/process. If you ever scale to multiple replicas,
+# move JOBS to something shared (e.g. Redis) — a poll can otherwise land on
+# an instance that never ran the job and 404.
+JOBS: dict[str, dict] = {}
+JOB_TTL_SECONDS = 60 * 60  # drop finished jobs after 1 hour
+
+
+def _cleanup_old_jobs():
+    now = asyncio.get_event_loop().time()
+    stale = [
+        jid for jid, j in JOBS.items()
+        if j.get("finished_at") is not None and now - j["finished_at"] > JOB_TTL_SECONDS
+    ]
+    for jid in stale:
+        del JOBS[jid]
+
+
+async def _run_question_animation_job(job_id: str, question: str):
+    try:
+        JOBS[job_id]["status"] = "running"
+        result = await generate_question_animation(question)
+        JOBS[job_id]["status"] = "done"
+        JOBS[job_id]["result"] = result
+        JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+    except ValueError as ve:
+        JOBS[job_id]["status"] = "error"
+        JOBS[job_id]["detail"] = str(ve)
+        JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+    except Exception as e:
+        JOBS[job_id]["status"] = "error"
+        JOBS[job_id]["detail"] = f"Question animation generation failed: {e}"
+        JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+        print(f"[QAnim Job {job_id}] ERROR: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # AI GENERATION ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -294,17 +348,39 @@ async def create_animation(request: AnimationRequest):
 
 @app.post("/generate-question-animation")
 async def create_question_animation(request: QuestionAnimRequest):
-    """Generate a rich Canvas+SVG+anime.js animation that visually answers any educational question."""
+    """
+    Enqueue a question-animation generation job and return immediately.
+    The frontend polls GET /generate-question-animation/status/{job_id}
+    for the result. See the JOB QUEUE comment block above for why.
+    """
     question = (request.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="'question' field cannot be empty")
-    try:
-        result = await generate_question_animation(question)
-        return result
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Question animation generation failed: {e}")
+
+    _cleanup_old_jobs()
+
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {
+        "status": "pending",
+        "result": None,
+        "detail": None,
+        "finished_at": None,
+    }
+    asyncio.create_task(_run_question_animation_job(job_id, question))
+
+    return {"job_id": job_id}
+
+
+@app.get("/generate-question-animation/status/{job_id}")
+async def get_question_animation_status(job_id: str):
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired job_id")
+    return {
+        "status": job["status"],       # "pending" | "running" | "done" | "error"
+        "result": job["result"],
+        "detail": job["detail"],
+    }
 
 
 @app.post("/generate-topic-content")
