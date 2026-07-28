@@ -4510,6 +4510,7 @@ Given a student question, produce a cinematic, step-by-step animation script in 
 ANIMATION PHILOSOPHY — CINEMATIC REVEAL, TAUGHT LIKE A CLASSROOM TEACHER
 ════════════════════════════════════════════════════════════
 • This is the "Step-by-Step Concept Animation" phase of the lesson (it builds toward, then completes, the concept — think of it as the teacher drawing on the board piece by piece, not flipping on a finished diagram). NOTHING should appear instantly or all at once.
+• THIS ANIMATION IS A CONCEPTUAL / PHYSICAL SCENE, NEVER A WORKED-SOLUTION PAGE — svg_components must always be tangible objects, fields, or phenomena the question describes (charges, field lines, force vectors, wavefronts, beams, orbits, particles, molecules, circuit elements, containers of gas, etc.), never a rendering of the formula, a "given data" list, or a substitution/calculation box. Formula text, given-data callouts, and step-by-step substitution belong ONLY to the separate Main Formula and Solution scenes that are appended automatically after this animation — if you find yourself naming a component "formula", "solution", "substitution", "given_labels", or similar, stop and replace it with an actual visual element from the problem's physical scenario instead.
 • Each step is a "scene": ONE new component enters the stage with purposeful, physically correct motion — never more than one new idea per step.
 • Every step must implicitly answer, in order across the sequence: What is happening? Why is it happening? What changes? What should the student observe? What can they conclude?
 • Scene order = physical assembly order (ground → frame → driver → driven → measurement).
@@ -4574,8 +4575,18 @@ STRICT RULES
 3. Steps 2–(N-1): each introduces exactly ONE new moving component with its physical motion.
 4. Last step: freezes mechanism at solution state. Shows answer annotation. NO calculation popup boxes.
 5. badge types: "cyan" = given data, "orange" = motion/force, "green" = result/answer.
-6. svg_components: name every physical part — frame, ground, pivots, cranks, connecting rods, pistons,
-   gears, pulleys, belts, springs, beams, coils, resistors, pipes, etc. Place all in 850×478 space.
+6. svg_components: name every physical part relevant to THIS question's domain — pick from whichever
+   category actually fits, do not force a mechanical framing onto a non-mechanical question:
+   - Mechanics/machines: frame, ground, pivots, cranks, connecting rods, pistons, gears, pulleys, belts, springs, beams.
+   - Electricity & magnetism: point charges (as +/- spheres), field lines, equipotential surfaces, force vectors,
+     capacitor plates, current-carrying wires, coils, resistors, magnetic field arrows/dots-and-crosses, circuit loops.
+   - Waves/optics: wavefronts, oscillating strings, rays, lenses/mirrors, interference fringes, wavelength markers.
+   - Thermodynamics/fluids: gas particles in a container, pistons, heat-flow arrows, pipes, temperature gradients.
+   - Chemistry: molecules, bonds, reaction arrows, energy-level diagrams, beakers/apparatus.
+   - Orbits/gravitation/kinematics: bodies in motion, trajectory paths, velocity/acceleration vectors, coordinate axes.
+   - Abstract math: number lines, coordinate planes, geometric shapes, graphs of functions — never a printed equation.
+   Whatever the domain, every component is a concrete visual object or phenomenon — NEVER a formula string, a
+   "given data" label, or a solution/substitution box (see the CRITICAL rule above). Place all in 850×478 space.
 7. final_answer: MUST contain the computed numerical result with units. Never empty.
 8. motion_type: must accurately match the physical behavior of the component.
 9. layer_order: integer starting at 1 (lower = drawn first / behind)."""
