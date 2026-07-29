@@ -151,7 +151,35 @@ MAX_TOK_CONCEPT = 16000
 # ---------------------------------------------------------------------------
 STAGE_TIMEOUT_SMALL = 40.0   # classify/solution/glossary/scene-analysis calls
 STAGE_TIMEOUT_BUILD = 70.0   # animation HTML builder (bigger output, needs more room)
-PIPELINE_TIMEOUT    = 95.0   # absolute ceiling for the WHOLE pipeline, end to end
+
+# PIPELINE_TIMEOUT MUST be derived from the stage budgets below, never
+# hard-coded as its own magic number.
+#
+# ROOT CAUSE of the "Animation Could Not Render — took longer than 95s" bug:
+# the pipeline runs Stage A/B1/B2 CONCURRENTLY (worst case = STAGE_TIMEOUT_SMALL,
+# since they race each other) and only THEN runs Stage C, GeminiAnimationBuilder,
+# SEQUENTIALLY AFTER them (worst case = STAGE_TIMEOUT_BUILD). So the true
+# worst-case wall-clock time for a run where every individual stage is
+# behaving exactly as designed and simply using its own full timeout budget is:
+#
+#     STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD  =  40 + 70  =  110s
+#
+# PIPELINE_TIMEOUT was hard-coded to 95s — LESS than that 110s minimum. That
+# meant the outer asyncio.wait_for() could (and routinely did) fire and kill
+# the ENTIRE pipeline while Stage C was still legitimately working inside its
+# own allotted 70s window, before Stage C ever got the chance to hit its own
+# timeout and return a clean per-stage fallback. Users were seeing the harsh
+# generic "pipeline exceeded 95s" failure screen on ordinary slow-Gemini days,
+# not just extreme ones — it wasn't random, it was mathematically guaranteed
+# to happen whenever the two stages together ran past 95s but under 110s.
+#
+# Fix: compute PIPELINE_TIMEOUT from the stage budgets plus a fixed buffer for
+# the synchronous work that also happens inside the pipeline (preprocessing,
+# extraction, HTML sanitizing, panel injection, JS validation). Because this
+# is now a formula instead of a magic number, changing either stage timeout
+# later can never silently reintroduce this bug.
+_SYNC_WORK_BUFFER = 20.0   # preprocessing + extraction + sanitize + panel injection + JS validation
+PIPELINE_TIMEOUT = STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD + _SYNC_WORK_BUFFER  # = 130.0
 
 
 # ===========================================================================
