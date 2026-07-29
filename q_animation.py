@@ -4619,17 +4619,37 @@ class GeminiSceneAnalyzer:
         # literal { } (e.g. set notation, LaTeX) that .format() misinterprets.
         user_prompt = _SCENE_ANALYZER_USER.replace("{question}", question[:1200])
 
-        try:
-            raw = GeminiSolutionGenerator._call_gemini(
-                user_prompt, _SCENE_ANALYZER_SYSTEM, max_tokens=8192
-            )
-            raw = _sanitize_json_str(raw)
-            data = json.loads(raw)
-            QAnimLogger.ok("SceneAnalyzer", f"Scene script produced: {len(data.get('steps',[]))} steps, {len(data.get('svg_components',{}))} components")
-            return data
-        except Exception as e:
-            QAnimLogger.warn("SceneAnalyzer", f"Analysis failed: {e} — using fallback script")
-            return cls._fallback_script(question)
+        # Falling straight to the generic 5-step "Setup/Given/Formula/
+        # Substitute/Solution" fallback on the FIRST parse failure meant a
+        # single truncated or malformed JSON response (which _call_gemini's
+        # own retry logic doesn't catch, since it only retries API-level
+        # 429/503 errors, not a 200 response containing bad JSON) silently
+        # produced the generic template with no second attempt. Give the
+        # actual model 2 more tries at a clean JSON response before
+        # accepting the fallback.
+        last_err = None
+        last_raw_snippet = ""
+        for attempt in range(1, 4):
+            try:
+                raw = GeminiSolutionGenerator._call_gemini(
+                    user_prompt, _SCENE_ANALYZER_SYSTEM, max_tokens=16384
+                )
+                last_raw_snippet = raw[:400]
+                cleaned = _sanitize_json_str(raw)
+                data = json.loads(cleaned)
+                QAnimLogger.ok("SceneAnalyzer", f"Scene script produced: {len(data.get('steps',[]))} steps, {len(data.get('svg_components',{}))} components")
+                return data
+            except Exception as e:
+                last_err = e
+                QAnimLogger.warn("SceneAnalyzer", f"Attempt {attempt}/3 failed: {e}")
+                continue
+
+        QAnimLogger.warn(
+            "SceneAnalyzer",
+            f"All attempts failed ({last_err}) — using fallback script. "
+            f"Last raw response started with: {last_raw_snippet!r}"
+        )
+        return cls._fallback_script(question)
 
     @classmethod
     async def analyze_async(cls, question: str) -> dict:
