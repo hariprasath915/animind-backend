@@ -367,6 +367,32 @@ async def create_animation(request: AnimationRequest):
 JOBS: dict[str, dict] = {}
 JOB_TTL_SECONDS = 60 * 60  # drop finished jobs after 1 hour
 
+# ── Strong references to fire-and-forget background tasks ──────────────────
+# asyncio.create_task() returns a Task that the event loop only holds a WEAK
+# reference to. If nothing else keeps a strong reference, the task can be
+# garbage-collected at any point before it finishes — silently, with no
+# exception, no log line, nothing. The job's JOBS[job_id]["status"] just
+# freezes at "pending" forever, and the frontend polls a healthy 200 for
+# 10 minutes before giving up. This bit us in production. Fix: keep every
+# background task alive in this set until it's actually done, and log
+# anything that escapes it instead of swallowing it silently.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+
+    def _on_done(t: asyncio.Task) -> None:
+        _BACKGROUND_TASKS.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                print(f"[BACKGROUND TASK] ⚠ unhandled exception: {exc!r}")
+
+    task.add_done_callback(_on_done)
+    return task
+
 
 def _cleanup_old_jobs():
     now = asyncio.get_event_loop().time()
@@ -416,7 +442,7 @@ async def create_question_animation(request: QuestionAnimRequest):
         "detail": None,
         "finished_at": None,
     }
-    asyncio.create_task(_run_question_animation_job(job_id, question))
+    _spawn_background_task(_run_question_animation_job(job_id, question))
 
     return {"job_id": job_id}
 
