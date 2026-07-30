@@ -139,48 +139,6 @@ else:
 MAX_TOK = 18000
 MAX_TOK_CONCEPT = 16000
 
-# ---------------------------------------------------------------------------
-# Hard timeout budgets — every Gemini-calling stage MUST return within these
-# windows, one way or another (real result OR a clean fallback/exception).
-# Without this, a single slow/overloaded Gemini call had no ceiling at all:
-# retry sleeps (up to 155s) plus an uncapped network call could make one
-# stage alone run for minutes with nothing to cut it off. That unbounded
-# worst case is the actual cause of "taking much longer than expected" --
-# it doesn't happen every time, only when Gemini is slow, which is why it
-# felt random/recurring instead of a clean reproducible bug.
-# ---------------------------------------------------------------------------
-STAGE_TIMEOUT_SMALL = 40.0   # classify/solution/glossary/scene-analysis calls
-STAGE_TIMEOUT_BUILD = 70.0   # animation HTML builder (bigger output, needs more room)
-
-# PIPELINE_TIMEOUT MUST be derived from the stage budgets below, never
-# hard-coded as its own magic number.
-#
-# ROOT CAUSE of the "Animation Could Not Render — took longer than 95s" bug:
-# the pipeline runs Stage A/B1/B2 CONCURRENTLY (worst case = STAGE_TIMEOUT_SMALL,
-# since they race each other) and only THEN runs Stage C, GeminiAnimationBuilder,
-# SEQUENTIALLY AFTER them (worst case = STAGE_TIMEOUT_BUILD). So the true
-# worst-case wall-clock time for a run where every individual stage is
-# behaving exactly as designed and simply using its own full timeout budget is:
-#
-#     STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD  =  40 + 70  =  110s
-#
-# PIPELINE_TIMEOUT was hard-coded to 95s — LESS than that 110s minimum. That
-# meant the outer asyncio.wait_for() could (and routinely did) fire and kill
-# the ENTIRE pipeline while Stage C was still legitimately working inside its
-# own allotted 70s window, before Stage C ever got the chance to hit its own
-# timeout and return a clean per-stage fallback. Users were seeing the harsh
-# generic "pipeline exceeded 95s" failure screen on ordinary slow-Gemini days,
-# not just extreme ones — it wasn't random, it was mathematically guaranteed
-# to happen whenever the two stages together ran past 95s but under 110s.
-#
-# Fix: compute PIPELINE_TIMEOUT from the stage budgets plus a fixed buffer for
-# the synchronous work that also happens inside the pipeline (preprocessing,
-# extraction, HTML sanitizing, panel injection, JS validation). Because this
-# is now a formula instead of a magic number, changing either stage timeout
-# later can never silently reintroduce this bug.
-_SYNC_WORK_BUFFER = 20.0   # preprocessing + extraction + sanitize + panel injection + JS validation
-PIPELINE_TIMEOUT = STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD + _SYNC_WORK_BUFFER  # = 130.0
-
 
 # ===========================================================================
 #  MODULE 1 — QAnimLogger
@@ -1220,7 +1178,7 @@ class GeminiSolutionGenerator:
     def _call_gemini(cls, user_prompt: str, system_text: str, max_tokens: int = 4096) -> str:
         import time as _time
         MAX_RETRIES  = 3
-        RETRY_DELAYS = [4, 8, 15]
+        RETRY_DELAYS = [15, 30, 60]
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -1415,14 +1373,7 @@ class GeminiSolutionGenerator:
     @classmethod
     async def generate_async(cls, question: str) -> dict:
         loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.generate, question),
-                timeout=STAGE_TIMEOUT_SMALL,
-            )
-        except asyncio.TimeoutError:
-            QAnimLogger.error("GeminiSolution", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — using fallback solution")
-            return cls._FALLBACK
+        return await loop.run_in_executor(None, cls.generate, question)
 
 
 # ===========================================================================
@@ -4703,14 +4654,7 @@ class GeminiSceneAnalyzer:
     @classmethod
     async def analyze_async(cls, question: str) -> dict:
         loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.analyze, question),
-                timeout=STAGE_TIMEOUT_SMALL,
-            )
-        except asyncio.TimeoutError:
-            QAnimLogger.error("SceneAnalyzer", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — using fallback script")
-            return cls._fallback_script(question)
+        return await loop.run_in_executor(None, cls.analyze, question)
 
     @classmethod
     def _fallback_script(cls, question: str) -> dict:
@@ -5476,7 +5420,7 @@ class GeminiAnimationBuilder:
     def _call_gemini_large(cls, user_prompt: str) -> str:
         import time as _time
         MAX_RETRIES  = 3
-        RETRY_DELAYS = [6, 12, 20]
+        RETRY_DELAYS = [20, 45, 90]
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -6153,14 +6097,7 @@ setTimeout(function() {{ resetAnim(); }}, 80);
     @classmethod
     async def build_async(cls, question: str, scene_script: dict) -> str:
         loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.build, question, scene_script),
-                timeout=STAGE_TIMEOUT_BUILD,
-            )
-        except asyncio.TimeoutError:
-            QAnimLogger.error("AnimationBuilder", f"Stage exceeded {STAGE_TIMEOUT_BUILD}s")
-            raise  # caller (pipeline) already falls back to RecoveryEngine.fallback_html on any exception
+        return await loop.run_in_executor(None, cls.build, question, scene_script)
 
 
 # ===========================================================================
@@ -6231,14 +6168,7 @@ class GeminiGlossaryAnalyzer:
     @classmethod
     async def analyze_async(cls, question: str) -> dict:
         loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.analyze, question),
-                timeout=STAGE_TIMEOUT_SMALL,
-            )
-        except asyncio.TimeoutError:
-            QAnimLogger.error("GlossaryAnalyzer", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — skipping glossary")
-            return {"terms": []}
+        return await loop.run_in_executor(None, cls.analyze, question)
 
 
 # ===========================================================================
@@ -6310,23 +6240,7 @@ async def generate_question_animation(question: str) -> dict:
     if not question:
         raise ValueError("Question cannot be empty")
     try:
-        # Absolute ceiling on total wall-clock time. Every stage below this
-        # already has its own timeout, so this should rarely fire — but it's
-        # the backstop that guarantees this function NEVER hangs open-ended.
-        # Before this existed, a slow/overloaded Gemini response had no
-        # ceiling anywhere in the call chain, so "taking much longer than
-        # expected" could mean anywhere from 2 minutes to 10+ minutes with
-        # nothing to cut it off. Now the worst case is bounded and known.
-        return await asyncio.wait_for(
-            _run_generation_pipeline(question), timeout=PIPELINE_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        QAnimLogger.error("Pipeline", f"TOTAL pipeline exceeded {PIPELINE_TIMEOUT}s — returning fallback")
-        return _build_failure_result(
-            question,
-            f"Generation took longer than {int(PIPELINE_TIMEOUT)}s (Gemini was slow/overloaded) — "
-            f"showing a fallback animation instead of hanging indefinitely. Please try again.",
-        )
+        return await _run_generation_pipeline(question)
     except Exception as e:
         QAnimLogger.error("Pipeline", f"UNHANDLED error: {e}")
         return _build_failure_result(question, f"Unexpected error: {e}")
@@ -6363,16 +6277,42 @@ async def _run_generation_pipeline(question: str) -> dict:
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
     QAnimLogger.info("Pipeline", f"Category: {category}, n_scenes: {n_scenes}")
 
-    # Stages A + B1 + B2: run concurrently
+    # Stages A + B1 + B2: run concurrently, under a hard timeout ceiling.
+    # Each of these has its own internal retry loop (SceneAnalyzer,
+    # GeminiSolutionGenerator, GlossaryAnalyzer all sleep-and-retry on
+    # transient failures), and those loops can legitimately add up to
+    # minutes in the worst case. Without an outer ceiling, one slow/flaky
+    # stage stalls the ENTIRE user-facing request — which is what caused
+    # the "generation is taking much longer than expected" timeouts.
+    # asyncio.wait(timeout=...) guarantees we move on after STAGE_AB_TIMEOUT
+    # seconds no matter what the stages are doing internally; anything still
+    # running gets cancelled and treated as a failure (safe fallback).
+    STAGE_AB_TIMEOUT = 45.0
     QAnimLogger.info("Pipeline", "Launching concurrent Gemini analysis stages...")
     scene_script_task  = asyncio.ensure_future(GeminiSceneAnalyzer.analyze_async(ai_question))
     solution_task      = asyncio.ensure_future(GeminiSolutionGenerator.generate_async(ai_question))
     glossary_task      = asyncio.ensure_future(GeminiGlossaryAnalyzer.analyze_async(ai_question))
+    _ab_tasks = [scene_script_task, solution_task, glossary_task]
 
-    raw_results = await asyncio.gather(
-        scene_script_task, solution_task, glossary_task,
-        return_exceptions=True,
-    )
+    done, pending = await asyncio.wait(_ab_tasks, timeout=STAGE_AB_TIMEOUT)
+    if pending:
+        QAnimLogger.warn(
+            "Pipeline",
+            f"{len(pending)}/{len(_ab_tasks)} analysis stage(s) still running "
+            f"after {STAGE_AB_TIMEOUT}s — moving on without them (fallbacks will be used)"
+        )
+        for t in pending:
+            t.cancel()
+
+    def _result_or_exc(task: "asyncio.Task"):
+        if task in pending:
+            return TimeoutError(f"stage exceeded {STAGE_AB_TIMEOUT}s budget")
+        try:
+            return task.result()
+        except Exception as e:
+            return e
+
+    raw_results = [_result_or_exc(t) for t in _ab_tasks]
 
     # Safely unpack — any task that raised an exception returns the Exception
     # object instead of a result. Replace failures with safe fallbacks so the
@@ -6401,10 +6341,20 @@ async def _run_generation_pipeline(question: str) -> dict:
     final_answer = scene_script.get("final_answer") or gemini_sol.get("final_answer") or ""
     key_insight  = scene_script.get("key_insight")  or gemini_sol.get("key_insight")  or ""
 
-    # Stage C: build main animation HTML
+    # Stage C: build main animation HTML — same reasoning as above. This is
+    # the heaviest stage (up to 32,768 output tokens, its own 3-attempt
+    # retry with delays up to 90s), so it gets its own generous but bounded
+    # ceiling rather than being allowed to run indefinitely.
+    STAGE_C_TIMEOUT = 75.0
     QAnimLogger.info("Pipeline", "Building main animation HTML...")
     try:
-        animation_html = await GeminiAnimationBuilder.build_async(question, scene_script)
+        animation_html = await asyncio.wait_for(
+            GeminiAnimationBuilder.build_async(question, scene_script),
+            timeout=STAGE_C_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        QAnimLogger.error("Pipeline", f"Animation build exceeded {STAGE_C_TIMEOUT}s budget — using fallback HTML")
+        animation_html = RecoveryEngine.fallback_html(question, f"Animation build timed out after {STAGE_C_TIMEOUT}s")
     except Exception as e:
         QAnimLogger.error("Pipeline", f"Animation build failed: {e}")
         animation_html = RecoveryEngine.fallback_html(question, f"Animation build error: {e}")
