@@ -148,9 +148,28 @@ MAX_TOK_CONCEPT = 16000
 # worst case is the actual cause of "taking much longer than expected" --
 # it doesn't happen every time, only when Gemini is slow, which is why it
 # felt random/recurring instead of a clean reproducible bug.
+#
+# ROOT CAUSE OF THE "Animation build error:" (blank reason) FALLBACK:
+# gemini-3.1-pro-preview is a Gemini-3-generation model, and Google's own
+# docs state thinking CANNOT be disabled for Gemini 3 / 3.1 Pro — even with
+# thinking_level="low" every call still pays a mandatory reasoning-token
+# cost before the visible output starts streaming. The animation builder
+# asks for a single ~32k-token, fully self-contained HTML page in one shot
+# (unlike the "small" stages, which return a few hundred tokens of JSON),
+# so its realistic latency is far higher than the other stages. The old
+# STAGE_TIMEOUT_BUILD=75s budget was simply too tight for that combination,
+# so builds routinely hit asyncio.TimeoutError. That exception's message is
+# the empty string by default, so the pipeline's `except Exception as e`
+# handler produced literally "Animation build error: " with nothing after
+# the colon — which is exactly the blank box users were seeing. Both the
+# timing AND the blank-message bug are fixed below (see _err_msg()).
 # ---------------------------------------------------------------------------
-STAGE_TIMEOUT_SMALL = 40.0   # classify/solution/glossary/scene-analysis calls
-STAGE_TIMEOUT_BUILD = 75.0   # animation HTML builder (bigger output, needs more room)
+STAGE_TIMEOUT_SMALL = 40.0    # classify/solution/glossary/scene-analysis calls
+STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
+                              # thinking, ~32k-token single-shot generation.
+                              # Doubled from 75s: that budget was measured
+                              # against ordinary (non-thinking-locked) models
+                              # and was not enough headroom for Gemini 3.1 Pro.
 # IMPORTANT: the pipeline's critical path is SEQUENTIAL, not flat —
 #   Stage 0 (classify, ~instant, no API)
 #   -> concurrent gather of scene/solution/glossary  (bounded by STAGE_TIMEOUT_SMALL)
@@ -163,7 +182,32 @@ STAGE_TIMEOUT_BUILD = 75.0   # animation HTML builder (bigger output, needs more
 # An earlier version of this fix set PIPELINE_TIMEOUT=95 while the two stage
 # budgets alone summed to 110 — mathematically impossible to complete within,
 # which is why the fallback fired on ordinary, non-overloaded runs. Fixed here.
-PIPELINE_TIMEOUT = STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD + 20.0  # = 135.0
+# Keep this derived from the stage constants (never hardcode a total) so the
+# two can never drift out of sync again.
+PIPELINE_TIMEOUT = STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD + 20.0  # = 210.0
+
+
+def _err_msg(e: BaseException) -> str:
+    """
+    Always return a non-empty, human-readable description of an exception.
+
+    Several common exceptions — most importantly asyncio.TimeoutError —
+    stringify to '' by default. Every place in this module that used to do
+    f"...error: {e}" could therefore render a completely blank reason box
+    (this is precisely what produced the "Animation build error:" screen
+    with nothing after the colon). Route ALL user-facing error strings
+    through this helper instead of interpolating exceptions directly.
+    """
+    if isinstance(e, asyncio.TimeoutError):
+        return (
+            "Gemini took too long to respond and the request was cancelled "
+            "(the model may be overloaded, or the response was unusually "
+            "large). This is a timeout, not a code error — please try again."
+        )
+    msg = str(e).strip()
+    if msg:
+        return f"{type(e).__name__}: {msg}"
+    return f"{type(e).__name__} (no additional detail was provided by the exception)"
 
 
 # ===========================================================================
@@ -5453,8 +5497,8 @@ class GeminiAnimationBuilder:
                 QAnimLogger.warn("AnimationBuilder", f"Short/empty HTML ({len(html)} chars) — trying repair")
                 return cls._repair_or_fallback(question, raw, scene_script)
         except Exception as e:
-            QAnimLogger.error("AnimationBuilder", f"Build failed: {e}")
-            return RecoveryEngine.fallback_html(question, f"Animation build error: {e}")
+            QAnimLogger.error("AnimationBuilder", f"Build failed: {_err_msg(e)}")
+            return RecoveryEngine.fallback_html(question, f"Animation build error: {_err_msg(e)}")
 
     @classmethod
     def _call_gemini_large(cls, user_prompt: str) -> str:
@@ -6312,8 +6356,8 @@ async def generate_question_animation(question: str) -> dict:
             f"showing a fallback animation instead of hanging indefinitely. Please try again.",
         )
     except Exception as e:
-        QAnimLogger.error("Pipeline", f"UNHANDLED error: {e}")
-        return _build_failure_result(question, f"Unexpected error: {e}")
+        QAnimLogger.error("Pipeline", f"UNHANDLED error: {_err_msg(e)}")
+        return _build_failure_result(question, f"Unexpected error: {_err_msg(e)}")
 
 
 async def _run_generation_pipeline(question: str) -> dict:
@@ -6390,8 +6434,8 @@ async def _run_generation_pipeline(question: str) -> dict:
     try:
         animation_html = await GeminiAnimationBuilder.build_async(question, scene_script)
     except Exception as e:
-        QAnimLogger.error("Pipeline", f"Animation build failed: {e}")
-        animation_html = RecoveryEngine.fallback_html(question, f"Animation build error: {e}")
+        QAnimLogger.error("Pipeline", f"Animation build failed: {_err_msg(e)}")
+        animation_html = RecoveryEngine.fallback_html(question, f"Animation build error: {_err_msg(e)}")
 
     # Also build concept animation (same HTML is used for both)
     concept_html = animation_html
