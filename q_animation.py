@@ -164,7 +164,26 @@ MAX_TOK_CONCEPT = 16000
 # the colon — which is exactly the blank box users were seeing. Both the
 # timing AND the blank-message bug are fixed below (see _err_msg()).
 # ---------------------------------------------------------------------------
-STAGE_TIMEOUT_SMALL = 40.0    # classify/solution/glossary/scene-analysis calls
+STAGE_TIMEOUT_SMALL = 40.0    # classify/solution/glossary calls — a few
+                              # hundred tokens of JSON, one attempt.
+STAGE_TIMEOUT_SCENE = 100.0   # scene-analysis (the stage that decides WHAT
+                              # the main animation actually shows — the real
+                              # physical scene, e.g. charges/fields/forces
+                              # being placed step by step, vs. a placeholder).
+                              # This stage internally retries up to 3 times,
+                              # each asking a thinking-locked Gemini 3.1 Pro
+                              # model for up to 16,384 tokens of JSON — that
+                              # does NOT fit in the 40s budget shared by the
+                              # lightweight stages. When it timed out, the
+                              # pipeline silently fell back to a generic,
+                              # non-physical "Setup/Given/Formula/Substitute/
+                              # Solution" placeholder script instead of a real
+                              # step-by-step scene — exactly the "not
+                              # step-by-step like the reference" symptom this
+                              # constant fixes. Same class of bug as the
+                              # STAGE_TIMEOUT_BUILD fix below — give a stage
+                              # that does real multi-attempt work its own
+                              # realistic budget instead of sharing a tight one.
 STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
                               # thinking, ~32k-token single-shot generation.
                               # Doubled from 75s: that budget was measured
@@ -172,10 +191,12 @@ STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
                               # and was not enough headroom for Gemini 3.1 Pro.
 # IMPORTANT: the pipeline's critical path is SEQUENTIAL, not flat —
 #   Stage 0 (classify, ~instant, no API)
-#   -> concurrent gather of scene/solution/glossary  (bounded by STAGE_TIMEOUT_SMALL)
+#   -> concurrent gather of scene/solution/glossary  (bounded by
+#      max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL), since scene-analysis
+#      now runs on its own, longer budget than solution/glossary)
 #   -> animation HTML builder                        (bounded by STAGE_TIMEOUT_BUILD)
 #   -> sanitize/post-process (~instant, no API)
-# So the true worst case is STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD, plus a
+# So the true worst case is that max(...) + STAGE_TIMEOUT_BUILD, plus a
 # margin for JSON parsing / sanitization overhead. PIPELINE_TIMEOUT must be
 # comfortably ABOVE that sum, or it becomes a guaranteed failure on any run
 # where stages simply use their normal allotted time (not just on overload).
@@ -184,7 +205,7 @@ STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
 # which is why the fallback fired on ordinary, non-overloaded runs. Fixed here.
 # Keep this derived from the stage constants (never hardcode a total) so the
 # two can never drift out of sync again.
-PIPELINE_TIMEOUT = STAGE_TIMEOUT_SMALL + STAGE_TIMEOUT_BUILD + 20.0  # = 210.0
+PIPELINE_TIMEOUT = max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD + 20.0  # = 270.0
 
 
 def _err_msg(e: BaseException) -> str:
@@ -4734,10 +4755,10 @@ class GeminiSceneAnalyzer:
         try:
             return await asyncio.wait_for(
                 loop.run_in_executor(None, cls.analyze, question),
-                timeout=STAGE_TIMEOUT_SMALL,
+                timeout=STAGE_TIMEOUT_SCENE,
             )
         except asyncio.TimeoutError:
-            QAnimLogger.error("SceneAnalyzer", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — using fallback script")
+            QAnimLogger.error("SceneAnalyzer", f"Stage exceeded {STAGE_TIMEOUT_SCENE}s — using fallback script")
             return cls._fallback_script(question)
 
     @classmethod
