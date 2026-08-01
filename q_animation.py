@@ -166,7 +166,7 @@ MAX_TOK_CONCEPT = 16000
 # ---------------------------------------------------------------------------
 STAGE_TIMEOUT_SMALL = 40.0    # classify/solution/glossary calls — a few
                               # hundred tokens of JSON, one attempt.
-STAGE_TIMEOUT_SCENE = 100.0   # scene-analysis (the stage that decides WHAT
+STAGE_TIMEOUT_SCENE = 150.0   # scene-analysis (the stage that decides WHAT
                               # the main animation actually shows — the real
                               # physical scene, e.g. charges/fields/forces
                               # being placed step by step, vs. a placeholder).
@@ -184,6 +184,17 @@ STAGE_TIMEOUT_SCENE = 100.0   # scene-analysis (the stage that decides WHAT
                               # STAGE_TIMEOUT_BUILD fix below — give a stage
                               # that does real multi-attempt work its own
                               # realistic budget instead of sharing a tight one.
+                              # NOTE: 100.0 was tried first but was STILL not
+                              # enough — observed logs showed attempt1 (33s) +
+                              # attempt2 (36s) = 69s elapsed, then the 100s
+                              # timeout fired while attempt3 was still running
+                              # in the background (finishing at ~157s total),
+                              # so the async wrapper raced ahead and returned
+                              # its own fallback before the real 3rd attempt —
+                              # which had a chance to succeed — ever got to
+                              # report back. 150s gives 3 attempts a realistic
+                              # ~50s each, matching STAGE_TIMEOUT_BUILD's
+                              # single-shot budget for a similarly heavy call.
 STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
                               # thinking, ~32k-token single-shot generation.
                               # Doubled from 75s: that budget was measured
@@ -381,7 +392,73 @@ def _sanitize_json_str(raw: str) -> str:
     # 9. Remove ellipsis placeholders  ...  that break JSON
     raw = re.sub(r'\.\.\.\s*', '', raw)
 
+    # 10. Repair unescaped double-quotes INSIDE string values.
+    #     Gemini frequently writes descriptions/labels containing a literal
+    #     " (an inch mark, a quoted phrase, a units abbreviation, etc.)
+    #     without escaping it, e.g.:  "desc": "The 5" gap closes"
+    #     That inner " prematurely closes the JSON string, so the parser
+    #     then finds "gap closes"" where it expects a ',' delimiter — this
+    #     is exactly the "Expecting ',' delimiter" failure seen in practice.
+    #     Fix: walk the text tracking string state; whenever we hit a `"`
+    #     while already inside a string, only treat it as the real closing
+    #     quote if the next non-whitespace character is one of : , } ] or
+    #     end-of-text (i.e. it's acting as a genuine JSON delimiter).
+    #     Otherwise it's an embedded quote — escape it and stay in-string.
+    raw = _repair_unescaped_inner_quotes(raw)
+
     return raw.strip()
+
+
+def _repair_unescaped_inner_quotes(text: str) -> str:
+    """Escape stray `"` characters found inside JSON string values.
+
+    Safe/idempotent on well-formed JSON: a legitimate closing quote is
+    always immediately followed (modulo whitespace) by one of : , } ] or
+    the end of the text, so those are left untouched. Any other quote
+    encountered while already inside a string is an unescaped embedded
+    quote and gets escaped instead.
+    """
+    out = []
+    i = 0
+    n = len(text)
+    in_str = False
+    esc = False
+    while i < n:
+        ch = text[i]
+        if esc:
+            out.append(ch)
+            esc = False
+            i += 1
+            continue
+        if ch == '\\':
+            out.append(ch)
+            if in_str:
+                esc = True
+            i += 1
+            continue
+        if ch == '"':
+            if not in_str:
+                in_str = True
+                out.append(ch)
+                i += 1
+                continue
+            # Already inside a string — decide if this is the real closer.
+            j = i + 1
+            while j < n and text[j] in ' \t\r\n':
+                j += 1
+            nxt = text[j] if j < n else ''
+            if j >= n or nxt in (',', '}', ']', ':'):
+                in_str = False
+                out.append(ch)
+                i += 1
+                continue
+            else:
+                out.append('\\"')
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+    return ''.join(out)
 
 
 # ===========================================================================
