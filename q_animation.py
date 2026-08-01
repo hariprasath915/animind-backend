@@ -2145,12 +2145,28 @@ PREV_STEP_JS_MODULE = r"""
     pb.disabled=(cur<=0);
   }
 
+  function _resumeRAFIfNeeded(){
+    // Mirrors Scene 6/7's resume helper: prefer the required naming
+    // contract (window.qanimRafId / window.qanimStartRAF), fall back to
+    // older guessed names for animations generated before that contract.
+    if(typeof window.qanimStartRAF==='function'){ window.qanimStartRAF(); return; }
+    if(typeof window.startRAF==='function'){ window.startRAF(); return; }
+    if(typeof window.animate==='function'){ requestAnimationFrame(window.animate); return; }
+  }
+
   // Exposed so the button's onclick (and anyone else) can call it directly.
   window.prevStep=function(){
     if(typeof window.currentStep!=='number')return;
     if(window.currentStep<=0)return;
     window.currentStep--;
     if(typeof window.applyStep==='function')window.applyStep(window.currentStep);
+    // Stepping back off a frozen/final step must resume any paused motion
+    // loop — applyStep() alone repositions moving parts for THIS step
+    // instantly, but if the loop itself was left cancelled (e.g. stepping
+    // back from a "freezing" final step), it must be restarted here too,
+    // or continuous effects (rotation, flow, etc.) will stay dead for the
+    // rest of the session even though this step's static frame is correct.
+    _resumeRAFIfNeeded();
     // Stepping back from the last step must un-hide Next Step again
     // (the base animation hides it there — see applyStep()/btn-next).
     var nb=document.getElementById('btn-next');
@@ -2825,6 +2841,26 @@ _SCENE6_JS = r"""
     s6Render();
   };
 
+  /* ── RAF cancel/resume helpers ──
+     Prefer the required naming contract (window.qanimRafId /
+     window.qanimStartRAF) that the animation builder prompt now mandates;
+     fall back to the older guessed names for any animation generated
+     before that contract existed, so previously-generated files still get
+     best-effort behavior instead of a hard failure. */
+  function _qanimCancelRAF(){
+    if(typeof window.qanimRafId!=='undefined'&&window.qanimRafId){
+      cancelAnimationFrame(window.qanimRafId);window.qanimRafId=null;
+    }
+    if(typeof window.rafId!=='undefined'&&window.rafId){
+      cancelAnimationFrame(window.rafId);window.rafId=null;
+    }
+  }
+  function _qanimResumeRAF(){
+    if(typeof window.qanimStartRAF==='function'){ window.qanimStartRAF(); return; }
+    if(typeof window.startRAF==='function'){ window.startRAF(); return; }
+    if(typeof window.animate==='function'){ requestAnimationFrame(window.animate); return; }
+  }
+
   /* ── show / hide ── */
   window.qanim_showScene6 = function(){
     var ov=_el('qanim-scene6-overlay');
@@ -2834,9 +2870,7 @@ _SCENE6_JS = r"""
     var bd=_el('qanim-scene-modal-backdrop');
     if(bd) bd.classList.add('qanim-scene-visible');
     /* freeze the SVG animation if running */
-    if(typeof window.rafId!=='undefined'&&window.rafId){
-      cancelAnimationFrame(window.rafId);window.rafId=null;
-    }
+    _qanimCancelRAF();
     /* update the dot bar to show Scene 6 active */
     _syncDots(5); /* 0-based index 5 = scene 6 */
     /* start the teaching sequence from the beginning every time we arrive */
@@ -2863,8 +2897,7 @@ _SCENE6_JS = r"""
       window.applyStep(last);
     }
     /* resume RAF if there was one */
-    if(typeof window.startRAF==='function') window.startRAF();
-    else if(typeof window.animate==='function') requestAnimationFrame(window.animate);
+    _qanimResumeRAF();
   };
 
   window.qanim_goToScene7 = function(){
@@ -5475,7 +5508,41 @@ applyStep(idx) must:
   5. Update step dots (active/done classes)
   6. Update step-label text ("Step N of M")
   7. Update progress bar width (idx+1)/total × 100%
-  8. If freezing: trigger angle lerp and pause the RAF loop
+  8. DIRECTLY set every moving component's position/rotation/dashoffset for
+     THIS step — call the exact same drawing/positioning function the RAF
+     loop uses (e.g. drawFrame(angleForStep(idx))), passing the angle/time
+     value that is correct for stepsData[idx]. Do this unconditionally,
+     every call, regardless of whether the RAF loop is currently running,
+     paused, or was never started. This is not optional: applyStep(idx)
+     must be able to render ANY step correctly all on its own, with the
+     RAF loop fully stopped — because the Previous Step button, and the
+     "Back to Animation" button on the Main Formula / Solution overlays,
+     call applyStep() directly and expect a fully correct frame with no
+     RAF loop involved. If a moving part's position only ever gets set
+     inside the RAF callback, that part will be frozen/misplaced/invisible
+     the instant a user navigates backward past a freezing step — this is
+     a defect, not acceptable behavior.
+  9. If idx is NOT a freezing step: ensure the RAF loop is running (start
+     it if it was paused/never started). If idx IS a freezing step: run
+     the angle-lerp-to-solution then pause the RAF loop as before.
+     The loop must resume automatically the moment the user leaves the
+     freezing step in either direction — never leave it paused on a
+     non-freezing step.
+
+REQUIRED GLOBAL NAMING CONTRACT for the RAF loop (exact names, no
+substitutes — the page's fixed control-panel script calls these by name
+when the Main Formula / Solution overlays hand control back to the
+animation, and Previous Step calls them too):
+  window.qanimRafId     — current requestAnimationFrame handle, or null
+                           when the loop is not running. Set/clear this
+                           EVERY time you call/cancel requestAnimationFrame
+                           — never keep the id in a local/closure variable
+                           only.
+  window.qanimStartRAF  — a function, callable with no arguments at any
+                           time, that (re)starts the continuous loop from
+                           wherever state currently is (does not reset
+                           angle/time). Must be safe to call even if the
+                           loop is already running (no-op / idempotent).
 
 ════════════════════════════════════════════════════════════
 CRITICAL CODE REQUIREMENTS
@@ -5486,7 +5553,13 @@ CRITICAL CODE REQUIREMENTS
 - NO external scripts or CDN imports — fully self-contained
 - ALL JavaScript in one <script> block
 - requestAnimationFrame loop keeps running unless explicitly paused (freeze step)
-- Restart button resets angle, currentStep=0, resumes RAF, applies step 0
+- The loop's id MUST live in window.qanimRafId and its restart function
+  MUST be window.qanimStartRAF, per the naming contract above — Previous
+  Step and the Back to Animation buttons rely on these exact names to
+  resume motion; if they're missing, navigating backward from a frozen
+  step silently leaves every moving part stuck in its frozen position.
+- Restart button resets angle, currentStep=0, resumes RAF via
+  window.qanimStartRAF(), applies step 0
 - NEVER put a raw apostrophe/single-quote character inside a single-quoted
   JS string. ONE unescaped apostrophe silently breaks the ENTIRE <script>
   block it's in — every function in that block (including nextStep and
