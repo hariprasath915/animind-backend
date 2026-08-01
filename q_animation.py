@@ -3175,16 +3175,31 @@ _SCENE6_AUTOTRIGGER_JS = """
      base animation always disables it / relabels it once the last step
      is reached (that behaviour is required and validated separately),
      so this works regardless of what Gemini named its internal
-     variables or how it structured its step logic. */
-  var _shown=false;
+     variables or how it structured its step logic.
+
+     IMPORTANT: whether to trigger is decided from the ACTUAL DOM state
+     every time (is the button showing "Finish", AND is neither overlay
+     already open) — never from a one-shot flag that only resets on the
+     Restart button. A one-shot flag breaks the very common flow of:
+     reach the end → Scene 6 opens → Back to Animation → Previous Step →
+     Next Step back to the end again — that flow never touches Restart,
+     so a flag left "already shown" from the first time would silently
+     refuse to reopen Scene 6 the second time, requiring a full page
+     refresh to recover. Checking real DOM state instead makes this
+     naturally correct no matter how many times the user goes back and
+     forth. */
   function _tryTrigger(){
-    if(_shown)return;
     var btn=document.getElementById('btn-next');
     if(!btn)return;
     var label=(btn.textContent||btn.innerText||'').trim().toLowerCase();
     var isFinished = btn.disabled || label.indexOf('finish')!==-1;
-    if(isFinished && typeof window.qanim_showScene6==='function'){
-      _shown=true;
+    if(!isFinished)return;
+    var ov6=document.getElementById('qanim-scene6-overlay');
+    var ov7=document.getElementById('qanim-scene7-overlay');
+    var alreadyOpen=(ov6&&ov6.classList.contains('qanim-scene-visible'))||
+                    (ov7&&ov7.classList.contains('qanim-scene-visible'));
+    if(alreadyOpen)return; /* don't re-trigger the fade-out while one is already open */
+    if(typeof window.qanim_showScene6==='function'){
       var svgCont=document.querySelector('.svg-container');
       var doShow=function(){ window.qanim_showScene6(); };
       if(svgCont){
@@ -3205,11 +3220,6 @@ _SCENE6_AUTOTRIGGER_JS = """
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   _onReady(function(){
     _wireBtn();
-    var origReset=window.resetAnim;
-    window.resetAnim=function(){
-      _shown=false;
-      if(typeof origReset==='function')origReset();
-    };
   });
 })();
 </script>
