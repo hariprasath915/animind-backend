@@ -3986,24 +3986,157 @@ _MATH_TYPOGRAPHY_JS = r"""
     '\\times':'\u00D7', '\\cdot':'\u00B7', '\\pm':'\u00B1', '\\mp':'\u2213',
     '\\geq':'\u2265', '\\leq':'\u2264', '\\neq':'\u2260', '\\approx':'\u2248',
     '\\propto':'\u221D', '\\infty':'\u221E', '\\rightarrow':'\u2192', '\\to':'\u2192',
+    '\\leftarrow':'\u2190', '\\leftrightarrow':'\u2194',
+    '\\Rightarrow':'\u21D2', '\\Leftrightarrow':'\u21D4',
+    '\\rightleftharpoons':'\u21CC', '\\rightleftarrows':'\u21C4',
     '\\angle':'\u2220', '\\parallel':'\u2225', '\\perp':'\u27C2', '\\in':'\u2208',
+    '\\notin':'\u2209',
     '\\subset':'\u2282', '\\cup':'\u222A', '\\cap':'\u2229', '\\int':'\u222B',
-    '\\sum':'\u2211', '\\deg':'\u00B0',
+    '\\sum':'\u2211', '\\prod':'\u220F', '\\partial':'\u2202', '\\nabla':'\u2207',
+    '\\therefore':'\u2234', '\\because':'\u2235',
+    '\\varnothing':'\u2205', '\\emptyset':'\u2205', '\\hbar':'\u0127',
+    '\\deg':'\u00B0',
     '\\mu':'\u03BC', '\\theta':'\u03B8', '\\pi':'\u03C0', '\\lambda':'\u03BB',
     '\\alpha':'\u03B1', '\\beta':'\u03B2', '\\gamma':'\u03B3', '\\delta':'\u03B4',
     '\\sigma':'\u03C3', '\\rho':'\u03C1', '\\phi':'\u03C6', '\\omega':'\u03C9',
     '\\Omega':'\u03A9', '\\Delta':'\u0394', '\\Theta':'\u0398', '\\Lambda':'\u039B',
-    '\\Sigma':'\u03A3', '\\Phi':'\u03A6'
+    '\\Sigma':'\u03A3', '\\Phi':'\u03A6', '\\nu':'\u03BD', '\\eta':'\u03B7', '\\tau':'\u03C4'
   };
 
   function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+  /* ── Protected-fragment vault ──
+     Some conversions (stacked fractions, chemistry subscripts, \frac) need to
+     emit their own <span>/<sub>/<sup> markup *before* the generic HTML-escape
+     pass runs later in mathify(). Rather than special-case ordering, any such
+     HTML is stashed here and swapped back in as the very last step, so it is
+     immune to the escaping / superscript / subscript passes in between. */
+  var _vault = [];
+  function protect(htmlFragment){
+    var token = '\u0001' + (_vault.length) + '\u0002';
+    _vault.push(htmlFragment);
+    return token;
+  }
+  function restoreProtected(text){
+    if(!_vault.length) return text;
+    return text.replace(/\u0001(\d+)\u0002/g, function(m, idx){
+      return _vault[Number(idx)] !== undefined ? _vault[Number(idx)] : m;
+    });
+  }
+
+  /* ── Reusable sub/superscript token formatter (used by the main pass AND
+     by fraction / chemistry operand formatting) ── */
+  function supSubToken(base, token, map){
+    return base + (canMap(token, map) ? applyMap(token, map) : (map===SUB_MAP ? '<sub>'+token+'</sub>' : '<sup>'+token+'</sup>'));
+  }
+
+  /* ── Small self-contained formatter for fraction numerator/denominator
+     and chemistry text — handles greek names + ^/_ notation without
+     re-running fraction/chemistry detection (avoids recursion). ── */
+  function formatAtom(s){
+    var t = String(s);
+    Object.keys(GREEK).forEach(function(word){
+      var re = new RegExp('\\b' + word + '\\b', 'g');
+      t = t.replace(re, GREEK[word]);
+    });
+    t = t.replace(/([A-Za-z0-9\u0370-\u03FF])_\{?([A-Za-z0-9+\-]+)\}?/g, function(m, base, sub){
+      return supSubToken(base, sub, SUB_MAP);
+    });
+    t = t.replace(/([A-Za-z0-9)\]\u0370-\u03FF])\^\{?(-?[A-Za-z0-9]+)\}?/g, function(m, base, exp){
+      return supSubToken(base, exp, SUP_MAP);
+    });
+    return t;
+  }
+
+  /* One-time CSS injection for stacked fractions */
+  function ensureFractionCSS(){
+    if(document.getElementById('qanim-frac-css')) return;
+    var style = document.createElement('style');
+    style.id = 'qanim-frac-css';
+    style.textContent =
+      '.qanim-frac{display:inline-flex;flex-direction:column;vertical-align:middle;' +
+        'text-align:center;margin:0 .15em;font-size:0.95em;line-height:1.05;}' +
+      '.qanim-frac .qanim-frac-num,.qanim-frac .qanim-frac-den{display:block;padding:0 .2em;}' +
+      '.qanim-frac .qanim-frac-num{border-bottom:1.5px solid currentColor;padding-bottom:1px;}' +
+      '.qanim-frac .qanim-frac-den{padding-top:1px;}';
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function buildFractionHtml(numRaw, denRaw){
+    ensureFractionCSS();
+    return '<span class="qanim-frac"><span class="qanim-frac-num">' + formatAtom(numRaw) +
+           '</span><span class="qanim-frac-den">' + formatAtom(denRaw) + '</span></span>';
+  }
+
+  /* ── Chemistry: common element symbols (covers the compounds/ions that
+     show up in high-school/intro university chemistry). Case-sensitive and
+     longest-symbol-first so real element tokens are matched before the
+     generic single-letter fallback, which keeps false positives (ordinary
+     capitalized words) low. ── */
+  var ELEMENTS = ['Na','Ca','Fe','Mg','Al','Zn','Cu','Ag','Au','Pb','Sn','Ni','Mn',
+    'Cr','Co','Br','Si','He','Ne','Ar','Li','Be','Xe','Kr','Cl',
+    'H','O','C','N','S','P','K','F','I','B','U','V','W'];
+  ELEMENTS.sort(function(a,b){ return b.length - a.length; });
+  var ELEM_ALT = ELEMENTS.join('|');
+  var CHEM_RE = new RegExp('\\b(?:(?:' + ELEM_ALT + ')\\d{0,2}){2,6}(?:\\^?\\d{0,2}[+\\-])?(?![A-Za-z0-9])|' +
+                            '\\b(?:' + ELEM_ALT + ')\\d{0,2}\\^?\\d{0,2}[+\\-](?![A-Za-z0-9])', 'g');
+
+  function convertChemistry(text){
+    return text.replace(CHEM_RE, function(whole){
+      var work = whole;
+      var chargeMatch = work.match(/\^?(\d{0,2})([+\-])$/);
+      var charge = '';
+      if(chargeMatch){
+        work = work.slice(0, work.length - chargeMatch[0].length);
+        charge = '<sup>' + (chargeMatch[1] || '') + chargeMatch[2] + '</sup>';
+      }
+      if(!work && !charge) return whole;
+      var out = work.replace(/([A-Z][a-z]?)(\d+)/g, function(m2, el, num){
+        return el + (canMap(num, SUB_MAP) ? applyMap(num, SUB_MAP) : '<sub>'+num+'</sub>');
+      });
+      if(out === work && !charge) return whole; /* nothing actually changed — leave untouched */
+      return protect(out + charge);
+    });
+  }
+
+  /* ── Plain a/b → stacked fraction detector.
+     Restricted to simple numeric / single-variable operands (with optional
+     sign, decimal point, or a single ^exponent) so we don't mangle dates
+     (12/25/2024), URLs, or prose fractions like "3/4 cup of flour". ── */
+  var FRAC_OPERAND = '-?(?:\\d+(?:\\.\\d+)?|[A-Za-z\u0391-\u03C9]+\\d*(?:\\^-?\\d+)?)';
+  var FRAC_RE = new RegExp('(?:^|(?<=[\\s(=]))(' + FRAC_OPERAND + ')\\/(' + FRAC_OPERAND + ')(?=[\\s).,;]|$)', 'g');
+
+  /* Common unit symbols — if either side of a "/" is one of these, treat it
+     as a compound unit (m/s², kg/m³, J/mol, …) and leave it inline rather
+     than rendering a stacked fraction, matching standard unit typography. */
+  var UNIT_BASES = {m:1,s:1,g:1,kg:1,cm:1,mm:1,km:1,J:1,N:1,W:1,Pa:1,mol:1,K:1,
+    A:1,V:1,C:1,T:1,Hz:1,L:1,ml:1,eV:1,lb:1,ft:1,'in':1,mi:1,hr:1,min:1,h:1,
+    atm:1,cal:1,S:1,F:1,Wb:1,H:1,lx:1,sr:1,rad:1,mA:1,kA:1,kJ:1,kN:1,kW:1,
+    mV:1,mm3:1,cm3:1,m3:1,cm2:1,m2:1};
+
+  function operandBase(op){ return op.replace(/\^-?\d+$/,''); }
+
+  function convertFractions(text){
+    return text.replace(FRAC_RE, function(whole, num, den, offset, full){
+      /* Skip anything that looks like a date: d/d immediately followed by another /d */
+      var after = full.slice(offset + whole.length, offset + whole.length + 6);
+      if(/^\/\d/.test(after)) return whole;
+      var before = full.slice(Math.max(0, offset-6), offset);
+      if(/\d\/$/.test(before)) return whole;
+      /* Skip compound units — those stay inline (e.g. "m/s^2", "kg/m^3") */
+      if(UNIT_BASES.hasOwnProperty(operandBase(num)) || UNIT_BASES.hasOwnProperty(operandBase(den))) return whole;
+      return protect(buildFractionHtml(num, den));
+    });
+  }
+
   /* ── The core text → typographic-HTML converter ──
-     Order matters: LaTeX cleanup → word/macro swaps → ASCII operators →
-     escape any remaining raw <, >, & → subscript/superscript (may add tags). */
+     Order matters: LaTeX cleanup → fractions/chemistry (protected HTML) →
+     word/macro swaps → ASCII operators → escape any remaining raw <, >, & →
+     subscript/superscript (may add tags) → restore protected fragments. */
   function mathify(raw){
     var text = String(raw);
-    if(!text || text.indexOf('_')===-1 && text.indexOf('^')===-1 && !/[A-Za-z]/.test(text) && text.indexOf('\\')===-1){
+    if(!text || text.indexOf('_')===-1 && text.indexOf('^')===-1 && text.indexOf('/')===-1 &&
+       !/[A-Za-z]/.test(text) && text.indexOf('\\')===-1){
       return null; /* nothing worth scanning (pure whitespace/punctuation) */
     }
 
@@ -4011,8 +4144,18 @@ _MATH_TYPOGRAPHY_JS = r"""
     text = text.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
     text = text.replace(/\\text\{([^{}]*)\}/g, '$1');
     text = text.replace(/\\mathrm\{([^{}]*)\}/g, '$1');
+
+    /* 1b. \vec{X} → combining right-arrow over the variable (plain unicode,
+       no protection needed since it contains no HTML-sensitive chars) */
+    text = text.replace(/\\vec\{([^{}]+)\}/g, function(m, v){ return v + '\u20D7'; });
+    text = text.replace(/\\vec\s+([A-Za-z])/g, function(m, v){ return v + '\u20D7'; });
+
     text = text.replace(/\\sqrt\{([^{}]*)\}/g, '\u221A($1)');
-    text = text.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1\u2044$2');
+
+    /* 1c. \frac{a}{b} → real stacked fraction (protected HTML) */
+    text = text.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, function(m, a, b){
+      return protect(buildFractionHtml(a, b));
+    });
 
     /* 2. LaTeX macros (longest-first isn't required — none of ours are prefixes of another) */
     Object.keys(LATEX_MACROS).forEach(function(key){
@@ -4022,14 +4165,24 @@ _MATH_TYPOGRAPHY_JS = r"""
     /* strip any leftover unrecognised LaTeX macro backslashes, e.g. "\phi" already handled above */
     text = text.replace(/\\([a-zA-Z]+)/g, '$1');
 
-    /* 3. Greek word names (word-boundary) */
+    /* 3. Greek word names (word-boundary), plus compact concatenated forms
+       like "deltaE" or "thetaC" (word immediately followed by a variable
+       with no separating space — common in AI-generated compact notation). */
     Object.keys(GREEK).forEach(function(word){
       var re = new RegExp('\\b' + word + '\\b', 'g');
       text = text.replace(re, GREEK[word]);
+      var reConcat = new RegExp('\\b' + word + '(?=[A-Z0-9])', 'g');
+      text = text.replace(reConcat, GREEK[word]);
     });
     /* "mu"/"Mu" — also converts unit prefixes like "muC", "muF" with no space */
     text = text.replace(/\bmu(?![a-z])/g, '\u03BC');
     text = text.replace(/\bMu(?![a-zA-Z])/g, '\u03BC');
+    /* common compact physics-constant words */
+    text = text.replace(/\bhbar\b/g, '\u0127');
+    text = text.replace(/\bmu0\b/g, '\u03BC\u2080');
+    text = text.replace(/\bepsilon0\b/g, '\u03B5\u2080');
+    text = text.replace(/\btherefore\b/g, '\u2234');
+    text = text.replace(/\bbecause\b/g, '\u2235');
 
     /* 4. Units & everyday math words */
     text = text.replace(/\bohms?\b/g, '\u03A9');
@@ -4044,7 +4197,12 @@ _MATH_TYPOGRAPHY_JS = r"""
     text = text.replace(/sqrt\s*\(([^)]+)\)/gi, '\u221A($1)');
     text = text.replace(/sqrt\s*([0-9]+(?:\.[0-9]+)?)/gi, '\u221A$1');
 
-    /* 5. Unambiguous ASCII comparison/operator sequences */
+    /* 5. Unambiguous ASCII comparison/operator/arrow sequences */
+    text = text.replace(/<=>/g, '\u21CC');
+    text = text.replace(/<->/g, '\u2194');
+    text = text.replace(/=>/g, '\u21D2');
+    text = text.replace(/->/g, '\u2192');
+    text = text.replace(/<-/g, '\u2190');
     text = text.replace(/>=/g, '\u2265');
     text = text.replace(/<=/g, '\u2264');
     text = text.replace(/!=/g, '\u2260');
@@ -4052,7 +4210,7 @@ _MATH_TYPOGRAPHY_JS = r"""
 
     /* 6. Multiplication "*" → "×", but never touch markdown "**bold**" */
     text = text.replace(/\*\*/g, '\u0000BOLD\u0000');
-    text = text.replace(/([A-Za-z0-9)\]])\s*\*\s*([A-Za-z0-9(])/g, '$1 \u00D7 $2');
+    text = text.replace(/([A-Za-z0-9)\]\u0370-\u03FF])\s*\*\s*([A-Za-z0-9(\u0370-\u03FF])/g, '$1 \u00D7 $2');
     text = text.replace(/\u0000BOLD\u0000/g, '**');
 
     /* 7. Scientific "e" notation → × 10^exp (exponent turned into superscript below) */
@@ -4060,19 +4218,33 @@ _MATH_TYPOGRAPHY_JS = r"""
       return base + ' \u00D7 10^' + exp;
     });
 
+    /* 7b. Chemistry formulas / ions (H2O, CO2, SO4^2-, Fe3+, Na+, Ca2+, Cl-)
+       — must run before the generic HTML-escape pass since it emits its own
+       <sub>/<sup> markup (protected until the very end). */
+    text = convertChemistry(text);
+
+    /* 7c. Plain a/b → stacked textbook fraction (also protected). Runs after
+       chemistry/scientific-notation so it doesn't collide with those, and
+       before escaping since it emits HTML. */
+    text = convertFractions(text);
+
     /* 8. Escape any remaining literal HTML-sensitive characters before we
-       start inserting our own <sub>/<sup> tags. */
+       start inserting our own <sub>/<sup> tags. (Protected fragments use
+       \u0001/\u0002 control chars, which are untouched by this pass.) */
     text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     /* 9. Subscripts: base_sub or base_{sub} */
-    text = text.replace(/([A-Za-z0-9])_\{?([A-Za-z0-9+\-]+)\}?/g, function(m, base, sub){
-      return base + (canMap(sub, SUB_MAP) ? applyMap(sub, SUB_MAP) : '<sub>' + sub + '</sub>');
+    text = text.replace(/([A-Za-z0-9\u0370-\u03FF])_\{?([A-Za-z0-9+\-]+)\}?/g, function(m, base, sub){
+      return supSubToken(base, sub, SUB_MAP);
     });
 
     /* 10. Superscripts: base^exp or base^{exp} */
-    text = text.replace(/([A-Za-z0-9)\]])\^\{?(-?[A-Za-z0-9]+)\}?/g, function(m, base, exp){
-      return base + (canMap(exp, SUP_MAP) ? applyMap(exp, SUP_MAP) : '<sup>' + exp + '</sup>');
+    text = text.replace(/([A-Za-z0-9)\]\u0370-\u03FF])\^\{?(-?[A-Za-z0-9]+)\}?/g, function(m, base, exp){
+      return supSubToken(base, exp, SUP_MAP);
     });
+
+    /* 11. Swap protected fraction/chemistry HTML back in */
+    text = restoreProtected(text);
 
     return text;
   }
@@ -4125,7 +4297,54 @@ _MATH_TYPOGRAPHY_JS = r"""
   function start(){
     processNode(document.body);
     observer.observe(document.body, {childList:true, subtree:true});
+    patchCanvasText();
   }
+
+  /* ── Canvas support ──
+     Canvas <text> is drawn as pixels, not DOM text, so the MutationObserver/
+     TreeWalker approach above can never reach it. We patch fillText/strokeText
+     to run strings through a plain-unicode-only converter first (no HTML
+     tags are possible on a canvas — sub/superscripts fall back to whichever
+     Unicode glyphs exist, e.g. digits and common letters, and otherwise the
+     original text is left as-is rather than emitting broken markup). */
+  function mathifyPlain(raw){
+    var text = String(raw);
+    if(!text) return text;
+    Object.keys(GREEK).forEach(function(word){
+      var re = new RegExp('\\b' + word + '\\b', 'g');
+      text = text.replace(re, GREEK[word]);
+    });
+    text = text.replace(/\bmu(?![a-z])/g, '\u03BC');
+    text = text.replace(/\bhbar\b/g, '\u0127');
+    text = text.replace(/(\d+(?:\.\d+)?)[eE]([+-]?\d+)\b/g, function(m, base, exp){
+      return base + ' \u00D7 10' + (canMap(exp, SUP_MAP) ? applyMap(exp, SUP_MAP) : '^' + exp);
+    });
+    text = text.replace(/sqrt\s*\(([^)]+)\)/gi, '\u221A($1)');
+    text = text.replace(/>=/g, '\u2265').replace(/<=/g, '\u2264').replace(/!=/g, '\u2260').replace(/\+-/g, '\u00B1');
+    text = text.replace(/->/g, '\u2192');
+    text = text.replace(/([A-Za-z0-9\u0370-\u03FF])_\{?([A-Za-z0-9+\-]+)\}?/g, function(m, base, sub){
+      return base + (canMap(sub, SUB_MAP) ? applyMap(sub, SUB_MAP) : sub);
+    });
+    text = text.replace(/([A-Za-z0-9)\]\u0370-\u03FF])\^\{?(-?[A-Za-z0-9]+)\}?/g, function(m, base, exp){
+      return base + (canMap(exp, SUP_MAP) ? applyMap(exp, SUP_MAP) : exp);
+    });
+    return text;
+  }
+
+  function patchCanvasText(){
+    if(typeof CanvasRenderingContext2D === 'undefined') return;
+    if(CanvasRenderingContext2D.prototype.__qanimPatched) return;
+    CanvasRenderingContext2D.prototype.__qanimPatched = true;
+    ['fillText','strokeText'].forEach(function(fn){
+      var orig = CanvasRenderingContext2D.prototype[fn];
+      CanvasRenderingContext2D.prototype[fn] = function(text, x, y, maxWidth){
+        var converted = mathifyPlain(text);
+        if(maxWidth === undefined) return orig.call(this, converted, x, y);
+        return orig.call(this, converted, x, y, maxWidth);
+      };
+    });
+  }
+
   if(document.readyState==='loading'){
     document.addEventListener('DOMContentLoaded', start);
   } else {
