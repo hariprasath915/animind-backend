@@ -47,7 +47,7 @@ from auth_utils import get_current_user, get_supabase
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 # Frontend URL — used for OAuth redirect and dashboard_url in responses
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://genzet-app.vercel.app")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://haezet.com")
 
 # Google OAuth callback page — where Supabase redirects after Google sign-in.
 # Must be listed as an "Authorized redirect URI" in Google Cloud Console AND
