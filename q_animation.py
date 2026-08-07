@@ -164,8 +164,17 @@ MAX_TOK_CONCEPT = 16000
 # the colon — which is exactly the blank box users were seeing. Both the
 # timing AND the blank-message bug are fixed below (see _err_msg()).
 # ---------------------------------------------------------------------------
-STAGE_TIMEOUT_SMALL = 40.0    # classify/solution/glossary calls — a few
-                              # hundred tokens of JSON, one attempt.
+STAGE_TIMEOUT_SMALL = 90.0    # classify/solution/glossary calls. Raised from 40s
+                              # -> 90s because the retry ladder inside
+                              # GeminiSolutionGenerator._call_gemini (up to
+                              # 2 outer attempts x 3 inner retries with
+                              # 4s/8s/15s backoff = ~54s worst case) could
+                              # exceed the old 40s budget on a single 429/503,
+                              # causing generate_async() to hit asyncio.wait_for's
+                              # timeout and silently return _FALLBACK even
+                              # though the retry would have succeeded shortly
+                              # after. 90s gives the full retry ladder room
+                              # to finish before we give up.
 STAGE_TIMEOUT_SCENE = 150.0   # scene-analysis (the stage that decides WHAT
                               # the main animation actually shows — the real
                               # physical scene, e.g. charges/fields/forces
@@ -1297,13 +1306,17 @@ class GeminiSolutionGenerator:
         "key_insight":  "Always identify given values and the target quantity before selecting a formula.",
         "real_world_note": "",
         "raw": "",
+        "_used_fallback": True,   # marks this dict as placeholder content so
+                                  # downstream rendering can surface a visible
+                                  # warning instead of silently shipping generic
+                                  # text that looks like a real solved answer.
     }
 
     @classmethod
     def generate(cls, question: str) -> dict:
         if _gemini_client is None:
             QAnimLogger.warn("GeminiSolution", "Gemini client not available — using fallback")
-            return cls._FALLBACK
+            return dict(cls._FALLBACK)
 
         QAnimLogger.info("GeminiSolution", f"Generating solution via {GEMINI_MODEL}...")
         user_prompt = (
@@ -1313,7 +1326,7 @@ class GeminiSolutionGenerator:
             f"Start your response with {{ and end with }}."
         )
 
-        MAX_ATTEMPTS = 2
+        MAX_ATTEMPTS = 3   # was 2 — one more full attempt before giving up
         last_error = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
@@ -1336,7 +1349,7 @@ class GeminiSolutionGenerator:
                 QAnimLogger.warn("GeminiSolution", f"Attempt {attempt} failed: {e}")
 
         QAnimLogger.warn("GeminiSolution", f"All {MAX_ATTEMPTS} attempts failed ({last_error}) — using fallback")
-        return cls._FALLBACK
+        return dict(cls._FALLBACK)
 
     @classmethod
     def _solution_system_text(cls):
@@ -1536,7 +1549,7 @@ class GeminiSolutionGenerator:
             }
         except Exception as e:
             QAnimLogger.warn("GeminiSolution", f"JSON parse failed: {e}")
-            return cls._FALLBACK
+            return dict(cls._FALLBACK)
 
     @classmethod
     async def generate_async(cls, question: str) -> dict:
@@ -1548,7 +1561,7 @@ class GeminiSolutionGenerator:
             )
         except asyncio.TimeoutError:
             QAnimLogger.error("GeminiSolution", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — using fallback solution")
-            return cls._FALLBACK
+            return dict(cls._FALLBACK)
 
 
 # ===========================================================================
@@ -6760,6 +6773,33 @@ async def generate_question_animation(question: str) -> dict:
         return _build_failure_result(question, f"Unexpected error: {_err_msg(e)}")
 
 
+def _inject_fallback_warning_banner(html: str) -> str:
+    """
+    Inserts a visible, unmissable banner right after <body> telling the
+    user that the actual formula/solution could not be generated for this
+    question and that the panel below is a generic placeholder, not a
+    real answer. This replaces the old silent behaviour where a failed
+    Gemini call resulted in placeholder text rendered identically to a
+    real solution, with nothing distinguishing the two.
+    """
+    banner = (
+        '<div style="position:sticky;top:0;z-index:9999;background:#fef2f2;'
+        'border-bottom:2px solid #dc2626;color:#991b1b;padding:10px 16px;'
+        'font-family:-apple-system,\'Segoe UI\',Arial,sans-serif;font-size:13px;'
+        'font-weight:700;text-align:center;">'
+        '&#9888; Solution generation failed for this question (API error or timeout). '
+        'The formula and steps below are a generic placeholder, not the real answer. '
+        'Please regenerate.'
+        '</div>'
+    )
+    if "<body" in html:
+        # insert right after the opening <body ...> tag
+        idx = html.find(">", html.find("<body")) + 1
+        return html[:idx] + banner + html[idx:]
+    # no <body> tag found (fragment) — just prepend
+    return banner + html
+
+
 async def _run_generation_pipeline(question: str) -> dict:
     """
     PIPELINE v1.0 (Gemini-only):
@@ -6806,7 +6846,7 @@ async def _run_generation_pipeline(question: str) -> dict:
     # object instead of a result. Replace failures with safe fallbacks so the
     # rest of the pipeline can always proceed.
     scene_script = raw_results[0] if isinstance(raw_results[0], dict) else GeminiSceneAnalyzer._fallback_script(ai_question)
-    gemini_sol   = raw_results[1] if isinstance(raw_results[1], dict) else GeminiSolutionGenerator._FALLBACK
+    gemini_sol   = raw_results[1] if isinstance(raw_results[1], dict) else dict(GeminiSolutionGenerator._FALLBACK)
     glossary_result = raw_results[2] if isinstance(raw_results[2], dict) else {"terms": []}
 
     if isinstance(raw_results[0], Exception):
@@ -6845,6 +6885,20 @@ async def _run_generation_pipeline(question: str) -> dict:
 
     # Centre the animation dashboard (override whatever Gemini generated)
     animation_html = inject_centering_css(animation_html)
+
+    # ── Surface silent solution-generation failures ──────────────────────
+    # Previously, if GeminiSolutionGenerator exhausted its retries (rate
+    # limit / timeout / bad JSON), the pipeline quietly substituted
+    # cls._FALLBACK — generic text like "Select the appropriate governing
+    # formula" and "See question for numerical values" — and rendered it
+    # in the exact same styled boxes as a real solution. The page looked
+    # complete and correct, so there was no signal to the user that
+    # anything had gone wrong or that they should just retry. Now that the
+    # fallback dict is tagged with _used_fallback, inject an explicit
+    # warning banner instead of letting the placeholder pass as a result.
+    if gemini_sol.get("_used_fallback"):
+        QAnimLogger.warn("Pipeline", "Solution generation fell back to placeholder — injecting visible warning banner")
+        animation_html = _inject_fallback_warning_banner(animation_html)
 
     # Build answer targets
     answer_targets = _build_answer_targets(
