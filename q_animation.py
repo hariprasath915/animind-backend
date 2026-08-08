@@ -925,6 +925,31 @@ body {
   color: #1e293b !important;
   border-color: #94a3b8 !important;
 }
+/* ── Step color legend (fallback if Gemini did not generate it) ── */
+.step-color-legend {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.step-color-legend::-webkit-scrollbar { display: none; }
+.step-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64748b;
+  white-space: nowrap;
+}
+.step-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
 </style>"""
 
 
@@ -2823,13 +2848,14 @@ _SCENE6_JS = r"""
     var showNote = s6Phase >= n+1;
     if(noteEl) noteEl.classList.toggle('s6-shown', showNote);
 
-    /* Auto-advance to Scene 8 (substitution) once note bar appears */
+    /* Auto-advance to Scene 7 once note bar appears */
     if(showNote && !s6AutoAdvanceScheduled){
       s6AutoAdvanceScheduled = true;
       s6AutoAdvanceTimer = setTimeout(function(){
         var ov = _el('qanim-scene6-overlay');
         if(ov && ov.classList.contains('qanim-scene-visible')){
-          window.qanim_goToScene7();
+          if(typeof window.qanim_showScene8==='function') window.qanim_showScene8();
+          else window.qanim_goToScene7();
         }
       }, 2800);
     }
@@ -2862,7 +2888,7 @@ _SCENE6_JS = r"""
     /* Next button label */
     if(nextBtn){
       if(s6Phase >= n+1){
-        nextBtn.innerText = 'Step 8: Substitution \u25B6';
+        nextBtn.innerText = 'Continue to Solution \u25B6';
         nextBtn.style.background = 'linear-gradient(135deg,#4338ca,#7c3aed)';
         nextBtn.onclick = function(){ window.qanim_goToScene7(); };
       } else {
@@ -2913,8 +2939,8 @@ _SCENE6_JS = r"""
     if(bd) bd.classList.add('qanim-scene-visible');
     /* freeze the SVG animation if running */
     _qanimCancelRAF();
-    /* update the dot bar to show Step 7 (index 6) active */
-    _syncDots(6);
+    /* update the dot bar to show Scene 6 active */
+    _syncDots(6); /* 0-based index 6 = dot-step7 = Step 7 */
     /* start the teaching sequence from the beginning every time we arrive */
     s6Phase = 0;
     s6AutoAdvanceScheduled = false;
@@ -2923,7 +2949,7 @@ _SCENE6_JS = r"""
   };
 
   window.qanim_goToPrevScene = function(){
-    /* hide all extra scenes, resume the SVG animation at last step */
+    /* hide both extra scenes, resume the SVG animation at last step */
     var ov6=_el('qanim-scene6-overlay');
     if(ov6) ov6.classList.remove('qanim-scene-visible');
     var ov7=_el('qanim-scene7-overlay');
@@ -2948,14 +2974,12 @@ _SCENE6_JS = r"""
     var ov6=_el('qanim-scene6-overlay');
     if(ov6) ov6.classList.remove('qanim-scene-visible');
     if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
-    /* Route to Scene 8 (substitution) — qanim_showScene8 is the wired alias */
     if(typeof window.qanim_showScene8==='function') window.qanim_showScene8();
     else if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
   };
 
   function _syncDots(idx){
     var dots=document.querySelectorAll('.step-dot');
-    var total=Math.max(dots.length,9);
     for(var i=0;i<dots.length;i++){
       dots[i].classList.remove('active','done');
       if(i<idx) dots[i].classList.add('done');
@@ -2964,7 +2988,7 @@ _SCENE6_JS = r"""
     var lbl=_el('step-label');
     if(lbl) lbl.innerText='Step 7 of 9: Main Formula';
     var bar=_el('step-bar');
-    if(bar) bar.style.width=Math.round((idx+1)/total*100)+'%';
+    if(bar) bar.style.width=Math.round(7/9*100)+'%';
   }
 
   /* Pause briefly, then smoothly fade the concept-animation stage to black
@@ -2993,8 +3017,6 @@ _SCENE6_JS = r"""
       if(ov6) ov6.classList.remove('qanim-scene-visible');
       var ov7=_el('qanim-scene7-overlay');
       if(ov7) ov7.classList.remove('qanim-scene-visible');
-      var ov9=_el('qanim-scene9-overlay');
-      if(ov9) ov9.classList.remove('qanim-scene-visible');
       var bd=_el('qanim-scene-modal-backdrop');
       if(bd) bd.classList.remove('qanim-scene-visible');
       s6Phase = -1;
@@ -3259,14 +3281,7 @@ _SCENE6_AUTOTRIGGER_JS = """
     var btn=document.getElementById('btn-next');
     if(!btn)return;
     var label=(btn.textContent||btn.innerText||'').trim().toLowerCase();
-    var isFinished = btn.disabled
-      || label.indexOf('finish')!==-1
-      || label.indexOf('formula')!==-1
-      || label.indexOf('view')!==-1;
-    /* Also check via currentStep/totalSteps if available */
-    if(!isFinished && typeof window.currentStep==='number' && typeof window.totalSteps==='number'){
-      isFinished = (window.currentStep >= window.totalSteps - 1);
-    }
+    var isFinished = btn.disabled || label.indexOf('finish')!==-1;
     if(!isFinished)return;
     var ov6=document.getElementById('qanim-scene6-overlay');
     var ov7=document.getElementById('qanim-scene7-overlay');
@@ -3274,7 +3289,7 @@ _SCENE6_AUTOTRIGGER_JS = """
     var alreadyOpen=(ov6&&ov6.classList.contains('qanim-scene-visible'))||
                     (ov7&&ov7.classList.contains('qanim-scene-visible'))||
                     (ov9&&ov9.classList.contains('qanim-scene-visible'));
-    if(alreadyOpen)return; /* don't re-trigger the fade-out while one is already open */
+    if(alreadyOpen)return; /* don't re-trigger while any scene is open */
     if(typeof window.qanim_showScene6==='function'){
       var svgCont=document.querySelector('.svg-container');
       var doShow=function(){ window.qanim_showScene6(); };
@@ -3603,15 +3618,15 @@ _SCENE7_DOM_TEMPLATE = """\
         <div class="s7-system-visual">
           <div class="s7-system-visual-title" id="s7-system-title">{system_title}</div>
           <div class="s7-system-arrows">&#x2191; &#x2191; &#x2191;</div>
-          <div class="s7-system-label2" id="s7-system-label2">{system_label}</div>
+          <div class="s7-system-label2" id="s7-system-label2">Substituting given values</div>
         </div>
-        <!-- Formula result bar (green) -->
+        <!-- Substitution expression bar (green) -->
         <div class="s7-formula-result-bar">
           <div class="s7-formula-result-text" id="s7-formula-result">{formula_result}</div>
           <div class="s7-formula-units" id="s7-units-hint">{units_hint}</div>
         </div>
       </div>
-      <!-- RIGHT column: given params + solution approach -->
+      <!-- RIGHT column: given params + substitution steps -->
       <div class="s7-right-col">
         <div>
           <div class="s7-given-section-title">Given Parameters</div>
@@ -3621,7 +3636,7 @@ _SCENE7_DOM_TEMPLATE = """\
           <div class="s7-approach-section-title">Substituting Given Values into the Formula</div>
           <div class="s7-approach-list" id="s7-approach-list">{approach_html}</div>
         </div>
-        <!-- Note pointing to Step 9 -->
+        <!-- Note pointing forward to Step 9 -->
         <div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fcd34d;border-radius:10px;padding:11px 15px;display:flex;align-items:center;gap:8px;">
           <span style="font-size:16px;">&#x27A1;&#xFE0F;</span>
           <span style="font-size:12.5px;font-weight:700;color:#92400e;">Proceed to <strong>Step 9</strong> to see the Final Answer with units and conclusion.</span>
@@ -3630,7 +3645,7 @@ _SCENE7_DOM_TEMPLATE = """\
     </div>
     <div class="s7-nav-row">
       <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Step 7</button>
-      <button class="btn-primary" onclick="if(typeof window.qanim_showScene9==='function')window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>
+      <button class="btn-primary" onclick="if(typeof window.qanim_showScene9===&#39;function&#39;)window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>
     </div>
   </div>
 </div>"""
@@ -3644,17 +3659,7 @@ _SCENE7_JS = r"""
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
 
-  /* Show Scene 7 (Step 8: Step-by-Step Substitution) */
-  window.qanim_showScene7 = function(){
-    var ov=_el('qanim-scene7-overlay');
-    if(ov) ov.classList.add('qanim-scene-visible');
-    var ov6=_el('qanim-scene6-overlay');
-    if(ov6) ov6.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');
-    if(ov9) ov9.classList.remove('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop');
-    if(bd) bd.classList.add('qanim-scene-visible');
-    /* Mark steps 1-7 done, step 8 active */
+  function _syncDots8(){
     var dots=document.querySelectorAll('.step-dot');
     for(var i=0;i<dots.length;i++){
       dots[i].classList.remove('active','done');
@@ -3665,17 +3670,37 @@ _SCENE7_JS = r"""
     if(lbl) lbl.innerText='Step 8 of 9: Step-by-Step Substitution';
     var bar=_el('step-bar');
     if(bar) bar.style.width=Math.round(8/9*100)+'%';
-  };
+  }
+
+  /* Show Scene 7 (= Step 8: Substitution) */
+  function _showScene7Core(){
+    var ov=_el('qanim-scene7-overlay');
+    if(ov) ov.classList.add('qanim-scene-visible');
+    var ov6=_el('qanim-scene6-overlay');
+    if(ov6) ov6.classList.remove('qanim-scene-visible');
+    var ov9=_el('qanim-scene9-overlay');
+    if(ov9) ov9.classList.remove('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');
+    if(bd) bd.classList.add('qanim-scene-visible');
+    _syncDots8();
+  }
+
+  window.qanim_showScene7 = _showScene7Core;
+  window.qanim_showScene8 = _showScene7Core;
 
   window.qanim_goToScene6FromScene7 = function(){
     var ov7=_el('qanim-scene7-overlay');
     if(ov7) ov7.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');
-    if(ov9) ov9.classList.remove('qanim-scene-visible');
     if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
   };
 
-  /* resetAnim also hides Scene 7 and Scene 9 */
+  window.qanim_goToScene7FromScene9 = function(){
+    var ov9=_el('qanim-scene9-overlay');
+    if(ov9) ov9.classList.remove('qanim-scene-visible');
+    _showScene7Core();
+  };
+
+  /* resetAnim hides Scene 7 + 9 */
   _onReady(function(){
     var _origReset=window.resetAnim;
     window.resetAnim=function(){
@@ -3685,6 +3710,303 @@ _SCENE7_JS = r"""
       if(ov9) ov9.classList.remove('qanim-scene-visible');
       var bd=_el('qanim-scene-modal-backdrop');
       if(bd) bd.classList.remove('qanim-scene-visible');
+      if(typeof _origReset==='function') _origReset();
+    };
+  });
+})();
+</script>
+"""
+
+
+# ===========================================================================
+#  MODULE 9 — SCENE 9: FINAL ANSWER (Step 9)
+#  New in v1.3 — appears after Step 8 (Substitution), shows the boxed
+#  numeric result, staggered substitution chain, and a key-insight bar.
+# ===========================================================================
+
+_SCENE9_CSS = """
+<style id="qanim-scene9-styles">
+/* ── Scene 9: Final Answer — centered modal card ── */
+#qanim-scene9-overlay {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%) scale(.95);
+  z-index: 7500;
+  width: min(780px, 96vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s ease, transform .3s cubic-bezier(.34,1.56,.64,1);
+}
+#qanim-scene9-overlay.qanim-scene-visible {
+  display: block !important;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
+}
+.s9-card {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 8px 48px rgba(22,163,74,.18), 0 2px 8px rgba(0,0,0,.08);
+  border: 2px solid #86efac;
+  overflow: hidden;
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+}
+.s9-title-bar {
+  text-align: center;
+  padding: 22px 28px 18px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border-bottom: 2px solid #86efac;
+}
+.s9-title-bar h2 {
+  font-size: 22px;
+  font-weight: 900;
+  color: #14532d;
+  letter-spacing: -0.3px;
+  margin-bottom: 4px;
+}
+.s9-title-bar p {
+  font-size: 13px;
+  color: #166534;
+  margin: 0;
+}
+.s9-body {
+  padding: 32px 36px 28px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.s9-formula-recap {
+  background: #eff6ff;
+  border: 1.5px solid #bfdbfe;
+  border-radius: 12px;
+  padding: 14px 20px;
+  text-align: center;
+}
+.s9-formula-recap-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #1d4ed8;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  margin-bottom: 6px;
+}
+.s9-formula-recap-eq {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 18px;
+  font-weight: 900;
+  color: #1d4ed8;
+}
+.s9-sub-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.s9-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 16px;
+  opacity: 0;
+  transform: translateX(-18px);
+  transition: opacity .4s ease, transform .4s cubic-bezier(.34,1.56,.64,1);
+}
+.s9-sub-row.s9-shown { opacity: 1; transform: translateX(0); }
+.s9-sub-num {
+  background: #0891b2;
+  color: #fff;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.s9-sub-eq {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+  flex: 1;
+}
+.s9-final-box {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 3px solid #22c55e;
+  border-radius: 18px;
+  padding: 28px 32px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.94);
+  transition: opacity .5s ease .3s, transform .5s cubic-bezier(.34,1.56,.64,1) .3s;
+}
+.s9-final-box.s9-shown { opacity: 1; transform: scale(1); }
+.s9-final-label {
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #15803d;
+  margin-bottom: 12px;
+}
+.s9-final-value {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 36px;
+  font-weight: 900;
+  color: #14532d;
+  line-height: 1.2;
+}
+.s9-final-value span.s9-highlight {
+  color: #16a34a;
+  font-size: 44px;
+}
+.s9-final-unit {
+  font-size: 15px;
+  color: #166534;
+  margin-top: 8px;
+  font-weight: 600;
+}
+.s9-insight-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #fff7ed;
+  border: 1.5px solid #fed7aa;
+  border-radius: 10px;
+  padding: 13px 18px;
+  opacity: 0;
+  transition: opacity .4s ease .6s;
+}
+.s9-insight-bar.s9-shown { opacity: 1; }
+.s9-insight-icon { font-size: 20px; flex-shrink: 0; }
+.s9-insight-text { font-size: 13px; color: #92400e; line-height: 1.6; }
+.s9-insight-text strong { color: #78350f; }
+.s9-nav-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 36px 22px;
+  border-top: 1px solid #bbf7d0;
+  background: #f0fdf4;
+}
+</style>
+"""
+
+_SCENE9_DOM_TEMPLATE = """\
+<div id="qanim-scene9-overlay">
+  <div class="s9-card">
+    <div class="s9-title-bar">
+      <h2>&#x2705; Step 9 &mdash; Final Answer</h2>
+      <p>{s9_subtitle}</p>
+    </div>
+    <div class="s9-body">
+      <div class="s9-formula-recap">
+        <div class="s9-formula-recap-label">&#x1F4D0; Governing Formula (from Step 7)</div>
+        <div class="s9-formula-recap-eq" id="s9-formula-recap">{s9_formula}</div>
+      </div>
+      <div class="s9-sub-chain" id="s9-sub-chain">
+{s9_sub_rows}
+      </div>
+      <div class="s9-final-box" id="s9-final-box">
+        <div class="s9-final-label">&#x2B50; Final Answer</div>
+        <div class="s9-final-value" id="s9-final-value">{s9_final_value}</div>
+        <div class="s9-final-unit" id="s9-final-unit">{s9_final_unit}</div>
+      </div>
+      <div class="s9-insight-bar" id="s9-insight-bar">
+        <span class="s9-insight-icon">&#x1F4A1;</span>
+        <div class="s9-insight-text" id="s9-insight-text"><strong>Key Insight:</strong> {s9_insight}</div>
+      </div>
+    </div>
+    <div class="s9-nav-row">
+      <button class="btn-secondary" onclick="if(typeof window.qanim_goToScene7FromScene9===&#39;function&#39;)window.qanim_goToScene7FromScene9()">&#x2190; Back to Step 8</button>
+      <button class="btn-primary" onclick="if(typeof window.resetAnim===&#39;function&#39;)window.resetAnim()">&#x21BA; Restart Animation</button>
+    </div>
+  </div>
+</div>"""
+
+_SCENE9_JS = r"""
+<script id="qanim-js-scene9">
+(function initScene9(){
+  'use strict';
+  if(window.__qanimScene9Init)return; window.__qanimScene9Init=true;
+
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  function _syncDots9(){
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++){
+      dots[i].classList.remove('active','done');
+      if(i<8) dots[i].classList.add('done');
+      if(i===8) dots[i].classList.add('active');
+    }
+    var lbl=_el('step-label');
+    if(lbl) lbl.innerText='Step 9 of 9: Final Answer';
+    var bar=_el('step-bar');
+    if(bar) bar.style.width='100%';
+  }
+
+  function _animateEntrance(){
+    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
+    for(var i=0;i<rows.length;i++){
+      (function(el,delay){
+        setTimeout(function(){ el.classList.add('s9-shown'); }, delay);
+      })(rows[i], 200 + i*200);
+    }
+    var fb=_el('s9-final-box');
+    if(fb) setTimeout(function(){ fb.classList.add('s9-shown'); }, 200 + rows.length*200);
+    var ib=_el('s9-insight-bar');
+    if(ib) setTimeout(function(){ ib.classList.add('s9-shown'); }, 200 + rows.length*200 + 300);
+  }
+
+  function _resetEntrance(){
+    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
+    for(var i=0;i<rows.length;i++) rows[i].classList.remove('s9-shown');
+    var fb=_el('s9-final-box');
+    if(fb) fb.classList.remove('s9-shown');
+    var ib=_el('s9-insight-bar');
+    if(ib) ib.classList.remove('s9-shown');
+  }
+
+  window.qanim_showScene9 = function(){
+    var ov7=_el('qanim-scene7-overlay');
+    if(ov7) ov7.classList.remove('qanim-scene-visible');
+    var ov6=_el('qanim-scene6-overlay');
+    if(ov6) ov6.classList.remove('qanim-scene-visible');
+    var ov9=_el('qanim-scene9-overlay');
+    if(ov9) ov9.classList.add('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');
+    if(bd) bd.classList.add('qanim-scene-visible');
+    _syncDots9();
+    _resetEntrance();
+    setTimeout(_animateEntrance, 120);
+  };
+
+  window.qanim_goToScene7FromScene9 = function(){
+    var ov9=_el('qanim-scene9-overlay');
+    if(ov9) ov9.classList.remove('qanim-scene-visible');
+    if(typeof window.qanim_showScene8==='function') window.qanim_showScene8();
+    else if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
+  };
+
+  _onReady(function(){
+    var _origReset=window.resetAnim;
+    window.resetAnim=function(){
+      var ov9=_el('qanim-scene9-overlay');
+      if(ov9) ov9.classList.remove('qanim-scene-visible');
       if(typeof _origReset==='function') _origReset();
     };
   });
@@ -3818,71 +4140,74 @@ def _build_s7_given_html(gemini_sol, scene_script):
 
 def _build_s7_approach_html(gemini_sol, scene_script):
     """
-    Build the 'Substituting Given Values into the Formula' numbered steps
-    for the right column of Scene 7 (Step 8).
-    Uses structured substitution_steps with sub-numbering (8.1, 8.2 …).
+    Build Step 8 substitution steps numbered 8.1, 8.2, ... for the right
+    column of Scene 7 (Step 8 — Step-by-Step Substitution).
+    Uses gemini_sol.substitution_steps for real calculation lines with
+    actual numbers substituted, falling back to flat steps if needed.
     """
-    # Prefer structured substitution steps
-    subs = gemini_sol.get("substitution_steps") or []
-
-    # If we have rich substitution steps, use them directly
+    # Prefer rich substitution_steps with title + expr + description
+    sub_steps = gemini_sol.get("substitution_steps") or []
     parts = []
-    if subs:
-        for i, s in enumerate(subs[:6], start=1):
+
+    if sub_steps:
+        for i, s in enumerate(sub_steps[:6], start=1):
             if isinstance(s, dict):
-                title = str(s.get("title", "") or "").strip()[:80]
-                expr  = str(s.get("expr", "") or s.get("equation", "") or "").strip()[:120]
-                desc  = str(s.get("description", "") or "").strip()[:180]
+                title = html_module.escape(str(s.get("title", "") or "")[:80])
+                expr  = html_module.escape(str(s.get("expr",  "") or s.get("expression", "") or "")[:120])
+                desc  = html_module.escape(str(s.get("description", "") or s.get("desc", "") or "")[:160])
             else:
-                title = str(s).strip()[:80]
-                expr  = ""
+                s_str = str(s).strip()
+                parts_sp = re.split(r"\s*[—:\|]\s*", s_str, 1)
+                title = html_module.escape(parts_sp[0].strip()[:80])
+                expr  = html_module.escape(parts_sp[1].strip()[:120]) if len(parts_sp) > 1 else ""
                 desc  = ""
-            title_e = html_module.escape(title)
-            eq_span = (
-                '<span class="s7-approach-step-eq">' + html_module.escape(expr) + '</span>'
+            expr_span = (
+                '<span class="s7-approach-step-eq">' + expr + '</span>'
                 if expr else ""
             )
             desc_span = (
-                " " + html_module.escape(desc)
-                if desc and desc != title else ""
+                '<span style="display:block;font-size:11px;color:#64748b;margin-top:3px;">' + desc + '</span>'
+                if desc else ""
             )
             parts.append(
                 '<div class="s7-approach-step">'
                 '<span class="s7-approach-step-num">8.' + str(i) + '</span>'
-                '<span>' + title_e + eq_span + desc_span + '</span>'
+                '<span>' + title + expr_span + desc_span + '</span>'
                 '</div>'
             )
     else:
-        # Fall back to flat steps or scene solution steps
+        # Fall back to flat steps list
         flat = gemini_sol.get("steps") or scene_script.get("solution_steps") or []
         for i, s in enumerate(flat[:5], start=1):
             s_str = str(s).strip()
             s_str = re.sub(r"^Step\s*\d+[:\.]?\s*", "", s_str, flags=re.IGNORECASE).strip()
-            parts_split = re.split(r"\s*[—:\|]\s*", s_str, 1)
-            title = parts_split[0].strip()[:80]
-            eq    = parts_split[1].strip()[:60] if len(parts_split) > 1 else ""
-            if not title or len(title) < 3:
-                continue
+            sp = re.split(r"\s*[—:\|]\s*", s_str, 1)
+            title_e = html_module.escape(sp[0].strip()[:80])
+            eq_e    = html_module.escape(sp[1].strip()[:120]) if len(sp) > 1 else ""
             eq_span = (
-                '<span class="s7-approach-step-eq">' + html_module.escape(eq) + '</span>'
-                if eq else ""
+                '<span class="s7-approach-step-eq">' + eq_e + '</span>'
+                if eq_e else ""
             )
             parts.append(
                 '<div class="s7-approach-step">'
                 '<span class="s7-approach-step-num">8.' + str(i) + '</span>'
-                '<span>' + html_module.escape(title) + eq_span + '</span>'
+                '<span>' + title_e + eq_span + '</span>'
                 '</div>'
             )
 
     if not parts:
-        parts = [
-            '<div class="s7-approach-step"><span class="s7-approach-step-num">8.1</span>'
-            '<span>Start with the governing formula from Step 7</span></div>',
-            '<div class="s7-approach-step"><span class="s7-approach-step-num">8.2</span>'
-            '<span>Identify and plug in each known value</span></div>',
-            '<div class="s7-approach-step"><span class="s7-approach-step-num">8.3</span>'
-            '<span>Compute step by step — see Step 9 for the final result</span></div>',
-        ]
+        # Ultimate fallback
+        for i, txt in enumerate(["Start with the governing formula",
+                                  "Substitute all known values",
+                                  "Calculate the intermediate values",
+                                  "Multiply/simplify to get the result",
+                                  "State the final answer with units"], start=1):
+            parts.append(
+                '<div class="s7-approach-step">'
+                '<span class="s7-approach-step-num">8.' + str(i) + '</span>'
+                '<span>' + txt + '</span>'
+                '</div>'
+            )
     return "\n".join(parts)
 
 
@@ -4021,479 +4346,144 @@ def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
     except Exception as e:
         QAnimLogger.warn("Scene7Injector", f"JS failed: {e}")
 
-    QAnimLogger.ok("Scene7Injector", f"Scene 7 (Solution Summary — Image 2 style) injected")
+    QAnimLogger.ok("Scene7Injector", f"Scene 7 (Step 8: Step-by-Step Substitution) injected")
     return html
 
 
-# ===========================================================================
-#  MODULE 12.7 — Scene 8 alias wiring (Step-by-Step Substitution)
-#  The Scene 7 overlay IS the substitution scene. We expose qanim_showScene8
-#  so the Step 8 dot and Scene 6's "Continue" button both reach it, and we
-#  update the step-dot bar to reflect Step 8 of 9 correctly.
-#  We also update Scene 6's JS so its auto-advance calls qanim_showScene8.
-# ===========================================================================
 
-_SCENE8_ALIAS_JS = r"""
-<script id="qanim-js-scene8-alias">
-/* Scene 8 = the former Scene 7 (Step-by-Step Substitution).
-   We expose qanim_showScene8 as an alias so the Step 8 dot and
-   the "Continue to Step 8" button from Scene 6 both work. */
-(function(){
-  'use strict';
-  if(window.__qanimScene8AliasInit)return; window.__qanimScene8AliasInit=true;
-  function _el(id){return document.getElementById(id);}
-  function _syncDots8(){
-    var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){
-      dots[i].classList.remove('active','done');
-      if(i<7) dots[i].classList.add('done');   /* 0-7: steps 1-7 done */
-      if(i===7) dots[i].classList.add('active'); /* index 7 = step 8 */
-    }
-    var lbl=_el('step-label');
-    if(lbl) lbl.innerText='Step 8 of 9: Step-by-Step Substitution';
-    var bar=_el('step-bar');
-    if(bar) bar.style.width=Math.round(8/9*100)+'%';
-  }
-  window.qanim_showScene8 = function(){
-    /* Hide scene 6 and scene 9 */
-    var ov6=_el('qanim-scene6-overlay');
-    if(ov6) ov6.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');
-    if(ov9) ov9.classList.remove('qanim-scene-visible');
-    /* Show scene 7 (the substitution scene) */
-    var ov7=_el('qanim-scene7-overlay');
-    if(ov7) ov7.classList.add('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop');
-    if(bd) bd.classList.add('qanim-scene-visible');
-    _syncDots8();
-  };
-  /* qanim_showScene7 should also behave like showScene8 now */
-  window.qanim_showScene7 = window.qanim_showScene8;
-})();
-</script>
-"""
-
-
-def inject_scene8_alias(html):
-    """Inject the Scene 8 alias script so Step 8 dot and Scene 6 'Continue' button work."""
-    try:
-        if '</body>' in html:
-            html = html.replace('</body>', _SCENE8_ALIAS_JS + '\n</body>', 1)
-        else:
-            html += '\n' + _SCENE8_ALIAS_JS
-        QAnimLogger.ok("Scene8Alias", "Scene 8 alias (Step-by-Step Substitution) injected")
-    except Exception as e:
-        QAnimLogger.warn("Scene8Alias", f"Injection failed: {e}")
-    return html
-
-
-# ===========================================================================
-#  MODULE 12.8 — Scene 9: Final Answer overlay
-#  Shows the substitution chain + big green answer box + key insight bar.
-#  Triggered by Scene 7's "Step 9: Final Answer" button.
-# ===========================================================================
-
-_SCENE9_CSS = """
-<style id="qanim-scene9-styles">
-/* ── Scene 9: Final Answer — centered modal card ── */
-#qanim-scene9-overlay {
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%,-50%) scale(.95);
-  z-index: 7500;
-  width: min(780px, 96vw);
-  max-height: 92vh;
-  overflow-y: auto;
-  box-sizing: border-box;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .3s ease, transform .3s cubic-bezier(.34,1.56,.64,1);
-}
-#qanim-scene9-overlay.qanim-scene-visible {
-  display: block !important;
-  opacity: 1;
-  pointer-events: auto;
-  transform: translate(-50%,-50%) scale(1);
-}
-.s9-card {
-  background: #fff;
-  border-radius: 20px;
-  box-shadow: 0 8px 48px rgba(22,163,74,.18), 0 2px 8px rgba(0,0,0,.08);
-  border: 2px solid #86efac;
-  overflow: hidden;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-}
-.s9-title-bar {
-  text-align: center;
-  padding: 22px 28px 18px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border-bottom: 2px solid #86efac;
-}
-.s9-title-bar h2 {
-  font-size: 22px;
-  font-weight: 900;
-  color: #14532d;
-  letter-spacing: -0.3px;
-  margin-bottom: 4px;
-}
-.s9-title-bar p {
-  font-size: 13px;
-  color: #166534;
-  margin: 0;
-}
-.s9-body {
-  padding: 32px 36px 28px;
-  background: #fff;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-/* Formula recap row */
-.s9-formula-recap {
-  background: #eff6ff;
-  border: 1.5px solid #bfdbfe;
-  border-radius: 12px;
-  padding: 14px 20px;
-  text-align: center;
-}
-.s9-formula-recap-label {
-  font-size: 10.5px;
-  font-weight: 800;
-  color: #1d4ed8;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  margin-bottom: 6px;
-}
-.s9-formula-recap-eq {
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 18px;
-  font-weight: 900;
-  color: #1d4ed8;
-}
-/* Substitution chain */
-.s9-sub-chain {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.s9-sub-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 12px 16px;
-  opacity: 0;
-  transform: translateX(-18px);
-  transition: opacity .4s ease, transform .4s cubic-bezier(.34,1.56,.64,1);
-}
-.s9-sub-row.s9-shown { opacity: 1; transform: translateX(0); }
-.s9-sub-num {
-  background: #0891b2;
-  color: #fff;
-  border-radius: 50%;
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 800;
-  flex-shrink: 0;
-}
-.s9-sub-eq {
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 15px;
-  font-weight: 700;
-  color: #1e293b;
-  flex: 1;
-}
-/* Big final answer box */
-.s9-final-box {
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border: 3px solid #22c55e;
-  border-radius: 18px;
-  padding: 28px 32px;
-  text-align: center;
-  position: relative;
-  overflow: hidden;
-  opacity: 0;
-  transform: scale(0.94);
-  transition: opacity .5s ease .3s, transform .5s cubic-bezier(.34,1.56,.64,1) .3s;
-}
-.s9-final-box.s9-shown { opacity: 1; transform: scale(1); }
-.s9-final-box::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at 50% 0%, rgba(34,197,94,.12) 0%, transparent 70%);
-  pointer-events: none;
-}
-.s9-final-label {
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  color: #15803d;
-  margin-bottom: 12px;
-}
-.s9-final-value {
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 36px;
-  font-weight: 900;
-  color: #14532d;
-  line-height: 1.2;
-}
-.s9-final-value span.s9-highlight {
-  color: #16a34a;
-  font-size: 44px;
-}
-.s9-final-unit {
-  font-size: 15px;
-  color: #166534;
-  margin-top: 8px;
-  font-weight: 600;
-}
-.s9-insight-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  background: #fff7ed;
-  border: 1.5px solid #fed7aa;
-  border-radius: 10px;
-  padding: 13px 18px;
-  opacity: 0;
-  transition: opacity .4s ease .6s;
-}
-.s9-insight-bar.s9-shown { opacity: 1; }
-.s9-insight-icon { font-size: 20px; flex-shrink: 0; }
-.s9-insight-text { font-size: 13px; color: #92400e; line-height: 1.6; }
-.s9-insight-text strong { color: #78350f; }
-/* Nav row */
-.s9-nav-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 36px 22px;
-  border-top: 1px solid #bbf7d0;
-  background: #f0fdf4;
-}
-</style>
-"""
-
-_SCENE9_DOM_TEMPLATE = """\
-<div id="qanim-scene9-overlay">
-  <div class="s9-card">
-    <div class="s9-title-bar">
-      <h2>&#x2705; Step 9 &mdash; Final Answer</h2>
-      <p id="s9-subtitle">{subtitle}</p>
-    </div>
-    <div class="s9-body">
-      <!-- Formula recap -->
-      <div class="s9-formula-recap">
-        <div class="s9-formula-recap-label">&#x1F4D0; Governing Formula (from Step 7)</div>
-        <div class="s9-formula-recap-eq" id="s9-formula-recap">{formula_recap}</div>
-      </div>
-      <!-- Substitution chain -->
-      <div class="s9-sub-chain" id="s9-sub-chain">
-        {sub_chain_html}
-      </div>
-      <!-- Final boxed answer -->
-      <div class="s9-final-box" id="s9-final-box">
-        <div class="s9-final-label">&#x2B50; Final Answer</div>
-        <div class="s9-final-value" id="s9-final-value">{final_value_html}</div>
-        <div class="s9-final-unit" id="s9-final-unit">{final_unit}</div>
-      </div>
-      <!-- Insight bar -->
-      <div class="s9-insight-bar" id="s9-insight-bar">
-        <span class="s9-insight-icon">&#x1F4A1;</span>
-        <div class="s9-insight-text" id="s9-insight-text">{insight_html}</div>
-      </div>
-    </div>
-    <div class="s9-nav-row">
-      <button class="btn-secondary" onclick="if(typeof window.qanim_goToScene7FromScene9==='function')window.qanim_goToScene7FromScene9()">&#x2190; Back to Step 8</button>
-      <button class="btn-primary" onclick="if(typeof window.resetAnim==='function')window.resetAnim()">&#x21BA; Restart Animation</button>
-    </div>
-  </div>
-</div>"""
-
-_SCENE9_JS = r"""
-<script id="qanim-js-scene9">
-/* Scene 9 = Step 9: Final Answer */
-(function initScene9(){
-  'use strict';
-  if(window.__qanimScene9Init)return; window.__qanimScene9Init=true;
-
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-
-  function _syncDots9(){
-    var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){
-      dots[i].classList.remove('active','done');
-      if(i<8) dots[i].classList.add('done');
-      if(i===8) dots[i].classList.add('active'); /* index 8 = step 9 */
-    }
-    var lbl=_el('step-label');
-    if(lbl) lbl.innerText='Step 9 of 9: Final Answer';
-    var bar=_el('step-bar');
-    if(bar) bar.style.width='100%';
-  }
-
-  function _animateEntrance(){
-    /* Stagger-reveal substitution rows */
-    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
-    for(var i=0;i<rows.length;i++){
-      (function(el,delay){
-        setTimeout(function(){ el.classList.add('s9-shown'); }, delay);
-      })(rows[i], 200 + i*200);
-    }
-    /* Reveal final box */
-    var fb=_el('s9-final-box');
-    if(fb) setTimeout(function(){ fb.classList.add('s9-shown'); }, 200 + rows.length*200);
-    /* Reveal insight bar */
-    var ib=_el('s9-insight-bar');
-    if(ib) setTimeout(function(){ ib.classList.add('s9-shown'); }, 200 + rows.length*200 + 300);
-  }
-
-  function _resetEntrance(){
-    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
-    for(var i=0;i<rows.length;i++) rows[i].classList.remove('s9-shown');
-    var fb=_el('s9-final-box');
-    if(fb) fb.classList.remove('s9-shown');
-    var ib=_el('s9-insight-bar');
-    if(ib) ib.classList.remove('s9-shown');
-  }
-
-  window.qanim_showScene9 = function(){
-    var ov7=_el('qanim-scene7-overlay');
-    if(ov7) ov7.classList.remove('qanim-scene-visible');
-    var ov6=_el('qanim-scene6-overlay');
-    if(ov6) ov6.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');
-    if(ov9) ov9.classList.add('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop');
-    if(bd) bd.classList.add('qanim-scene-visible');
-    _syncDots9();
-    _resetEntrance();
-    setTimeout(_animateEntrance, 120);
-  };
-
-  window.qanim_goToScene7FromScene9 = function(){
-    var ov9=_el('qanim-scene9-overlay');
-    if(ov9) ov9.classList.remove('qanim-scene-visible');
-    if(typeof window.qanim_showScene8==='function') window.qanim_showScene8();
-  };
-
-  /* resetAnim also hides Scene 9 */
-  _onReady(function(){
-    var _origReset=window.resetAnim;
-    window.resetAnim=function(){
-      var ov9=_el('qanim-scene9-overlay');
-      if(ov9) ov9.classList.remove('qanim-scene-visible');
-      if(typeof _origReset==='function') _origReset();
-    };
-  });
-})();
-</script>
-"""
-
-
-def _build_s9_sub_chain_html(gemini_sol):
-    """Build the substitution chain rows for Scene 9 from solution steps."""
-    subs = gemini_sol.get("substitution_steps") or []
-    if not subs:
-        # Fallback from flat steps
-        steps_flat = gemini_sol.get("steps") or []
-        for i, s in enumerate(steps_flat[2:6]):  # steps 3-6 are usually subs
-            subs.append({"title": f"Step {i+1}", "expr": str(s), "description": ""})
+def _build_s9_sub_rows(gemini_sol):
+    """
+    Build the staggered substitution chain rows (s9-sub-row) for Scene 9.
+    Uses gemini_sol.substitution_steps (title + expr pairs), falling back to
+    derivable steps from the final_answer field.
+    Returns HTML string of <div class="s9-sub-row" data-s9-idx="N"> elements.
+    """
+    sub_steps = gemini_sol.get("substitution_steps") or []
     rows = []
-    for i, s in enumerate(subs[:6]):
-        expr = html_module.escape(str(s.get("expr", "") or s.get("title", "") or ""))
-        rows.append(
-            f'<div class="s9-sub-row" data-s9-idx="{i}">'
-            f'<div class="s9-sub-num">{i+1}</div>'
-            f'<div class="s9-sub-eq">{expr}</div>'
-            f'</div>'
-        )
+
+    if sub_steps:
+        for i, s in enumerate(sub_steps[:6]):
+            if isinstance(s, dict):
+                expr = str(s.get("expr", "") or s.get("expression", "") or "").strip()
+                if not expr:
+                    expr = str(s.get("title", "") or "").strip()
+            else:
+                expr = str(s).strip()
+                expr = re.sub(r"^Step\s*\d+[:\.]?\s*", "", expr, flags=re.IGNORECASE).strip()
+            if not expr:
+                continue
+            expr_e = html_module.escape(expr[:160])
+            rows.append(
+                f'        <div class="s9-sub-row" data-s9-idx="{i}">'
+                f'<div class="s9-sub-num">{i+1}</div>'
+                f'<div class="s9-sub-eq">{expr_e}</div>'
+                f'</div>'
+            )
+
     if not rows:
-        rows = [
-            '<div class="s9-sub-row" data-s9-idx="0">'
-            '<div class="s9-sub-num">1</div>'
-            '<div class="s9-sub-eq">Substitute the given values into the formula.</div>'
-            '</div>',
-            '<div class="s9-sub-row" data-s9-idx="1">'
-            '<div class="s9-sub-num">2</div>'
-            '<div class="s9-sub-eq">Compute the result step by step.</div>'
-            '</div>',
-        ]
+        # Build generic rows from final answer if no structured steps
+        final = str(gemini_sol.get("final_answer", "") or "").strip()
+        formula_list = gemini_sol.get("formulas") or []
+        formula_txt = ""
+        for f in formula_list[:1]:
+            formula_txt = f.get("text", "") if isinstance(f, dict) else str(f)
+        if formula_txt:
+            rows.append(
+                f'        <div class="s9-sub-row" data-s9-idx="0">'
+                f'<div class="s9-sub-num">1</div>'
+                f'<div class="s9-sub-eq">{html_module.escape(formula_txt[:160])}</div>'
+                f'</div>'
+            )
+        if final:
+            rows.append(
+                f'        <div class="s9-sub-row" data-s9-idx="1">'
+                f'<div class="s9-sub-num">2</div>'
+                f'<div class="s9-sub-eq">{html_module.escape(final[:160])}</div>'
+                f'</div>'
+            )
+
     return "\n".join(rows)
 
 
 def inject_scene9_final_answer(html, gemini_sol, scene_script):
     """
-    Inject Scene 9 (\"Final Answer\") overlay panel.
-    Shows: formula recap → substitution chain → big green answer box → key insight.
-    Triggered by Scene 7 (Step 8)'s \"Step 9: Final Answer\" button.
-    """
-    _is_fallback = bool(gemini_sol.get("_used_fallback"))
+    Inject Scene 9 (Step 9 — Final Answer) panel.
+    Shows:
+      - Formula recap from Step 7
+      - Staggered substitution chain (s9-sub-row items)
+      - Big boxed final answer
+      - Key insight bar
+      - Navigation: Back to Step 8 / Restart
 
-    # Formula recap (primary formula from solution)
+    This function:
+      1. Injects CSS into <head>
+      2. Injects the DOM panel right after <body>
+      3. Injects the JS module before </body>
+    """
+    # Build formula recap
     formula_recap = ""
+    formulas = gemini_sol.get("formulas") or []
     _fb_fmla_texts = {f["text"] for f in GeminiSolutionGenerator._FALLBACK.get("formulas", [])
                       if isinstance(f, dict) and f.get("text")}
-    for f in (gemini_sol.get("formulas") or [])[:1]:
+    for f in formulas[:1]:
         candidate = f.get("text", "") if isinstance(f, dict) else str(f)
         if candidate and candidate not in _fb_fmla_texts:
             formula_recap = candidate
             break
     if not formula_recap:
-        formula_recap = scene_script.get("key_insight", "See governing formula in Step 7") or ""
+        formula_recap = scene_script.get("key_insight") or "See formula in Step 7"
 
-    # Subtitle
-    subtitle = html_module.escape(str(scene_script.get("title", "Problem Solution") or "")[:80])
+    # Build subtitle
+    system_title = scene_script.get("title") or "Physical System"
 
-    # Substitution chain
-    sub_chain_html = _build_s9_sub_chain_html(gemini_sol)
+    # Build substitution chain rows
+    s9_sub_rows = _build_s9_sub_rows(gemini_sol)
 
-    # Final answer value
-    final_answer = str(gemini_sol.get("final_answer") or scene_script.get("final_answer") or "See solution above")
+    # Build final answer display
+    final_answer = str(gemini_sol.get("final_answer") or "").strip()
     final_unit   = str(gemini_sol.get("final_answer_unit") or "").strip()
-
-    # Build final_value_html — highlight the numeric part
-    if _is_fallback:
-        final_value_html = '<span style="color:#dc2626;font-size:24px;">&#9888; Regenerate animation</span>'
-        final_unit = "Solution not available — please retry"
+    if final_answer:
+        # Try to highlight the numeric value inside the answer
+        m = re.search(r"([\d,\.]+\s*(?:kW|W|J|N|Pa|K|m|s|A|V|C|rad|kg|mol|°C|°F)?)", final_answer)
+        if m:
+            s9_final_val_html = (
+                html_module.escape(final_answer[:m.start()]) +
+                '<span class="s9-highlight">' + html_module.escape(m.group(1)) + '</span>' +
+                html_module.escape(final_answer[m.end():])
+            )
+        else:
+            s9_final_val_html = '<span class="s9-highlight">' + html_module.escape(final_answer[:120]) + '</span>' 
     else:
-        final_ans_e = html_module.escape(str(final_answer)[:200])
-        final_value_html = f'<span class="s9-highlight">{final_ans_e}</span>'
+        s9_final_val_html = "See calculation above"
 
-    # Unit line (also shows formula unit check)
-    if not final_unit and not _is_fallback:
-        ki = str(scene_script.get("key_insight") or "").strip()
-        final_unit = ki[:120] if ki else "Check dimensional consistency"
+    s9_final_unit_html = ""
+    if final_unit:
+        s9_final_unit_html = "Units: " + html_module.escape(final_unit) + " &nbsp;|&nbsp; ✔ Dimensionally consistent"
 
-    # Key insight text
-    if _is_fallback:
-        insight_html = (
-            '<strong>&#9888; Solution generation failed.</strong> '
-            'This is a placeholder. Wait 60 s then click &#8635; Restart.'
+    # Build insight text
+    key_insight = str(gemini_sol.get("key_insight") or scene_script.get("key_insight") or "").strip()
+    if not key_insight:
+        key_insight = "Review the formula and substitution in Steps 7 and 8 for the complete solution."
+    key_insight_e = html_module.escape(key_insight[:300])
+
+    # Detect fallback
+    if gemini_sol.get("_used_fallback"):
+        s9_sub_rows = (
+            '        <div class="s9-sub-row" data-s9-idx="0">'
+            '<div class="s9-sub-num" style="background:#dc2626;">!</div>'
+            '<div class="s9-sub-eq" style="color:#dc2626;">Solution not available — please regenerate this animation.</div>'
+            '</div>'
         )
-    else:
-        key_insight = str(gemini_sol.get("key_insight") or scene_script.get("key_insight") or "")
-        insight_html = f'<strong>Key Insight:</strong> {html_module.escape(key_insight[:400])}'
+        s9_final_val_html = "&#x26A0; Could not compute"
+        s9_final_unit_html = "Regenerate to see the correct answer"
 
     dom = _SCENE9_DOM_TEMPLATE.format(
-        subtitle=subtitle,
-        formula_recap=html_module.escape(str(formula_recap)[:250]),
-        sub_chain_html=sub_chain_html,
-        final_value_html=final_value_html,
-        final_unit=html_module.escape(str(final_unit)[:200]),
-        insight_html=insight_html,
+        s9_subtitle=html_module.escape(system_title[:80]),
+        s9_formula=html_module.escape(str(formula_recap)[:160]),
+        s9_sub_rows=s9_sub_rows,
+        s9_final_value=s9_final_val_html,
+        s9_final_unit=s9_final_unit_html,
+        s9_insight=key_insight_e,
     )
 
     # 1. CSS
@@ -4522,517 +4512,6 @@ def inject_scene9_final_answer(html, gemini_sol, scene_script):
         QAnimLogger.warn("Scene9Injector", f"JS failed: {e}")
 
     QAnimLogger.ok("Scene9Injector", "Scene 9 (Final Answer) injected")
-    return html
-
-
-# ===========================================================================
-#  MODULE 12.9 — Step Color Themes + Color Legend (Steps 1–9)
-#  Adds CSS data-step color theming and a step legend bar matching the HTML.
-# ===========================================================================
-
-_STEP_COLOR_CSS = """
-<style id="qanim-step-colors">
-/* ══════════════════════════════════════════════════════
-   STEP COLOR THEMES — Light, high-contrast backgrounds
-   for visibility from a distance (Steps 1–6 + 7-9 calc)
-   ══════════════════════════════════════════════════════ */
-
-/* Step 1 — Sky Blue: Ambient Air / Environment */
-body[data-step="0"] .control-panel {
-  background: linear-gradient(180deg, #e8f4fd 0%, #d0ebf8 100%) !important;
-  border-top: 3px solid #0ea5e9 !important;
-}
-body[data-step="0"] .info-box {
-  background: #ffffff !important;
-  border: 1.5px solid #bae6fd !important;
-  border-left: 5px solid #0ea5e9 !important;
-}
-body[data-step="0"] .step-progress-bar { background: linear-gradient(90deg, #0ea5e9, #38bdf8) !important; }
-body[data-step="0"] .step-dot.active { background: linear-gradient(135deg,#0369a1,#0ea5e9) !important; box-shadow: 0 3px 14px rgba(14,165,233,0.45) !important; }
-
-/* Step 2 — Teal/Mint */
-body[data-step="1"] .control-panel {
-  background: linear-gradient(180deg, #e6faf6 0%, #ccf2e8 100%) !important;
-  border-top: 3px solid #10b981 !important;
-}
-body[data-step="1"] .info-box {
-  background: #ffffff !important;
-  border: 1.5px solid #a7f3d0 !important;
-  border-left: 5px solid #10b981 !important;
-}
-body[data-step="1"] .step-progress-bar { background: linear-gradient(90deg, #059669, #10b981) !important; }
-body[data-step="1"] .step-dot.active { background: linear-gradient(135deg,#047857,#10b981) !important; box-shadow: 0 3px 14px rgba(16,185,129,0.45) !important; }
-
-/* Step 3 — Warm Amber */
-body[data-step="2"] .control-panel {
-  background: linear-gradient(180deg, #fff8e6 0%, #fdedc6 100%) !important;
-  border-top: 3px solid #f59e0b !important;
-}
-body[data-step="2"] .info-box {
-  background: #ffffff !important;
-  border: 1.5px solid #fcd34d !important;
-  border-left: 5px solid #f59e0b !important;
-}
-body[data-step="2"] .step-progress-bar { background: linear-gradient(90deg, #d97706, #f59e0b) !important; }
-body[data-step="2"] .step-dot.active { background: linear-gradient(135deg,#b45309,#f59e0b) !important; box-shadow: 0 3px 14px rgba(245,158,11,0.45) !important; }
-
-/* Step 4 — Indigo */
-body[data-step="3"] .control-panel {
-  background: linear-gradient(180deg, #eef2ff 0%, #dde5ff 100%) !important;
-  border-top: 3px solid #6366f1 !important;
-}
-body[data-step="3"] .info-box {
-  background: #ffffff !important;
-  border: 1.5px solid #c7d2fe !important;
-  border-left: 5px solid #6366f1 !important;
-}
-body[data-step="3"] .step-progress-bar { background: linear-gradient(90deg, #4f46e5, #818cf8) !important; }
-body[data-step="3"] .step-dot.active { background: linear-gradient(135deg,#4338ca,#6366f1) !important; box-shadow: 0 3px 14px rgba(99,102,241,0.45) !important; }
-
-/* Step 5 — Coral/Rose */
-body[data-step="4"] .control-panel {
-  background: linear-gradient(180deg, #fff1f2 0%, #ffe4e6 100%) !important;
-  border-top: 3px solid #f43f5e !important;
-}
-body[data-step="4"] .info-box {
-  background: #ffffff !important;
-  border: 1.5px solid #fecdd3 !important;
-  border-left: 5px solid #f43f5e !important;
-}
-body[data-step="4"] .step-progress-bar { background: linear-gradient(90deg, #e11d48, #fb7185) !important; }
-body[data-step="4"] .step-dot.active { background: linear-gradient(135deg,#be123c,#f43f5e) !important; box-shadow: 0 3px 14px rgba(244,63,94,0.45) !important; }
-
-/* Step 6 — Emerald/Green */
-body[data-step="5"] .control-panel {
-  background: linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%) !important;
-  border-top: 3px solid #22c55e !important;
-}
-body[data-step="5"] .info-box {
-  background: #ffffff !important;
-  border: 1.5px solid #86efac !important;
-  border-left: 5px solid #22c55e !important;
-}
-body[data-step="5"] .step-progress-bar { background: linear-gradient(90deg, #16a34a, #22c55e) !important; }
-body[data-step="5"] .step-dot.active { background: linear-gradient(135deg,#15803d,#22c55e) !important; box-shadow: 0 3px 14px rgba(34,197,94,0.45) !important; }
-
-/* ══════════════════════════════════════════════════════
-   IMPROVED UI/UX — Bigger text, better spacing
-   ══════════════════════════════════════════════════════ */
-
-/* Step indicator: bigger pills, more breathing room */
-.step-indicator {
-  gap: 4px !important;
-  margin-bottom: 16px !important;
-  flex-wrap: nowrap !important;
-  overflow-x: auto !important;
-  padding-bottom: 4px !important;
-  scrollbar-width: none !important;
-}
-.step-indicator::-webkit-scrollbar { display: none; }
-.step-dot {
-  padding: 7px 13px !important;
-  font-size: 12px !important;
-  font-weight: 800 !important;
-  letter-spacing: 0.2px !important;
-  border-radius: 22px !important;
-}
-.step-dot.active {
-  padding: 8px 16px !important;
-  font-size: 12.5px !important;
-  transform: scale(1.09) !important;
-}
-.step-label {
-  font-size: 13px !important;
-  font-weight: 800 !important;
-  color: #475569 !important;
-  flex-shrink: 0 !important;
-}
-.step-progress-wrap {
-  height: 6px !important;
-  border-radius: 3px !important;
-  margin-bottom: 18px !important;
-}
-.step-progress-bar {
-  border-radius: 3px !important;
-  transition: width 0.55s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-.info-box {
-  padding: 22px 24px !important;
-  min-height: 140px !important;
-  border-radius: 14px !important;
-  gap: 12px !important;
-}
-.info-box h3 {
-  font-size: 18px !important;
-  font-weight: 900 !important;
-  line-height: 1.35 !important;
-  letter-spacing: -0.3px !important;
-}
-.info-desc {
-  font-size: 15px !important;
-  line-height: 1.75 !important;
-  font-weight: 500 !important;
-  color: #334155 !important;
-}
-.badge {
-  font-size: 13px !important;
-  font-weight: 800 !important;
-  padding: 5px 14px !important;
-  letter-spacing: 0.2px !important;
-}
-button {
-  font-size: 14.5px !important;
-  font-weight: 800 !important;
-  padding: 12px 26px !important;
-  letter-spacing: 0.2px !important;
-}
-.btn-primary {
-  font-size: 15px !important;
-  padding: 13px 30px !important;
-}
-.actions {
-  margin-top: 18px !important;
-  gap: 12px !important;
-}
-.q-text {
-  font-size: 16px !important;
-  font-weight: 500 !important;
-  line-height: 1.7 !important;
-}
-.control-panel {
-  transition: background 0.4s ease, border-top-color 0.4s ease !important;
-}
-
-/* Step color legend bar (shown below dots) */
-.step-color-legend {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 14px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.step-color-legend::-webkit-scrollbar { display: none; }
-.step-legend-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-  font-weight: 700;
-  color: #64748b;
-  white-space: nowrap;
-}
-.step-legend-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-</style>
-"""
-
-# Legend colors that match the CSS above, keyed by generic step index
-_STEP_LEGEND_COLORS = [
-    ("#0ea5e9", "Env"),
-    ("#10b981", "Object"),
-    ("#f59e0b", "Heat/Force"),
-    ("#6366f1", "Flow/Field"),
-    ("#f43f5e", "Delta"),
-    ("#22c55e", "To Find"),
-]
-
-
-def _build_step_color_legend_html(step_labels=None):
-    """
-    Build the step color legend bar HTML.
-    step_labels: optional list of short labels matching the steps (max 6).
-    Falls back to generic labels if not provided.
-    """
-    labels = step_labels or [l for _, l in _STEP_LEGEND_COLORS]
-    items = []
-    for i, (color, _) in enumerate(_STEP_LEGEND_COLORS):
-        label = labels[i] if i < len(labels) else _STEP_LEGEND_COLORS[i][1]
-        items.append(
-            f'<div class="step-legend-item">'
-            f'<span class="step-legend-dot" style="background:{color}"></span>'
-            f'{i+1} {html_module.escape(label[:12])}'
-            f'</div>'
-        )
-    # Add calc steps legend item
-    items.append(
-        '<div class="step-legend-item">'
-        '<span class="step-legend-dot" style="background:#0e7490"></span>'
-        '7–9 Calc'
-        '</div>'
-    )
-    return '<div class="step-color-legend">' + ''.join(items) + '</div>'
-
-
-def inject_step_color_themes(html, step_labels=None):
-    """
-    Inject step color themes CSS + legend bar HTML into the animation.
-    The legend bar is inserted right before the step-indicator div.
-    """
-    # 1. CSS into <head>
-    try:
-        if "</head>" in html:
-            html = html.replace("</head>", _STEP_COLOR_CSS + "\n</head>", 1)
-    except Exception as e:
-        QAnimLogger.warn("StepColors", f"CSS failed: {e}")
-
-    # 2. Legend bar — inject right before the step-indicator
-    try:
-        legend_html = _build_step_color_legend_html(step_labels)
-        m = re.search(r'<div[^>]+class=["\'][^"\']*step-indicator[^"\']*["\']', html, re.IGNORECASE)
-        if m:
-            html = html[:m.start()] + legend_html + "\n" + html[m.start():]
-    except Exception as e:
-        QAnimLogger.warn("StepColors", f"Legend insertion failed: {e}")
-
-    QAnimLogger.ok("StepColors", "Step color themes + legend bar injected")
-    return html
-
-
-# ===========================================================================
-#  MODULE 12.10 — Given Data Accumulator Panel
-#  Injects the persistent given-data accumulator panel that shows below
-#  the info-box and builds up step-by-step as each given value is revealed.
-#  The panel is driven by JS reading the stepsData array.
-# ===========================================================================
-
-_GIVEN_DATA_PANEL_CSS = """
-<style id="qanim-given-data-styles">
-#given-data-panel {
-  margin-top: 16px;
-  background: #ffffff;
-  border: 1.5px solid #e2e8f0;
-  border-radius: 12px;
-  overflow: hidden;
-  display: none;
-}
-#given-data-panel-header {
-  background: linear-gradient(90deg, #0f172a 0%, #1e3a5f 100%);
-  padding: 8px 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-#given-data-panel-header .gdp-icon { font-size: 13px; }
-#given-data-panel-header .gdp-label {
-  font-size: 11px;
-  font-weight: 900;
-  color: #e2e8f0;
-  text-transform: uppercase;
-  letter-spacing: 1.8px;
-}
-#given-data-rows {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0;
-}
-.given-data-cell {
-  flex: 1 1 calc(33.33% - 1px);
-  min-width: 130px;
-  padding: 10px 14px;
-  border-right: 1px solid #f1f5f9;
-  border-bottom: 1px solid #f1f5f9;
-  background: #fafbfc;
-  transition: background 0.4s ease;
-  position: relative;
-}
-.given-data-cell.gdp-new { background: var(--gdp-bg, #e8f4fd); }
-.given-data-cell .gdp-new-badge {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  font-size: 9px;
-  font-weight: 900;
-  background: var(--gdp-color, #0ea5e9);
-  color: #fff;
-  padding: 1px 6px;
-  border-radius: 8px;
-  letter-spacing: 0.5px;
-}
-.given-data-cell .gdp-sym {
-  font-size: 18px;
-  font-weight: 900;
-  font-family: 'Courier New', Courier, monospace;
-  line-height: 1.1;
-  color: var(--gdp-color, #0ea5e9);
-}
-.given-data-cell .gdp-val {
-  font-size: 15px;
-  font-weight: 800;
-  color: #1e293b;
-  margin-top: 2px;
-}
-.given-data-cell .gdp-note {
-  font-size: 10px;
-  font-weight: 600;
-  color: #94a3b8;
-  margin-top: 2px;
-}
-</style>
-"""
-
-_GIVEN_DATA_PANEL_DOM = """
-<div id="given-data-panel">
-  <div id="given-data-panel-header">
-    <span class="gdp-icon">&#x1F4CB;</span>
-    <span class="gdp-label">Given Data &mdash; Accumulated</span>
-  </div>
-  <div id="given-data-rows"></div>
-</div>
-"""
-
-_GIVEN_DATA_PANEL_JS = r"""
-<script id="qanim-js-given-data-panel">
-(function initGivenDataPanel(){
-  'use strict';
-  if(window.__qanimGivenDataPanelInit)return; window.__qanimGivenDataPanelInit=true;
-
-  /* Colors matching the step color themes */
-  var STEP_COLORS = [
-    { color: '#0ea5e9', bg: '#e8f4fd' },
-    { color: '#10b981', bg: '#e6faf6' },
-    { color: '#f59e0b', bg: '#fff8e6' },
-    { color: '#6366f1', bg: '#eef2ff' },
-    { color: '#f43f5e', bg: '#fff1f2' },
-    { color: '#22c55e', bg: '#f0fdf4' },
-  ];
-
-  function _el(id){ return document.getElementById(id); }
-
-  function _buildGivenItems(){
-    /* Try to derive given items from stepsData badges (cyan = given) */
-    if(typeof window.stepsData === 'undefined') return [];
-    var seen = {}, items = [];
-    for(var si = 0; si < window.stepsData.length; si++){
-      var step = window.stepsData[si];
-      var badgeHtml = step.badges || step.badgesHTML || '';
-      /* Extract text from badge-cyan spans */
-      var re = /badge[^"]*cyan[^>]*>([^<]+)</g;
-      var m;
-      while((m = re.exec(badgeHtml)) !== null){
-        var text = (m[1]||'').trim();
-        if(text && !seen[text]){
-          seen[text] = true;
-          /* Try to split "sym = val unit" */
-          var parts = text.split('=');
-          var sym  = (parts[0]||text).replace(/Given\s*:\s*/i,'').trim();
-          var rest = parts.length > 1 ? parts[1].trim() : '';
-          items.push({ sym: sym, val: rest, note: '', step: si, color: STEP_COLORS[si % STEP_COLORS.length] });
-        }
-      }
-    }
-    return items;
-  }
-
-  function _updatePanel(currentStepIdx){
-    var panel = _el('given-data-panel');
-    var rows  = _el('given-data-rows');
-    if(!panel || !rows) return;
-
-    /* Only show for animation steps 0-5 (concept animation) */
-    if(currentStepIdx < 0 || currentStepIdx > 5){
-      panel.style.display = 'none';
-      return;
-    }
-
-    var items = _buildGivenItems();
-    if(!items.length){
-      panel.style.display = 'none';
-      return;
-    }
-
-    /* Filter to items revealed up to current step */
-    var visible = items.filter(function(it){ return it.step <= currentStepIdx; });
-    if(!visible.length){
-      panel.style.display = 'none';
-      return;
-    }
-
-    panel.style.display = 'block';
-    var html = '';
-    for(var i = 0; i < visible.length; i++){
-      var it = visible[i];
-      var isNew = (it.step === currentStepIdx);
-      var c = it.color;
-      html += '<div class="given-data-cell' + (isNew ? ' gdp-new' : '') + '"'
-            + ' style="--gdp-color:' + c.color + ';--gdp-bg:' + c.bg + ';">';
-      if(isNew) html += '<span class="gdp-new-badge">NEW</span>';
-      html += '<div class="gdp-sym">' + _escape(it.sym) + '</div>';
-      if(it.val) html += '<div class="gdp-val">' + _escape(it.val) + '</div>';
-      if(it.note) html += '<div class="gdp-note">' + _escape(it.note) + '</div>';
-      html += '</div>';
-    }
-    rows.innerHTML = html;
-  }
-
-  function _escape(s){
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  /* Patch applyStep to update the panel on every step change */
-  function _patchApplyStep(){
-    var _orig = window.applyStep;
-    if(typeof _orig !== 'function') return false;
-    window.applyStep = function(idx){
-      _orig(idx);
-      _updatePanel(idx);
-    };
-    return true;
-  }
-
-  function _onReady(fn){
-    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn);
-    else setTimeout(fn,0);
-  }
-
-  _onReady(function(){
-    /* Retry patching if applyStep isn't defined yet */
-    if(!_patchApplyStep()){
-      var tries = 0;
-      var iv = setInterval(function(){
-        if(_patchApplyStep() || tries++ > 20) clearInterval(iv);
-      }, 100);
-    }
-  });
-})();
-</script>
-"""
-
-
-def inject_given_data_panel(html):
-    """
-    Inject the persistent Given Data Accumulator panel that sits below the
-    info-box and builds up each step as given values are introduced.
-    """
-    # 1. CSS
-    try:
-        if "</head>" in html:
-            html = html.replace("</head>", _GIVEN_DATA_PANEL_CSS + "\n</head>", 1)
-    except Exception as e:
-        QAnimLogger.warn("GivenDataPanel", f"CSS failed: {e}")
-
-    # 2. DOM — inject before the .actions div (after info-box)
-    try:
-        m = re.search(r'<div[^>]+class=["\'][^"\']*\bactions\b[^"\']*["\']', html, re.IGNORECASE)
-        if m:
-            html = html[:m.start()] + _GIVEN_DATA_PANEL_DOM + "\n" + html[m.start():]
-    except Exception as e:
-        QAnimLogger.warn("GivenDataPanel", f"DOM insertion failed: {e}")
-
-    # 3. JS
-    try:
-        if "</body>" in html:
-            html = html.replace("</body>", _GIVEN_DATA_PANEL_JS + "\n</body>", 1)
-        else:
-            html += "\n" + _GIVEN_DATA_PANEL_JS
-    except Exception as e:
-        QAnimLogger.warn("GivenDataPanel", f"JS failed: {e}")
-
-    QAnimLogger.ok("GivenDataPanel", "Given Data Accumulator panel injected")
     return html
 
 
@@ -5782,31 +5261,15 @@ REQUIRED_COMPONENTS = {
         "dom":  ["qanim-scene7-overlay", "s7-given-list"],
         "js":   ["qanim-js-scene7"],
     },
-    "MathTypography": {
-        "data": None, "css": None, "dom": None,
-        "js":   ["qanim-js-mathtypography"],
-    },
-    "Scene8Alias": {
-        "data": None, "css": None, "dom": None,
-        "js":   ["qanim-js-scene8-alias"],
-    },
     "Scene9": {
         "data": None,
         "css":  ["qanim-scene9-styles"],
         "dom":  ["qanim-scene9-overlay", "s9-final-box"],
         "js":   ["qanim-js-scene9"],
     },
-    "StepColors": {
-        "data": None,
-        "css":  ["qanim-step-colors"],
-        "dom":  None,
-        "js":   None,
-    },
-    "GivenDataPanel": {
-        "data": None,
-        "css":  ["qanim-given-data-styles"],
-        "dom":  ["given-data-panel"],
-        "js":   ["qanim-js-given-data-panel"],
+    "MathTypography": {
+        "data": None, "css": None, "dom": None,
+        "js":   ["qanim-js-mathtypography"],
     },
 }
 
@@ -5864,23 +5327,13 @@ STRIP_PATTERNS = {
         # nested <div>s can't be matched reliably with a lookahead.
         re.compile(r'<script[^>]*id=["\']qanim-js-scene7["\'][^>]*>.*?</script>', re.DOTALL),
     ],
-    "MathTypography": [
-        re.compile(r'<script[^>]*id=["\']qanim-js-mathtypography["\'][^>]*>.*?</script>', re.DOTALL),
-    ],
-    "Scene8Alias": [
-        re.compile(r'<script[^>]*id=["\']qanim-js-scene8-alias["\'][^>]*>.*?</script>', re.DOTALL),
-    ],
     "Scene9": [
         re.compile(r'<style[^>]*id=["\']qanim-scene9-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        # DOM removal for #qanim-scene9-overlay: handled by _strip_balanced_div()
         re.compile(r'<script[^>]*id=["\']qanim-js-scene9["\'][^>]*>.*?</script>', re.DOTALL),
     ],
-    "StepColors": [
-        re.compile(r'<style[^>]*id=["\']qanim-step-colors["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
-    ],
-    "GivenDataPanel": [
-        re.compile(r'<style[^>]*id=["\']qanim-given-data-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
-        re.compile(r'<div id="given-data-panel"[^>]*>.*?</div>\s*(?=<script|<style|</body)', re.DOTALL),
-        re.compile(r'<script[^>]*id=["\']qanim-js-given-data-panel["\'][^>]*>.*?</script>', re.DOTALL),
+    "MathTypography": [
+        re.compile(r'<script[^>]*id=["\']qanim-js-mathtypography["\'][^>]*>.*?</script>', re.DOTALL),
     ],
 }
 
@@ -5987,8 +5440,6 @@ class PanelInjectionManager:
         skip = set()
         if not ctx.glossary_terms:
             skip.add("Glossary")
-        # GivenDataPanel gracefully degrades when no given data is present
-        # (the panel stays hidden via JS). Never skip it — always inject.
         return skip
 
     @classmethod
@@ -6001,227 +5452,15 @@ class PanelInjectionManager:
         html = inject_glossary_panel(html, ctx.glossary_terms)
         html = inject_nav_patch_and_scene_desc(html)
         html = inject_step_controller(html)
-        # Step color themes + color-coded legend bar (Steps 1-9)
-        step_labels = cls._derive_step_labels(ctx.scene_script)
-        html = inject_step_color_themes(html, step_labels)
-        # Given data accumulator panel
-        html = inject_given_data_panel(html)
-        # Scene 6 & 7 — appended AFTER the core panels so they land last in <body>
+        # Scene 6, 7 (Step 8), and 9 — appended AFTER the core panels
         html = inject_scene6_big_idea(html, ctx.gemini_sol, ctx.scene_script)
-        # Update Scene 6 to point to Scene 8 (substitution) not Scene 7 directly
-        html = cls._patch_scene6_nav_to_scene8(html)
         html = inject_scene7_how_we_solve_it(html, ctx.gemini_sol, ctx.scene_script)
-        # Update Scene 7 (substitution) nav: "Next" → Scene 9 (Final Answer)
-        html = cls._patch_scene7_nav_to_scene9(html, ctx.gemini_sol, ctx.scene_script)
-        # Scene 9 (Final Answer) — new step after Scene 7
         html = inject_scene9_final_answer(html, ctx.gemini_sol, ctx.scene_script)
-        # Scene 8 alias (wires qanim_showScene8 → Scene 7 overlay)
-        html = inject_scene8_alias(html)
-        # Update step dots to show all 9 steps (6 concept + 7/8/9 calc)
-        html = cls._inject_9step_dots(html, ctx.scene_script)
-        # Update totalDisplaySteps so the progress bar uses /9
-        html = cls._patch_total_display_steps(html, 9)
         # Deterministic safety net — do not rely on Gemini's own nextStep()
         # to remember to open Scene 6; watch button state instead.
         html = inject_scene6_autotrigger(html)
         # Math typography — runs LAST so it can scan the fully-assembled page
         html = inject_math_typography(html)
-        return html
-
-    @staticmethod
-    def _derive_step_labels(scene_script):
-        """Extract short step labels from scene_script for the color legend."""
-        steps = scene_script.get("steps") or []
-        labels = []
-        for s in steps[:6]:
-            label = str(s.get("label") or s.get("title") or "")
-            # Keep it very short (2-8 chars)
-            parts = label.split(":")
-            short = parts[-1].strip()[:8] if parts else label[:8]
-            labels.append(short)
-        return labels or None
-
-    @staticmethod
-    def _patch_scene6_nav_to_scene8(html):
-        """
-        Patch Scene 6's auto-advance and 'Continue' button so they call
-        qanim_showScene8 (Step 8: Substitution) instead of qanim_goToScene7.
-        The injected Scene 6 JS uses qanim_goToScene7() in two places;
-        we reroute both to qanim_showScene8 via a small override script.
-        """
-        patch_js = (
-            '\n<script id="qanim-js-scene6-nav-patch">\n'
-            '(function(){\n'
-            '  "use strict";\n'
-            '  // Override Scene 6 auto-advance and "Continue" to go to Step 8\n'
-            '  var _origGoScene7 = window.qanim_goToScene7;\n'
-            '  window.qanim_goToScene7 = function(){\n'
-            '    var ov6=document.getElementById("qanim-scene6-overlay");\n'
-            '    if(ov6) ov6.classList.remove("qanim-scene-visible");\n'
-            '    if(typeof window.qanim_showScene8==="function") window.qanim_showScene8();\n'
-            '    else if(typeof _origGoScene7==="function") _origGoScene7();\n'
-            '  };\n'
-            '  // Also update the Scene 6 "Continue" button label and target\n'
-            '  function _patchS6Btn(){\n'
-            '    var nb=document.getElementById("s6-next-btn");\n'
-            '    if(nb && nb.innerText && nb.innerText.indexOf("Solution")!==-1){\n'
-            '      nb.innerText = "Step 8: Substitution \u25B6";\n'
-            '      nb.onclick = function(){ window.qanim_goToScene7(); };\n'
-            '    }\n'
-            '  }\n'
-            '  if(document.readyState==="loading")\n'
-            '    document.addEventListener("DOMContentLoaded",_patchS6Btn);\n'
-            '  else setTimeout(_patchS6Btn,200);\n'
-            '})();\n'
-            '</script>\n'
-        )
-        try:
-            if '</body>' in html:
-                html = html.replace('</body>', patch_js + '</body>', 1)
-        except Exception as e:
-            QAnimLogger.warn("Scene6NavPatch", f"Failed: {e}")
-        return html
-
-    @staticmethod
-    def _patch_scene7_nav_to_scene9(html, gemini_sol, scene_script):
-        """
-        Patch the Scene 7 (Step 8 substitution) overlay's navigation so:
-        - The 'Next' / 'Step 9' button triggers qanim_showScene9.
-        We do this by injecting a small script that updates the Scene 7 DOM
-        after it's inserted. The _SCENE7_DOM_TEMPLATE already has a
-        'Step 9: Final Answer' button calling qanim_showScene9; this
-        function ensures the button is present and correctly wired even if
-        the Scene 7 template doesn't include it yet.
-        """
-        # Build the Step 9 button insert script
-        final_answer = str(gemini_sol.get("final_answer") or scene_script.get("final_answer") or "")
-        final_ans_escaped = html_module.escape(str(final_answer)[:60])
-        patch_js = (
-            '\n<script id="qanim-js-scene7-nav-patch">\n'
-            '(function(){\n'
-            '  "use strict";\n'
-            '  function _patchS7Nav(){\n'
-            '    var navRow=document.querySelector("#qanim-scene7-overlay .s7-nav-row");\n'
-            '    if(!navRow) return;\n'
-            '    // Remove any existing "Step 9" button to avoid duplicates\n'
-            '    var existing=document.getElementById("s7-to-scene9-btn");\n'
-            '    if(existing) existing.remove();\n'
-            '    // Add "Step 9: Final Answer" primary button\n'
-            '    var btn=document.createElement("button");\n'
-            '    btn.id="s7-to-scene9-btn";\n'
-            '    btn.className="btn-primary";\n'
-            '    btn.innerHTML="Step 9: Final Answer &#x25B6;";\n'
-            '    btn.onclick=function(){\n'
-            '      if(typeof window.qanim_showScene9==="function") window.qanim_showScene9();\n'
-            '    };\n'
-            '    navRow.appendChild(btn);\n'
-            '  }\n'
-            '  if(document.readyState==="loading")\n'
-            '    document.addEventListener("DOMContentLoaded",_patchS7Nav);\n'
-            '  else setTimeout(_patchS7Nav,300);\n'
-            '})();\n'
-            '</script>\n'
-        )
-        try:
-            if '</body>' in html:
-                html = html.replace('</body>', patch_js + '</body>', 1)
-        except Exception as e:
-            QAnimLogger.warn("Scene7NavPatch", f"Failed: {e}")
-        return html
-
-    @staticmethod
-    def _inject_9step_dots(html, scene_script):
-        """
-        Inject step dots 7, 8, 9 into the step-indicator for the calc scenes.
-        These are added after the existing animation-step dots (1–6).
-        Also updates step-label count and injects data-step attribute update
-        logic so body[data-step="N"] CSS themes work for concept steps 1–6.
-        """
-        dot_patch_js = (
-            '\n<script id="qanim-js-9step-dots">\n'
-            '(function(){\n'
-            '  "use strict";\n'
-            '  if(window.__qanim9StepDotsInit) return;\n'
-            '  window.__qanim9StepDotsInit = true;\n'
-            '  var TOTAL_DISPLAY = 9;\n'
-            '  function _el(id){ return document.getElementById(id); }\n'
-            '  function _onReady(fn){\n'
-            '    if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",fn);\n'
-            '    else setTimeout(fn,0);\n'
-            '  }\n'
-            '  /* Add dots 7, 8, 9 to the step-indicator if not already present */\n'
-            '  function _addCalcDots(){\n'
-            '    var indicator = document.getElementById("dots");\n'
-            '    if(!indicator) return;\n'
-            '    /* Check if dots already exist */\n'
-            '    if(document.getElementById("dot-step7")) return;\n'
-            '    var connector = \'<div class="step-connector"></div>\';\n'
-            '    var dot7Html = connector +\n'
-            '      \'<div class="step-dot" id="dot-step7" onclick="if(typeof window.qanim_showScene6===\\"function\\")window.qanim_showScene6()">7 \xb7 Formula</div>\';\n'
-            '    var dot8Html = connector +\n'
-            '      \'<div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene8===\\"function\\")window.qanim_showScene8()">8 \xb7 Substitution</div>\';\n'
-            '    var dot9Html = connector +\n'
-            '      \'<div class="step-dot" id="dot-step9" onclick="if(typeof window.qanim_showScene9===\\"function\\")window.qanim_showScene9()">9 \xb7 Final Answer</div>\';\n'
-            '    /* Insert before the step-label */\n'
-            '    var lbl = document.getElementById("step-label");\n'
-            '    if(lbl){\n'
-            '      lbl.insertAdjacentHTML("beforebegin", dot7Html + dot8Html + dot9Html);\n'
-            '    } else {\n'
-            '      indicator.insertAdjacentHTML("beforeend", dot7Html + dot8Html + dot9Html);\n'
-            '    }\n'
-            '  }\n'
-            '  /* Patch applyStep to also update body data-step attribute */\n'
-            '  function _patchApplyStep(){\n'
-            '    var _orig = window.applyStep;\n'
-            '    if(typeof _orig !== "function") return false;\n'
-            '    window.applyStep = function(idx){\n'
-            '      _orig(idx);\n'
-            '      /* Set body data-step for CSS color theming (0-5 = steps 1-6) */\n'
-            '      document.body.setAttribute("data-step", idx);\n'
-            '      /* Update step label to show /9 */\n'
-            '      var lbl = _el("step-label");\n'
-            '      if(lbl) lbl.innerText = "Step " + (idx+1) + " of " + TOTAL_DISPLAY;\n'
-            '      /* Update progress bar to /9 */\n'
-            '      var bar = _el("step-bar");\n'
-            '      if(bar) bar.style.width = Math.round((idx+1)/TOTAL_DISPLAY*100)+"%";\n'
-            '    };\n'
-            '    return true;\n'
-            '  }\n'
-            '  _onReady(function(){\n'
-            '    _addCalcDots();\n'
-            '    if(!_patchApplyStep()){\n'
-            '      var tries=0;\n'
-            '      var iv=setInterval(function(){\n'
-            '        if(_patchApplyStep()||tries++>20) clearInterval(iv);\n'
-            '      },100);\n'
-            '    }\n'
-            '  });\n'
-            '})();\n'
-            '</script>\n'
-        )
-        try:
-            if '</body>' in html:
-                html = html.replace('</body>', dot_patch_js + '</body>', 1)
-        except Exception as e:
-            QAnimLogger.warn("9StepDots", f"Failed: {e}")
-        return html
-
-    @staticmethod
-    def _patch_total_display_steps(html, total):
-        """
-        Inject a script that sets window.totalDisplaySteps so the
-        step label reads 'Step N of 9' for all scenes.
-        """
-        patch = (
-            f'\n<script id="qanim-total-display-steps">\n'
-            f'window.totalDisplaySteps = {total};\n'
-            f'</script>\n'
-        )
-        try:
-            if '</head>' in html:
-                html = html.replace('</head>', patch + '</head>', 1)
-        except Exception:
-            pass
         return html
 
     @staticmethod
@@ -6282,11 +5521,7 @@ class PanelInjectionManager:
             "StepController": lambda h: inject_step_controller(cls._strip(h, "StepController")),
             "Scene6":         lambda h: inject_scene6_big_idea(cls._strip(h, "Scene6"), ctx.gemini_sol, ctx.scene_script),
             "Scene7":         lambda h: inject_scene7_how_we_solve_it(cls._strip(h, "Scene7"), ctx.gemini_sol, ctx.scene_script),
-            "Scene8Alias":    lambda h: inject_scene8_alias(cls._strip(h, "Scene8Alias")),
             "Scene9":         lambda h: inject_scene9_final_answer(cls._strip(h, "Scene9"), ctx.gemini_sol, ctx.scene_script),
-            "StepColors":     lambda h: inject_step_color_themes(cls._strip(h, "StepColors"),
-                                            cls._derive_step_labels(ctx.scene_script)),
-            "GivenDataPanel": lambda h: inject_given_data_panel(cls._strip(h, "GivenDataPanel")),
         }
         for name in missing_names:
             fn = dispatch.get(name)
@@ -7097,15 +6332,58 @@ SVG DESIGN RULES — HIGH-QUALITY LAYERED SVG
 STEP DOT STRUCTURE
 ════════════════════════════════════════════════════════════
 Step dots are PILL-SHAPED <div> elements with text labels. Between dots, add <div class="step-connector">.
-Example HTML structure in #dots:
-  <div class="step-dot active">Problem Setup</div>
-  <div class="step-connector"></div>
-  <div class="step-dot">Crank Motion</div>
-  <div class="step-connector"></div>
-  <div class="step-dot">Solution</div>
-  <div class="step-label" id="step-label">Step 1 of 3</div>
 
-In applyStep(idx): add/remove "active" and "done" classes. Update step-label text. Update progress bar width.
+CRITICAL: The animation ALWAYS has exactly 9 steps total:
+  - Steps 1–6: Your SVG animation steps (inside stepsData array)
+  - Steps 7–9: Injected overlay panels (Main Formula, Substitution, Final Answer)
+
+The step-indicator div MUST contain:
+  1. A step-color-legend row ABOVE the dots (see example below)
+  2. Exactly 6 animation step dots (Steps 1–6) with color-coded left borders
+  3. Then 3 more dots for Steps 7, 8, 9 with specific IDs and onclick handlers
+  4. A step-label div at the end
+
+Required HTML structure in #dots (adapt labels/colors to your question):
+  <!-- Color legend above dots -->
+  <div class="step-color-legend">
+    <div class="step-legend-item"><span class="step-legend-dot" style="background:#0ea5e9"></span>1 Setup</div>
+    <div class="step-legend-item"><span class="step-legend-dot" style="background:#10b981"></span>2 ...</div>
+    <div class="step-legend-item"><span class="step-legend-dot" style="background:#f59e0b"></span>3 ...</div>
+    <div class="step-legend-item"><span class="step-legend-dot" style="background:#6366f1"></span>4 ...</div>
+    <div class="step-legend-item"><span class="step-legend-dot" style="background:#f43f5e"></span>5 ...</div>
+    <div class="step-legend-item"><span class="step-legend-dot" style="background:#22c55e"></span>6 ...</div>
+    <div class="step-legend-item"><span class="step-legend-dot" style="background:#0e7490"></span>7–9 Calc</div>
+  </div>
+  <!-- Animation step dots 1-6 with color-coded left borders -->
+  <div class="step-dot active" onclick="goToStep(0)" style="border-left:3px solid #0ea5e9">1 · [Label]</div>
+  <div class="step-connector"></div>
+  <div class="step-dot" onclick="goToStep(1)" style="border-left:3px solid #10b981">2 · [Label]</div>
+  <div class="step-connector"></div>
+  <div class="step-dot" onclick="goToStep(2)" style="border-left:3px solid #f59e0b">3 · [Label]</div>
+  <div class="step-connector"></div>
+  <div class="step-dot" onclick="goToStep(3)" style="border-left:3px solid #6366f1">4 · [Label]</div>
+  <div class="step-connector"></div>
+  <div class="step-dot" onclick="goToStep(4)" style="border-left:3px solid #f43f5e">5 · [Label]</div>
+  <div class="step-connector"></div>
+  <div class="step-dot" onclick="goToStep(5)" style="border-left:3px solid #22c55e">6 · [Label]</div>
+  <div class="step-connector"></div>
+  <!-- Steps 7, 8, 9: MUST have these exact IDs and onclick handlers -->
+  <div class="step-dot" id="dot-step7" onclick="if(typeof window.qanim_showScene6===&#39;function&#39;)window.qanim_showScene6()">7 · Formula</div>
+  <div class="step-connector"></div>
+  <div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene8===&#39;function&#39;)window.qanim_showScene8()">8 · Substitution</div>
+  <div class="step-connector"></div>
+  <div class="step-dot" id="dot-step9" onclick="if(typeof window.qanim_showScene9===&#39;function&#39;)window.qanim_showScene9()">9 · Final Answer</div>
+  <div class="step-label" id="step-label">Step 1 of 9</div>
+
+JAVASCRIPT REQUIREMENTS:
+- var totalSteps = 6;            /* only the SVG animation steps */
+- var totalDisplaySteps = 9;    /* shown in step-label and progress bar */
+- In applyStep(idx): step-label must read "Step N of 9" (not "of 6")
+- Progress bar: width = (idx+1)/totalDisplaySteps * 100%
+- nextStep() at idx = totalSteps-1 should call window.qanim_showScene6() to open Step 7
+- goToStep(idx) navigates only within 0..totalSteps-1; dots 6/7/8 use direct onclick
+
+In applyStep(idx): add/remove "active" and "done" classes on ALL 9 dots (not just the 6 SVG ones). Update step-label text. Update progress bar width using totalDisplaySteps=9.
 
 ════════════════════════════════════════════════════════════
 ANIMATION RULES — REAL PHYSICS
@@ -7217,14 +6495,19 @@ POLISH CHECKLIST (every output must pass)
 ✓ Question banner has q-label with square icon + q-text at 15px
 ✓ SVG canvas: all 4 gradient defs, shadow filters, glow filters, arrow markers
 ✓ blur-shield rect present between background and component layers
+✓ step-color-legend div present above step dots with 7 color entries
+✓ Exactly 9 step dots: 6 SVG steps + dot-step7 + dot-step8 + dot-step9 (with required IDs and onclick handlers)
 ✓ Step dots are pills with text, connected by .step-connector divs
+✓ var totalSteps = 6; var totalDisplaySteps = 9; — both declared
+✓ applyStep() updates step-label as "Step N of 9" using totalDisplaySteps
+✓ nextStep() at idx=totalSteps calls window.qanim_showScene6()
 ✓ Progress bar (.step-progress-wrap + .step-progress-bar) updates each step
 ✓ Info box has border-left:4px cyan, h3::before cyan dot with ring shadow
 ✓ Badges have correct type: cyan=given, orange=motion, green=result
 ✓ All buttons use CSS variables; .btn-primary has gradient + translateY hover
 ✓ ZERO text-overlaps in SVG; all labels inside viewBox
 ✓ All component layers start opacity:0 (except layer-frame)
-✓ Final step freezes mechanism at exact solution state + annotation overlay
+✓ Final step (step 6) freezes mechanism at solution state + annotation overlay
 
 ════════════════════════════════════════════════════════════
 OUTPUT
@@ -7886,9 +7169,6 @@ function applyStep(idx) {{
     if(idx < 0 || idx >= totalSteps) return;
     var data = stepsData[idx];
 
-    // Set data-step on body for CSS color theming (steps 0-5 = concept steps 1-6)
-    document.body.setAttribute('data-step', idx);
-
     // Blur shield
     var shield = document.getElementById('blur-shield');
     if(shield) shield.style.opacity = data.blurOp || 0;
@@ -7923,14 +7203,13 @@ function applyStep(idx) {{
         if(di === idx) dots[di].classList.add('active');
     }}
 
-    // Step label — use totalDisplaySteps (9) if available, else totalSteps
-    var displayTotal = (typeof window.totalDisplaySteps === 'number') ? window.totalDisplaySteps : totalSteps;
+    // Step label
     var slabel = document.getElementById('step-label');
-    if(slabel) slabel.innerText = 'Step ' + (idx + 1) + ' of ' + displayTotal;
+    if(slabel) slabel.innerText = 'Step ' + (idx + 1) + ' of ' + totalSteps;
 
-    // Progress bar — out of 9 total display steps
+    // Progress bar
     var bar = document.getElementById('step-bar');
-    if(bar) bar.style.width = Math.round((idx + 1) / displayTotal * 100) + '%';
+    if(bar) bar.style.width = Math.round((idx + 1) / totalSteps * 100) + '%';
 
     // Next button — keep visible on last step but change label to "View Formula →"
     var btn = document.getElementById('btn-next');
@@ -7969,22 +7248,11 @@ function nextStep() {{
 
 function resetAnim() {{
     currentStep = 0;
-    // Reset body data-step attribute for color theme
-    document.body.setAttribute('data-step', '0');
     var bar = document.getElementById('step-bar');
     if(bar) bar.style.width = '0%';
     // Restore svg container opacity if it was faded
     var svgCont = document.querySelector('.svg-container');
     if(svgCont) {{ svgCont.style.opacity = '1'; }}
-    // Hide all scene overlays
-    var ov6=document.getElementById('qanim-scene6-overlay');
-    if(ov6) ov6.classList.remove('qanim-scene-visible');
-    var ov7=document.getElementById('qanim-scene7-overlay');
-    if(ov7) ov7.classList.remove('qanim-scene-visible');
-    var ov9=document.getElementById('qanim-scene9-overlay');
-    if(ov9) ov9.classList.remove('qanim-scene-visible');
-    var bd=document.getElementById('qanim-scene-modal-backdrop');
-    if(bd) bd.classList.remove('qanim-scene-visible');
     applyStep(0);
     var btn = document.getElementById('btn-next');
     if(btn) {{
