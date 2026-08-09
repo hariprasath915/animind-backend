@@ -222,11 +222,16 @@ STAGE_TIMEOUT_SCENE = 150.0   # scene-analysis (the stage that decides WHAT
                               # report back. 150s gives 3 attempts a realistic
                               # ~50s each, matching STAGE_TIMEOUT_BUILD's
                               # single-shot budget for a similarly heavy call.
-STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
-                              # thinking, ~32k-token single-shot generation.
-                              # Doubled from 75s: that budget was measured
-                              # against ordinary (non-thinking-locked) models
-                              # and was not enough headroom for Gemini 3.1 Pro.
+STAGE_TIMEOUT_BUILD = 240.0   # animation HTML builder — one large, mandatory-
+                              # thinking, ~32-50k-token single-shot generation.
+                              # Raised from 150s: complex multi-layer problems
+                              # (3-layer furnace walls, composite systems) generate
+                              # ~50k chars of HTML with the 9-step workflow. With
+                              # mandatory thinking tokens, Gemini 3.1 Pro can take
+                              # 180-220s for these. 150s was firing the timeout
+                              # before the response arrived, causing the "Gemini
+                              # took too long" error seen in production. 240s gives
+                              # realistic headroom for heavy generations.
 # IMPORTANT: the pipeline's critical path is SEQUENTIAL, not flat —
 #   Stage 0 (classify, ~instant, no API)
 #   -> concurrent gather of scene/solution/glossary  (bounded by
@@ -243,7 +248,17 @@ STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
 # which is why the fallback fired on ordinary, non-overloaded runs. Fixed here.
 # Keep this derived from the stage constants (never hardcode a total) so the
 # two can never drift out of sync again.
-PIPELINE_TIMEOUT = max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD + 20.0  # = 270.0
+# FIX: Updated formula accounts for:
+# - concurrent stages: max(STAGE_TIMEOUT_SCENE=150, STAGE_TIMEOUT_SMALL=180) = 180s
+# - build stage with 1 pipeline-level retry: STAGE_TIMEOUT_BUILD*2 + 35s gap = 515s
+# - overhead: 25s
+# Total worst case = 180 + 515 + 25 = 720s — too long for user-facing UX.
+# Cap at 600s (10 min): covers the normal 1-attempt path (180+240+25=445s)
+# with generous headroom, and allows the retry path up to its budget.
+PIPELINE_TIMEOUT = min(
+    max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD * 2 + 35.0 + 25.0,
+    600.0
+)  # = 600.0
 
 
 def _err_msg(e: BaseException) -> str:
@@ -576,48 +591,63 @@ class JsSyntaxValidator:
                 errors.append((script_id, err))
         return errors
 
+    # Cache node availability so we only probe the PATH once per process.
+    _node_available = None   # None = unchecked, True/False = result
+
+    @classmethod
+    def _node_present(cls) -> bool:
+        """Returns True if `node --check` is usable on this host."""
+        if cls._node_available is None:
+            import shutil
+            cls._node_available = shutil.which("node") is not None
+            if not cls._node_available:
+                QAnimLogger.warn(
+                    "JsSyntaxValidator",
+                    "`node` not found on PATH — JS syntax validation skipped. "
+                    "Install Node.js to enable this safety net.",
+                )
+        return cls._node_available
+
     @classmethod
     def _check_syntax(cls, code: str):
         """Returns an error string if `code` is invalid JS, else None.
-        Tries Node's own engine first (exactly what the browser uses),
-        then falls back to a pure-Python parser (pip install esprima) if
-        Node isn't available on this host. If neither is available, logs
-        once and skips validation rather than failing the whole pipeline."""
+
+        Uses `node --check` (Node.js v22+ available on this host). If node
+        is not on PATH, validation is silently skipped rather than crashing
+        the pipeline. The old esprima fallback has been removed — esprima
+        is not installed and its ImportError was printing a warning on every
+        single pipeline run, polluting logs with a message that looks like
+        a real error.
+        """
+        if not cls._node_present():
+            return None   # node unavailable — skip silently, logged once above
+
+        import subprocess, tempfile, os as _os
+        fd, path = tempfile.mkstemp(suffix='.js')
         try:
-            import subprocess, tempfile, os as _os
-            fd, path = tempfile.mkstemp(suffix='.js')
+            with _os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(code)
             try:
-                with _os.fdopen(fd, 'w', encoding='utf-8') as f:
-                    f.write(code)
                 proc = subprocess.run(
                     ["node", "--check", path],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=8,   # raised from 5s — large generated scripts can be slow
                 )
                 return proc.stderr.strip()[:500] if proc.returncode != 0 else None
-            finally:
-                try:
-                    _os.unlink(path)
-                except OSError:
-                    pass
-        except FileNotFoundError:
-            pass  # node not on PATH -- fall through to esprima
-        except Exception:
-            pass
-
-        try:
-            import esprima
-            esprima.parseScript(code)
-            return None
-        except ImportError:
-            QAnimLogger.warn(
-                "JsSyntaxValidator",
-                "Neither `node` nor `esprima` is available -- JS syntax "
-                "validation skipped. Install one (`pip install esprima` "
-                "needs no system deps) to enable this safety net.",
-            )
-            return None
-        except Exception as e:
-            return str(e)[:500]
+            except subprocess.TimeoutExpired:
+                QAnimLogger.warn("JsSyntaxValidator", "node --check timed out — skipping this block")
+                return None
+            except Exception as e:
+                # Unexpected error running node (permissions, OS issue, etc.)
+                # Log it properly instead of silently swallowing it.
+                QAnimLogger.warn("JsSyntaxValidator", f"node --check error: {e} — skipping")
+                return None
+        finally:
+            try:
+                _os.unlink(path)
+            except OSError:
+                pass
 
     @classmethod
     def auto_fix_stray_apostrophes(cls, html: str) -> str:
@@ -1332,6 +1362,7 @@ class GeminiSolutionGenerator:
 
     @classmethod
     def generate(cls, question: str) -> dict:
+        import time as _time   # FIX: _time.sleep() used in outer retry loop below
         if _gemini_client is None:
             QAnimLogger.warn("GeminiSolution", "Gemini client not available — using fallback")
             return dict(cls._FALLBACK)
@@ -1441,12 +1472,19 @@ class GeminiSolutionGenerator:
                 # Gemini returns fairly often at peak load) went straight to
                 # "Animation Could Not Render" on attempt 1 with no retry at
                 # all. Treat both as retryable.
+                err_lower = err_str.lower()
                 is_retryable = (
                     "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
-                    or "503" in err_str or "UNAVAILABLE" in err_str or "overloaded" in err_str.lower()
-                    or "high demand" in err_str.lower()
+                    or "503" in err_str or "UNAVAILABLE" in err_str
+                    or "overloaded" in err_lower or "high demand" in err_lower
+                    or "deadline exceeded" in err_lower
+                    or "timeout" in err_lower
+                    or "connection" in err_lower
+                    or "temporarily" in err_lower
+                    or "try again" in err_lower
                 )
                 if is_retryable and attempt < MAX_RETRIES:
+                    QAnimLogger.warn("GeminiSolution", f"Retryable error (attempt {attempt}/{MAX_RETRIES}): {err_str[:80]} — waiting {RETRY_DELAYS[attempt-1]}s...")
                     _time.sleep(RETRY_DELAYS[attempt - 1])
                     continue
                 raise
@@ -6450,10 +6488,56 @@ class GeminiAnimationBuilder:
         # contains many literal { } braces that .format() would misinterpret as
         # positional/keyword placeholders, raising:
         #   "Replacement index 0 out of range for positional args tuple"
+        # FIX: Compress scene_script before sending to reduce input tokens.
+        # The full script_json for a complex 3-layer problem can be 8-12k chars.
+        # With the 14k builder system prompt, that's 22k+ input tokens BEFORE
+        # thinking — which adds mandatory reasoning tokens on top.
+        # Strategy: keep the structural fields (steps, title, final_answer,
+        # key_insight, solution_steps) but truncate long svg_component
+        # descriptions that the builder doesn't need verbatim.
+        try:
+            import json as _json_compress
+            script_obj = _json_compress.loads(script_json) if isinstance(script_json, str) else scene_script
+            # Keep only what the builder actually uses; drop verbose descriptions
+            compressed = {
+                "title": script_obj.get("title", ""),
+                "topic": script_obj.get("topic", ""),
+                "final_answer": script_obj.get("final_answer", ""),
+                "key_insight": script_obj.get("key_insight", ""),
+                "solution_steps": script_obj.get("solution_steps", [])[:6],
+                "steps": [],
+                "svg_components": {},
+            }
+            for step in (script_obj.get("steps") or [])[:6]:
+                compressed["steps"].append({
+                    "step_number": step.get("step_number"),
+                    "label": step.get("label", ""),
+                    "title": step.get("title", ""),
+                    "description": step.get("description", "")[:200],
+                    "badges": step.get("badges", []),
+                    "components_new": step.get("components_new", []),
+                    "components_visible": step.get("components_visible", []),
+                    "focus_component": step.get("focus_component"),
+                    "blur_background": step.get("blur_background", False),
+                    "motion_emphasis": step.get("motion_emphasis", ""),
+                })
+            for comp_id, comp in (script_obj.get("svg_components") or {}).items():
+                compressed["svg_components"][comp_id] = {
+                    "description": str(comp.get("description", ""))[:180],
+                    "motion_type": comp.get("motion_type", "static"),
+                    "motion_description": str(comp.get("motion_description", ""))[:120],
+                    "accent_color": comp.get("accent_color", "#0891b2"),
+                    "layer_order": comp.get("layer_order", 1),
+                    "labels": comp.get("labels", []),
+                }
+            compressed_json = _json_compress.dumps(compressed, separators=(",", ":"))
+        except Exception:
+            compressed_json = script_json[:5000]
+
         user_prompt = (
             _ANIMATION_BUILDER_USER
             .replace("{question}", question[:500])
-            .replace("{scene_script}", script_json[:6000])
+            .replace("{scene_script}", compressed_json[:5000])
         )
 
         try:
@@ -6473,7 +6557,13 @@ class GeminiAnimationBuilder:
     def _call_gemini_large(cls, user_prompt: str) -> str:
         import time as _time
         MAX_RETRIES  = 3
-        RETRY_DELAYS = [6, 12, 20]
+        # Raised from [6, 12, 20] (total: 38s) to [25, 60, 120] (total: 205s).
+        # A Gemini 503-overloaded state typically lasts 30-90s, so the old
+        # delays meant all 3 retries fired within the same overload window and
+        # all failed. Now each retry has a realistic chance of hitting Gemini
+        # after the overload window clears. Matches the pattern in
+        # GeminiSolutionGenerator which uses [10, 25, 50, 90].
+        RETRY_DELAYS = [25, 60, 120]
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -6511,14 +6601,25 @@ class GeminiAnimationBuilder:
 
             except Exception as e:
                 err_str = str(e)
+                err_lower = err_str.lower()
                 is_retryable = (
                     "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
-                    or "503" in err_str or "UNAVAILABLE" in err_str or "overloaded" in err_str.lower()
-                    or "high demand" in err_str.lower()
+                    or "503" in err_str or "UNAVAILABLE" in err_str
+                    or "overloaded" in err_lower or "high demand" in err_lower
+                    or "deadline exceeded" in err_lower   # gRPC timeout from Google's side
+                    or "timeout" in err_lower             # any network-level timeout
+                    or "connection" in err_lower          # transient connection errors
+                    or "temporarily" in err_lower         # "temporarily unavailable"
+                    or "try again" in err_lower           # explicit retry suggestion
                 )
                 if is_retryable and attempt < MAX_RETRIES:
-                    reason = "429 rate limit" if "429" in err_str else "503 model overloaded"
-                    QAnimLogger.warn("AnimationBuilder", f"{reason} — waiting {RETRY_DELAYS[attempt-1]}s...")
+                    if "429" in err_str:
+                        reason = "429 rate limit"
+                    elif "deadline" in err_lower or "timeout" in err_lower:
+                        reason = "request timeout (model busy)"
+                    else:
+                        reason = "503 model overloaded"
+                    QAnimLogger.warn("AnimationBuilder", f"{reason} — waiting {RETRY_DELAYS[attempt-1]}s before retry {attempt+1}/{MAX_RETRIES}...")
                     _time.sleep(RETRY_DELAYS[attempt - 1])
                     continue
                 raise
@@ -7156,8 +7257,19 @@ setTimeout(function() {{ resetAnim(); }}, 80);
                 timeout=STAGE_TIMEOUT_BUILD,
             )
         except asyncio.TimeoutError:
-            QAnimLogger.error("AnimationBuilder", f"Stage exceeded {STAGE_TIMEOUT_BUILD}s")
-            raise  # caller (pipeline) already falls back to RecoveryEngine.fallback_html on any exception
+            # FIX: return a meaningful fallback instead of re-raising a bare
+            # TimeoutError whose str() is "" — that caused the blank "Animation
+            # build error: " message users saw. The pipeline's except clause
+            # calls _err_msg(e) which returns "timed out" for TimeoutError,
+            # but the UX is still better if we short-circuit here with a
+            # clear, actionable message rather than letting it propagate.
+            msg = (
+                f"Gemini took too long to respond and the request was cancelled "
+                f"(the model may be overloaded, or the response was unusually large). "
+                f"This is a timeout, not a code error — please try again."
+            )
+            QAnimLogger.error("AnimationBuilder", f"Stage exceeded {STAGE_TIMEOUT_BUILD}s — {msg}")
+            return RecoveryEngine.fallback_html(question, msg)
 
 
 # ===========================================================================
@@ -7434,12 +7546,40 @@ async def _run_generation_pipeline(question: str) -> dict:
     key_insight  = scene_script.get("key_insight")  or gemini_sol.get("key_insight")  or ""
 
     # Stage C: build main animation HTML
+    # FIX: Pipeline-level retry for the build stage — if the first attempt
+    # fails (timeout, overload, empty HTML), wait 30s and try once more
+    # before giving up. Scene/solution are already cached so only this
+    # stage needs repeating. This catches the most common failure: Gemini
+    # is momentarily overloaded when the build request arrives (the small
+    # concurrent stages A/B1/B2 that ran before it may have hit the same
+    # overload window), but recovers within 30-60s.
+    import time as _pipeline_time
     QAnimLogger.info("Pipeline", "Building main animation HTML...")
-    try:
-        animation_html = await GeminiAnimationBuilder.build_async(question, scene_script)
-    except Exception as e:
-        QAnimLogger.error("Pipeline", f"Animation build failed: {_err_msg(e)}")
-        animation_html = RecoveryEngine.fallback_html(question, f"Animation build error: {_err_msg(e)}")
+    animation_html = None
+    for _build_attempt in range(1, 3):  # 2 total attempts
+        try:
+            _candidate = await GeminiAnimationBuilder.build_async(question, scene_script)
+            # Reject obvious fallback/error pages as "failed" so we retry
+            if _candidate and "Animation Could Not Render" not in _candidate and len(_candidate) > 3000:
+                animation_html = _candidate
+                break
+            else:
+                QAnimLogger.warn("Pipeline", f"Build attempt {_build_attempt}: got fallback/error page — treating as failure")
+                if _build_attempt < 2:
+                    _pipeline_time.sleep(35)
+        except Exception as e:
+            QAnimLogger.error("Pipeline", f"Build attempt {_build_attempt} failed: {_err_msg(e)}")
+            if _build_attempt < 2:
+                QAnimLogger.info("Pipeline", "Waiting 35s before pipeline-level build retry...")
+                _pipeline_time.sleep(35)
+    if animation_html is None:
+        QAnimLogger.error("Pipeline", "Both build attempts failed — using fallback page")
+        animation_html = RecoveryEngine.fallback_html(
+            question,
+            "Animation build error: Gemini took too long to respond and the request was cancelled "
+            "(the model may be overloaded, or the response was unusually large). "
+            "This is a timeout, not a code error \u2014 please try again."
+        )
 
     # Also build concept animation (same HTML is used for both)
     concept_html = animation_html
