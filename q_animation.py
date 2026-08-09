@@ -5534,7 +5534,7 @@ STEP ASSIGNMENT FOR THE 6 SVG STEPS:
   Step 5: Reveal the ambient / far-field environment and the direction of energy/heat/current flow. Show flow arrows. Display all remaining given parameters as overlays accumulating on the SVG.
   Step 6: Full system summary step — ALL SVG layers visible simultaneously. Show the temperature/energy profile curve (if applicable). Display a summary "Given Data" card AND a "To Find" card on the SVG. This is setup-complete. Do NOT state any formula or calculation here — those come in Steps 7–9.
 
-BADGE TYPES: "cyan" = given data, "orange" = motion/force/flow, "green" = derived/result.
+BADGE TYPES: "cyan" = given data, "orange" = motion/force/flow, "green" = derived/result. The "To Find" quantity (e.g. Q=?, q''=?) must always appear as a solid dark-orange badge with white text so it is clearly visible against any SVG background. In the SVG overlay, render it as a filled rect with fill="#d97706" and white text, NOT a transparent chip.
 svg_components: every component is a concrete visual object or phenomenon (frame, layer, fluid, arrows, profile curve, particles, field lines, etc.) — NEVER a formula string, a label block, or a calculation/substitution box. Place all in 850×478 space.
 final_answer: MUST contain the computed numerical result with units. Never empty.
 solution_steps: flat list of 3–8 plain-English calculation steps used to solve (these feed the Step 8 substitution modal).
@@ -6420,7 +6420,7 @@ STEP CONTROL:
 PHYSICS & MOTION:
 14. Rotating parts (cranks, gears, pulleys): continuous RAF loop, angle=omega*elapsed_time. Use REAL RPM from the problem.
 15. Oscillating parts (pistons): x = r*cos(theta) + sqrt(L*L - r*r*sin(theta)*sin(theta)). Use REAL geometry.
-16. Thermal/fluid problems: animate heat flux arrows (stroke-dashoffset), temperature gradient overlays, layer reveals.
+16. Thermal/fluid problems: animate heat flux arrows using setAttribute('stroke-dashoffset', value) NOT .style.strokeDashoffset — SVG presentation attributes require setAttribute. Always set stroke-dashoffset="0" as an SVG attribute on the element initially. The dashoffset value must increase each frame to make arrows march in the flow direction (negative offset = rightward motion for left-to-right arrows). Also animate hot-zone opacity with setAttribute('opacity', value) not .style.opacity.
 17. Each component animates on the FRAME it first becomes visible (triggered in applyStep).
 
 CODE QUALITY:
@@ -6428,6 +6428,10 @@ CODE QUALITY:
 19. Use var for all variables. Use function() {} for all functions.
 20. Single <script> block. Zero external dependencies.
 21. window.qanimRafId and window.qanimStartRAF must be present (for modal back-navigation compat).
+22. CRITICAL — applyStep alias: The injected prevStep module calls window.applyStep(). Your animation must expose this. After your updateUI/applyStep/goToStep function, add: window.applyStep = function(idx) { goToStep(idx); }; (or whatever your step-apply function is named). Without this alias, the Previous Step button silently does nothing.
+23. CRITICAL — btn-prev disabled state: Inside your step-update function, always set: var pb=document.getElementById('btn-prev'); if(pb) pb.disabled=(idx<=0); This keeps the Previous Step button correctly greyed out on step 0.
+24. CRITICAL — resetAnim must hide all overlays: Your resetAnim() function must explicitly set display:'none' AND remove 'qanim-scene-visible' class from #qanim-scene6-overlay, #qanim-scene7-overlay, #qanim-scene9-overlay, and #qanim-scene-modal-backdrop. Class removal alone is not sufficient — the injected scene modules set display:'block' explicitly and it must be reversed.
+25. CRITICAL — btn-next label: On the last SVG step (step index 5), set btn-next textContent to 'View Formula ▶' instead of 'Next Step ▶' so users know what clicking it will do.
 
 Return the complete <!DOCTYPE html>...</html> page — nothing else."""
 
