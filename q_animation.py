@@ -51,7 +51,7 @@ v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
   - The public entry point: generate_question_animation(question)
   - The result dict structure (animation_code, concept_animation_code, etc.)
 
-  GEMINI MODEL: gemini-3.1-pro-preview for ALL stages.
+  GEMINI MODEL: gemini-3.1-pro-preview for ALL stages (including build).
   ANTHROPIC:    client kept alive only for injected panel JS that references it
                 (ControlsBar etc. are pure HTML/JS, no API calls).
                 If ANTHROPIC_API_KEY is missing the pipeline still works fully.
@@ -124,6 +124,8 @@ except Exception as _anthropic_init_err:
 # Gemini client
 # ---------------------------------------------------------------------------
 GEMINI_MODEL = "gemini-3.1-pro-preview"
+# Build stage uses the same model as all other stages.
+GEMINI_BUILD_MODEL = "gemini-3.1-pro-preview"
 _gemini_client = None
 _GEMINI_DISABLED_REASON = None
 
@@ -222,16 +224,9 @@ STAGE_TIMEOUT_SCENE = 150.0   # scene-analysis (the stage that decides WHAT
                               # report back. 150s gives 3 attempts a realistic
                               # ~50s each, matching STAGE_TIMEOUT_BUILD's
                               # single-shot budget for a similarly heavy call.
-STAGE_TIMEOUT_BUILD = 240.0   # animation HTML builder — one large, mandatory-
-                              # thinking, ~32-50k-token single-shot generation.
-                              # Raised from 150s: complex multi-layer problems
-                              # (3-layer furnace walls, composite systems) generate
-                              # ~50k chars of HTML with the 9-step workflow. With
-                              # mandatory thinking tokens, Gemini 3.1 Pro can take
-                              # 180-220s for these. 150s was firing the timeout
-                              # before the response arrived, causing the "Gemini
-                              # took too long" error seen in production. 240s gives
-                              # realistic headroom for heavy generations.
+STAGE_TIMEOUT_BUILD = 240.0   # animation HTML builder — gemini-3.1-pro-preview.
+                              # Pro has mandatory thinking tokens; complex multi-layer
+                              # problems can take 120-220s. 240s gives safe headroom.
 # IMPORTANT: the pipeline's critical path is SEQUENTIAL, not flat —
 #   Stage 0 (classify, ~instant, no API)
 #   -> concurrent gather of scene/solution/glossary  (bounded by
@@ -248,17 +243,15 @@ STAGE_TIMEOUT_BUILD = 240.0   # animation HTML builder — one large, mandatory-
 # which is why the fallback fired on ordinary, non-overloaded runs. Fixed here.
 # Keep this derived from the stage constants (never hardcode a total) so the
 # two can never drift out of sync again.
-# FIX: Updated formula accounts for:
-# - concurrent stages: max(STAGE_TIMEOUT_SCENE=150, STAGE_TIMEOUT_SMALL=180) = 180s
-# - build stage with 1 pipeline-level retry: STAGE_TIMEOUT_BUILD*2 + 35s gap = 515s
+# Pro model path timing:
+# - concurrent stages: max(150, 180) = 180s
+# - build stage: STAGE_TIMEOUT_BUILD=240s per attempt, 2 attempts, 35s gap = 515s
 # - overhead: 25s
-# Total worst case = 180 + 515 + 25 = 720s — too long for user-facing UX.
-# Cap at 600s (10 min): covers the normal 1-attempt path (180+240+25=445s)
-# with generous headroom, and allows the retry path up to its budget.
+# Worst case: 180 + 515 + 25 = 720s. Cap at 600s (10 min).
 PIPELINE_TIMEOUT = min(
     max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD * 2 + 35.0 + 25.0,
     600.0
-)  # = 600.0
+)  # = 600s
 
 
 def _err_msg(e: BaseException) -> str:
@@ -5748,669 +5741,112 @@ class GeminiSceneAnalyzer:
 # STAGE B: GeminiAnimationBuilder — generates the complete HTML animation
 # ---------------------------------------------------------------------------
 
-_ANIMATION_BUILDER_SYSTEM = """You are QAnim Animation Builder v1.0 — a world-class specialist who generates COMPLETE, SELF-CONTAINED, VISUALLY POLISHED HTML animation pages for engineering and science education.
+_ANIMATION_BUILDER_SYSTEM = """You are QAnim — a specialist that generates COMPLETE self-contained HTML animation pages for engineering/science education.
 
-You receive a scene script (JSON) and must produce a premium interactive animation that feels like a professional educational platform (think Khan Academy × Brilliant × a high-end engineering textbook).
-
-════════════════════════════════════════════════════════════
-DESIGN PRINCIPLES
-════════════════════════════════════════════════════════════
-1. LIGHT, AIRY PALETTE — Never dark backgrounds. The page feels open and breathable.
-   Body: #eef2f9 (soft blue-grey). Dashboard card: #ffffff. Canvas: radial gradient #f0f5ff→#dce8f5→#c8d8ed.
-2. CLEAR VISUAL HIERARCHY — Every element has a purpose. No clutter.
-   Question banner → SVG canvas → control panel. No floating noise.
-3. SMOOTH, PURPOSEFUL MOTION — Every animation is physically correct and aesthetically satisfying.
-   Transitions use cubic-bezier(0.4, 0, 0.2, 1). Layer reveals use opacity + slight translateY (0→natural).
-4. LAYERED SVG DEPTH — Components exist in z-order. Shadows, gradients, and glow filters create depth.
-5. POLISHED TYPOGRAPHY — Font stack: 'Segoe UI', system-ui, -apple-system. Consistent sizing scale.
+You receive a scene script (JSON) and produce a premium interactive animation.
 
 ════════════════════════════════════════════════════════════
-REFERENCE OUTPUT STYLE (follow precisely)
+PAGE STRUCTURE (required skeleton)
 ════════════════════════════════════════════════════════════
-The output must match this structure and CSS (light theme, visually rich):
-
-<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>[Title] — Interactive Animation</title>
   <style>
+    /* CSS variables — MUST include all of these */
     :root {
-      --bg-color: #eef2f9;
-      --panel-bg: #ffffff;
-      --text-main: #1e293b;
-      --text-sub: #64748b;
-      --text-muted: #94a3b8;
-      --accent-cyan: #0891b2;
-      --accent-cyan-dim: #0e7490;
-      --accent-cyan-light: rgba(8,145,178,0.10);
-      --accent-orange: #d97706;
-      --accent-green: #16a34a;
-      --border: #e2e8f0;
-      --border-strong: #cbd5e1;
-      --border-radius: 16px;
-      --border-radius-sm: 10px;
-      --shadow-card: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08), 0 24px 48px rgba(15,23,42,0.04);
-      --shadow-hover: 0 4px 16px rgba(8,145,178,0.18);
-      --transition-smooth: 0.45s cubic-bezier(0.4, 0, 0.2, 1);
-      --transition-spring: 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      --bg-color:#eef2f9; --card-bg:#ffffff; --text-main:#1e293b;
+      --text-sub:#64748b; --accent-cyan:#0891b2; --accent-purple:#7c3aed;
+      --accent-orange:#d97706; --accent-green:#16a34a;
+      --border-subtle:#e2e8f0; --shadow-card:0 4px 24px rgba(14,30,64,0.10);
     }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-      background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
-      background-attachment: fixed;
-      color: var(--text-main);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-start;
-      min-height: 100vh;
-      padding: 28px 16px 130px;
-    }
-    /* ── Page header (above dashboard) ── */
-    .page-header {
-      width: 100%;
-      max-width: 900px;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .page-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 12px;
-      border-radius: 20px;
-      background: rgba(8,145,178,0.10);
-      border: 1px solid rgba(8,145,178,0.22);
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--accent-cyan-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-    }
-    .page-chip::before { content: '▶'; font-size: 8px; }
-    /* ── Dashboard Card ── */
-    .dashboard {
-      width: 100%;
-      max-width: 900px;
-      margin: 0 auto;
-      background: var(--panel-bg);
-      border-radius: var(--border-radius);
-      box-shadow: var(--shadow-card);
-      overflow: hidden;
-      border: 1px solid var(--border);
-      position: relative;
-    }
-    /* Subtle top accent line */
-    .dashboard::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      background: linear-gradient(90deg, var(--accent-cyan-dim) 0%, #7c3aed 50%, var(--accent-orange) 100%);
-      border-radius: var(--border-radius) var(--border-radius) 0 0;
-      z-index: 2;
-    }
-    /* ── Question Banner ── */
-    .question-banner {
-      padding: 22px 28px 18px;
-      background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 40%, #eef2f9 100%);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      position: relative;
-      overflow: hidden;
-    }
-    .question-banner::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(100deg, rgba(8,145,178,0.05) 0%, transparent 55%);
-      pointer-events: none;
-    }
-    /* ── Question Banner Inner ── */
-    .q-label {
-      font-size: 10.5px;
-      font-weight: 800;
-      color: var(--accent-cyan-dim);
-      text-transform: uppercase;
-      letter-spacing: 1.8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .q-label::before {
-      content: '';
-      display: inline-block;
-      width: 16px; height: 16px;
-      border-radius: 5px;
-      background: linear-gradient(135deg, var(--accent-cyan-dim), var(--accent-cyan));
-      flex-shrink: 0;
-    }
-    .q-text {
-      font-size: 15px;
-      color: var(--text-main);
-      line-height: 1.6;
-      font-weight: 450;
-      max-width: 820px;
-    }
-    /* ── SVG Canvas ── */
-    .svg-container {
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
-      position: relative;
-      overflow: hidden;
-      border-bottom: 1px solid var(--border);
-    }
-    svg { display: block; width: 100%; height: 100%; }
-    /* Smooth, physically-weighted layer transitions */
-    .svg-layer {
-      transition: opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    /* ── Control Panel ── */
-    .control-panel {
-      padding: 22px 28px 26px;
-      background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
-      border-top: 1px solid var(--border);
-    }
-    /* ── Step Indicator: pill-style dots ── */
-    .step-indicator {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 20px;
-      flex-wrap: wrap;
-    }
-    /* Connector line between dots */
-    .step-connector {
-      flex: 0 0 18px;
-      height: 1.5px;
-      background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
-      border-radius: 2px;
-    }
-    .step-dot {
-      padding: 6px 14px;
-      border-radius: 20px;
-      background: #f1f5f9;
-      border: 1.5px solid #e2e8f0;
-      font-size: 11.5px;
-      font-weight: 700;
-      color: #94a3b8;
-      cursor: pointer;
-      transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease,
-                  box-shadow 0.3s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
-      white-space: nowrap;
-      user-select: none;
-      position: relative;
-    }
-    .step-dot:hover:not(.active) {
-      background: rgba(8,145,178,0.07);
-      border-color: rgba(8,145,178,0.3);
-      color: var(--accent-cyan-dim);
-    }
-    .step-dot.active {
-      background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%);
-      border-color: transparent;
-      color: #ffffff;
-      box-shadow: 0 3px 12px rgba(8,145,178,0.38), 0 1px 3px rgba(8,145,178,0.20);
-      transform: scale(1.07);
-    }
-    /* Completed step indicator */
-    .step-dot.done {
-      background: rgba(22,163,74,0.09);
-      border-color: rgba(22,163,74,0.28);
-      color: #15803d;
-    }
-    .step-label {
-      font-size: 11px;
-      color: var(--text-muted);
-      font-weight: 600;
-      letter-spacing: 0.6px;
-      text-transform: uppercase;
-      margin-left: 6px;
-      flex: 1;
-      min-width: 0;
-    }
-    /* ── Info Box ── */
-    .info-box {
-      background: linear-gradient(135deg, #f8fbff 0%, #f4f8ff 100%);
-      border: 1px solid #dde8f8;
-      border-left: 4px solid var(--accent-cyan);
-      border-radius: var(--border-radius-sm);
-      padding: 20px 22px;
-      min-height: 130px;
-      display: flex;
-      flex-direction: column;
-      gap: 11px;
-      position: relative;
-      overflow: hidden;
-    }
-    .info-box::before {
-      content: '';
-      position: absolute;
-      top: 0; right: 0;
-      width: 120px; height: 120px;
-      background: radial-gradient(circle, rgba(8,145,178,0.06) 0%, transparent 70%);
-      pointer-events: none;
-    }
-    .info-box h3 {
-      color: var(--text-main);
-      font-size: 16.5px;
-      font-weight: 800;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      line-height: 1.3;
-      letter-spacing: -0.2px;
-    }
-    .info-box h3::before {
-      content: '';
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--accent-cyan);
-      flex-shrink: 0;
-      box-shadow: 0 0 0 3px rgba(8,145,178,0.18);
-    }
-    /* ── Badges ── */
-    .badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
-    .badge {
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 11.5px;
-      font-weight: 700;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      letter-spacing: 0.1px;
-    }
-    .badge-cyan  { background: rgba(8,145,178,0.09);  border: 1px solid rgba(8,145,178,0.28);  color: #0e7490; }
-    .badge-orange{ background: rgba(217,119,6,0.09);  border: 1px solid rgba(217,119,6,0.28);  color: #92400e; }
-    .badge-green { background: rgba(22,163,74,0.09);  border: 1px solid rgba(22,163,74,0.28);  color: #15803d; }
-    /* ── Description ── */
-    .info-desc {
-      font-size: 14px;
-      line-height: 1.7;
-      color: var(--text-sub);
-      font-weight: 400;
-    }
-    /* ── Step progress bar ── */
-    .step-progress-wrap {
-      height: 3px;
-      background: #f1f5f9;
-      border-radius: 2px;
-      margin-bottom: 20px;
-      overflow: hidden;
-    }
-    .step-progress-bar {
-      height: 100%;
-      background: linear-gradient(90deg, #0e7490, #0891b2, #38bdf8);
-      border-radius: 2px;
-      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    /* ── Actions ── */
-    .actions {
-      display: flex;
-      justify-content: flex-end;
-      align-items: center;
-      gap: 10px;
-      margin-top: 20px;
-    }
-    button {
-      padding: 11px 24px;
-      border-radius: 10px;
-      font-size: 13.5px;
-      font-weight: 700;
-      font-family: inherit;
-      cursor: pointer;
-      transition: background 0.22s ease, box-shadow 0.22s ease,
-                  transform 0.18s cubic-bezier(0.34,1.56,0.64,1),
-                  color 0.2s ease, border-color 0.2s ease;
-      border: none;
-      outline: none;
-      letter-spacing: 0.1px;
-    }
-    .btn-primary {
-      background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%);
-      color: #ffffff;
-      box-shadow: 0 4px 14px rgba(8,145,178,0.30), 0 1px 3px rgba(8,145,178,0.15);
-    }
-    .btn-primary:hover {
-      background: linear-gradient(135deg, #0c6680 0%, #0e7490 100%);
-      box-shadow: 0 6px 22px rgba(8,145,178,0.38);
-      transform: translateY(-2px);
-    }
-    .btn-primary:active { transform: translateY(0); box-shadow: 0 2px 6px rgba(8,145,178,0.20); }
-    .btn-secondary {
-      background: #ffffff;
-      color: var(--text-sub);
-      border: 1.5px solid var(--border-strong);
-      box-shadow: 0 1px 3px rgba(15,23,42,0.06);
-    }
-    .btn-secondary:hover {
-      background: #f8fafc;
-      color: var(--text-main);
-      border-color: #94a3b8;
-      box-shadow: 0 2px 8px rgba(15,23,42,0.10);
-      transform: translateY(-1px);
-    }
-    .btn-secondary:active { transform: translateY(0); }
+    body { margin:0; background:linear-gradient(160deg,#eef2f9,#e8f0fe,#eff6ff); background-attachment:fixed; font-family:'Segoe UI',system-ui,sans-serif; }
+    /* dashboard, question-banner, svg-container, control-panel, step-indicator,
+       step-dot(.active/.done), step-connector, step-progress-wrap/bar,
+       info-box, .badge(.badge-cyan/.badge-orange/.badge-green),
+       btn-primary, btn-secondary — define all with the light theme */
   </style>
 </head>
 <body>
-  <!-- Page header chip -->
-  <div class="page-header">
-    <div class="page-chip">Interactive Animation</div>
-  </div>
+  <div class="page-header"><div class="page-chip">Interactive Animation</div></div>
   <div class="dashboard">
-    <!-- Question Banner -->
     <div class="question-banner">
-      <div class="q-label">Problem Statement</div>
+      <div class="q-label"><span class="q-icon">?</span> Problem Statement</div>
       <div class="q-text">[question text]</div>
     </div>
-    <!-- SVG Canvas -->
     <div class="svg-container">
       <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" stroke-opacity="0.05" />
-          </pattern>
-          <!-- Metallic gradients, drop-shadow filters, glow filters, arrow markers -->
-          <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#e8f0fa" />
-            <stop offset="40%" stop-color="#b8cce0" />
-            <stop offset="100%" stop-color="#6a8aaa" />
-          </linearGradient>
-          <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="rgba(30,64,175,0.18)" />
-          </filter>
-          <filter id="glowCyan" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
-            <feComposite in="SourceGraphic" in2="blur" operator="over" />
-          </filter>
-          <marker id="arrowCyan" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#0891b2" />
-          </marker>
-          <marker id="arrowOrange" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#ea8c00" />
-          </marker>
-          <marker id="arrowGreen" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
-            <path d="M 0 0 L 6 3 L 0 6 Z" fill="#16a34a" />
-          </marker>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#grid)" />
-        <!-- Fixed background layer (always visible) -->
-        <g class="svg-layer" id="layer-frame"> ... </g>
-        <!-- blur-shield rect -->
-        <rect id="blur-shield" width="100%" height="100%" fill="#c7d8ed" opacity="0" pointer-events="none" />
-        <!-- Component layers (one per physical component, start opacity:0) -->
-        <g class="svg-layer" id="layer-[component]" style="opacity:0"> ... </g>
-        <!-- Overlay layers: labels and annotations per step -->
-        <g class="svg-layer" id="overlay-step0" style="opacity:0"> ... </g>
-        ...
+        <defs><!-- steel gradient, steelHi gradient, glowCyan, glowOrange, shadow, shadowDeep filters, arrowCyan/arrowOrange/arrowGreen/arrowGrey markers --></defs>
+        <rect id="canvas-bg" width="850" height="478" fill="url(#canvasBg)"/>
+        <!-- layer groups: id="layer-frame", "blur-shield"(fill=#c2d4e8,opacity=0), then one <g> per component -->
       </svg>
     </div>
-    <!-- Control Panel -->
-    <div class="control-panel">
-      <div class="step-indicator" id="dots">
-        <!-- pill-style step dots: each dot shows the step label text -->
-        <div class="step-dot active">Step label text</div>
-        <div class="step-dot">Step label text</div>
-        <div class="step-label" id="step-label">Starting...</div>
+    <div class="control-panel" id="control-panel">
+      <div class="step-indicator" id="step-indicator">
+        <!-- 9 step-dot pills separated by step-connector divs (see 9-STEP RULES) -->
+        <div class="step-label" id="step-label">Step 1 of 9</div>
       </div>
-      <div class="info-box">
-        <h3 id="info-title">...</h3>
-        <div class="badges" id="info-badges"></div>
-        <div class="info-desc" id="info-desc">...</div>
+      <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar"></div></div>
+      <div class="info-box" id="info-box">
+        <h3 id="info-title"></h3>
+        <div id="info-badges"></div>
+        <p id="info-desc"></p>
       </div>
-      <div class="actions">
-        <button class="btn-secondary" onclick="resetAnim()">↺ Restart</button>
-        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step ▶</button>
+      <div class="btn-row">
+        <button class="btn-secondary" id="btn-prev" onclick="prevStep()" disabled>&#x2190; Prev</button>
+        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step &#x25B6;</button>
+        <button class="btn-secondary" onclick="resetAnim()">&#x21BA; Restart</button>
       </div>
     </div>
   </div>
-  <script> ... full animation JS ... </script>
-</body>
-</html>
+  <script>/* ALL JS in one block */</script>
+</body></html>
 
 ════════════════════════════════════════════════════════════
-SVG DESIGN RULES — HIGH-QUALITY LAYERED SVG
+9-STEP RULES (MANDATORY — read carefully)
 ════════════════════════════════════════════════════════════
-1. viewBox="0 0 850 478" (16:9). preserveAspectRatio="xMidYMid slice".
-2. Canvas background: <rect> with fill="url(#canvasBg)" using a radial gradient:
-   center light (#eef5ff), midpoint (#dce8f5), edge (#c8d9ed). Add subtle noise via feTurbulence.
-3. Grid pattern: id="grid", 40×40 units, stroke "#1e3a5f" opacity 0.04, strokeWidth 0.6.
-4. DEFS section must include ALL of:
-   a) Metallic gradient "steel": #e8f0fa → #c8d8e8 → #8aaac0 → #5a7a9a (4-stop, 135°)
-   b) Highlight gradient "steelHi": #f4f8fc → #d4e4f0 → #94b4c8 (lighter, for top-facing surfaces)
-   c) Accent glow filter "glowCyan": feGaussianBlur stdDeviation="6", feComposite over source
-   d) Accent glow filter "glowOrange": same, orange-tinted flood for force arrows
-   e) Drop shadow "shadow": feDropShadow dx=0 dy=3 stdDeviation=5, flood-color rgba(14,30,64,0.16)
-   f) Deep shadow "shadowDeep": feDropShadow dx=0 dy=6 stdDeviation=10, flood-color rgba(14,30,64,0.22)
-   g) Inner glow "innerGlow": feGaussianBlur in="SourceAlpha", feOffset, feComposite
-   h) Arrow marker "arrowCyan": fill #0891b2, markerWidth=8 markerHeight=8 refX=4 refY=4
-   i) Arrow marker "arrowOrange": fill #d97706
-   j) Arrow marker "arrowGreen": fill #16a34a
-   k) Arrow marker "arrowGrey": fill #94a3b8 (for dimension lines)
-5. LAYER STRUCTURE (strict order, top-to-bottom in source = back-to-front visually):
-   <g id="layer-canvas-bg">  — background rect + grid (always visible, opacity:1)
-   <rect id="blur-shield" …>  — dimming overlay between bg and components
-   <g class="svg-layer" id="layer-frame" …>   — fixed structure, always visible
-   <g class="svg-layer" id="layer-[comp1]" style="opacity:0"> — components in reveal order
-   <g class="svg-layer" id="layer-[comp2]" style="opacity:0">
-   …
-   <g class="svg-layer" id="overlay-step0" style="opacity:0"> — labels/arrows for step 0
-   <g class="svg-layer" id="overlay-step1" style="opacity:0"> — labels/arrows for step 1
-   …
-6. blur-shield: <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
-   Opacity range: 0 (no focus) → 0.38 (focused step) → 0 (final reveal step).
-7. STRUCTURAL COMPONENTS — use metallic fill="url(#steel)", stroke layering, filter="url(#shadow)":
-   - Frames/housings: rounded rect or path, fill="url(#steel)", stroke="#6a8aaa" strokeWidth=2.5
-   - Ground hatching: diagonal lines pattern, classic engineering style
-   - Pivots/bearings: concentric circles with metallic gradient, inner circle lighter
-8. MOVING COMPONENTS — each must have a distinct visual personality:
-   - Cranks: thick rounded bar, fill="url(#steel)", with pivot circle at both ends
-   - Connecting rods: tapered shape (wider at crank end, narrower at piston end)
-   - Pistons: rectangular with rounded ends, fill="url(#steelHi)", subtle chamfer lines
-   - Gears: proper involute-like teeth (use path or polygon approximation), fill="url(#steel)"
-   - Pulleys: circles with spoke detail, belt grooves visible
-   - Belts: thick stroke path, stroke="#334155", slightly textured with dash patterns
-   - Springs: zigzag path, stroke="#475569", strokeWidth=2.5
-   - Heat pipes: concentric circles or annular ring, fill gradient from hot to cool colors
-9. TEXT IN SVG — strict hierarchy:
-   - Component name labels: fontSize=13, fontWeight=800, fill="#1e293b", fontFamily="Segoe UI,system-ui,sans-serif"
-   - Value callout chips: <rect rx=5 fill="rgba(8,145,178,0.12)" stroke="rgba(8,145,178,0.25)"/> + <text> centered
-   - Dimension lines: stroke="#94a3b8", strokeWidth=1.5, strokeDasharray="5,3", with arrowGrey markers
-   - Annotation arrows (forces, velocities): stroke="#0891b2" or "#d97706", strokeWidth=2.5, with arrowCyan/Orange
-   - Secondary labels: fontSize=11, fill="#475569"
-10. ZERO text overlaps — plan all label positions. Every label must be ≥12px from any other element.
-11. Light-theme colors for components (NO dark/neon colors):
-    Primary structure: #4a6a8a, #6a8aaa, #8aaac4
-    Crank/driver: #2563eb (vibrant blue), stroke #1d4ed8
-    Driven: #0891b2 (cyan), stroke #0e7490
-    Forces/motion arrows: #d97706 (amber), stroke #b45309
-    Results/measurements: #16a34a (green), stroke #15803d
-    Danger/highlight: #dc2626 (red)
+The step dot bar MUST always show ALL 9 dots:
+  "1·[label]" through "6·[label]" use goToStep(N).
+  "7·Formula"  → id="dot-step7"  onclick calls qanim_showScene6()
+  "8·Substitution" → id="dot-step8" onclick calls qanim_showScene7()
+  "9·Final Answer" → id="dot-step9" onclick calls qanim_showScene9()
+
+Step label: "Step N of 9". Progress bar: (currentStep+1)/9*100%.
+
+nextStep() behavior:
+  if(currentStep>=5){if(typeof qanim_showScene6==='function')qanim_showScene6();return;}
+  goToStep(currentStep+1);
+
+Step accent colors: 0=#0ea5e9, 1=#10b981, 2=#f59e0b, 3=#6366f1, 4=#f43f5e, 5=#22c55e.
 
 ════════════════════════════════════════════════════════════
-9-STEP WORKFLOW — MANDATORY STRUCTURE
+SVG RULES
 ════════════════════════════════════════════════════════════
-EVERY animation MUST follow this exact 9-step structure:
-
-  Steps 1–6: SVG animation steps (driven by stepsData array, inline in the page).
-  Step 7:    "Formula" modal (injected automatically — you MUST add the dot but the modal content is injected separately).
-  Step 8:    "Substitution" modal (injected automatically — add the dot only).
-  Step 9:    "Final Answer" modal (injected automatically — add the dot only).
-
-THE STEP DOT BAR MUST ALWAYS SHOW ALL 9 DOTS:
-  <div class="step-dot active" onclick="goToStep(0)">1 · [Step1Label]</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" onclick="goToStep(1)">2 · [Step2Label]</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" onclick="goToStep(2)">3 · [Step3Label]</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" onclick="goToStep(3)">4 · [Step4Label]</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" onclick="goToStep(4)">5 · [Step5Label]</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" onclick="goToStep(5)">6 · [Step6Label]</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" id="dot-step7" onclick="if(typeof qanim_showScene6==='function')qanim_showScene6()">7 · Formula</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" id="dot-step8" onclick="if(typeof qanim_showScene7==='function')qanim_showScene7()">8 · Substitution</div>
-  <div class="step-connector"></div>
-  <div class="step-dot" id="dot-step9" onclick="if(typeof qanim_showScene9==='function')qanim_showScene9()">9 · Final Answer</div>
-  <div class="step-label" id="step-label">Step 1 of 9</div>
-
-STEP LABEL: always display "Step N of 9" (total is always 9).
-PROGRESS BAR: width = (currentStep+1)/9 * 100% for steps 1–6.
-
-NEXTSTE BUTTON BEHAVIOR:
-  - On steps 0–4: advance to next SVG step (goToStep(idx+1)).
-  - On step 5 (last SVG step): clicking "Next Step ▶" should call qanim_showScene6() (opens Step 7 Formula modal).
-    Use: onclick="if(currentStep===5){if(typeof qanim_showScene6==='function')qanim_showScene6();}else{goToStep(currentStep+1);}"
-  - nextStep() function should also handle this: if(currentStep>=5){if(typeof qanim_showScene6==='function')qanim_showScene6();return;}
-
-STEP COLORS — each of the 6 SVG steps has a distinct accent color applied to its dot and control panel:
-  Step 0 (1): #0ea5e9 (sky blue)
-  Step 1 (2): #10b981 (emerald)
-  Step 2 (3): #f59e0b (amber)
-  Step 3 (4): #6366f1 (indigo)
-  Step 4 (5): #f43f5e (rose)
-  Step 5 (6): #22c55e (green)
-
-Apply step color to the active dot's border-left (3px solid [color]) and to the control panel background.
+- viewBox="0 0 850 478", preserveAspectRatio="xMidYMid slice"
+- DEFS must include: steel gradient (4-stop #e8f0fa→#c8d8e8→#8aaac0→#5a7a9a), glowCyan filter, glowOrange filter, shadow/shadowDeep drop-shadow filters, arrowCyan/arrowOrange/arrowGreen/arrowGrey markers.
+- blur-shield <rect> (fill="#c2d4e8" opacity="0") sits between background and components.
+- Each component is a <g class="svg-layer"> starting at opacity:0; only layer-frame starts visible.
+- Thermal arrows: set stroke-dashoffset="0" as SVG attribute initially; animate with setAttribute('stroke-dashoffset', value) NOT .style — SVG attrs need setAttribute. Negative offset = rightward flow.
+- Hot-zone pulse: use setAttribute('opacity', value) not .style.opacity.
+- "To Find" quantity badge: solid fill="#d97706" with white text (NOT transparent).
+- All labels stay inside viewBox. Zero text-overlaps.
 
 ════════════════════════════════════════════════════════════
-ANIMATION RULES — REAL PHYSICS
+JAVASCRIPT RULES (CRITICAL — violations break the page)
 ════════════════════════════════════════════════════════════
-Motion must be physically correct, not just decorative:
-- Rotating cranks/gears/pulleys: continuous requestAnimationFrame, angle=ω×t (real rpm)
-- Oscillating pistons/sliders: x=r×cos(θ)+√(l²-r²×sin²(θ)) (actual kinematic formula)
-- Gear trains: each gear's ω scaled by tooth ratio (ω₂/ω₁ = T₁/T₂)
-- Belt drives: pulley animations synchronized, belt path traces smoothly
-- Springs: translateY(amplitude×sin(ωt)) with correct stiffness-derived frequency
-- Heat flow / current flow: animated stroke-dashoffset on the path
-- Waveforms / signals: path d attribute updated each frame with sin/cos
-- Freezing mechanism: lerp angle toward solution angle over ~60 frames, then pause RAF
-
-stepsData schema (one object per step, drives ALL state):
-  {
-    label: "3-5 word pill text",
-    blurOp: 0.0,                  // blur-shield opacity (0 = off, 0.38 = focus)
-    overlays: ["overlay-step0"],  // which overlay layers become visible
-    freezing: false,              // true = lerp to solution angle and pause
-    solutionAngle: null,          // target angle in radians for freeze step
-    title: "Step N: Full Title",
-    badges: '<span class="badge badge-cyan">r = 50 mm</span>',
-    desc: "Conversational 2-3 sentence description.",
-    layerOpacities: {             // explicit opacity for EVERY layer
-      "layer-frame": 1,
-      "layer-crank": 0,
-      ...
-    }
-  }
-
-applyStep(idx) must:
-  1. Set blur-shield opacity from stepsData[idx].blurOp
-  2. Apply all layerOpacities (every layer, not just new ones)
-  3. Hide all overlays, then show only stepsData[idx].overlays
-  4. Update info-title, info-badges, info-desc
-  5. Update step dots (active/done classes)
-  6. Update step-label text ("Step N of M")
-  7. Update progress bar width (idx+1)/total × 100%
-  8. DIRECTLY set every moving component's position/rotation/dashoffset for
-     THIS step — call the exact same drawing/positioning function the RAF
-     loop uses (e.g. drawFrame(angleForStep(idx))), passing the angle/time
-     value that is correct for stepsData[idx]. Do this unconditionally,
-     every call, regardless of whether the RAF loop is currently running,
-     paused, or was never started. This is not optional: applyStep(idx)
-     must be able to render ANY step correctly all on its own, with the
-     RAF loop fully stopped — because the Previous Step button, and the
-     "Back to Animation" button on the Main Formula / Solution overlays,
-     call applyStep() directly and expect a fully correct frame with no
-     RAF loop involved. If a moving part's position only ever gets set
-     inside the RAF callback, that part will be frozen/misplaced/invisible
-     the instant a user navigates backward past a freezing step — this is
-     a defect, not acceptable behavior.
-  9. If idx is NOT a freezing step: ensure the RAF loop is running (start
-     it if it was paused/never started). If idx IS a freezing step: run
-     the angle-lerp-to-solution then pause the RAF loop as before.
-     The loop must resume automatically the moment the user leaves the
-     freezing step in either direction — never leave it paused on a
-     non-freezing step.
-
-REQUIRED GLOBAL NAMING CONTRACT for the RAF loop (exact names, no
-substitutes — the page's fixed control-panel script calls these by name
-when the Main Formula / Solution overlays hand control back to the
-animation, and Previous Step calls them too):
-  window.qanimRafId     — current requestAnimationFrame handle, or null
-                           when the loop is not running. Set/clear this
-                           EVERY time you call/cancel requestAnimationFrame
-                           — never keep the id in a local/closure variable
-                           only.
-  window.qanimStartRAF  — a function, callable with no arguments at any
-                           time, that (re)starts the continuous loop from
-                           wherever state currently is (does not reset
-                           angle/time). Must be safe to call even if the
-                           loop is already running (no-op / idempotent).
-
-════════════════════════════════════════════════════════════
-CRITICAL CODE REQUIREMENTS
-════════════════════════════════════════════════════════════
-- NO backtick template literals — use string concatenation only
-- NO const/let — use var everywhere
-- NO arrow functions — use function() {} only
-- NO external scripts or CDN imports — fully self-contained
-- ALL JavaScript in one <script> block
-- requestAnimationFrame loop keeps running unless explicitly paused (freeze step)
-- The loop's id MUST live in window.qanimRafId and its restart function
-  MUST be window.qanimStartRAF, per the naming contract above — Previous
-  Step and the Back to Animation buttons rely on these exact names to
-  resume motion; if they're missing, navigating backward from a frozen
-  step silently leaves every moving part stuck in its frozen position.
-- Restart button resets angle, currentStep=0, resumes RAF via
-  window.qanimStartRAF(), applies step 0
-- NEVER put a raw apostrophe/single-quote character inside a single-quoted
-  JS string. ONE unescaped apostrophe silently breaks the ENTIRE <script>
-  block it's in — every function in that block (including nextStep and
-  window.onload) stops being defined, with no visible error on the page.
-  This happens constantly with prime notation (l', θ', i', v') and words
-  like "it's"/"cell's". Always write the HTML entity &#39; instead:
-    WRONG: badges: '<span class="badge">l' = 32 cm</span>',
-    RIGHT: badges: '<span class="badge">l&#39; = 32 cm</span>',
-  This applies to every string field: title, badges, desc, jockeyLabel,
-  glossary terms/meanings, and answer target labels — anywhere user-facing
-  text is embedded inside a single-quoted JS string.
-
-════════════════════════════════════════════════════════════
-POLISH CHECKLIST (every output must pass)
-════════════════════════════════════════════════════════════
-✓ Page has page-header chip above dashboard
-✓ Dashboard has ::before top accent gradient bar (3px)
-✓ Question banner has q-label with square icon + q-text at 15px
-✓ SVG canvas: all 4 gradient defs, shadow filters, glow filters, arrow markers
-✓ blur-shield rect present between background and component layers
-✓ Step dots are pills with text, connected by .step-connector divs
-✓ Progress bar (.step-progress-wrap + .step-progress-bar) updates each step
-✓ Info box has border-left:4px cyan, h3::before cyan dot with ring shadow
-✓ Badges have correct type: cyan=given, orange=motion, green=result
-✓ All buttons use CSS variables; .btn-primary has gradient + translateY hover
-✓ ZERO text-overlaps in SVG; all labels inside viewBox
-✓ All component layers start opacity:0 (except layer-frame)
-✓ Final step freezes mechanism at exact solution state + annotation overlay
+- Use var everywhere. Use function(){} everywhere. NO const/let/arrow functions/backticks.
+- All JS in ONE <script> block. Zero external deps.
+- window.qanimRafId = the RAF id. window.qanimStartRAF = function to (re)start the RAF loop.
+- window.applyStep = alias for your step-update function (injected prevStep module needs this).
+- Inside step-update: var pb=document.getElementById('btn-prev'); if(pb)pb.disabled=(idx<=0);
+- Inside step-update: set btn-next text to 'View Formula ▶' when idx===5, else 'Next Step ▶'.
+- resetAnim() MUST: set display:'none' AND remove class 'qanim-scene-visible' from ALL of: #qanim-scene6-overlay, #qanim-scene7-overlay, #qanim-scene9-overlay, #qanim-scene-modal-backdrop. Then call goToStep(0).
+- NEVER put a raw apostrophe inside a single-quoted JS string. Use &#39; for primes (l&#39;, θ&#39;) and contractions (it&#39;s). One unescaped apostrophe silently kills the entire <script>.
 
 ════════════════════════════════════════════════════════════
 OUTPUT
 ════════════════════════════════════════════════════════════
-Return ONLY the complete <!DOCTYPE html>...</html> page as raw text.
-No JSON wrapper. No markdown. No fences. Pure HTML only."""
+Return ONLY the complete <!DOCTYPE html>...</html> as raw text. No markdown, no fences, no JSON."""
 
 _ANIMATION_BUILDER_USER = """Generate the complete, polished animation HTML page for this scene script. This is a premium educational product — quality matters at every level.
 
@@ -6482,7 +5918,8 @@ class GeminiAnimationBuilder:
         if _gemini_client is None:
             return RecoveryEngine.fallback_html(question, "Gemini client not available. Set GEMINI_API_KEY.")
 
-        QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {GEMINI_MODEL}...")
+        _bm = globals().get("GEMINI_BUILD_MODEL", GEMINI_MODEL)
+        QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {_bm} (fast build model)...")
         script_json = json.dumps(scene_script, indent=2, ensure_ascii=False)
         # Use .replace() instead of .format() — the scene_script is JSON and
         # contains many literal { } braces that .format() would misinterpret as
@@ -6557,21 +5994,19 @@ class GeminiAnimationBuilder:
     def _call_gemini_large(cls, user_prompt: str) -> str:
         import time as _time
         MAX_RETRIES  = 3
-        # Raised from [6, 12, 20] (total: 38s) to [25, 60, 120] (total: 205s).
-        # A Gemini 503-overloaded state typically lasts 30-90s, so the old
-        # delays meant all 3 retries fired within the same overload window and
-        # all failed. Now each retry has a realistic chance of hitting Gemini
-        # after the overload window clears. Matches the pattern in
-        # GeminiSolutionGenerator which uses [10, 25, 50, 90].
+        # Pro model overload windows last 30-90s. Use [25, 60, 120].
         RETRY_DELAYS = [25, 60, 120]
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
+                # Uses GEMINI_BUILD_MODEL (gemini-3.1-pro-preview).
+                # 65536 output token limit prevents truncation on large HTML pages.
+                _bmodel = globals().get("GEMINI_BUILD_MODEL", GEMINI_MODEL)
                 if _GEMINI_SDK_STYLE == "generativeai":
                     model_obj = _gemini_client.GenerativeModel(
-                        model_name=GEMINI_MODEL,
+                        model_name=_bmodel,
                         system_instruction=_ANIMATION_BUILDER_SYSTEM,
-                        generation_config={"temperature": 0.4, "max_output_tokens": 32768},
+                        generation_config={"temperature": 0.4, "max_output_tokens": 65536},
                     )
                     response = model_obj.generate_content(user_prompt)
                     raw = response.text.strip()
@@ -6580,17 +6015,17 @@ class GeminiAnimationBuilder:
                         config = _google_genai.types.GenerateContentConfig(
                             system_instruction=_ANIMATION_BUILDER_SYSTEM,
                             temperature=0.4,
-                            max_output_tokens=32768,
+                            max_output_tokens=65536,
                             thinking_config=_google_genai.types.ThinkingConfig(thinking_level="low"),
                         )
                     except Exception:
                         config = _google_genai.types.GenerateContentConfig(
                             system_instruction=_ANIMATION_BUILDER_SYSTEM,
                             temperature=0.4,
-                            max_output_tokens=32768,
+                            max_output_tokens=65536,
                         )
                     response = _gemini_client.models.generate_content(
-                        model=GEMINI_MODEL,
+                        model=_bmodel,
                         contents=user_prompt,
                         config=config,
                     )
