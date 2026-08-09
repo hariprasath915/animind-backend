@@ -28,6 +28,7 @@ import io
 import os
 import re
 import uuid
+import hashlib
 import asyncio
 import json
 from pathlib import Path
@@ -333,9 +334,150 @@ class SkillContentRequest(BaseModel):
     retry_failed: Optional[bool] = True
 
 
+class PasskeyVerifyRequest(BaseModel):
+    passkey: str   # plain passkey submitted by the user (8–9 chars)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PASSKEY ENDPOINTS
+# One passkey unlocks both AI Creator (animind) and Q Anim (question).
+# Passkeys are stored as SHA-256 hashes in `mode_passkeys` (no mode column).
+# Access grants are recorded in `passkey_access` by user_id only.
+# The plain passkey is NEVER stored or logged.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.post("/auth/verify-passkey")
+async def verify_passkey(request: PasskeyVerifyRequest):
+    """
+    Verify the typed passkey for the "Create with AI" gate.
+
+    Accepts  : { passkey: str }
+    Returns  : { ok: bool }  — true on match, false on mismatch
+    HTTP 400 : passkey length not 8–9 characters
+    HTTP 500 : unexpected Supabase error
+    """
+    passkey = (request.passkey or "").strip()
+
+    # ── Validate passkey length (8–9 characters) ────────────────────────
+    if len(passkey) < 8 or len(passkey) > 9:
+        raise HTTPException(
+            status_code=400,
+            detail="Passkey must be exactly 8 or 9 characters.",
+        )
+
+    # ── Hash the submitted passkey (SHA-256) ────────────────────────────
+    passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
+
+    # ── Query Supabase — any matching row in mode_passkeys ───────────────
+    try:
+        from auth_utils import get_supabase  # pyrefly: ignore [missing-import]
+        db = get_supabase()   # service-role client — bypasses RLS
+        result = (
+            db.table("mode_passkeys")
+            .select("id")
+            .eq("passkey_hash", passkey_hash)
+            .limit(1)
+            .execute()
+        )
+        matched = bool(result.data)
+    except Exception as e:
+        print(f"[PASSKEY] ⚠ Supabase error during verification: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Passkey verification failed due to a server error. Please try again.",
+        )
+
+    if matched:
+        print("[PASSKEY] ✅ Access granted")
+    else:
+        print("[PASSKEY] ❌ Access denied (wrong passkey)")
+
+    return {"ok": matched}
+
+
+# ── Grant access: record user_id in passkey_access ────────────────────────────
+@app.post("/auth/passkey/grant")
+async def passkey_grant(request: Request):
+    """
+    Record that the authenticated user has been granted "Create with AI" access.
+    Called by the frontend after a successful /auth/verify-passkey.
+
+    Auth    : Authorization: Bearer <jwt>  (required)
+    Returns : { "granted": true }
+    """
+    from auth_utils import get_supabase  # pyrefly: ignore
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    try:
+        db = get_supabase()
+        user_res = db.auth.get_user(token)
+        user_id = str(user_res.user.id)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token.")
+
+    try:
+        db.table("passkey_access").upsert(
+            {"user_id": user_id},
+            on_conflict="user_id",
+        ).execute()
+        print(f"[PASSKEY] ✅ Grant recorded for user={user_id[:8]}…")
+    except Exception as e:
+        print(f"[PASSKEY] ⚠ Grant insert failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not record access grant.")
+
+    return {"granted": True}
+
+
+# ── Check access: has this user already been granted access? ──────────────────
+@app.get("/auth/passkey/check")
+async def passkey_check(request: Request):
+    """
+    Check whether the authenticated user already has passkey access.
+
+    Auth    : Authorization: Bearer <jwt>  (required)
+    Returns : { "granted": true | false }
+    """
+    from auth_utils import get_supabase  # pyrefly: ignore
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    token = auth_header.split(" ", 1)[1].strip()
+
+    try:
+        db = get_supabase()
+        user_res = db.auth.get_user(token)
+        user_id = str(user_res.user.id)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token.")
+
+    try:
+        result = (
+            db.table("passkey_access")
+            .select("id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        granted = bool(result.data)
+    except Exception as e:
+        print(f"[PASSKEY] ⚠ Access check failed: {e}")
+        # Fail open — if DB is unreachable, modal will appear and user can verify again
+        granted = False
+
+    return {"granted": granted}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # AI GENERATION ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 @app.post("/generate-animation")
 async def create_animation(request: AnimationRequest):
