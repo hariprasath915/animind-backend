@@ -48,6 +48,7 @@ from typing import Optional
 # ── Auth + Sync ───────────────────────────────────────────────────────────────
 from auth_routes import router as auth_router
 from sync_routes import router as sync_router          # v6 normalized + legacy
+from passkey_routes import router as passkey_router    # passkey mode protection
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 from admin_router import router as admin_router, install_error_handler
@@ -181,9 +182,10 @@ else:
 # ROUTERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-app.include_router(auth_router)   # /auth/*
-app.include_router(sync_router)   # /sync/*
-app.include_router(admin_router)  # /admin/*
+app.include_router(auth_router)     # /auth/*
+app.include_router(sync_router)     # /sync/*
+app.include_router(admin_router)    # /admin/*
+app.include_router(passkey_router)  # /auth/verify-passkey, /auth/passkey/*
 
 install_error_handler(app)
 
