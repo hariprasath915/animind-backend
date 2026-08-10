@@ -6089,8 +6089,10 @@ class GeminiAnimationBuilder:
     def _call_gemini_large(cls, user_prompt: str) -> str:
         import time as _time
         MAX_RETRIES  = 3
-        # Pro model overload windows last 30-90s. Use [25, 60, 120].
-        RETRY_DELAYS = [25, 60, 120]
+        # Short backoff: 5s then 15s. With no outer asyncio timeout, longer
+        # waits just make the user stare at a spinner. 5s clears most
+        # transient 429s; 15s handles brief overload windows.
+        RETRY_DELAYS = [5, 15, 30]
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -6123,6 +6125,13 @@ class GeminiAnimationBuilder:
                         model=_bmodel,
                         contents=user_prompt,
                         config=config,
+                        # http_options: 600s gives Gemini 3.1 Pro plenty of
+                        # headroom even with mandatory thinking on heavy questions.
+                        # This is a true network-level hang guard, not a
+                        # pipeline cancellation — the SDK raises an exception
+                        # only if the TCP connection goes completely silent for
+                        # 600s, which would indicate a real infrastructure fault.
+                        http_options={"timeout": 600},
                     )
                     raw = response.text.strip()
 
@@ -6780,26 +6789,15 @@ setTimeout(function() {{ resetAnim(); }}, 80);
 
     @classmethod
     async def build_async(cls, question: str, scene_script: dict) -> str:
+        # No asyncio.wait_for timeout — removed because it was the direct
+        # cause of the "Gemini took too long" error. Gemini 3.1 Pro with
+        # mandatory thinking can take 120-300s on heavy questions; cutting
+        # it off at 240s meant the request was cancelled mid-generation and
+        # the user got an error page instead of a result. The Gemini SDK's
+        # own HTTP transport handles true network failures. We just await
+        # the executor and let Gemini finish however long it needs.
         loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.build, question, scene_script),
-                timeout=STAGE_TIMEOUT_BUILD,
-            )
-        except asyncio.TimeoutError:
-            # FIX: return a meaningful fallback instead of re-raising a bare
-            # TimeoutError whose str() is "" — that caused the blank "Animation
-            # build error: " message users saw. The pipeline's except clause
-            # calls _err_msg(e) which returns "timed out" for TimeoutError,
-            # but the UX is still better if we short-circuit here with a
-            # clear, actionable message rather than letting it propagate.
-            msg = (
-                f"Gemini took too long to respond and the request was cancelled "
-                f"(the model may be overloaded, or the response was unusually large). "
-                f"This is a timeout, not a code error — please try again."
-            )
-            QAnimLogger.error("AnimationBuilder", f"Stage exceeded {STAGE_TIMEOUT_BUILD}s — {msg}")
-            return RecoveryEngine.fallback_html(question, msg)
+        return await loop.run_in_executor(None, cls.build, question, scene_script)
 
 
 # ===========================================================================
@@ -6956,16 +6954,7 @@ async def generate_question_animation(question: str) -> dict:
         # ceiling anywhere in the call chain, so "taking much longer than
         # expected" could mean anywhere from 2 minutes to 10+ minutes with
         # nothing to cut it off. Now the worst case is bounded and known.
-        return await asyncio.wait_for(
-            _run_generation_pipeline(question), timeout=PIPELINE_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        QAnimLogger.error("Pipeline", f"TOTAL pipeline exceeded {PIPELINE_TIMEOUT}s — returning fallback")
-        return _build_failure_result(
-            question,
-            f"Generation took longer than {int(PIPELINE_TIMEOUT)}s (Gemini was slow/overloaded) — "
-            f"showing a fallback animation instead of hanging indefinitely. Please try again.",
-        )
+        return await _run_generation_pipeline(question)
     except Exception as e:
         QAnimLogger.error("Pipeline", f"UNHANDLED error: {_err_msg(e)}")
         return _build_failure_result(question, f"Unexpected error: {_err_msg(e)}")
@@ -7008,10 +6997,8 @@ def _inject_fallback_warning_banner(html: str) -> str:
 
 async def _run_generation_pipeline(question: str) -> dict:
     """
-    PIPELINE v2.0 (single-call):
+    PIPELINE v3.0 (zero-stage, single Gemini call):
 
-    Stage -1: LargeInputPreprocessor (sync, regex — no API)
-    Stage  0: ToFind + GivenValues extraction (sync, no AI)
     Stage  C: GeminiAnimationBuilder — ONE Gemini call that:
               • Generates all 6 SVG animation steps (1-6)
               • Solves the problem and embeds solution data in
@@ -7022,72 +7009,32 @@ async def _run_generation_pipeline(question: str) -> dict:
             (Final Answer) modals using the extracted data
             Inject all other panels unchanged
 
-    Removed: Stage A (SceneAnalyzer), Stage B1 (SolutionGenerator),
-             Stage B2 (GlossaryAnalyzer) — were 3 extra Gemini calls.
-             The builder now handles everything in a single generation.
+    No preprocessing, no extraction, no analysis stages.
+    The builder receives the raw question and generates everything.
     """
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v2.0 single-call — '{short_q}'")
-
-    # Stage -1: preprocess (no API call — pure regex trim/clean)
-    try:
-        ai_question = LargeInputPreprocessor.compress(question)
-    except Exception as e:
-        QAnimLogger.warn("Pipeline", f"Preprocessor error: {e}")
-        ai_question = question[:LargeInputPreprocessor.HARD_LIMIT]
-
-    # Stage 0: sync extraction (no API calls).
-    # These are kept because inject_to_find_system and inject_answer_box_panel
-    # need them, and they are instant regex operations with zero Gemini cost.
-    to_find_targets = ToFindExtractor.extract(question)
-    given_cards     = GivenValuesExtractor.extract(question)
-    n_scenes        = _detect_scene_count(question)
-    category        = await _classify_topic_async(ai_question)
-
-    QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
-    QAnimLogger.info("Pipeline", f"Category: {category}, n_scenes: {n_scenes}")
+    QAnimLogger.info("Pipeline", f"START v3.0 — '{short_q}'")
 
     # ── SINGLE GEMINI CALL ───────────────────────────────────────────────
-    # GeminiAnimationBuilder generates the complete 9-step animation in one
-    # call. Steps 1-6 are SVG animation layers; Steps 7/8/9 (Formula,
-    # Substitution, Final Answer) are modal panels auto-injected afterwards.
-    # The builder embeds solution data in a <script id="__qanim_scene_data__">
-    # JSON block so the modal injectors have formula/step/answer content
-    # without any extra API calls.
-    # Stages A (SceneAnalyzer), B1 (SolutionGenerator), B2 (GlossaryAnalyzer)
-    # have been removed — the builder handles everything in one generation.
+    # GeminiAnimationBuilder receives the raw question and generates the
+    # complete 9-step animation (Steps 1-6 SVG + Steps 7/8/9 modals) in
+    # one call. No preprocessing, no extraction, no analysis stages.
     # ─────────────────────────────────────────────────────────────────────
-    import time as _pipeline_time
-    QAnimLogger.info("Pipeline", "Building animation HTML (single Gemini call)...")
-
-    # Pass a minimal seed so the builder knows the topic/category.
-    # The builder generates the full scene structure from the question itself.
-    _seed_scene = {
-        "title": ai_question[:60],
-        "topic": category,
-        "steps": [],
-        "solution_steps": [],
-        "final_answer": "",
-        "key_insight": "",
-        "svg_components": {},
-    }
+    QAnimLogger.info("Pipeline", "Building 9-step animation (single Gemini call)...")
 
     animation_html = None
     for _build_attempt in range(1, 3):  # 2 total attempts (retry on API error only)
         try:
-            _candidate = await GeminiAnimationBuilder.build_async(ai_question, _seed_scene)
+            _candidate = await GeminiAnimationBuilder.build_async(question, {})
             if _candidate and "Animation Could Not Render" not in _candidate and len(_candidate) > 3000:
                 animation_html = _candidate
                 break
             else:
                 QAnimLogger.warn("Pipeline", f"Build attempt {_build_attempt}: got fallback/short HTML — retrying")
-                if _build_attempt < 2:
-                    _pipeline_time.sleep(35)
         except Exception as e:
             QAnimLogger.error("Pipeline", f"Build attempt {_build_attempt} failed: {_err_msg(e)}")
             if _build_attempt < 2:
-                QAnimLogger.info("Pipeline", "Waiting 35s before pipeline-level build retry...")
-                _pipeline_time.sleep(35)
+                QAnimLogger.info("Pipeline", "Retrying build immediately (no sleep — timeout removed)...")
     if animation_html is None:
         QAnimLogger.error("Pipeline", "Both build attempts failed — using fallback page")
         animation_html = RecoveryEngine.fallback_html(
@@ -7159,6 +7106,10 @@ async def _run_generation_pipeline(question: str) -> dict:
         animation_html = _inject_fallback_warning_banner(animation_html)
 
     # Build answer targets
+    to_find_targets = []  # Stage 0 removed — no extraction
+    given_cards     = []  # Stage 0 removed — no extraction
+    n_scenes        = 6   # Stage 0 removed — default
+    category        = "ENGINEERING"  # Stage 0 removed — default
     answer_targets = _build_answer_targets(
         to_find_targets=to_find_targets,
         gemini_sol=gemini_sol,
@@ -7257,13 +7208,13 @@ async def _run_generation_pipeline(question: str) -> dict:
         "glossary_terms":  glossary_result.get("terms", []),
         "category":        category,
         "n_scenes":        n_scenes,
-        "engine_version":  "v2.0-single-call",
+        "engine_version":  "v3.0-zero-stage",
         "render_status":   "ok" if injection_report["all_ok"] else "panels_incomplete",
         "panel_verification": injection_report,
     }
 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v1.0 — '{result['title']}' "
+        f"DONE v3.0 — '{result['title']}' "
         f"html={len(html):,} chars "
         f"steps={len(solution_steps)} "
         f"to_find={to_find_targets} "
