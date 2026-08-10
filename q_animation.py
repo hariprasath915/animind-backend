@@ -248,10 +248,14 @@ STAGE_TIMEOUT_BUILD = 240.0   # animation HTML builder — gemini-3.1-pro-previe
 # - build stage: STAGE_TIMEOUT_BUILD=240s per attempt, 2 attempts, 35s gap = 515s
 # - overhead: 25s
 # Worst case: 180 + 515 + 25 = 720s. Cap at 600s (10 min).
+# BUG2 FIX: Accurate pipeline timeout calculation.
+# Happy path: concurrent stages (180s) + build (240s) + overhead (20s) = 440s
+# Retry path:  440s + retry_gap (35s) + build_retry (240s) = 715s
+# Old cap of 600s made the retry path always timeout. Raise to 750s.
 PIPELINE_TIMEOUT = min(
-    max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD * 2 + 35.0 + 25.0,
-    600.0
-)  # = 600s
+    max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD * 2 + 35.0 + 35.0,
+    750.0
+)  # = 750s
 
 
 def _err_msg(e: BaseException) -> str:
@@ -812,7 +816,8 @@ class GivenValuesExtractor:
 #  MODULE 2.7 — LargeInputPreprocessor
 # ===========================================================================
 class LargeInputPreprocessor:
-    COMPRESS_THRESHOLD = 600
+    COMPRESS_THRESHOLD = 400   # was 600 — fire earlier so long questions
+                               # are always cleaned before hitting Gemini
     HARD_LIMIT = 2000
     _MCQ_LINE_RE = re.compile(
         r'^\s*(?:\([A-Da-d1-4]\)|[A-Da-d1-4][.)]\s|Option\s*[A-D1-4]\s*[:.])',
@@ -1363,7 +1368,7 @@ class GeminiSolutionGenerator:
         QAnimLogger.info("GeminiSolution", f"Generating solution via {GEMINI_MODEL}...")
         user_prompt = (
             f"Solve this question step by step:\n\n"
-            f"QUESTION: {question[:800]}\n\n"
+            f"QUESTION: {question[:1500]}\n\n"
             f"Return ONLY valid JSON — no markdown, no preamble, no explanation. "
             f"Start your response with {{ and end with }}."
         )
@@ -2258,22 +2263,27 @@ PREV_STEP_JS_MODULE = r"""
     if(nb)nb.style.display='inline-block';
   };
 
-  // Piggyback on applyStep — every path that changes the step
-  // (nextStep, resetAnim, prevStep itself) funnels through it, so wrapping
-  // it once keeps the Previous button's enabled/disabled state correct
-  // regardless of which of those triggered the change.
-  var _origApplyPrev=window.applyStep;
-  if(typeof _origApplyPrev==='function'){
-    window.applyStep=function(idx){
-      _origApplyPrev(idx);
-      _updateBtn();
-    };
-  }
-
+  // BUG3 FIX: Wrap applyStep AFTER DOMContentLoaded so Gemini's main
+  // <script> (which defines window.applyStep) has always run first,
+  // regardless of script order in the HTML. The old approach wrapped at
+  // module-init time which raced against the main script and silently
+  // skipped the wrap when it lost — making prevStep update currentStep
+  // but never call applyStep, so the SVG/UI never actually changed.
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   _onReady(function(){
+    // Rewire btn-prev click to our canonical prevStep
     var pb=document.getElementById('btn-prev');
     if(pb){pb.removeAttribute('onclick');pb.addEventListener('click',function(e){e.stopPropagation();window.prevStep();});}
+
+    // Wrap applyStep NOW — after all scripts have run — so _origApplyPrev
+    // is guaranteed to be the real function, not undefined.
+    var _origApplyPrev=window.applyStep;
+    if(typeof _origApplyPrev==='function'){
+      window.applyStep=function(idx){
+        _origApplyPrev(idx);
+        _updateBtn();
+      };
+    }
     _updateBtn();
   });
 })();
@@ -2285,6 +2295,15 @@ def inject_previous_step_button(html):
     html = re.sub(r'<style[^>]*id=["\']qanim-prevstep-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<button[^>]*id=["\']btn-prev["\'][^>]*>.*?</button>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<script[^>]*id=["\']qanim-js-prevstep["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
+
+    # BUG3 FIX B: Remove any inline prevStep() the builder generated
+    # inside the main <script>. Conflicts with injected canonical version.
+    html = re.sub(
+        r'(?m)^\s*function\s+prevStep\s*\(',
+        'function _prevStepRemoved(',
+        html,
+    )
+
 
     try:
         if '</head>' in html:
@@ -4433,13 +4452,45 @@ def inject_scene9_final_answer(html, gemini_sol, scene_script):
     QAnimLogger.ok("Scene9Injector", "Scene 9 (Final Answer modal) injected")
     return html
 
+_APPLY_STEP_SHIM_JS = """
+<script id="qanim-js-applystep-shim">
+(function(){
+  // BUG3 FIX C: Safety shim — if the builder forgot to expose window.applyStep,
+  // create one pointing at whichever step function exists. This runs at
+  // DOMContentLoaded so the main script has already defined its functions.
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  _onReady(function(){
+    if(typeof window.applyStep==='function') return; // already set — nothing to do
+    if(typeof window.goToStep==='function'){
+      window.applyStep=function(idx){ window.goToStep(idx); };
+    } else if(typeof window.updateUI==='function'){
+      window.applyStep=function(idx){
+        window.currentStep=idx;
+        window.updateUI(idx);
+      };
+    }
+    // Also expose currentStep if the builder used a local var instead of window.currentStep
+    // (prevStep checks typeof window.currentStep === 'number')
+    if(typeof window.currentStep==='undefined'){
+      // Try to read it from a common local variable name via goToStep side-effect
+      window.currentStep=0;
+    }
+  });
+})();
+</script>
+"""
+
 def inject_nav_patch_and_scene_desc(html, scene_descriptions=None):
+    # BUG3 FIX C: inject applyStep shim BEFORE the nav patch so prevStep
+    # module always finds a working window.applyStep.
+    if '</body>' in html:
+        html = html.replace('</body>', _APPLY_STEP_SHIM_JS + '\n</body>', 1)
     injection = _NAV_PATCH_JS + '\n'
     if '</body>' in html:
         html = html.replace('</body>', injection + '\n</body>', 1)
     else:
         html += '\n' + injection
-    QAnimLogger.ok("NavPatch", "Nav patch injected")
+    QAnimLogger.ok("NavPatch", "Nav patch + applyStep shim injected")
     return html
 
 
@@ -5600,7 +5651,7 @@ class GeminiSceneAnalyzer:
         QAnimLogger.info("SceneAnalyzer", f"Analysing question via {GEMINI_MODEL}...")
         # Use .replace() instead of .format() — question text may contain
         # literal { } (e.g. set notation, LaTeX) that .format() misinterprets.
-        user_prompt = _SCENE_ANALYZER_USER.replace("{question}", question[:1200])
+        user_prompt = _SCENE_ANALYZER_USER.replace("{question}", question[:1800])
 
         # Falling straight to the generic 5-step "Setup/Given/Formula/
         # Substitute/Solution" fallback on the FIRST parse failure meant a
@@ -5973,7 +6024,7 @@ class GeminiAnimationBuilder:
 
         user_prompt = (
             _ANIMATION_BUILDER_USER
-            .replace("{question}", question[:500])
+            .replace("{question}", question[:1500])
             .replace("{scene_script}", compressed_json[:5000])
         )
 
@@ -6993,7 +7044,10 @@ async def _run_generation_pipeline(question: str) -> dict:
     animation_html = None
     for _build_attempt in range(1, 3):  # 2 total attempts
         try:
-            _candidate = await GeminiAnimationBuilder.build_async(question, scene_script)
+            # BUG1 FIX: pass ai_question (preprocessed) not raw question —
+            # raw question can be thousands of chars; builder truncates to 500
+            # which loses key data from long multi-part problems.
+            _candidate = await GeminiAnimationBuilder.build_async(ai_question, scene_script)
             # Reject obvious fallback/error pages as "failed" so we retry
             if _candidate and "Animation Could Not Render" not in _candidate and len(_candidate) > 3000:
                 animation_html = _candidate
