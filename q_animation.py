@@ -5895,16 +5895,60 @@ JAVASCRIPT RULES (CRITICAL — violations break the page)
 - NEVER put a raw apostrophe inside a single-quoted JS string. Use &#39; for primes (l&#39;, θ&#39;) and contractions (it&#39;s). One unescaped apostrophe silently kills the entire <script>.
 
 ════════════════════════════════════════════════════════════
+EMBEDDED DATA BLOCK (MANDATORY — do not skip)
+════════════════════════════════════════════════════════════
+Before </body>, embed this exact block with REAL computed values:
+
+<script type="application/json" id="__qanim_scene_data__">
+{
+  "scene_script": {
+    "title": "Problem title (max 60 chars)",
+    "topic": "ENGINEERING|PHYSICS|MATH|CHEMISTRY|BIOLOGY",
+    "final_answer": "Computed numerical answer with units",
+    "key_insight": "One memorable plain-English insight sentence",
+    "solution_steps": ["Step 1: formula", "Step 2: substitute", "Step 3: result"]
+  },
+  "solution": {
+    "given_data": [{"symbol": "k", "value": "1.5", "unit": "W/mK", "description": "Thermal conductivity"}],
+    "formulas": [{"text": "Q = (T1-T2)/R_total", "label": "Fourier Heat Law", "why": "Governs steady conduction"}],
+    "steps": ["R1 = L1/k1 = 0.15/1.5 = 0.1 m²K/W", "R_total = R1+R2+R3 = 0.6 m²K/W", "Q = 1050/0.6 = 1750 W/m²"],
+    "final_answer": "Q = 1750 W/m²",
+    "final_answer_unit": "W/m²",
+    "key_insight": "Insulating layer dominates thermal resistance.",
+    "variable_meanings": [{"symbol": "Q", "meaning": "Heat flux per unit area", "unit": "W/m²"}],
+    "formula_label": "Fourier Law of Heat Conduction",
+    "formula_why": "Applies to steady-state multilayer conduction"
+  },
+  "glossary_terms": [
+    {"term": "Thermal Resistance", "definition": "Opposition to heat flow; R = L/(kA)"}
+  ]
+}
+</script>
+
+Replace ALL placeholder values above with REAL values computed from the question.
+This block feeds the Formula (Step 7), Substitution (Step 8), and Final Answer (Step 9) modals.
+Do NOT omit it. Do NOT leave placeholder text.
+
+════════════════════════════════════════════════════════════
 OUTPUT
 ════════════════════════════════════════════════════════════
-Return ONLY the complete <!DOCTYPE html>...</html> as raw text. No markdown, no fences, no JSON."""
+Return ONLY the complete <!DOCTYPE html>...</html> as raw text. No markdown, no fences, no JSON.
+The __qanim_scene_data__ block must be inside the HTML, before </body>."""
 
-_ANIMATION_BUILDER_USER = """Generate the complete, polished animation HTML page for this scene script. This is a premium educational product — quality matters at every level.
+_ANIMATION_BUILDER_USER = """Generate the complete, polished 9-step animation HTML page for this engineering/science question. This is a premium educational product — quality matters at every level.
 
-ORIGINAL QUESTION: {question}
+QUESTION TO ANIMATE:
+{question}
 
-SCENE SCRIPT:
+TOPIC HINT (use to set SVG style and physics type):
 {scene_script}
+
+WHAT TO DO:
+1. Read the question carefully. Identify all given values, the unknown to find, and the governing physics.
+2. Solve the problem yourself — compute the actual numerical answer step by step.
+3. Design a 6-step SVG animation that reveals the physical setup layer by layer (Steps 1-6).
+4. Embed the solution data in the __qanim_scene_data__ JSON block (see EMBEDDED DATA BLOCK rule).
+5. Steps 7/8/9 (Formula, Substitution, Final Answer) are auto-injected — include their dots but NOT their modal content.
 
 ════════════════════════════════════════════════════════════
 CRITICAL REMINDERS FOR THIS OUTPUT
@@ -6964,27 +7008,37 @@ def _inject_fallback_warning_banner(html: str) -> str:
 
 async def _run_generation_pipeline(question: str) -> dict:
     """
-    PIPELINE v1.0 (Gemini-only):
+    PIPELINE v2.0 (single-call):
 
-    Stage -1: LargeInputPreprocessor (sync, regex-based)
+    Stage -1: LargeInputPreprocessor (sync, regex — no API)
     Stage  0: ToFind + GivenValues extraction (sync, no AI)
-    Stage  A: GeminiSceneAnalyzer (Gemini 2.5 Pro)  ─┐ concurrent
-    Stage  B1: GeminiSolutionGenerator (Gemini 2.5 Pro) │
-    Stage  B2: GeminiGlossaryAnalyzer (Gemini 2.5 Pro)  ┘
-    Stage  C: GeminiAnimationBuilder (Gemini 2.5 Pro) — main HTML generation
-    Post:  Inject all panels (unchanged from v0.6)
+    Stage  C: GeminiAnimationBuilder — ONE Gemini call that:
+              • Generates all 6 SVG animation steps (1-6)
+              • Solves the problem and embeds solution data in
+                <script id="__qanim_scene_data__"> JSON block
+              • Includes dot placeholders for Steps 7/8/9 (modals)
+    Post:   Extract __qanim_scene_data__ → build scene_script + gemini_sol
+            Inject Scene 6 (Formula), Scene 7 (Substitution), Scene 9
+            (Final Answer) modals using the extracted data
+            Inject all other panels unchanged
+
+    Removed: Stage A (SceneAnalyzer), Stage B1 (SolutionGenerator),
+             Stage B2 (GlossaryAnalyzer) — were 3 extra Gemini calls.
+             The builder now handles everything in a single generation.
     """
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v1.0 (Gemini) — '{short_q}'")
+    QAnimLogger.info("Pipeline", f"START v2.0 single-call — '{short_q}'")
 
-    # Stage -1: preprocess
+    # Stage -1: preprocess (no API call — pure regex trim/clean)
     try:
         ai_question = LargeInputPreprocessor.compress(question)
     except Exception as e:
         QAnimLogger.warn("Pipeline", f"Preprocessor error: {e}")
         ai_question = question[:LargeInputPreprocessor.HARD_LIMIT]
 
-    # Stage 0: sync extraction (always on raw question)
+    # Stage 0: sync extraction (no API calls).
+    # These are kept because inject_to_find_system and inject_answer_box_panel
+    # need them, and they are instant regex operations with zero Gemini cost.
     to_find_targets = ToFindExtractor.extract(question)
     given_cards     = GivenValuesExtractor.extract(question)
     n_scenes        = _detect_scene_count(question)
@@ -6993,67 +7047,40 @@ async def _run_generation_pipeline(question: str) -> dict:
     QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
     QAnimLogger.info("Pipeline", f"Category: {category}, n_scenes: {n_scenes}")
 
-    # Stages A + B1 + B2: run concurrently
-    QAnimLogger.info("Pipeline", "Launching concurrent Gemini analysis stages...")
-    scene_script_task  = asyncio.ensure_future(GeminiSceneAnalyzer.analyze_async(ai_question))
-    solution_task      = asyncio.ensure_future(GeminiSolutionGenerator.generate_async(ai_question))
-    glossary_task      = asyncio.ensure_future(GeminiGlossaryAnalyzer.analyze_async(ai_question))
-
-    raw_results = await asyncio.gather(
-        scene_script_task, solution_task, glossary_task,
-        return_exceptions=True,
-    )
-
-    # Safely unpack — any task that raised an exception returns the Exception
-    # object instead of a result. Replace failures with safe fallbacks so the
-    # rest of the pipeline can always proceed.
-    scene_script = raw_results[0] if isinstance(raw_results[0], dict) else GeminiSceneAnalyzer._fallback_script(ai_question)
-    gemini_sol   = raw_results[1] if isinstance(raw_results[1], dict) else dict(GeminiSolutionGenerator._FALLBACK)
-    glossary_result = raw_results[2] if isinstance(raw_results[2], dict) else {"terms": []}
-
-    if isinstance(raw_results[0], Exception):
-        QAnimLogger.error("Pipeline", f"SceneAnalyzer task failed: {raw_results[0]} — using fallback script")
-    if isinstance(raw_results[1], Exception):
-        QAnimLogger.error("Pipeline", f"SolutionGenerator task failed: {raw_results[1]} — using fallback solution")
-    if isinstance(raw_results[2], Exception):
-        QAnimLogger.error("Pipeline", f"GlossaryAnalyzer task failed: {raw_results[2]} — skipping glossary")
-
-    QAnimLogger.ok("Pipeline", f"Analysis stages complete — {len(scene_script.get('steps',[]))} steps, {len(gemini_sol.get('steps',[]))} solution steps")
-
-    # Merge solution into scene script for completeness
-    if gemini_sol.get("final_answer") and not scene_script.get("final_answer"):
-        scene_script["final_answer"] = gemini_sol["final_answer"]
-    if gemini_sol.get("key_insight") and not scene_script.get("key_insight"):
-        scene_script["key_insight"] = gemini_sol["key_insight"]
-    if gemini_sol.get("steps") and not scene_script.get("solution_steps"):
-        scene_script["solution_steps"] = gemini_sol["steps"]
-
-    final_answer = scene_script.get("final_answer") or gemini_sol.get("final_answer") or ""
-    key_insight  = scene_script.get("key_insight")  or gemini_sol.get("key_insight")  or ""
-
-    # Stage C: build main animation HTML
-    # FIX: Pipeline-level retry for the build stage — if the first attempt
-    # fails (timeout, overload, empty HTML), wait 30s and try once more
-    # before giving up. Scene/solution are already cached so only this
-    # stage needs repeating. This catches the most common failure: Gemini
-    # is momentarily overloaded when the build request arrives (the small
-    # concurrent stages A/B1/B2 that ran before it may have hit the same
-    # overload window), but recovers within 30-60s.
+    # ── SINGLE GEMINI CALL ───────────────────────────────────────────────
+    # GeminiAnimationBuilder generates the complete 9-step animation in one
+    # call. Steps 1-6 are SVG animation layers; Steps 7/8/9 (Formula,
+    # Substitution, Final Answer) are modal panels auto-injected afterwards.
+    # The builder embeds solution data in a <script id="__qanim_scene_data__">
+    # JSON block so the modal injectors have formula/step/answer content
+    # without any extra API calls.
+    # Stages A (SceneAnalyzer), B1 (SolutionGenerator), B2 (GlossaryAnalyzer)
+    # have been removed — the builder handles everything in one generation.
+    # ─────────────────────────────────────────────────────────────────────
     import time as _pipeline_time
-    QAnimLogger.info("Pipeline", "Building main animation HTML...")
+    QAnimLogger.info("Pipeline", "Building animation HTML (single Gemini call)...")
+
+    # Pass a minimal seed so the builder knows the topic/category.
+    # The builder generates the full scene structure from the question itself.
+    _seed_scene = {
+        "title": ai_question[:60],
+        "topic": category,
+        "steps": [],
+        "solution_steps": [],
+        "final_answer": "",
+        "key_insight": "",
+        "svg_components": {},
+    }
+
     animation_html = None
-    for _build_attempt in range(1, 3):  # 2 total attempts
+    for _build_attempt in range(1, 3):  # 2 total attempts (retry on API error only)
         try:
-            # BUG1 FIX: pass ai_question (preprocessed) not raw question —
-            # raw question can be thousands of chars; builder truncates to 500
-            # which loses key data from long multi-part problems.
-            _candidate = await GeminiAnimationBuilder.build_async(ai_question, scene_script)
-            # Reject obvious fallback/error pages as "failed" so we retry
+            _candidate = await GeminiAnimationBuilder.build_async(ai_question, _seed_scene)
             if _candidate and "Animation Could Not Render" not in _candidate and len(_candidate) > 3000:
                 animation_html = _candidate
                 break
             else:
-                QAnimLogger.warn("Pipeline", f"Build attempt {_build_attempt}: got fallback/error page — treating as failure")
+                QAnimLogger.warn("Pipeline", f"Build attempt {_build_attempt}: got fallback/short HTML — retrying")
                 if _build_attempt < 2:
                     _pipeline_time.sleep(35)
         except Exception as e:
@@ -7069,6 +7096,44 @@ async def _run_generation_pipeline(question: str) -> dict:
             "(the model may be overloaded, or the response was unusually large). "
             "This is a timeout, not a code error \u2014 please try again."
         )
+
+    # ── Extract embedded solution data from the generated HTML ───────────
+    # The builder embeds <script id="__qanim_scene_data__"> with scene_script
+    # and solution JSON so Scene 6/7/9 injectors have real formula/answer
+    # content without any extra Gemini calls.
+    scene_script = {}
+    gemini_sol   = dict(GeminiSolutionGenerator._FALLBACK)
+    glossary_result = {"terms": []}
+    try:
+        _data_match = re.search(
+            r'<script[^>]*id=["\']__qanim_scene_data__["\'][^>]*>\s*(\{.*?\})\s*</script>',
+            animation_html, re.DOTALL | re.IGNORECASE
+        )
+        if _data_match:
+            _embedded = json.loads(_data_match.group(1))
+            scene_script = _embedded.get("scene_script") or {}
+            _sol         = _embedded.get("solution") or {}
+            if _sol:
+                gemini_sol = {
+                    "given_data":        _sol.get("given_data", []),
+                    "formulas":          _sol.get("formulas", []),
+                    "steps":             _sol.get("steps", []),
+                    "final_answer":      _sol.get("final_answer", ""),
+                    "final_answer_unit": _sol.get("final_answer_unit", ""),
+                    "key_insight":       _sol.get("key_insight", ""),
+                    "variable_meanings": _sol.get("variable_meanings", []),
+                    "formula_label":     _sol.get("formula_label", ""),
+                    "formula_why":       _sol.get("formula_why", ""),
+                }
+            glossary_result = {"terms": _embedded.get("glossary_terms", [])}
+            QAnimLogger.ok("Pipeline", f"Embedded data extracted: {len(scene_script.get('steps', []))} scene steps, {len(gemini_sol.get('steps', []))} solution steps")
+        else:
+            QAnimLogger.warn("Pipeline", "No __qanim_scene_data__ block in HTML — Scene 6/7/9 modals will use graceful fallbacks")
+    except Exception as _ex:
+        QAnimLogger.warn("Pipeline", f"Embedded data parse failed: {_ex} — using fallback dicts")
+
+    final_answer = scene_script.get("final_answer") or gemini_sol.get("final_answer") or ""
+    key_insight  = scene_script.get("key_insight")  or gemini_sol.get("key_insight")  or ""
 
     # Also build concept animation (same HTML is used for both)
     concept_html = animation_html
@@ -7192,7 +7257,7 @@ async def _run_generation_pipeline(question: str) -> dict:
         "glossary_terms":  glossary_result.get("terms", []),
         "category":        category,
         "n_scenes":        n_scenes,
-        "engine_version":  "v1.2-gemini",
+        "engine_version":  "v2.0-single-call",
         "render_status":   "ok" if injection_report["all_ok"] else "panels_incomplete",
         "panel_verification": injection_report,
     }
