@@ -338,75 +338,24 @@ class PasskeyVerifyRequest(BaseModel):
     passkey: str   # plain passkey submitted by the user (8–9 chars)
 
 
+class PasskeyGrantRequest(BaseModel):
+    passkey: str   # the passkey that was verified (stored in passkey_access)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# PASSKEY ENDPOINTS
+# PASSKEY ENDPOINTS  (v3 — per-user passkey assignment)
 # One passkey unlocks both AI Creator (animind) and Q Anim (question).
-# Passkeys are stored as SHA-256 hashes in `mode_passkeys` (no mode column).
-# Access grants are recorded in `passkey_access` by user_id only.
-# The plain passkey is NEVER stored or logged.
+# Passkeys are stored in `admin_passkeys` (plain text + SHA-256 hash).
+# Access grants are recorded in `passkey_access` with full user identity.
+# Each passkey can only be claimed by ONE user (UNIQUE passkey_id constraint).
 # ══════════════════════════════════════════════════════════════════════════════
 
-
-@app.post("/auth/verify-passkey")
-async def verify_passkey(request: PasskeyVerifyRequest):
+def _pk_get_user(request: Request):
     """
-    Verify the typed passkey for the "Create with AI" gate.
-
-    Accepts  : { passkey: str }
-    Returns  : { ok: bool }  — true on match, false on mismatch
-    HTTP 400 : passkey length not 8–9 characters
-    HTTP 500 : unexpected Supabase error
+    Extract and verify the Supabase JWT from the Authorization header.
+    Returns (db, user_id, user_name, user_email).
     """
-    passkey = (request.passkey or "").strip()
-
-    # ── Validate passkey length (8–9 characters) ────────────────────────
-    if len(passkey) < 8 or len(passkey) > 9:
-        raise HTTPException(
-            status_code=400,
-            detail="Passkey must be exactly 8 or 9 characters.",
-        )
-
-    # ── Hash the submitted passkey (SHA-256) ────────────────────────────
-    passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
-
-    # ── Query Supabase — any matching row in mode_passkeys ───────────────
-    try:
-        from auth_utils import get_supabase  # pyrefly: ignore [missing-import]
-        db = get_supabase()   # service-role client — bypasses RLS
-        result = (
-            db.table("mode_passkeys")
-            .select("id")
-            .eq("passkey_hash", passkey_hash)
-            .limit(1)
-            .execute()
-        )
-        matched = bool(result.data)
-    except Exception as e:
-        print(f"[PASSKEY] ⚠ Supabase error during verification: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Passkey verification failed due to a server error. Please try again.",
-        )
-
-    if matched:
-        print("[PASSKEY] ✅ Access granted")
-    else:
-        print("[PASSKEY] ❌ Access denied (wrong passkey)")
-
-    return {"ok": matched}
-
-
-# ── Grant access: record user_id in passkey_access ────────────────────────────
-@app.post("/auth/passkey/grant")
-async def passkey_grant(request: Request):
-    """
-    Record that the authenticated user has been granted "Create with AI" access.
-    Called by the frontend after a successful /auth/verify-passkey.
-
-    Auth    : Authorization: Bearer <jwt>  (required)
-    Returns : { "granted": true }
-    """
-    from auth_utils import get_supabase  # pyrefly: ignore
+    from auth_utils import get_supabase  # pyrefly: ignore [missing-import]
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -418,17 +367,171 @@ async def passkey_grant(request: Request):
     try:
         db = get_supabase()
         user_res = db.auth.get_user(token)
-        user_id = str(user_res.user.id)
+        user = user_res.user
+        if not user:
+            raise Exception("No user returned")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired token.")
 
+    user_id    = str(user.id)
+    user_email = user.email or ""
+    meta       = user.user_metadata or {}
+    user_name  = meta.get("name") or meta.get("full_name") or user_email
+    return db, user_id, user_name, user_email
+
+
+@app.post("/auth/verify-passkey")
+async def verify_passkey(request: Request, body: PasskeyVerifyRequest):
+    """
+    Verify the typed passkey for the "Create with AI" gate.
+
+    Flow:
+      1. Authenticate the user from the JWT.
+      2. If the user already has a grant → return {ok:true, already_granted:true}.
+      3. Hash + look up admin_passkeys.
+      4. Check if another user has claimed this passkey → {ok:false, detail:"already_assigned"}.
+      5. Otherwise → {ok:true, already_granted:false}.
+
+    Accepts  : { passkey: str }  +  Authorization: Bearer <jwt>
+    Returns  : { ok: bool, already_granted?: bool, detail?: str }
+    HTTP 400 : passkey length not 8–9 characters
+    HTTP 401 : missing / invalid JWT
+    HTTP 500 : unexpected Supabase error
+    """
+    passkey = (body.passkey or "").strip()
+
+    if len(passkey) < 8 or len(passkey) > 9:
+        raise HTTPException(
+            status_code=400,
+            detail="Passkey must be exactly 8 or 9 characters.",
+        )
+
+    db, user_id, user_name, user_email = _pk_get_user(request)
+
     try:
-        db.table("passkey_access").upsert(
-            {"user_id": user_id},
-            on_conflict="user_id",
-        ).execute()
-        print(f"[PASSKEY] ✅ Grant recorded for user={user_id[:8]}…")
+        # Step 1: User already granted? Skip everything.
+        existing = (
+            db.table("passkey_access")
+            .select("id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            print(f"[PASSKEY] ✅ Returning user={user_id[:8]}… already granted")
+            return {"ok": True, "already_granted": True}
+
+        # Step 2: Look up passkey hash in admin_passkeys
+        passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
+        pk_result = (
+            db.table("admin_passkeys")
+            .select("id, passkey")
+            .eq("passkey_hash", passkey_hash)
+            .limit(1)
+            .execute()
+        )
+        if not pk_result.data:
+            print(f"[PASSKEY] ❌ Wrong passkey from user={user_id[:8]}…")
+            return {"ok": False}
+
+        passkey_id = pk_result.data[0]["id"]
+
+        # Step 3: Is this passkey already claimed by another user?
+        claimed = (
+            db.table("passkey_access")
+            .select("user_id")
+            .eq("passkey_id", passkey_id)
+            .limit(1)
+            .execute()
+        )
+        if claimed.data and claimed.data[0]["user_id"] != user_id:
+            print(f"[PASSKEY] ❌ Passkey already assigned — denied for user={user_id[:8]}…")
+            return {"ok": False, "detail": "already_assigned"}
+
+        print(f"[PASSKEY] ✅ Passkey valid for user={user_id[:8]}… — awaiting grant call")
+        return {"ok": True, "already_granted": False}
+
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"[PASSKEY] ⚠ Supabase error during verification: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Passkey verification failed due to a server error. Please try again.",
+        )
+
+
+# ── Grant access: record user identity + passkey in passkey_access ────────────
+@app.post("/auth/passkey/grant")
+async def passkey_grant(request: Request, body: PasskeyGrantRequest):
+    """
+    Claim a passkey for the authenticated user.
+    Stores user_id, user_name, user_email, passkey_id (FK), passkey_used.
+    Uses INSERT (not upsert) — the UNIQUE(passkey_id) DB constraint rejects
+    concurrent claims atomically.
+
+    Auth    : Authorization: Bearer <jwt>  (required)
+    Body    : { passkey: str }
+    Returns : { "granted": true }
+    HTTP 409 : passkey already claimed by another user
+    """
+    passkey = (body.passkey or "").strip()
+    if not passkey:
+        raise HTTPException(status_code=400, detail="passkey is required.")
+
+    db, user_id, user_name, user_email = _pk_get_user(request)
+
+    try:
+        # Idempotency: user already has a grant
+        existing = (
+            db.table("passkey_access")
+            .select("id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            print(f"[PASSKEY] ℹ Grant already exists for user={user_id[:8]}…")
+            return {"granted": True}
+
+        # Resolve passkey_id
+        passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
+        pk_result = (
+            db.table("admin_passkeys")
+            .select("id, passkey")
+            .eq("passkey_hash", passkey_hash)
+            .limit(1)
+            .execute()
+        )
+        if not pk_result.data:
+            raise HTTPException(status_code=400, detail="Invalid passkey.")
+
+        passkey_row  = pk_result.data[0]
+        passkey_id   = passkey_row["id"]
+        passkey_text = passkey_row["passkey"]
+
+        # Atomic insert — DB enforces UNIQUE(user_id) and UNIQUE(passkey_id)
+        db.table("passkey_access").insert({
+            "user_id":      user_id,
+            "user_name":    user_name,
+            "user_email":   user_email,
+            "passkey_id":   passkey_id,
+            "passkey_used": passkey_text,
+        }).execute()
+        print(
+            f"[PASSKEY] ✅ Grant recorded — user={user_id[:8]}…  "
+            f"email={user_email}  passkey_id={passkey_id}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_str = str(e)
+        if "23505" in err_str or "duplicate" in err_str.lower():
+            print(f"[PASSKEY] ❌ Concurrent claim rejected for user={user_id[:8]}…")
+            raise HTTPException(
+                status_code=409,
+                detail="This passkey has already been claimed by another user.",
+            )
         print(f"[PASSKEY] ⚠ Grant insert failed: {e}")
         raise HTTPException(status_code=500, detail="Could not record access grant.")
 
@@ -444,19 +547,7 @@ async def passkey_check(request: Request):
     Auth    : Authorization: Bearer <jwt>  (required)
     Returns : { "granted": true | false }
     """
-    from auth_utils import get_supabase  # pyrefly: ignore
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    token = auth_header.split(" ", 1)[1].strip()
-
-    try:
-        db = get_supabase()
-        user_res = db.auth.get_user(token)
-        user_id = str(user_res.user.id)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token.")
+    db, user_id, _name, _email = _pk_get_user(request)
 
     try:
         result = (
@@ -469,10 +560,112 @@ async def passkey_check(request: Request):
         granted = bool(result.data)
     except Exception as e:
         print(f"[PASSKEY] ⚠ Access check failed: {e}")
-        # Fail open — if DB is unreachable, modal will appear and user can verify again
         granted = False
 
     return {"granted": granted}
+
+
+# ── Admin: add a new passkey ──────────────────────────────────────────────────
+@app.post("/admin/passkeys/add")
+async def admin_add_passkey(request: Request, body: PasskeyGrantRequest):
+    """
+    Add a new passkey to admin_passkeys.
+
+    Auth    : X-Admin-Token: <ADMIN_SECRET_TOKEN>  (required)
+    Body    : { passkey: str }
+    Returns : { id, passkey, label, created_at }
+    """
+    _admin_token = os.getenv("ADMIN_SECRET_TOKEN", "")
+    if not _admin_token or request.headers.get("X-Admin-Token", "") != _admin_token:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token header.")
+
+    from auth_utils import get_supabase  # pyrefly: ignore [missing-import]
+
+    passkey = (body.passkey or "").strip()
+    if len(passkey) < 8 or len(passkey) > 9:
+        raise HTTPException(status_code=400, detail="Passkey must be exactly 8 or 9 characters.")
+
+    passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
+
+    try:
+        db = get_supabase()
+        result = db.table("admin_passkeys").insert({
+            "passkey":      passkey,
+            "passkey_hash": passkey_hash,
+        }).execute()
+        row = result.data[0] if result.data else {}
+        print(f"[PASSKEY-ADMIN] ✅ New passkey added")
+        return {
+            "id":         row.get("id"),
+            "passkey":    row.get("passkey"),
+            "label":      row.get("label"),
+            "created_at": row.get("created_at"),
+        }
+    except Exception as e:
+        err_str = str(e)
+        if "23505" in err_str or "duplicate" in err_str.lower():
+            raise HTTPException(status_code=409, detail="A passkey with that value already exists.")
+        print(f"[PASSKEY-ADMIN] ⚠ Insert failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not add passkey.")
+
+
+# ── Admin: list all passkeys with claim status ────────────────────────────────
+@app.get("/admin/passkeys/list")
+async def admin_list_passkeys(request: Request):
+    """
+    List all passkeys in admin_passkeys with claim status.
+
+    Auth    : X-Admin-Token: <ADMIN_SECRET_TOKEN>  (required)
+    Returns : { passkeys: [ { id, passkey, label, created_at, claimed, claimed_by? } ] }
+    """
+    _admin_token = os.getenv("ADMIN_SECRET_TOKEN", "")
+    if not _admin_token or request.headers.get("X-Admin-Token", "") != _admin_token:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token header.")
+
+    from auth_utils import get_supabase  # pyrefly: ignore [missing-import]
+
+    try:
+        db = get_supabase()
+        pk_res = (
+            db.table("admin_passkeys")
+            .select("id, passkey, label, created_at")
+            .order("created_at")
+            .execute()
+        )
+        acc_res = (
+            db.table("passkey_access")
+            .select("passkey_id, user_id, user_name, user_email, granted_at")
+            .execute()
+        )
+        claims = {
+            row["passkey_id"]: row
+            for row in (acc_res.data or [])
+            if row.get("passkey_id")
+        }
+        result = []
+        for pk in (pk_res.data or []):
+            pk_id = pk["id"]
+            entry = {
+                "id":         pk_id,
+                "passkey":    pk["passkey"],
+                "label":      pk.get("label"),
+                "created_at": pk.get("created_at"),
+                "claimed":    pk_id in claims,
+            }
+            if pk_id in claims:
+                claim = claims[pk_id]
+                entry["claimed_by"] = {
+                    "user_id":    claim.get("user_id"),
+                    "user_name":  claim.get("user_name"),
+                    "user_email": claim.get("user_email"),
+                    "granted_at": claim.get("granted_at"),
+                }
+            result.append(entry)
+        print(f"[PASSKEY-ADMIN] Listed {len(result)} passkeys")
+        return {"passkeys": result}
+    except Exception as e:
+        print(f"[PASSKEY-ADMIN] ⚠ List failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve passkeys.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI GENERATION ENDPOINTS
