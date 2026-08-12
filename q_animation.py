@@ -2,53 +2,33 @@
 q_animation.py  --  QAnim Question Animation Generator  v2.0
 =============================================================
 
-v2.0 -- 9-STEP WORKFLOW ENFORCEMENT (built on v1.1 Gemini rewrite):
-
-  NEW IN v2.0:
-  - Every animation now enforces exactly 9 steps:
-      Steps 1-6: Animated SVG reveal (problem setup, one given per step)
-      Step 7:    Formula modal — formula + coloured variable cards
-      Step 8:    Substitution modal — step-by-step with system diagram
-      Step 9:    Final Answer modal (NEW) — substitution chain + green
-                 final box + key insight bar (matches reference HTML)
-  - GeminiAnimationBuilder: enforces 9 dots, correct nextStep() flow
-  - inject_scene9_final_answer(): new injection function
-  - PanelInjectionManager: Scene9 wired into all dispatch tables
-
-v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
+v2.0 -- STEPS-ONLY PIPELINE (removes Stage A & Stage B):
 
   WHAT CHANGED:
-  - ALL generation (analysis, scene scripting, HTML animation) now uses
-    Gemini 3.1 Pro Preview exclusively.
-  - Two-stage generation pipeline:
-      Stage B: GeminiAnimationBuilder — turns the scene script into a
-               complete self-contained HTML animation page following the
-               reference output style (light, friendly dashboard, SVG canvas,
-               step-by-step reveal with blur/focus, control panel).
-  - Animation pattern follows the reference output exactly:
-      * Light, friendly dashboard UI (#eef2f9 background)
-      * SVG layers (svg-layer class) for each component
-      * blur-shield rect for focus highlighting
-      * stepsData array driving applyStep()/nextStep()/resetAnim()
-      * Component-by-component reveal with motion (rotation, translation,
-        dashoffset trace) before labels/annotations appear
-      * Control panel: dots, info-box (title + badges + description), Next/Restart buttons
-      * Question banner showing the original question
+  - Stage A (GeminiSceneAnalyzer) removed — no SVG scene script generation.
+  - Stage B (GeminiAnimationBuilder) removed — no SVG canvas animation HTML.
+  - Pipeline now generates Steps 1–9 for any user question using:
+      • GeminiSolutionGenerator  — produces structured solution data (given,
+        formula, variable meanings, substitution steps, final answer).
+      • GeminiGlossaryAnalyzer   — identifies difficult technical words.
+      • A clean minimal HTML page is built as the base (question banner +
+        content area, no SVG canvas).
+      • All step panels (ToFind, AnswerBox, Notes, ControlsBar, Glossary,
+        Scene 6 Main Formula, Scene 7 Solution Summary, Math Typography)
+        are injected on top through the Panel Reliability Engine.
 
   WHAT DID NOT CHANGE:
   - All post-processing injection functions (ToFind, AnswerBox,
     Notes, ControlsBar, Glossary, StepController, NavPatch)
-  - Scene 6 (Main Formula) / Scene 7 (Substitution) teach the formula and
-    walk through solving in-canvas, one piece at a time — no separate
-    scrollable panel (the old StepAnswer module was retired for this).
+  - Scene 6 (Main Formula) / Scene 7 (Solution Summary) panels.
   - All extraction utilities (ToFindExtractor, GivenValuesExtractor,
-    LargeInputPreprocessor, HaikuSolutionGenerator, SolutionGenerator, SceneAnalyzer all removed)
+    LargeInputPreprocessor, HaikuSolutionGenerator replaced by GeminiSolutionGenerator)
   - All validation (GenerationValidator, HtmlSanitizer)
   - All panel CSS/DOM/JS constants
   - The public entry point: generate_question_animation(question)
   - The result dict structure (animation_code, concept_animation_code, etc.)
 
-  GEMINI MODEL: gemini-3.1-pro-preview for ALL stages (including build).
+  GEMINI MODEL: gemini-3.1-pro-preview for ALL stages.
   ANTHROPIC:    client kept alive only for injected panel JS that references it
                 (ControlsBar etc. are pure HTML/JS, no API calls).
                 If ANTHROPIC_API_KEY is missing the pipeline still works fully.
@@ -121,8 +101,6 @@ except Exception as _anthropic_init_err:
 # Gemini client
 # ---------------------------------------------------------------------------
 GEMINI_MODEL = "gemini-3.1-pro-preview"
-# Build stage uses the same model as all other stages.
-GEMINI_BUILD_MODEL = "gemini-3.1-pro-preview"
 _gemini_client = None
 _GEMINI_DISABLED_REASON = None
 
@@ -154,7 +132,95 @@ MAX_TOK_CONCEPT = 16000
 
 # ---------------------------------------------------------------------------
 # Hard timeout budgets — every Gemini-calling stage MUST return within these
-# No stage/pipeline timeouts — removed. Gemini runs until complete.
+# windows, one way or another (real result OR a clean fallback/exception).
+# Without this, a single slow/overloaded Gemini call had no ceiling at all:
+# retry sleeps (up to 155s) plus an uncapped network call could make one
+# stage alone run for minutes with nothing to cut it off. That unbounded
+# worst case is the actual cause of "taking much longer than expected" --
+# it doesn't happen every time, only when Gemini is slow, which is why it
+# felt random/recurring instead of a clean reproducible bug.
+#
+# ROOT CAUSE OF THE "Animation build error:" (blank reason) FALLBACK:
+# gemini-3.1-pro-preview is a Gemini-3-generation model, and Google's own
+# docs state thinking CANNOT be disabled for Gemini 3 / 3.1 Pro — even with
+# thinking_level="low" every call still pays a mandatory reasoning-token
+# cost before the visible output starts streaming. The animation builder
+# asks for a single ~32k-token, fully self-contained HTML page in one shot
+# (unlike the "small" stages, which return a few hundred tokens of JSON),
+# so its realistic latency is far higher than the other stages. The old
+# STAGE_TIMEOUT_BUILD=75s budget was simply too tight for that combination,
+# so builds routinely hit asyncio.TimeoutError. That exception's message is
+# the empty string by default, so the pipeline's `except Exception as e`
+# handler produced literally "Animation build error: " with nothing after
+# the colon — which is exactly the blank box users were seeing. Both the
+# timing AND the blank-message bug are fixed below (see _err_msg()).
+# ---------------------------------------------------------------------------
+STAGE_TIMEOUT_SMALL = 180.0   # classify/solution/glossary calls. Raised from 90s to
+                              # 180s: the inner _call_gemini retry ladder uses
+                              # RETRY_DELAYS=[10,25,50] (85s of sleeping) plus up to
+                              # 3 actual API calls (~30s each), so 90s was cutting off
+                              # all retries before they could succeed on the 2nd question.
+                              # -> 90s because the retry ladder inside
+                              # GeminiSolutionGenerator._call_gemini (up to
+                              # 2 outer attempts x 3 inner retries with
+                              # 4s/8s/15s backoff = ~54s worst case) could
+                              # exceed the old 40s budget on a single 429/503,
+                              # causing generate_async() to hit asyncio.wait_for's
+                              # timeout and silently return _FALLBACK even
+                              # though the retry would have succeeded shortly
+                              # after. 90s gives the full retry ladder room
+                              # to finish before we give up.
+STAGE_TIMEOUT_SCENE = 150.0   # scene-analysis (the stage that decides WHAT
+                              # the main animation actually shows — the real
+                              # physical scene, e.g. charges/fields/forces
+                              # being placed step by step, vs. a placeholder).
+                              # This stage internally retries up to 3 times,
+                              # each asking a thinking-locked Gemini 3.1 Pro
+                              # model for up to 16,384 tokens of JSON — that
+                              # does NOT fit in the 40s budget shared by the
+                              # lightweight stages. When it timed out, the
+                              # pipeline silently fell back to a generic,
+                              # non-physical "Setup/Given/Formula/Substitute/
+                              # Solution" placeholder script instead of a real
+                              # step-by-step scene — exactly the "not
+                              # step-by-step like the reference" symptom this
+                              # constant fixes. Same class of bug as the
+                              # STAGE_TIMEOUT_BUILD fix below — give a stage
+                              # that does real multi-attempt work its own
+                              # realistic budget instead of sharing a tight one.
+                              # NOTE: 100.0 was tried first but was STILL not
+                              # enough — observed logs showed attempt1 (33s) +
+                              # attempt2 (36s) = 69s elapsed, then the 100s
+                              # timeout fired while attempt3 was still running
+                              # in the background (finishing at ~157s total),
+                              # so the async wrapper raced ahead and returned
+                              # its own fallback before the real 3rd attempt —
+                              # which had a chance to succeed — ever got to
+                              # report back. 150s gives 3 attempts a realistic
+                              # ~50s each, matching STAGE_TIMEOUT_BUILD's
+                              # single-shot budget for a similarly heavy call.
+STAGE_TIMEOUT_BUILD = 150.0   # animation HTML builder — one large, mandatory-
+                              # thinking, ~32k-token single-shot generation.
+                              # Doubled from 75s: that budget was measured
+                              # against ordinary (non-thinking-locked) models
+                              # and was not enough headroom for Gemini 3.1 Pro.
+# IMPORTANT: the pipeline's critical path is SEQUENTIAL, not flat —
+#   Stage 0 (classify, ~instant, no API)
+#   -> concurrent gather of scene/solution/glossary  (bounded by
+#      max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL), since scene-analysis
+#      now runs on its own, longer budget than solution/glossary)
+#   -> animation HTML builder                        (bounded by STAGE_TIMEOUT_BUILD)
+#   -> sanitize/post-process (~instant, no API)
+# So the true worst case is that max(...) + STAGE_TIMEOUT_BUILD, plus a
+# margin for JSON parsing / sanitization overhead. PIPELINE_TIMEOUT must be
+# comfortably ABOVE that sum, or it becomes a guaranteed failure on any run
+# where stages simply use their normal allotted time (not just on overload).
+# An earlier version of this fix set PIPELINE_TIMEOUT=95 while the two stage
+# budgets alone summed to 110 — mathematically impossible to complete within,
+# which is why the fallback fired on ordinary, non-overloaded runs. Fixed here.
+# Keep this derived from the stage constants (never hardcode a total) so the
+# two can never drift out of sync again.
+PIPELINE_TIMEOUT = max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD + 20.0  # = 270.0
 
 
 def _err_msg(e: BaseException) -> str:
@@ -487,63 +553,49 @@ class JsSyntaxValidator:
                 errors.append((script_id, err))
         return errors
 
-    # Cache node availability so we only probe the PATH once per process.
-    _node_available = None   # None = unchecked, True/False = result
-
-    @classmethod
-    def _node_present(cls) -> bool:
-        """Returns True if `node --check` is usable on this host."""
-        if cls._node_available is None:
-            import shutil
-            cls._node_available = shutil.which("node") is not None
-            if not cls._node_available:
-                QAnimLogger.warn(
-                    "JsSyntaxValidator",
-                    "`node` not found on PATH — JS syntax validation skipped. "
-                    "Install Node.js to enable this safety net.",
-                )
-        return cls._node_available
-
     @classmethod
     def _check_syntax(cls, code: str):
         """Returns an error string if `code` is invalid JS, else None.
-
-        Uses `node --check` (Node.js v22+ available on this host). If node
-        is not on PATH, validation is silently skipped rather than crashing
-        the pipeline. The old esprima fallback has been removed — esprima
-        is not installed and its ImportError was printing a warning on every
-        single pipeline run, polluting logs with a message that looks like
-        a real error.
-        """
-        if not cls._node_present():
-            return None   # node unavailable — skip silently, logged once above
-
-        import subprocess, tempfile, os as _os
-        fd, path = tempfile.mkstemp(suffix='.js')
+        Tries Node's own engine first (exactly what the browser uses),
+        then falls back to a pure-Python parser (pip install esprima) if
+        Node isn't available on this host. If neither is available, logs
+        once and skips validation rather than failing the whole pipeline."""
         try:
-            with _os.fdopen(fd, 'w', encoding='utf-8') as f:
-                f.write(code)
+            import subprocess, tempfile, os as _os
+            fd, path = tempfile.mkstemp(suffix='.js')
             try:
+                with _os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(code)
                 proc = subprocess.run(
                     ["node", "--check", path],
-                    capture_output=True,
-                    text=True,
-                    timeout=8,   # raised from 5s — large generated scripts can be slow
+                    capture_output=True, text=True, timeout=5,
                 )
                 return proc.stderr.strip()[:500] if proc.returncode != 0 else None
-            except subprocess.TimeoutExpired:
-                QAnimLogger.warn("JsSyntaxValidator", "node --check timed out — skipping this block")
-                return None
-            except Exception as e:
-                # Unexpected error running node (permissions, OS issue, etc.)
-                # Log it properly instead of silently swallowing it.
-                QAnimLogger.warn("JsSyntaxValidator", f"node --check error: {e} — skipping")
-                return None
-        finally:
-            try:
-                _os.unlink(path)
-            except OSError:
-                pass
+            finally:
+                try:
+                    _os.unlink(path)
+                except OSError:
+                    pass
+        except FileNotFoundError:
+            pass  # node not on PATH -- fall through to esprima
+        except Exception:
+            pass
+
+        try:
+            # pyrefly: ignore [missing-import]
+            import esprima
+            esprima.parseScript(code)
+            return None
+        except ImportError:
+            QAnimLogger.warn(
+                "JsSyntaxValidator",
+                "Neither `node` nor `esprima` is available -- JS syntax "
+                "validation skipped. Install one (`pip install esprima` "
+                "needs no system deps) to enable this safety net.",
+            )
+            return None
+        except Exception as e:
+            return str(e)[:500]
 
     @classmethod
     def auto_fix_stray_apostrophes(cls, html: str) -> str:
@@ -715,8 +767,7 @@ class GivenValuesExtractor:
 #  MODULE 2.7 — LargeInputPreprocessor
 # ===========================================================================
 class LargeInputPreprocessor:
-    COMPRESS_THRESHOLD = 400   # was 600 — fire earlier so long questions
-                               # are always cleaned before hitting Gemini
+    COMPRESS_THRESHOLD = 600
     HARD_LIMIT = 2000
     _MCQ_LINE_RE = re.compile(
         r'^\s*(?:\([A-Da-d1-4]\)|[A-Da-d1-4][.)]\s|Option\s*[A-D1-4]\s*[:.])',
@@ -1148,47 +1199,394 @@ def inject_to_find_system(html, targets):
 #  with no separate scrollable section and no page scrolling required.
 # ===========================================================================
 
+# ===========================================================================
+#  MODULE 7.5 — GeminiSolutionGenerator
+#  Replaces HaikuSolutionGenerator. Uses Gemini 3.1 Pro Preview.
+# ===========================================================================
 
+_SOLUTION_SYSTEM = """You are an expert engineering professor generating a structured 5-step solution for students.
 
-
-# Fallback solution dict used when no real solution is available.
-_GEMINI_SOL_FALLBACK = {
-"given_data": [
-"See question for numerical values"
-],
-"to_find": [
-"i) See question for what to find"
-],
-"formulas": [
-{"text": "Select the appropriate governing formula", "color": "blue"},
-{"text": "Substitute the given values", "color": "orange"},
-{"text": "Compute the result",  "color": "green"},
-],
-"formula_note": "",
-"formula_why": "This formula directly connects the given quantities to the unknown asked for in the question.",
-"variable_meanings": [],
-"substitution_steps": [
-{"title": "Identify Given Values",  "expr": "List all values from the question with their units.", "description": "We start by writing down everything we already know, with correct units, before touching the formula."},
-{"title": "Select Formula", "expr": "Choose the correct governing equation for this problem type.", "description": "The right formula connects the given quantities to the one we need to find."},
-{"title": "Substitute and Solve",   "expr": "Insert the known values and evaluate step by step.", "description": "Plugging in the numbers and simplifying carefully avoids arithmetic and unit errors."},
-],
-"steps": [
-"Step 1: Write down the given values from the question.",
-"Step 2: Identify what needs to be found.",
-"Step 3: Choose the correct governing formula.",
-"Step 4: Substitute values and solve step by step.",
-"Step 5: State the final answer with units.",
-],
-"final_answer": "Please re-generate for a detailed answer.",
-"final_answer_unit": "",
-"key_insight":  "Always identify given values and the target quantity before selecting a formula.",
-"real_world_note": "",
-"raw": "",
-"_used_fallback": True,   # marks this dict as placeholder content so
-  # downstream rendering can surface a visible
-  # warning instead of silently shipping generic
-  # text that looks like a real solved answer.
+Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no extra text, no comments:
+{
+  "given_data": [
+    "rho = 1000 kg/m3",
+    "V = 2 m/s",
+    "D = 0.05 m",
+    "mu = 0.001 Pa.s"
+  ],
+  "to_find": [
+    "i) Reynolds number Re",
+    "ii) Heat transfer coefficient h",
+    "iii) Nusselt number Nu"
+  ],
+  "formulas": [
+    {"text": "Re = rho x V x D / mu", "color": "blue"},
+    {"text": "Pr = mu x c_p / k",     "color": "orange"},
+    {"text": "Nu = 0.023 x Re^0.8 x Pr^0.4", "color": "purple"},
+    {"text": "h = Nu x k / D",          "color": "pink"}
+  ],
+  "formula_note": "Evaluate all properties at bulk mean temperature T_bulk = (T_in + T_out)/2",
+  "formula_why": "One clear sentence on WHY this is the governing formula/principle for this exact problem (what physical law it comes from and when it applies).",
+  "variable_meanings": [
+    {"symbol": "rho", "meaning": "Fluid density", "unit": "kg/m3", "value": "1000"},
+    {"symbol": "V",   "meaning": "Flow velocity",  "unit": "m/s",   "value": "2"},
+    {"symbol": "D",   "meaning": "Pipe diameter",  "unit": "m",     "value": "0.05"},
+    {"symbol": "mu",  "meaning": "Dynamic viscosity", "unit": "Pa.s", "value": "0.001"}
+  ],
+  "substitution_steps": [
+    {"title": "Calculate Reynolds Number",      "expr": "Re = (1000 x 2 x 0.05) / 0.001 = 100000", "description": "We substitute the known density, velocity, diameter and viscosity to check the flow regime."},
+    {"title": "Calculate Prandtl Number",       "expr": "Pr = (0.001 x 4200) / 0.6 = 7", "description": "Pr compares momentum diffusivity to thermal diffusivity and is needed for the Nusselt correlation."},
+    {"title": "Apply Dittus-Boelter Equation",  "expr": "Nu = 0.023 x (100000)^0.8 x (7)^0.4 = 365", "description": "With Re and Pr known, the empirical correlation gives the dimensionless heat transfer number."},
+    {"title": "Find Heat Transfer Coefficient", "expr": "h = 365 x 0.6 / 0.05 = 4380 W/(m2.K)", "description": "Multiplying Nu by the fluid conductivity and dividing by the diameter converts back to a physical coefficient."}
+  ],
+  "final_answer": "h = 4380 W/(m2.K),  Re = 100000,  Nu = 365",
+  "final_answer_unit": "W/(m2.K)",
+  "key_insight": "Higher flow velocity raises Re, which boosts h through the 0.8-power relationship.",
+  "real_world_note": "One short optional sentence on where this result matters in practice (e.g. heat exchanger sizing). Set to \"\" if not meaningful."
 }
+
+STRICT RULES:
+- given_data: Extract EVERY numerical value stated in the question. Format each as \"symbol = value unit\". Minimum 2, maximum 12 items. Never leave empty.
+- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Never leave empty.
+- formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them. Never leave empty.
+- formula_note: Optional note about evaluation conditions (e.g. bulk temperature). Set to \"\" if not applicable.
+- formula_why: One sentence, plain English, explaining why THIS formula/principle is the correct one to reach for. Never leave empty.
+- variable_meanings: ONE entry per distinct symbol used in given_data/formulas. Each entry MUST have \"symbol\", \"meaning\" (what the variable physically represents), \"unit\" (correct SI or given unit), and \"value\" (the given numerical value, or \"?\" if it is the unknown being solved for). This is used to teach the formula variable-by-variable — never leave empty, never invent a variable that is not actually in the formula.
+- substitution_steps: 3-6 numbered calculation steps. Each MUST have \"title\" (what this step computes), \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown), and \"description\" (ONE short sentence explaining WHY this step is done and what it accomplishes — the reasoning a teacher would say aloud, not just a restatement of the math). Never leave empty.
+- final_answer: Complete answer containing ALL computed numerical values with units. Must NEVER be empty.
+- final_answer_unit: The correct SI (or standard) unit of the primary requested quantity, written cleanly (e.g. \"W/(m2.K)\", \"m/s\", \"N\"). Must NEVER be empty.
+- key_insight: One clear memorable sentence about the core physics or mathematical concept. Must NEVER be empty.
+- real_world_note: One short optional real-world interpretation of the result. Set to \"\" (empty string) if nothing meaningful applies — never fabricate a forced example.
+
+ACCURACY REQUIREMENTS — NON-NEGOTIABLE:
+- The formula(s) you select MUST be the mathematically and physically correct ones for exactly what this question asks — verify the governing principle before writing anything down.
+- NEVER approximate, round prematurely, or substitute a similar-but-wrong formula. NEVER hallucinate a constant, property value, or relationship that was not given or is not a standard, correct physical constant.
+- Use correct SI units throughout (or the unit system explicitly given in the question) and correct standard variable notation for the subject (e.g. rho for density, mu for dynamic viscosity).
+- Every number in substitution_steps must be traceable to either a given value or a previously-computed intermediate result in this same solution — never introduce an unexplained number.
+- If you are not fully certain a value or formula is correct, prefer the standard textbook form for that topic rather than guessing.
+
+- CRITICAL OUTPUT FORMAT: Your response MUST start with {{ and end with }}. No preamble, no explanation, no markdown fences. Raw JSON only. If you include anything before {{ or after }}, the response will be rejected."""
+
+
+class GeminiSolutionGenerator:
+
+    _FALLBACK = {
+        "given_data": [
+            "See question for numerical values"
+        ],
+        "to_find": [
+            "i) See question for what to find"
+        ],
+        "formulas": [
+            {"text": "Select the appropriate governing formula", "color": "blue"},
+            {"text": "Substitute the given values",             "color": "orange"},
+            {"text": "Compute the result",                      "color": "green"},
+        ],
+        "formula_note": "",
+        "formula_why": "This formula directly connects the given quantities to the unknown asked for in the question.",
+        "variable_meanings": [],
+        "substitution_steps": [
+            {"title": "Identify Given Values",  "expr": "List all values from the question with their units.", "description": "We start by writing down everything we already know, with correct units, before touching the formula."},
+            {"title": "Select Formula",         "expr": "Choose the correct governing equation for this problem type.", "description": "The right formula connects the given quantities to the one we need to find."},
+            {"title": "Substitute and Solve",   "expr": "Insert the known values and evaluate step by step.", "description": "Plugging in the numbers and simplifying carefully avoids arithmetic and unit errors."},
+        ],
+        "steps": [
+            "Step 1: Write down the given values from the question.",
+            "Step 2: Identify what needs to be found.",
+            "Step 3: Choose the correct governing formula.",
+            "Step 4: Substitute values and solve step by step.",
+            "Step 5: State the final answer with units.",
+        ],
+        "final_answer": "Please re-generate for a detailed answer.",
+        "final_answer_unit": "",
+        "key_insight":  "Always identify given values and the target quantity before selecting a formula.",
+        "real_world_note": "",
+        "raw": "",
+        "_used_fallback": True,   # marks this dict as placeholder content so
+                                  # downstream rendering can surface a visible
+                                  # warning instead of silently shipping generic
+                                  # text that looks like a real solved answer.
+    }
+
+    @classmethod
+    def generate(cls, question: str) -> dict:
+        if _gemini_client is None:
+            QAnimLogger.warn("GeminiSolution", "Gemini client not available — using fallback")
+            return dict(cls._FALLBACK)
+
+        QAnimLogger.info("GeminiSolution", f"Generating solution via {GEMINI_MODEL}...")
+        user_prompt = (
+            f"Solve this question step by step:\n\n"
+            f"QUESTION: {question[:800]}\n\n"
+            f"Return ONLY valid JSON — no markdown, no preamble, no explanation. "
+            f"Start your response with {{ and end with }}."
+        )
+
+        MAX_ATTEMPTS = 4   # 4 outer attempts with inter-attempt back-off (5/10/15 s)
+        last_error = None
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                raw = cls._call_gemini(user_prompt, cls._solution_system_text(), max_tokens=4096)
+                result = cls._parse(raw)
+                # Validate the result is NOT the fallback.
+                # OLD check required substitution_steps — too strict: Gemini sometimes
+                # returns real formulas + given_data but omits substitution_steps (even
+                # though the prompt forbids it), causing every attempt to be discarded.
+                # NEW check: given_data must be real (non-fallback) AND at least one
+                # formula must be real (not one of the three placeholder formula texts).
+                _fb_given    = cls._FALLBACK["given_data"]
+                _fb_fmlas    = {f["text"] for f in cls._FALLBACK.get("formulas", [])
+                                if isinstance(f, dict) and f.get("text")}
+                real_formulas = [
+                    f for f in result.get("formulas", [])
+                    if isinstance(f, dict) and f.get("text") and f["text"] not in _fb_fmlas
+                ]
+                has_real_data = (
+                    bool(result.get("given_data")) and
+                    result.get("given_data") != _fb_given and
+                    bool(real_formulas)
+                )
+                if has_real_data:
+                    QAnimLogger.ok("GeminiSolution", f"Solution generated on attempt {attempt}")
+                    return result
+                else:
+                    QAnimLogger.warn("GeminiSolution", f"Attempt {attempt}: parsed result looks like fallback — retrying")
+                    last_error = "Result contained only fallback/placeholder content"
+            except Exception as e:
+                last_error = e
+                QAnimLogger.warn("GeminiSolution", f"Attempt {attempt} failed: {e}")
+            # Brief back-off between outer attempts so the Gemini rate-limit window
+            # (60 s for most tiers) has a chance to clear before we try again.
+            # Without this, all 3–4 outer attempts fire back-to-back and all hit
+            # the same rate-limit wall, making the retries pointless.
+            if attempt < MAX_ATTEMPTS and last_error is not None:
+                import time as _time
+                _wait = attempt * 5   # 5 s, 10 s, 15 s … gentle linear back-off
+                QAnimLogger.info("GeminiSolution", f"Waiting {_wait}s before outer attempt {attempt+1}…")
+                _time.sleep(_wait)
+
+        QAnimLogger.warn("GeminiSolution", f"All {MAX_ATTEMPTS} attempts failed ({last_error}) — using fallback")
+        return dict(cls._FALLBACK)
+
+    @classmethod
+    def _solution_system_text(cls):
+        return _SOLUTION_SYSTEM
+
+    @classmethod
+    def _call_gemini(cls, user_prompt: str, system_text: str, max_tokens: int = 4096) -> str:
+        import time as _time
+        MAX_RETRIES  = 4
+        # Longer delays so rate-limit windows (typically 60s) can clear.
+        # The old [4, 8, 15] total was only 27s — not long enough to ride out
+        # a 429 / 503 between the 1st and 2nd question pipeline run.
+        RETRY_DELAYS = [10, 25, 50, 90]
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                if _GEMINI_SDK_STYLE == "generativeai":
+                    model_obj = _gemini_client.GenerativeModel(
+                        model_name=GEMINI_MODEL,
+                        system_instruction=system_text,
+                        generation_config={"temperature": 0.3, "max_output_tokens": max_tokens},
+                    )
+                    response = model_obj.generate_content(user_prompt)
+                    return response.text.strip()
+                else:
+                    try:
+                        config = _google_genai.types.GenerateContentConfig(
+                            system_instruction=system_text,
+                            temperature=0.3,
+                            max_output_tokens=max_tokens,
+                            thinking_config=_google_genai.types.ThinkingConfig(thinking_level="low"),
+                        )
+                    except Exception:
+                        config = _google_genai.types.GenerateContentConfig(
+                            system_instruction=system_text,
+                            temperature=0.3,
+                            max_output_tokens=max_tokens,
+                        )
+                    response = _gemini_client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=user_prompt,
+                        config=config,
+                    )
+                    return response.text.strip()
+            except Exception as e:
+                err_str = str(e)
+                # 429 = rate limit. 503/UNAVAILABLE/"high demand"/"overloaded"
+                # = the model itself is transiently overloaded on Google's
+                # side. Both are self-resolving if you wait and retry — but
+                # only 429 was being retried before, so every 503 (which
+                # Gemini returns fairly often at peak load) went straight to
+                # "Animation Could Not Render" on attempt 1 with no retry at
+                # all. Treat both as retryable.
+                is_retryable = (
+                    "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
+                    or "503" in err_str or "UNAVAILABLE" in err_str or "overloaded" in err_str.lower()
+                    or "high demand" in err_str.lower()
+                )
+                if is_retryable and attempt < MAX_RETRIES:
+                    _time.sleep(RETRY_DELAYS[attempt - 1])
+                    continue
+                raise
+
+        raise RuntimeError("All Gemini retry attempts exhausted")
+
+    @classmethod
+    def _extract_json_from_raw(cls, raw: str) -> str:
+        """
+        Robustly extract the JSON object from Gemini's raw response.
+        Handles: markdown fences, preamble text, trailing commentary,
+        thinking tags, and partial wrapping.
+        """
+        # 1. Strip markdown fences (```json ... ``` or ``` ... ```)
+        raw = re.sub(r'^```(?:json)?\s*\n?', '', raw.strip(), flags=re.IGNORECASE)
+        raw = re.sub(r'\n?```\s*$', '', raw, flags=re.IGNORECASE).strip()
+
+        # 2. Strip Gemini "thinking" tags if present (<thinking>...</thinking>)
+        raw = re.sub(r'<thinking>.*?</thinking>', '', raw, flags=re.DOTALL).strip()
+
+        # 3. Try to find the outermost { ... } block via balanced-brace scan
+        start = raw.find('{')
+        if start == -1:
+            return _sanitize_json_str(raw)  # No JSON object found — let json.loads raise
+
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i, ch in enumerate(raw[start:], start):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return raw[start:i + 1]
+
+        # Partial JSON — return from start to end and let json.loads try
+        return _sanitize_json_str(raw[start:])
+
+    @classmethod
+    def _parse(cls, raw: str) -> dict:
+        raw = cls._extract_json_from_raw(raw)
+        try:
+            data = json.loads(raw)
+
+            # ── Structured 5-step fields ──────────────────────────────
+            given_data = data.get("given_data", [])
+            if not isinstance(given_data, list):
+                given_data = []
+
+            to_find = data.get("to_find", [])
+            if not isinstance(to_find, list):
+                to_find = []
+
+            formulas = data.get("formulas", [])
+            if not isinstance(formulas, list):
+                formulas = []
+            # Normalise each formula entry to {"text": ..., "color": ...}
+            COLORS = ["blue", "orange", "purple", "pink", "green", "teal"]
+            norm_formulas = []
+            for idx, f in enumerate(formulas):
+                if isinstance(f, dict):
+                    norm_formulas.append({
+                        "text":  str(f.get("text", "") or ""),
+                        "color": str(f.get("color", COLORS[idx % len(COLORS)])),
+                    })
+                else:
+                    norm_formulas.append({"text": str(f), "color": COLORS[idx % len(COLORS)]})
+
+            formula_note = str(data.get("formula_note", "") or "")
+            formula_why  = str(data.get("formula_why",  "") or "")
+
+            variable_meanings = data.get("variable_meanings", [])
+            if not isinstance(variable_meanings, list):
+                variable_meanings = []
+            norm_var_meanings = []
+            for v in variable_meanings:
+                if isinstance(v, dict):
+                    norm_var_meanings.append({
+                        "symbol":  str(v.get("symbol",  "") or ""),
+                        "meaning": str(v.get("meaning", "") or ""),
+                        "unit":    str(v.get("unit",    "") or ""),
+                        "value":   str(v.get("value",   "") or ""),
+                    })
+
+            substitution_steps = data.get("substitution_steps", [])
+            if not isinstance(substitution_steps, list):
+                substitution_steps = []
+            norm_subs = []
+            for s in substitution_steps:
+                if isinstance(s, dict):
+                    norm_subs.append({
+                        "title":       str(s.get("title", "") or ""),
+                        "expr":        str(s.get("expr", "") or ""),
+                        "description": str(s.get("description", "") or s.get("desc", "") or ""),
+                    })
+                else:
+                    norm_subs.append({"title": "Calculation", "expr": str(s), "description": ""})
+
+            final_answer      = str(data.get("final_answer", "") or "")
+            final_answer_unit = str(data.get("final_answer_unit", "") or "")
+            key_insight       = str(data.get("key_insight",  "") or "")
+            real_world_note   = str(data.get("real_world_note", "") or "")
+
+            # ── Backward-compat flat steps list ──────────────────────
+            steps = data.get("steps", [])
+            if not isinstance(steps, list) or not steps:
+                steps = [
+                    "Step 1: " + (", ".join(given_data[:3]) or "See question for given values."),
+                    "Step 2: " + (", ".join(to_find[:2])    or "See question for what to find."),
+                    "Step 3: " + (", ".join(f["text"] for f in norm_formulas[:2]) or "Apply the formula."),
+                    "Step 4: " + (norm_subs[0]["expr"] if norm_subs else "Substitute and solve."),
+                    "Step 5: " + (final_answer or "Compute the final answer."),
+                ]
+
+            return {
+                "given_data":         given_data,
+                "to_find":            to_find,
+                "formulas":           norm_formulas,
+                "formula_note":       formula_note,
+                "formula_why":        formula_why,
+                "variable_meanings":  norm_var_meanings,
+                "substitution_steps": norm_subs,
+                "steps":              steps,
+                "final_answer":       final_answer,
+                "final_answer_unit":  final_answer_unit,
+                "key_insight":        key_insight,
+                "real_world_note":    real_world_note,
+                "raw":                raw,
+            }
+        except Exception as e:
+            QAnimLogger.warn("GeminiSolution", f"JSON parse failed: {e}")
+            return dict(cls._FALLBACK)
+
+    @classmethod
+    async def generate_async(cls, question: str) -> dict:
+        loop = asyncio.get_event_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(None, cls.generate, question),
+                timeout=STAGE_TIMEOUT_SMALL,
+            )
+        except asyncio.TimeoutError:
+            QAnimLogger.error("GeminiSolution", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — using fallback solution")
+            return dict(cls._FALLBACK)
+
+
+# ===========================================================================
+#  MODULE 8 — Answer Box Panel
+# ===========================================================================
 
 def _build_answer_targets_tag(answer_targets):
     payload = {"answer_targets": answer_targets or []}
@@ -1808,27 +2206,22 @@ PREV_STEP_JS_MODULE = r"""
     if(nb)nb.style.display='inline-block';
   };
 
-  // BUG3 FIX: Wrap applyStep AFTER DOMContentLoaded so Gemini's main
-  // <script> (which defines window.applyStep) has always run first,
-  // regardless of script order in the HTML. The old approach wrapped at
-  // module-init time which raced against the main script and silently
-  // skipped the wrap when it lost — making prevStep update currentStep
-  // but never call applyStep, so the SVG/UI never actually changed.
+  // Piggyback on applyStep — every path that changes the step
+  // (nextStep, resetAnim, prevStep itself) funnels through it, so wrapping
+  // it once keeps the Previous button's enabled/disabled state correct
+  // regardless of which of those triggered the change.
+  var _origApplyPrev=window.applyStep;
+  if(typeof _origApplyPrev==='function'){
+    window.applyStep=function(idx){
+      _origApplyPrev(idx);
+      _updateBtn();
+    };
+  }
+
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   _onReady(function(){
-    // Rewire btn-prev click to our canonical prevStep
     var pb=document.getElementById('btn-prev');
     if(pb){pb.removeAttribute('onclick');pb.addEventListener('click',function(e){e.stopPropagation();window.prevStep();});}
-
-    // Wrap applyStep NOW — after all scripts have run — so _origApplyPrev
-    // is guaranteed to be the real function, not undefined.
-    var _origApplyPrev=window.applyStep;
-    if(typeof _origApplyPrev==='function'){
-      window.applyStep=function(idx){
-        _origApplyPrev(idx);
-        _updateBtn();
-      };
-    }
     _updateBtn();
   });
 })();
@@ -1840,15 +2233,6 @@ def inject_previous_step_button(html):
     html = re.sub(r'<style[^>]*id=["\']qanim-prevstep-styles["\'][^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<button[^>]*id=["\']btn-prev["\'][^>]*>.*?</button>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<script[^>]*id=["\']qanim-js-prevstep["\'][^>]*>.*?</script>', '', html, flags=re.DOTALL)
-
-    # BUG3 FIX B: Remove any inline prevStep() the builder generated
-    # inside the main <script>. Conflicts with injected canonical version.
-    html = re.sub(
-        r'(?m)^\s*function\s+prevStep\s*\(',
-        'function _prevStepRemoved(',
-        html,
-    )
-
 
     try:
         if '</head>' in html:
@@ -2355,7 +2739,7 @@ _SCENE6_DOM_TEMPLATE = """\
 <div id="qanim-scene6-overlay">
   <div class="s6-card">
     <div class="s6-title-bar">
-      <h2 id="s6-card-title">Step 7 &mdash; Governing Formula</h2>
+      <h2 id="s6-card-title">Main Formula</h2>
     </div>
     <div class="s6-body">
       <div class="s6-phase-progress" id="s6-phase-progress">Step 1 of 3 &mdash; The Formula</div>
@@ -2374,7 +2758,7 @@ _SCENE6_DOM_TEMPLATE = """\
       </div>
     </div>
     <div class="s6-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back to Step 6</button>
+      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back to Animation</button>
       <button class="btn-primary" onclick="qanim_s6Advance()" id="s6-next-btn">Next &#x25B6;</button>
     </div>
   </div>
@@ -2513,24 +2897,15 @@ _SCENE6_JS = r"""
   /* ── show / hide ── */
   window.qanim_showScene6 = function(){
     var ov=_el('qanim-scene6-overlay');
-    if(ov){ov.style.display='block';ov.classList.add('qanim-scene-visible');}
+    if(ov) ov.classList.add('qanim-scene-visible');
     var ov7=_el('qanim-scene7-overlay');
     if(ov7) ov7.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');
-    if(ov9) ov9.classList.remove('qanim-scene-visible');
     var bd=_el('qanim-scene-modal-backdrop');
-    if(bd){bd.style.display='block';bd.classList.add('qanim-scene-visible');}
+    if(bd) bd.classList.add('qanim-scene-visible');
     /* freeze the SVG animation if running */
     _qanimCancelRAF();
-    /* update the dot bar: dots 0-5 done, dot 6 (Step 7) active */
-    var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){
-      dots[i].className='step-dot';
-      if(i<6) dots[i].className+=' done';
-      if(i===6) dots[i].className+=' active';
-    }
-    var sl=_el('step-label'); if(sl) sl.innerHTML='Step 7 of 9';
-    var sb=_el('step-bar'); if(sb) sb.style.width='77.78%';
+    /* update the dot bar to show Scene 6 active */
+    _syncDots(5); /* 0-based index 5 = scene 6 */
     /* start the teaching sequence from the beginning every time we arrive */
     s6Phase = 0;
     s6AutoAdvanceScheduled = false;
@@ -2762,7 +3137,7 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
     # Extract formula — try structured keys first, then fallback
     formula_raw = ""
     formulas = gemini_sol.get("formulas") or []
-    _fb_fmla_texts = {f["text"] for f in _GEMINI_SOL_FALLBACK.get("formulas", [])
+    _fb_fmla_texts = {f["text"] for f in GeminiSolutionGenerator._FALLBACK.get("formulas", [])
                       if isinstance(f, dict) and f.get("text")}
     for f in formulas[:1]:
         candidate = f.get("text", "") if isinstance(f, dict) else str(f)
@@ -3230,8 +3605,8 @@ _SCENE7_DOM_TEMPLATE = """\
       </div>
     </div>
     <div class="s7-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Step 7</button>
-      <button class="btn-primary" onclick="if(typeof qanim_showScene9==='function')qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>
+      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Main Formula</button>
+      <button class="btn-primary" onclick="qanim_goToPrevScene()">&#x21BA; Back to Animation</button>
     </div>
   </div>
 </div>"""
@@ -3245,23 +3620,17 @@ _SCENE7_JS = r"""
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
 
-  /* Show Scene 7 (Step 8: Substitution) — called from Scene 6 or dot */
+  /* Show Scene 7 — called from Scene 6 "Continue to Solution" */
   window.qanim_showScene7 = function(){
     var ov=_el('qanim-scene7-overlay');
-    if(ov){ov.style.display='block';setTimeout(function(){ov.classList.add('qanim-scene-visible');},10);}
+    if(ov) ov.classList.add('qanim-scene-visible');
     var ov6=_el('qanim-scene6-overlay');
     if(ov6) ov6.classList.remove('qanim-scene-visible');
     var bd=_el('qanim-scene-modal-backdrop');
-    if(bd){bd.style.display='block';setTimeout(function(){bd.classList.add('qanim-scene-visible');},10);}
-    /* Mark dots 0-6 done, dot 7 (Step 8) active */
+    if(bd) bd.classList.add('qanim-scene-visible');
+    /* Mark all dots done, progress 100% */
     var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){
-      dots[i].className='step-dot';
-      if(i<7) dots[i].className+=' done';
-      if(i===7) dots[i].className+=' active';
-    }
-    var sl=_el('step-label'); if(sl) sl.innerHTML='Step 8 of 9';
-    var sb=_el('step-bar'); if(sb) sb.style.width='88.89%';
+    for(var i=0;i<dots.length;i++) dots[i].classList.add('done');
     var lbl=_el('step-label');
     if(lbl) lbl.innerText='Solution Summary';
     var bar=_el('step-bar');
@@ -3514,7 +3883,7 @@ def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
 
     # Build formula result text for the green bar
     formula_result = ""
-    _fb_fmla_texts_s7 = {f["text"] for f in _GEMINI_SOL_FALLBACK.get("formulas", [])
+    _fb_fmla_texts_s7 = {f["text"] for f in GeminiSolutionGenerator._FALLBACK.get("formulas", [])
                          if isinstance(f, dict) and f.get("text")}
     formulas = gemini_sol.get("formulas") or []
     for f in formulas[:1]:
@@ -3614,428 +3983,13 @@ _NAV_PATCH_JS = r"""
 """
 
 
-
-# ===========================================================================
-#  MODULE 12b — Scene 9 Injector (Step 9: Final Answer Modal)
-#  Matches the reference HTML pattern: animated substitution rows → green
-#  final-answer box → key insight bar, with back/restart navigation.
-# ===========================================================================
-
-_SCENE9_CSS = """
-<style id="qanim-scene9-styles">
-#qanim-scene9-overlay {
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%,-50%) scale(.95);
-  z-index: 7500;
-  width: min(780px, 96vw);
-  max-height: 92vh;
-  overflow-y: auto;
-  box-sizing: border-box;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .3s ease, transform .3s cubic-bezier(.34,1.56,.64,1);
-}
-#qanim-scene9-overlay.qanim-scene-visible {
-  display: block !important;
-  opacity: 1;
-  pointer-events: auto;
-  transform: translate(-50%,-50%) scale(1);
-}
-.s9-card {
-  background: #fff;
-  border-radius: 20px;
-  box-shadow: 0 8px 48px rgba(22,163,74,.18), 0 2px 8px rgba(0,0,0,.08);
-  border: 2px solid #86efac;
-  overflow: hidden;
-  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
-}
-.s9-title-bar {
-  text-align: center;
-  padding: 22px 28px 18px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border-bottom: 2px solid #86efac;
-}
-.s9-title-bar h2 { font-size: 22px; font-weight: 900; color: #14532d; margin-bottom: 4px; }
-.s9-title-bar p { font-size: 13px; color: #166534; margin: 0; }
-.s9-body {
-  padding: 32px 36px 28px;
-  background: #fff;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-.s9-formula-recap {
-  background: #eff6ff;
-  border: 1.5px solid #bfdbfe;
-  border-radius: 12px;
-  padding: 14px 20px;
-  text-align: center;
-}
-.s9-formula-recap-label {
-  font-size: 10.5px;
-  font-weight: 800;
-  color: #1d4ed8;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  margin-bottom: 6px;
-}
-.s9-formula-recap-eq {
-  font-family: 'Courier New', monospace;
-  font-size: 16px;
-  font-weight: 900;
-  color: #1d4ed8;
-}
-.s9-sub-chain { display: flex; flex-direction: column; gap: 10px; }
-.s9-sub-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 12px 16px;
-  opacity: 0;
-  transform: translateX(-18px);
-  transition: opacity .4s ease, transform .4s cubic-bezier(.34,1.56,.64,1);
-}
-.s9-sub-row.s9-shown { opacity: 1; transform: translateX(0); }
-.s9-sub-num {
-  background: #0891b2;
-  color: #fff;
-  border-radius: 50%;
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 800;
-  flex-shrink: 0;
-}
-.s9-sub-eq {
-  font-family: 'Courier New', monospace;
-  font-size: 14px;
-  font-weight: 700;
-  color: #1e293b;
-  flex: 1;
-}
-.s9-final-box {
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border: 3px solid #22c55e;
-  border-radius: 18px;
-  padding: 28px 32px;
-  text-align: center;
-  position: relative;
-  overflow: hidden;
-  opacity: 0;
-  transform: scale(0.94);
-  transition: opacity .5s ease .3s, transform .5s cubic-bezier(.34,1.56,.64,1) .3s;
-}
-.s9-final-box.s9-shown { opacity: 1; transform: scale(1); }
-.s9-final-label {
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  color: #15803d;
-  margin-bottom: 12px;
-}
-.s9-final-value {
-  font-family: 'Courier New', monospace;
-  font-size: 28px;
-  font-weight: 900;
-  color: #14532d;
-  line-height: 1.3;
-}
-.s9-final-value span.s9-highlight { color: #16a34a; font-size: 36px; }
-.s9-final-unit { font-size: 13px; color: #166534; margin-top: 8px; font-weight: 600; }
-.s9-insight-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  background: #fff7ed;
-  border: 1.5px solid #fed7aa;
-  border-radius: 10px;
-  padding: 13px 18px;
-  opacity: 0;
-  transition: opacity .4s ease .6s;
-}
-.s9-insight-bar.s9-shown { opacity: 1; }
-.s9-insight-icon { font-size: 20px; flex-shrink: 0; }
-.s9-insight-text { font-size: 13px; color: #92400e; line-height: 1.6; }
-.s9-insight-text strong { color: #78350f; }
-.s9-nav-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 36px 22px;
-  border-top: 1px solid #bbf7d0;
-  background: #f0fdf4;
-}
-</style>
-"""
-
-
-def inject_scene9_final_answer(html, gemini_sol, scene_script):
-    """
-    Inject Scene 9 (Step 9: Final Answer) as a standalone overlay modal.
-
-    Layout matches the reference Furnace HTML Step 9:
-      - Green-themed title bar
-      - Formula recap (from Step 7)
-      - Animated substitution chain rows (slide in one by one)
-      - Big green final-answer box (scales in)
-      - Key insight bar (fades in)
-      - Nav row: Back to Step 8 | Restart Animation
-
-    Inserts:
-      1. CSS into <head>
-      2. DOM panel right after <body>
-      3. JS module before </body>
-    """
-    _is_fallback = bool(gemini_sol.get("_used_fallback"))
-
-    # ── Extract formula for recap ──
-    formula_raw = ""
-    formulas = gemini_sol.get("formulas") or []
-    for f in formulas[:1]:
-        candidate = f.get("text", "") if isinstance(f, dict) else str(f)
-        if candidate:
-            formula_raw = candidate
-            break
-    if not formula_raw:
-        sol_steps = gemini_sol.get("steps") or []
-        for s in sol_steps:
-            s_str = str(s)
-            if "=" in s_str and len(s_str) < 120:
-                formula_raw = s_str
-                break
-    if not formula_raw:
-        formula_raw = scene_script.get("key_insight", "See formula in Step 7") or "See formula in Step 7"
-
-    # ── Build substitution rows from solution_steps ──
-    sol_steps_list = gemini_sol.get("steps") or scene_script.get("solution_steps") or []
-    sub_rows_parts = []
-    for i, step_text in enumerate(sol_steps_list[:6]):
-        step_str = html_module.escape(str(step_text).strip()[:200])
-        sub_rows_parts.append(
-            '<div class="s9-sub-row" id="s9r' + str(i) + '">'
-            '<div class="s9-sub-num">' + str(i + 1) + '</div>'
-            '<div class="s9-sub-eq">' + step_str + '</div>'
-            '</div>'
-        )
-
-    if not sub_rows_parts:
-        sub_rows_parts = [
-            '<div class="s9-sub-row" id="s9r0">'
-            '<div class="s9-sub-num">1</div>'
-            '<div class="s9-sub-eq">Substitute given values into the governing formula.</div>'
-            '</div>',
-            '<div class="s9-sub-row" id="s9r1">'
-            '<div class="s9-sub-num">2</div>'
-            '<div class="s9-sub-eq">Compute the result numerically.</div>'
-            '</div>',
-        ]
-    sub_rows_html = "\n".join(sub_rows_parts)
-    n_rows = len(sub_rows_parts)
-
-    # ── Final answer ──
-    final_answer_raw = (
-        gemini_sol.get("final_answer")
-        or scene_script.get("final_answer")
-        or "See calculation above"
-    )
-    if _is_fallback:
-        final_answer_raw = "Regenerate animation to see numerical answer"
-
-    final_answer_esc = html_module.escape(str(final_answer_raw)[:200])
-
-    # ── Key insight ──
-    insight_raw = (
-        gemini_sol.get("key_insight")
-        or scene_script.get("key_insight")
-        or "Review the solution steps above for the key physical reasoning."
-    )
-    if _is_fallback:
-        insight_raw = "Solution generation failed — please wait 60s and regenerate."
-    insight_esc = html_module.escape(str(insight_raw)[:400])
-
-    # ── Problem subtitle ──
-    subtitle_raw = scene_script.get("title", "Step-by-step solution") or "Step-by-step solution"
-    subtitle_esc = html_module.escape(str(subtitle_raw)[:80])
-
-    formula_esc = html_module.escape(str(formula_raw)[:200])
-
-    dom_lines = [
-        '<div id="qanim-scene9-overlay">',
-        '  <div class="s9-card">',
-        '    <div class="s9-title-bar">',
-        '      <h2>&#x2705; Step 9 &mdash; Final Answer</h2>',
-        '      <p>' + subtitle_esc + '</p>',
-        '    </div>',
-        '    <div class="s9-body">',
-        '      <div class="s9-formula-recap">',
-        '        <div class="s9-formula-recap-label">&#x1F4D0; Governing Formula (from Step 7)</div>',
-        '        <div class="s9-formula-recap-eq">' + formula_esc + '</div>',
-        '      </div>',
-        '      <div class="s9-sub-chain" id="s9-sub-chain">',
-        sub_rows_html,
-        '      </div>',
-        '      <div class="s9-final-box" id="s9-final-box">',
-        '        <div class="s9-final-label">&#x2B50; Final Answer</div>',
-        '        <div class="s9-final-value"><span class="s9-highlight">' + final_answer_esc + '</span></div>',
-        '        <div class="s9-final-unit">Verify units for dimensional consistency &#x2714;</div>',
-        '      </div>',
-        '      <div class="s9-insight-bar" id="s9-insight-bar">',
-        '        <span class="s9-insight-icon">&#x1F4A1;</span>',
-        '        <div class="s9-insight-text"><strong>Key Insight:</strong> ' + insight_esc + '</div>',
-        '      </div>',
-        '    </div>',
-        '    <div class="s9-nav-row">',
-        '      <button class="btn-secondary" onclick="qanim_hideScene9();if(typeof qanim_showScene7===\'function\')qanim_showScene7();">&#x2190; Back to Step 8</button>',
-        '      <button class="btn-primary" onclick="qanim_hideScene9();if(typeof resetAnim===\'function\')resetAnim();">&#x21BA; Restart Animation</button>',
-        '    </div>',
-        '  </div>',
-        '</div>',
-    ]
-    dom = "\n".join(dom_lines) + "\n"
-
-    scene9_js_lines = [
-        '<script id="qanim-js-scene9">',
-        '(function initScene9(){',
-        '  "use strict";',
-        '  if(window.__qanimScene9Init)return; window.__qanimScene9Init=true;',
-        '  var _nRows=' + str(n_rows) + ';',
-        '  function _el(id){return document.getElementById(id);}',
-        '',
-        '  function qanim_showScene9(){',
-        '    var bd=_el("qanim-scene-modal-backdrop");',
-        '    if(bd){bd.style.display="block";setTimeout(function(){bd.classList.add("qanim-scene-visible");},10);}',
-        '    var ov=_el("qanim-scene9-overlay");',
-        '    if(!ov)return;',
-        '    ov.style.display="block";',
-        '    setTimeout(function(){ov.classList.add("qanim-scene-visible");},10);',
-        '    /* Update step dot state: dots 0-7 done, dot 8 (Step 9) active */',
-        '    var dots=document.querySelectorAll(".step-dot");',
-        '    for(var i=0;i<dots.length;i++){',
-        '      dots[i].className="step-dot";',
-        '      if(i<8)dots[i].className+=" done";',
-        '      if(i===8)dots[i].className+=" active";',
-        '    }',
-        '    var sl=_el("step-label"); if(sl)sl.innerHTML="Step 9 of 9";',
-        '    var sb=_el("step-bar"); if(sb)sb.style.width="100%";',
-        '    /* Animate rows */',
-        '    var rows=document.querySelectorAll(".s9-sub-row");',
-        '    var finalBox=_el("s9-final-box");',
-        '    var insightBar=_el("s9-insight-bar");',
-        '    rows.forEach(function(r){r.classList.remove("s9-shown");});',
-        '    if(finalBox)finalBox.classList.remove("s9-shown");',
-        '    if(insightBar)insightBar.classList.remove("s9-shown");',
-        '    rows.forEach(function(r,i){',
-        '      setTimeout(function(){r.classList.add("s9-shown");},200+i*200);',
-        '    });',
-        '    setTimeout(function(){if(finalBox)finalBox.classList.add("s9-shown");},200+_nRows*200+100);',
-        '    setTimeout(function(){if(insightBar)insightBar.classList.add("s9-shown");},200+_nRows*200+500);',
-        '  }',
-        '',
-        '  function qanim_hideScene9(){',
-        '    var ov=_el("qanim-scene9-overlay");',
-        '    if(ov){ov.classList.remove("qanim-scene-visible");setTimeout(function(){ov.style.display="none";},350);}',
-        '    var bd=_el("qanim-scene-modal-backdrop");',
-        '    if(bd){bd.classList.remove("qanim-scene-visible");setTimeout(function(){bd.style.display="none";},300);}',
-        '  }',
-        '',
-        '  window.qanim_showScene9=qanim_showScene9;',
-        '  window.qanim_hideScene9=qanim_hideScene9;',
-        '',
-        '  /* resetAnim hides Scene 9 */',
-        '  function _onReady(fn){if(document.readyState!=="loading"){fn();}else{document.addEventListener("DOMContentLoaded",fn);}}',
-        '  _onReady(function(){',
-        '    var _origReset=window.resetAnim;',
-        '    window.resetAnim=function(){',
-        '      qanim_hideScene9();',
-        '      if(typeof _origReset==="function")_origReset();',
-        '    };',
-        '    /* Wire dot-step9 if present */',
-        '    var d9=_el("dot-step9");',
-        '    if(d9){d9.onclick=function(){qanim_showScene9();};}',
-        '  });',
-        '})();',
-        '</script>',
-    ]
-    scene9_js = "\n".join(scene9_js_lines) + "\n"
-
-    # 1. CSS
-    try:
-        if "</head>" in html:
-            html = html.replace("</head>", _SCENE9_CSS + "\n</head>", 1)
-    except Exception as e:
-        QAnimLogger.warn("Scene9Injector", "CSS failed: " + str(e))
-
-    # 2. DOM — insert right after <body ...>
-    try:
-        body_m = re.search(r"<body[^>]*>", html, re.IGNORECASE)
-        if body_m:
-            ins = body_m.end()
-            html = html[:ins] + "\n" + dom + html[ins:]
-    except Exception as e:
-        QAnimLogger.warn("Scene9Injector", "DOM failed: " + str(e))
-
-    # 3. JS
-    try:
-        if "</body>" in html:
-            html = html.replace("</body>", scene9_js + "\n</body>", 1)
-        else:
-            html += "\n" + scene9_js
-    except Exception as e:
-        QAnimLogger.warn("Scene9Injector", "JS failed: " + str(e))
-
-    QAnimLogger.ok("Scene9Injector", "Scene 9 (Final Answer modal) injected")
-    return html
-
-_APPLY_STEP_SHIM_JS = """
-<script id="qanim-js-applystep-shim">
-(function(){
-  // BUG3 FIX C: Safety shim — if the builder forgot to expose window.applyStep,
-  // create one pointing at whichever step function exists. This runs at
-  // DOMContentLoaded so the main script has already defined its functions.
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  _onReady(function(){
-    if(typeof window.applyStep==='function') return; // already set — nothing to do
-    if(typeof window.goToStep==='function'){
-      window.applyStep=function(idx){ window.goToStep(idx); };
-    } else if(typeof window.updateUI==='function'){
-      window.applyStep=function(idx){
-        window.currentStep=idx;
-        window.updateUI(idx);
-      };
-    }
-    // Also expose currentStep if the builder used a local var instead of window.currentStep
-    // (prevStep checks typeof window.currentStep === 'number')
-    if(typeof window.currentStep==='undefined'){
-      // Try to read it from a common local variable name via goToStep side-effect
-      window.currentStep=0;
-    }
-  });
-})();
-</script>
-"""
-
 def inject_nav_patch_and_scene_desc(html, scene_descriptions=None):
-    # BUG3 FIX C: inject applyStep shim BEFORE the nav patch so prevStep
-    # module always finds a working window.applyStep.
-    if '</body>' in html:
-        html = html.replace('</body>', _APPLY_STEP_SHIM_JS + '\n</body>', 1)
     injection = _NAV_PATCH_JS + '\n'
     if '</body>' in html:
         html = html.replace('</body>', injection + '\n</body>', 1)
     else:
         html += '\n' + injection
-    QAnimLogger.ok("NavPatch", "Nav patch + applyStep shim injected")
+    QAnimLogger.ok("NavPatch", "Nav patch injected")
     return html
 
 
@@ -4760,12 +4714,6 @@ REQUIRED_COMPONENTS = {
         "data": None, "css": None, "dom": None,
         "js":   ["qanim-js-mathtypography"],
     },
-    "Scene9": {
-        "data": None,
-        "css":  ["qanim-scene9-styles"],
-        "dom":  ["qanim-scene9-overlay", "s9-final-box"],
-        "js":   ["qanim-js-scene9"],
-    },
 }
 
 # Regex fragments used to strip a component's previous output before
@@ -4824,10 +4772,6 @@ STRIP_PATTERNS = {
     ],
     "MathTypography": [
         re.compile(r'<script[^>]*id=["\']qanim-js-mathtypography["\'][^>]*>.*?</script>', re.DOTALL),
-    ],
-    "Scene9": [
-        re.compile(r'<style[^>]*id=[\"\']qanim-scene9-styles[\"\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
-        re.compile(r'<script[^>]*id=[\"\']qanim-js-scene9[\"\'][^>]*>.*?</script>', re.DOTALL),
     ],
 }
 
@@ -4949,8 +4893,6 @@ class PanelInjectionManager:
         # Scene 6 & 7 — appended AFTER the core panels so they land last in <body>
         html = inject_scene6_big_idea(html, ctx.gemini_sol, ctx.scene_script)
         html = inject_scene7_how_we_solve_it(html, ctx.gemini_sol, ctx.scene_script)
-        # Scene 9 — Final Answer modal (Step 9 of the 9-step workflow)
-        html = inject_scene9_final_answer(html, ctx.gemini_sol, ctx.scene_script)
         # Deterministic safety net — do not rely on Gemini's own nextStep()
         # to remember to open Scene 6; watch button state instead.
         html = inject_scene6_autotrigger(html)
@@ -4999,8 +4941,6 @@ class PanelInjectionManager:
             html = cls._strip_balanced_div(html, "qanim-scene6-overlay")
         elif name == "Scene7":
             html = cls._strip_balanced_div(html, "qanim-scene7-overlay")
-        elif name == "Scene9":
-            html = cls._strip_balanced_div(html, "qanim-scene9-overlay")
         return html
 
     @classmethod
@@ -5016,7 +4956,6 @@ class PanelInjectionManager:
             "StepController": lambda h: inject_step_controller(cls._strip(h, "StepController")),
             "Scene6":         lambda h: inject_scene6_big_idea(cls._strip(h, "Scene6"), ctx.gemini_sol, ctx.scene_script),
             "Scene7":         lambda h: inject_scene7_how_we_solve_it(cls._strip(h, "Scene7"), ctx.gemini_sol, ctx.scene_script),
-            "Scene9":         lambda h: inject_scene9_final_answer(cls._strip(h, "Scene9"), ctx.gemini_sol, ctx.scene_script),
         }
         for name in missing_names:
             fn = dispatch.get(name)
@@ -5030,999 +4969,6 @@ class PanelInjectionManager:
             except Exception as e:
                 QAnimLogger.error("Repair", f"{name}: repair raised {type(e).__name__}: {e}")
         return html
-
-
-# ===========================================================================
-#  ██████████████████████████████████████████████████████████████████████████
-#  CORE GENERATION ENGINE  (v1.0 — Gemini-only, reference-output style)
-#  ██████████████████████████████████████████████████████████████████████████
-#
-#  TWO-STAGE PIPELINE:
-#
-
-
-_ANIMATION_BUILDER_SYSTEM = """You are QAnim — an expert that generates COMPLETE self-contained HTML animation pages for engineering and science education.
-
-You receive a question. You must:
-1. Solve it yourself — compute the exact numerical answer.
-2. Generate a complete HTML page that EXACTLY follows the structure and code patterns shown below.
-
-════════════════════════════════════════════════════════════
-MANDATORY HTML SKELETON — follow this EXACTLY
-════════════════════════════════════════════════════════════
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>[Problem Title] — Interactive Animation</title>
-  <style>
-    :root {
-      --bg-color: #eef2f9; --panel-bg: #ffffff; --text-main: #1e293b;
-      --text-sub: #64748b; --text-muted: #94a3b8;
-      --accent-cyan: #0891b2; --accent-cyan-dim: #0e7490;
-      --accent-cyan-light: rgba(8,145,178,0.10);
-      --accent-orange: #d97706; --accent-green: #16a34a;
-      --border: #e2e8f0; --border-strong: #cbd5e1;
-      --border-radius: 16px; --border-radius-sm: 10px;
-      --shadow-card: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08);
-    }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
-      background-attachment: fixed; color: var(--text-main);
-      display: flex; flex-direction: column; align-items: center;
-      min-height: 100vh; padding: 28px 16px 130px;
-    }
-    .page-header { width: 100%; max-width: 900px; margin-bottom: 14px; }
-    .page-chip {
-      display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
-      border-radius: 20px; background: rgba(8,145,178,0.10);
-      border: 1px solid rgba(8,145,178,0.22); font-size: 11px; font-weight: 700;
-      color: var(--accent-cyan-dim); text-transform: uppercase; letter-spacing: 0.8px;
-    }
-    .page-chip::before { content: '▶'; font-size: 8px; }
-    .dashboard {
-      width: 100%; max-width: 900px; background: var(--panel-bg);
-      border-radius: var(--border-radius); box-shadow: var(--shadow-card);
-      overflow: hidden; border: 1px solid var(--border); position: relative;
-    }
-    .dashboard::before {
-      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-      background: linear-gradient(90deg, var(--accent-cyan-dim) 0%, #7c3aed 50%, var(--accent-orange) 100%);
-      border-radius: var(--border-radius) var(--border-radius) 0 0; z-index: 2;
-    }
-    .question-banner {
-      padding: 22px 28px 18px;
-      background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 40%, #eef2f9 100%);
-      border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;
-    }
-    .q-label { font-size: 10.5px; font-weight: 800; color: var(--accent-cyan-dim); text-transform: uppercase; letter-spacing: 1.8px; }
-    .q-text { font-size: 15px; color: var(--text-main); line-height: 1.6; max-width: 820px; }
-    .svg-container {
-      width: 100%; aspect-ratio: 16/9; position: relative; overflow: hidden;
-      background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
-      border-bottom: 1px solid var(--border);
-    }
-    svg { display: block; width: 100%; height: 100%; }
-    .svg-layer { transition: opacity 0.55s cubic-bezier(0.4,0,0.2,1); }
-    .control-panel { padding: 22px 28px 26px; background: linear-gradient(180deg,#fff 0%,#f9fbff 100%); border-top: 1px solid var(--border); }
-    .step-indicator { display: flex; align-items: center; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
-    .step-connector { flex: 0 0 18px; height: 1.5px; background: linear-gradient(90deg,#cbd5e1,#e2e8f0); border-radius: 2px; }
-    .step-dot {
-      padding: 6px 14px; border-radius: 20px; background: #f1f5f9;
-      border: 1.5px solid #e2e8f0; font-size: 11.5px; font-weight: 700; color: #94a3b8;
-      cursor: pointer; white-space: nowrap; user-select: none;
-      transition: background 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s, transform 0.25s;
-    }
-    .step-dot:hover:not(.active) { background: rgba(8,145,178,0.07); border-color: rgba(8,145,178,0.3); color: var(--accent-cyan-dim); }
-    .step-dot.active { background: linear-gradient(135deg,#0e7490,#0891b2); border-color: transparent; color: #fff; box-shadow: 0 3px 12px rgba(8,145,178,0.38); transform: scale(1.07); }
-    .step-dot.done { background: rgba(22,163,74,0.09); border-color: rgba(22,163,74,0.28); color: #15803d; }
-    .step-label { font-size: 11px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; margin-left: 6px; }
-    .step-progress-wrap { height: 3px; background: #f1f5f9; border-radius: 2px; margin-bottom: 20px; overflow: hidden; }
-    .step-progress-bar { height: 100%; background: linear-gradient(90deg,#0e7490,#0891b2,#38bdf8); border-radius: 2px; transition: width 0.5s; }
-    .info-box {
-      background: linear-gradient(135deg,#f8fbff,#f4f8ff); border: 1px solid #dde8f8;
-      border-left: 4px solid var(--accent-cyan); border-radius: var(--border-radius-sm);
-      padding: 20px 22px; min-height: 130px; display: flex; flex-direction: column; gap: 11px;
-    }
-    .info-box h3 { color: var(--text-main); font-size: 16.5px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
-    .info-box h3::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent-cyan); flex-shrink:0; }
-    .badges { display: flex; gap: 7px; flex-wrap: wrap; }
-    .badge { padding: 4px 12px; border-radius: 20px; font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; }
-    .badge-cyan  { background:rgba(8,145,178,0.09);  border:1px solid rgba(8,145,178,0.28);  color:#0e7490; }
-    .badge-orange{ background:rgba(217,119,6,0.09);  border:1px solid rgba(217,119,6,0.28);  color:#92400e; }
-    .badge-green { background:rgba(22,163,74,0.09);  border:1px solid rgba(22,163,74,0.28);  color:#15803d; }
-    .info-desc { font-size: 14px; line-height: 1.7; color: var(--text-sub); }
-    .actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 20px; }
-    button { padding: 11px 24px; border-radius: 10px; font-size: 13.5px; font-weight: 700; font-family: inherit; cursor: pointer; border: none; outline: none; transition: all 0.2s; }
-    .btn-primary { background: linear-gradient(135deg,#0e7490,#0891b2); color: #fff; box-shadow: 0 4px 14px rgba(8,145,178,0.30); }
-    .btn-primary:hover { background: linear-gradient(135deg,#0c6680,#0e7490); transform: translateY(-2px); }
-    .btn-secondary { background: #fff; color: var(--text-sub); border: 1.5px solid var(--border-strong); }
-    .btn-secondary:hover { background: #f8fafc; color: var(--text-main); }
-  </style>
-</head>
-<body>
-  <div class="page-header"><div class="page-chip">Interactive Animation</div></div>
-  <div class="dashboard">
-    <div class="question-banner">
-      <div class="q-label">Problem Statement</div>
-      <div class="q-text">[FULL QUESTION TEXT]</div>
-    </div>
-    <div class="svg-container">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
-        <defs><!-- gradients, filters, markers --></defs>
-        <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
-        <!-- SVG layers: <g class="svg-layer" id="layer-[name]" style="opacity:0"> ... </g> -->
-        <!-- Overlay groups: <g class="svg-layer" id="overlay-step0"> ... </g> through overlay-step5 -->
-      </svg>
-    </div>
-    <div class="control-panel">
-      <div class="step-indicator" id="dots">
-        <!-- 6 step-dot divs with onclick="goToStep(N)" -->
-        <div class="step-connector"></div>
-        <div class="step-dot" id="dot-step7" onclick="if(typeof window.qanim_showScene6==='function')window.qanim_showScene6()">Main Formula</div>
-        <div class="step-connector"></div>
-        <div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene8==='function')window.qanim_showScene8()">Substitution</div>
-        <div class="step-connector"></div>
-        <div class="step-dot" id="dot-step9" onclick="if(typeof window.qanim_showScene9==='function')window.qanim_showScene9()">Final Answer</div>
-        <div class="step-label" id="step-label">Step 1 of 9</div>
-      </div>
-      <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar" style="width:11.11%"></div></div>
-      <div class="info-box">
-        <h3 id="info-title"></h3>
-        <div class="badges" id="info-badges"></div>
-        <div class="info-desc" id="info-desc"></div>
-      </div>
-      <div class="actions">
-        <button class="btn-secondary" onclick="resetAnim()">↺ Restart</button>
-        <button class="btn-secondary qanim-prev-btn" id="btn-prev" onclick="prevStep()" disabled>◀ Previous Step</button>
-        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step ▶</button>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    var currentStep = 0;
-    var totalSteps = 6;
-    var totalDisplaySteps = 9;
-    window.qanimRafId = null;
-    var time = 0;
-
-    var stepsData = [/* 6 entries */];
-
-    function updateDOM(idx) {
-      var data = stepsData[idx];
-      document.getElementById('blur-shield').style.opacity = data.blurOp;
-      for (var id in data.layerOpacities) { var el=document.getElementById(id); if(el) el.style.opacity=data.layerOpacities[id]; }
-      for (var i=0;i<totalSteps;i++){var ov=document.getElementById('overlay-step'+i);if(ov)ov.style.opacity=(data.overlays.indexOf('overlay-step'+i)!==-1)?1:0;}
-      document.getElementById('info-title').innerHTML = data.title;
-      document.getElementById('info-badges').innerHTML = data.badges;
-      document.getElementById('info-desc').innerHTML = data.desc;
-      var dots=document.querySelectorAll('.step-dot');
-      for(var j=0;j<dots.length;j++){dots[j].className='step-dot';if(j<idx)dots[j].className+=' done';if(j===idx)dots[j].className+=' active';}
-      document.getElementById('step-label').innerHTML='Step '+(idx+1)+' of '+totalDisplaySteps;
-      document.getElementById('step-bar').style.width=((idx+1)/totalDisplaySteps*100)+'%';
-      var bn=document.getElementById('btn-next');
-      if(bn){bn.innerHTML=(idx===totalSteps-1)?'View Formula &#x25B6;':'Next Step &#x25B6;';}
-      var bp=document.getElementById('btn-prev'); if(bp) bp.disabled=(idx<=0);
-    }
-
-    function applyStep(idx) {
-      currentStep = idx; updateDOM(idx);
-      if(window.qanimRafId){cancelAnimationFrame(window.qanimRafId);window.qanimRafId=null;}
-      if(!stepsData[idx].freezing){ window.qanimRafId=requestAnimationFrame(animLoop); }
-    }
-    window.applyStep = applyStep;
-
-    function animLoop(){time+=0.05;drawFrame(time);if(!stepsData[currentStep].freezing){window.qanimRafId=requestAnimationFrame(animLoop);}else{window.qanimRafId=null;}}
-    window.qanimStartRAF=function(){if(!window.qanimRafId)window.qanimRafId=requestAnimationFrame(animLoop);};
-
-    function nextStep(){
-      if(currentStep+1<totalSteps){applyStep(currentStep+1);}
-      else{if(typeof window.qanim_showScene6==='function'){currentStep=totalSteps;window.qanim_showScene6();}}
-    }
-    function prevStep(){if(currentStep>0)applyStep(currentStep-1);}
-    function goToStep(idx){if(idx>=0&&idx<totalSteps)applyStep(idx);}
-    function resetAnim(){
-      var ids=['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay','qanim-scene-modal-backdrop'];
-      for(var i=0;i<ids.length;i++){var el=document.getElementById(ids[i]);if(el){el.classList.remove('qanim-scene-visible');el.style.display='none';}}
-      time=0; applyStep(0);
-    }
-    function drawFrame(t){ /* SVG animation here — use setAttribute for SVG props */ }
-    window.onload=function(){applyStep(0);};
-  </script>
-
-  <script type="application/json" id="__qanim_scene_data__">
-  {
-    "scene_script": {
-      "title": "[Problem title max 60 chars]",
-      "topic": "[PHYSICS|ENGINEERING|MATH|CHEMISTRY]",
-      "final_answer": "[Computed answer with units]",
-      "key_insight": "[One sentence physical insight]",
-      "solution_steps": ["[Step 1 equation]","[Step 2 substitution]","[Step 3 result]"]
-    },
-    "solution": {
-      "given_data": [{"symbol":"[sym]","value":"[val]","unit":"[unit]","description":"[desc]"}],
-      "formulas": [{"text":"[formula]","label":"[law name]","why":"[why]"}],
-      "steps": ["[Step 1: formula]","[Step 2: values]","[Step 3: answer]"],
-      "final_answer": "[answer with units]",
-      "final_answer_unit": "[unit]",
-      "key_insight": "[insight]",
-      "variable_meanings": [{"symbol":"[sym]","meaning":"[meaning]","unit":"[unit]"}],
-      "formula_label": "[Law/Theorem name]",
-      "formula_why": "[Why this formula applies]"
-    },
-    "glossary_terms": [{"term":"[Term]","definition":"[Definition]"}]
-  }
-  </script>
-
-</body></html>
-
-════════════════════════════════════════════════════════════
-STRICT RULES
-════════════════════════════════════════════════════════════
-1. EXACTLY 6 SVG steps (stepsData has 6 entries, indices 0–5).
-2. EXACTLY 9 step-dots: 6 named + Main Formula + Substitution + Final Answer.
-3. dot-step7 → qanim_showScene6, dot-step8 → qanim_showScene8, dot-step9 → qanim_showScene9.
-4. nextStep() calls qanim_showScene6 when currentStep reaches totalSteps.
-5. resetAnim() MUST hide all overlay divs before calling applyStep(0).
-6. window.applyStep = applyStep — MANDATORY alias.
-7. SVG animation: setAttribute('stroke-dashoffset', val) NOT .style.
-8. "To Find" badge: solid fill="#d97706" with white text.
-9. var everywhere. No const/let. No arrow functions. No backticks.
-10. ALL __qanim_scene_data__ values must be REAL computed numbers.
-11. Do NOT include <script id="qanim-*"> blocks — auto-injected.
-12. Do NOT include Scene 6/7/9 overlay divs — auto-injected.
-13. Return ONLY the complete <!DOCTYPE html>...</html>. No markdown, no fences."""
-
-_ANIMATION_BUILDER_USER = """Generate the complete HTML animation page for this question. Follow the skeleton in the system prompt EXACTLY.
-
-QUESTION:
-{question}
-
-STEPS TO FOLLOW:
-1. Read every given value from the question.
-2. Solve the problem — compute the exact numerical answer.
-3. Design 6 SVG animation steps that reveal given values one by one (Steps 1–5), then show all data + "To Find" (Step 6).
-4. Fill in ALL __qanim_scene_data__ values with real computed numbers — no placeholders.
-5. Do NOT include Scene 6/7/9 overlay divs or qanim-* scripts — those are injected automatically.
-
-Return ONLY the complete <!DOCTYPE html>...</html>. No markdown. No fences."""
-
-
-
-class GeminiAnimationBuilder:
-    """Stage B: Generates complete HTML animation from the scene script."""
-
-    @classmethod
-    def build(cls, question: str, scene_script: dict) -> str:
-        if _gemini_client is None:
-            return RecoveryEngine.fallback_html(question, "Gemini client not available. Set GEMINI_API_KEY.")
-
-        _bmodel = globals().get("GEMINI_BUILD_MODEL") or globals().get("GEMINI_MODEL") or "gemini-3.1-pro-preview"
-        QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {_bmodel}...")
-        # scene_script is always {} — builder generates everything from the question.
-        user_prompt = (
-            _ANIMATION_BUILDER_USER
-            .replace("{question}", question[:2000])
-            .replace("{scene_script}", "")
-        )
-
-        try:
-            raw = cls._call_gemini_large(user_prompt, _bmodel)
-            html = cls._extract_html(raw)
-            if html and len(html) > 1000:
-                QAnimLogger.ok("AnimationBuilder", f"Animation HTML generated: {len(html):,} chars")
-                return html
-            else:
-                QAnimLogger.warn("AnimationBuilder", f"Short/empty HTML ({len(html)} chars) — trying repair")
-                return cls._repair_or_fallback(question, raw, scene_script)
-        except Exception as e:
-            QAnimLogger.error("AnimationBuilder", f"Build failed: {_err_msg(e)}")
-            return RecoveryEngine.fallback_html(question, f"Animation build error: {_err_msg(e)}")
-
-    @classmethod
-    def _call_gemini_large(cls, user_prompt: str, bmodel: str = None) -> str:
-        import time as _time
-        MAX_RETRIES  = 3
-        RETRY_DELAYS = [5, 15, 30]
-        # Safe model resolution — globals().get() never raises NameError.
-        _bmodel = bmodel or globals().get("GEMINI_BUILD_MODEL") or globals().get("GEMINI_MODEL") or "gemini-3.1-pro-preview"
-
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                if _GEMINI_SDK_STYLE == "generativeai":
-                    model_obj = _gemini_client.GenerativeModel(
-                        model_name=_bmodel,
-                        system_instruction=_ANIMATION_BUILDER_SYSTEM,
-                        generation_config={"temperature": 0.4, "max_output_tokens": 65536},
-                    )
-                    response = model_obj.generate_content(user_prompt)
-                    raw = response.text.strip()
-                else:
-                    # Single clean config — no thinking_config (Gemini 3.1 Pro
-                    # mandatory thinking cannot be reduced; the parameter is
-                    # silently ignored and the old try/except around it was
-                    # swallowing all other config errors too).
-                    config = _google_genai.types.GenerateContentConfig(
-                        system_instruction=_ANIMATION_BUILDER_SYSTEM,
-                        temperature=0.4,
-                        max_output_tokens=65536,
-                    )
-                    response = _gemini_client.models.generate_content(
-                        model=_bmodel,
-                        contents=user_prompt,
-                        config=config,
-                        http_options={"timeout": 600},
-                    )
-                    raw = response.text.strip()
-
-                QAnimLogger.info("AnimationBuilder", f"Attempt {attempt} OK — {len(raw):,} chars")
-                return raw
-
-            except Exception as e:
-                err_str = str(e)
-                err_lower = err_str.lower()
-                is_retryable = (
-                    "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
-                    or "503" in err_str or "UNAVAILABLE" in err_str
-                    or "overloaded" in err_lower or "high demand" in err_lower
-                    or "deadline exceeded" in err_lower   # gRPC timeout from Google's side
-                    or "timeout" in err_lower             # any network-level timeout
-                    or "connection" in err_lower          # transient connection errors
-                    or "temporarily" in err_lower         # "temporarily unavailable"
-                    or "try again" in err_lower           # explicit retry suggestion
-                )
-                if is_retryable and attempt < MAX_RETRIES:
-                    if "429" in err_str:
-                        reason = "429 rate limit"
-                    elif "deadline" in err_lower or "timeout" in err_lower:
-                        reason = "request timeout (model busy)"
-                    else:
-                        reason = "503 model overloaded"
-                    QAnimLogger.warn("AnimationBuilder", f"{reason} — waiting {RETRY_DELAYS[attempt-1]}s before retry {attempt+1}/{MAX_RETRIES}...")
-                    _time.sleep(RETRY_DELAYS[attempt - 1])
-                    continue
-                raise
-
-        raise RuntimeError("All retry attempts exhausted")
-
-    @classmethod
-    def _extract_html(cls, raw: str) -> str:
-        """Extract clean HTML from the raw Gemini response."""
-        # Strip any markdown fences
-        raw = re.sub(r'^```(?:html)?\s*', '', raw.strip(), flags=re.MULTILINE)
-        raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE).strip()
-
-        # Find DOCTYPE or <html start
-        for marker in ['<!DOCTYPE html>', '<!doctype html>', '<html']:
-            idx = raw.lower().find(marker.lower())
-            if idx != -1:
-                end = raw.lower().rfind('</html>')
-                if end != -1:
-                    return raw[idx:end + 7]
-                return raw[idx:]
-        return raw
-
-    @classmethod
-    def _repair_or_fallback(cls, question: str, raw: str, scene_script: dict) -> str:
-        """Try to build a minimal working page from the scene script if Gemini output is bad."""
-        QAnimLogger.info("AnimationBuilder", "Attempting repair from scene script...")
-        try:
-            return cls._build_minimal_page(question, scene_script)
-        except Exception as e:
-            QAnimLogger.error("AnimationBuilder", f"Repair failed: {e}")
-            return RecoveryEngine.fallback_html(question, "Animation generation failed — please regenerate.")
-
-    @classmethod
-    def _build_minimal_page(cls, question: str, script: dict) -> str:
-        """Build a clean minimal animation page directly from the scene script (no AI needed)."""
-        title = html_module.escape(script.get("title", question[:60]))
-        q_esc = html_module.escape(question[:300])
-        steps = script.get("steps", [])
-        final_answer = html_module.escape(script.get("final_answer", ""))
-        key_insight = html_module.escape(script.get("key_insight", ""))
-
-        # Build stepsData JS
-        steps_js_parts = []
-        for step in steps:
-            label = step.get("label", f"Step {step.get('step_number',1)}")
-            title_s = step.get("title", label)
-            desc = step.get("description", "")
-            badges_html = ""
-            for b in step.get("badges", []):
-                bt = b.get("type", "cyan")
-                badges_html += f'<span class="badge badge-{bt}">{html_module.escape(b.get("text",""))}</span> '
-            math_lines = step.get("math_lines", [])       # kept for legacy compat only
-            show_math  = step.get("show_math", False)      # kept for legacy compat only
-            blur = 0.38 if step.get("blur_background") else 0
-            step_num = step.get("step_number", 1) - 1
-
-            # Escape strings for JS
-            label_js    = label.replace('"', '\\"')
-            title_js    = title_s.replace('"', '\\"')
-            desc_js     = desc.replace('"', '\\"').replace('\n', ' ')
-            badges_js   = badges_html.replace('"', '\\"').replace('\n', '')
-
-            steps_js_parts.append(
-                "    {\n"
-                f'      label: "{label_js}",\n'
-                f'      blurOp: {blur},\n'
-                f'      overlays: ["overlay-step{step_num}"],\n'
-                f'      title: "{title_js}",\n'
-                f'      badges: "{badges_js}",\n'
-                f'      desc: "{desc_js}"\n'
-                "    }"
-            )
-
-        steps_js = "[\n" + ",\n".join(steps_js_parts) + "\n  ]"
-
-        # Build overlay SVG groups
-        overlay_groups = []
-        for i, step in enumerate(steps):
-            overlay_groups.append(
-                f'<g class="svg-layer" id="overlay-step{i}" style="opacity:0"></g>'
-            )
-        overlays_html = "\n                ".join(overlay_groups)
-
-        # Build pill-style dot elements with step-connector divs between them
-        dot_count = len(steps)
-        dot_parts = []
-        for i in range(dot_count):
-            dot_parts.append(
-                '<div class="step-dot' + (' active' if i == 0 else '') + '">'
-                + html_module.escape(steps[i].get('label', f'Step {i+1}')[:24])
-                + '</div>'
-            )
-            if i < dot_count - 1:
-                dot_parts.append('<div class="step-connector"></div>')
-        dots_html = "\n                ".join(dot_parts)
-
-        # Count overlays list for applyStep
-        all_overlay_ids = [f"overlay-step{i}" for i in range(len(steps))]
-        overlay_ids_js = json.dumps(all_overlay_ids)
-
-        page = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title} — Interactive Animation</title>
-    <style>
-        :root {{
-            --bg: #eef2f9;
-            --panel: #ffffff;
-            --text: #1e293b;
-            --text-sub: #64748b;
-            --text-muted: #94a3b8;
-            --accent: #0891b2;
-            --accent-dim: #0e7490;
-            --accent-light: rgba(8,145,178,0.10);
-            --orange: #d97706;
-            --green: #16a34a;
-            --border: #e2e8f0;
-            --border-md: #cbd5e1;
-            --radius: 16px;
-            --radius-sm: 10px;
-            --shadow: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08);
-        }}
-        *, *::before, *::after {{ box-sizing:border-box; margin:0; padding:0; }}
-        body {{
-            font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-            background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
-            background-attachment: fixed;
-            color: var(--text);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-            padding: 28px 16px 130px;
-        }}
-        /* ── Page header chip ── */
-        .page-header {{
-            width: 100%;
-            max-width: 900px;
-            margin-bottom: 14px;
-        }}
-        .page-chip {{
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            padding: 5px 13px;
-            border-radius: 20px;
-            background: rgba(8,145,178,0.10);
-            border: 1px solid rgba(8,145,178,0.22);
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--accent-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.9px;
-        }}
-        .page-chip::before {{ content: '▶'; font-size: 8px; }}
-        /* ── Dashboard Card ── */
-        .dashboard {{
-            width: 100%;
-            max-width: 900px;
-            background: var(--panel);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            overflow: hidden;
-            border: 1px solid var(--border);
-            position: relative;
-        }}
-        .dashboard::before {{
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, var(--accent-dim) 0%, #7c3aed 50%, var(--orange) 100%);
-            border-radius: var(--radius) var(--radius) 0 0;
-            z-index: 2;
-        }}
-        /* ── Question Banner ── */
-        .question-banner {{
-            padding: 22px 28px 18px;
-            background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 45%, #eef2f9 100%);
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            position: relative;
-            overflow: hidden;
-        }}
-        .question-banner::before {{
-            content: '';
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(100deg, rgba(8,145,178,0.05) 0%, transparent 55%);
-            pointer-events: none;
-        }}
-        .q-label {{
-            font-size: 10.5px;
-            font-weight: 800;
-            color: var(--accent-dim);
-            text-transform: uppercase;
-            letter-spacing: 1.8px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .q-label::before {{
-            content: '';
-            display: inline-block;
-            width: 16px; height: 16px;
-            border-radius: 5px;
-            background: linear-gradient(135deg, var(--accent-dim), var(--accent));
-            flex-shrink: 0;
-        }}
-        .q-text {{
-            font-size: 15px;
-            color: var(--text);
-            line-height: 1.62;
-            font-weight: 430;
-            max-width: 820px;
-        }}
-        /* ── SVG Canvas ── */
-        .svg-container {{
-            width: 100%;
-            aspect-ratio: 16 / 9;
-            background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
-            position: relative;
-            overflow: hidden;
-            border-bottom: 1px solid var(--border);
-        }}
-        svg {{ display: block; width: 100%; height: 100%; }}
-        .svg-layer {{ transition: opacity 0.52s cubic-bezier(0.4, 0, 0.2, 1); }}
-        /* ── Control Panel ── */
-        .control-panel {{
-            padding: 22px 28px 26px;
-            background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
-            border-top: 1px solid var(--border);
-        }}
-        /* ── Step Indicator ── */
-        .step-indicator {{
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            margin-bottom: 8px;
-            flex-wrap: wrap;
-        }}
-        .step-connector {{
-            flex: 0 0 18px;
-            height: 1.5px;
-            background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
-            border-radius: 2px;
-        }}
-        .step-dot {{
-            padding: 6px 14px;
-            border-radius: 20px;
-            background: #f1f5f9;
-            border: 1.5px solid var(--border);
-            font-size: 11.5px;
-            font-weight: 700;
-            color: var(--text-muted);
-            cursor: pointer;
-            transition: background 0.28s ease, color 0.28s ease, border-color 0.28s ease,
-                        box-shadow 0.28s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
-            white-space: nowrap;
-            user-select: none;
-        }}
-        .step-dot:hover:not(.active) {{
-            background: rgba(8,145,178,0.07);
-            border-color: rgba(8,145,178,0.30);
-            color: var(--accent-dim);
-        }}
-        .step-dot.active {{
-            background: linear-gradient(135deg, #0e7490, #0891b2);
-            border-color: transparent;
-            color: #fff;
-            box-shadow: 0 3px 12px rgba(8,145,178,0.38);
-            transform: scale(1.07);
-        }}
-        .step-dot.done {{
-            background: rgba(22,163,74,0.09);
-            border-color: rgba(22,163,74,0.28);
-            color: #15803d;
-        }}
-        .step-label {{
-            font-size: 11px;
-            color: var(--text-muted);
-            font-weight: 600;
-            letter-spacing: 0.6px;
-            text-transform: uppercase;
-            margin-left: 8px;
-            flex: 1;
-        }}
-        /* ── Progress bar ── */
-        .step-progress-wrap {{
-            height: 3px;
-            background: #f1f5f9;
-            border-radius: 2px;
-            margin: 10px 0 18px;
-            overflow: hidden;
-        }}
-        .step-progress-bar {{
-            height: 100%;
-            background: linear-gradient(90deg, #0e7490, #0891b2, #38bdf8);
-            border-radius: 2px;
-            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-            width: 0%;
-        }}
-        /* ── Info Box ── */
-        .info-box {{
-            background: linear-gradient(135deg, #f8fbff, #f4f8ff);
-            border: 1px solid #dde8f8;
-            border-left: 4px solid var(--accent);
-            border-radius: var(--radius-sm);
-            padding: 20px 22px;
-            min-height: 128px;
-            display: flex;
-            flex-direction: column;
-            gap: 11px;
-            position: relative;
-            overflow: hidden;
-        }}
-        .info-box::before {{
-            content: '';
-            position: absolute;
-            top: 0; right: 0;
-            width: 110px; height: 110px;
-            background: radial-gradient(circle, rgba(8,145,178,0.06), transparent 70%);
-            pointer-events: none;
-        }}
-        .info-box h3 {{
-            color: var(--text);
-            font-size: 16.5px;
-            font-weight: 800;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            line-height: 1.3;
-            letter-spacing: -0.2px;
-        }}
-        .info-box h3::before {{
-            content: '';
-            display: inline-block;
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            background: var(--accent);
-            flex-shrink: 0;
-            box-shadow: 0 0 0 3px rgba(8,145,178,0.18);
-        }}
-        /* ── Badges ── */
-        .badges {{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; }}
-        .badge {{
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 11.5px;
-            font-weight: 700;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-        }}
-        .badge-cyan   {{ background:rgba(8,145,178,0.09);  border:1px solid rgba(8,145,178,0.28);  color:#0e7490; }}
-        .badge-orange {{ background:rgba(217,119,6,0.09);  border:1px solid rgba(217,119,6,0.28);  color:#92400e; }}
-        .badge-green  {{ background:rgba(22,163,74,0.09);  border:1px solid rgba(22,163,74,0.28);  color:#15803d; }}
-        /* ── Description ── */
-        .info-desc {{ font-size:14px; line-height:1.7; color:var(--text-sub); }}
-        /* ── Actions ── */
-        .actions {{
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            gap: 10px;
-            margin-top: 20px;
-        }}
-        button {{
-            padding: 11px 24px;
-            border-radius: 10px;
-            font-size: 13.5px;
-            font-weight: 700;
-            font-family: inherit;
-            cursor: pointer;
-            transition: background 0.22s ease, box-shadow 0.22s ease,
-                        transform 0.18s cubic-bezier(0.34,1.56,0.64,1),
-                        color 0.2s ease;
-            border: none;
-            outline: none;
-            letter-spacing: 0.1px;
-        }}
-        .btn-primary {{
-            background: linear-gradient(135deg, #0e7490, #0891b2);
-            color: #fff;
-            box-shadow: 0 4px 14px rgba(8,145,178,0.30);
-        }}
-        .btn-primary:hover {{
-            background: linear-gradient(135deg, #0c6680, #0e7490);
-            box-shadow: 0 6px 22px rgba(8,145,178,0.38);
-            transform: translateY(-2px);
-        }}
-        .btn-primary:active {{ transform: translateY(0); }}
-        .btn-secondary {{
-            background: #fff;
-            color: var(--text-sub);
-            border: 1.5px solid var(--border-md);
-            box-shadow: 0 1px 3px rgba(15,23,42,0.06);
-        }}
-        .btn-secondary:hover {{
-            background: #f8fafc;
-            color: var(--text);
-            border-color: #94a3b8;
-            transform: translateY(-1px);
-        }}
-    </style>
-</head>
-<body>
-    <div class="page-header">
-        <div class="page-chip">Interactive Animation</div>
-    </div>
-    <div class="dashboard">
-        <!-- Question Banner -->
-        <div class="question-banner">
-            <div class="q-label">Problem Statement</div>
-            <div class="q-text">{q_esc}</div>
-        </div>
-        <!-- SVG Canvas -->
-        <div class="svg-container">
-            <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
-                <defs>
-                    <radialGradient id="canvasBg" cx="35%" cy="38%" r="70%">
-                        <stop offset="0%"   stop-color="#eef5ff" />
-                        <stop offset="45%"  stop-color="#dce8f5" />
-                        <stop offset="85%"  stop-color="#c8d9ed" />
-                        <stop offset="100%" stop-color="#b8ccdf" />
-                    </radialGradient>
-                    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.6" stroke-opacity="0.04" />
-                    </pattern>
-                    <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%"   stop-color="#e8f0fa" />
-                        <stop offset="35%"  stop-color="#c8d8e8" />
-                        <stop offset="70%"  stop-color="#8aaac0" />
-                        <stop offset="100%" stop-color="#5a7a9a" />
-                    </linearGradient>
-                    <linearGradient id="steelHi" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%"   stop-color="#f4f8fc" />
-                        <stop offset="50%"  stop-color="#d4e4f0" />
-                        <stop offset="100%" stop-color="#94b4c8" />
-                    </linearGradient>
-                    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="rgba(14,30,64,0.16)" />
-                    </filter>
-                    <filter id="shadowDeep" x="-25%" y="-25%" width="150%" height="150%">
-                        <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="rgba(14,30,64,0.22)" />
-                    </filter>
-                    <filter id="glowCyan" x="-50%" y="-50%" width="200%" height="200%">
-                        <feGaussianBlur stdDeviation="6" result="blur" />
-                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                    <filter id="glowOrange" x="-50%" y="-50%" width="200%" height="200%">
-                        <feGaussianBlur stdDeviation="5" result="blur" />
-                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                    <marker id="arrowCyan" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
-                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#0891b2" />
-                    </marker>
-                    <marker id="arrowOrange" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
-                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#d97706" />
-                    </marker>
-                    <marker id="arrowGreen" orient="auto" markerWidth="8" markerHeight="8" refX="4" refY="4">
-                        <path d="M 0 1 L 7 4 L 0 7 Z" fill="#16a34a" />
-                    </marker>
-                    <marker id="arrowGrey" orient="auto" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5">
-                        <path d="M 0 1 L 6 3.5 L 0 6 Z" fill="#94a3b8" />
-                    </marker>
-                </defs>
-                <!-- Canvas background -->
-                <rect width="850" height="478" fill="url(#canvasBg)" />
-                <rect width="850" height="478" fill="url(#grid)" />
-                <!-- Frame layer — always visible -->
-                <g class="svg-layer" id="layer-frame">
-                    <line x1="90" y1="239" x2="760" y2="239"
-                          stroke="#b0c4de" stroke-width="1.2" stroke-dasharray="10,6" stroke-opacity="0.6"/>
-                    <text x="425" y="50"
-                          fill="#0e7490" font-size="20" font-weight="800"
-                          text-anchor="middle"
-                          font-family="'Segoe UI',system-ui,sans-serif"
-                          filter="url(#glowCyan)"
-                          letter-spacing="-0.3">{html_module.escape(script.get('title', title))}</text>
-                    <text x="425" y="72"
-                          fill="#64748b" font-size="12" font-weight="500"
-                          text-anchor="middle"
-                          font-family="'Segoe UI',system-ui,sans-serif">Interactive Step-by-Step Animation</text>
-                </g>
-                <!-- Blur shield (sits between frame and components) -->
-                <rect id="blur-shield" width="850" height="478"
-                      fill="#c2d4e8" opacity="0" pointer-events="none" />
-                <!-- Step overlays -->
-                {overlays_html}
-            </svg>
-        </div>
-        <!-- Control Panel -->
-        <div class="control-panel">
-            <div class="step-indicator" id="dots">
-                {dots_html}
-                <div class="step-label" id="step-label">Ready</div>
-            </div>
-            <!-- Progress bar -->
-            <div class="step-progress-wrap">
-                <div class="step-progress-bar" id="step-bar"></div>
-            </div>
-            <div class="info-box">
-                <h3 id="info-title">{title}</h3>
-                <div class="badges" id="info-badges"></div>
-                <div class="info-desc" id="info-desc">Press "Next Step" to begin the animation.</div>
-            </div>
-            <div class="actions">
-                <button class="btn-secondary" onclick="resetAnim()">&#x21BA; Restart</button>
-                <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step &#x25B6;</button>
-            </div>
-        </div>
-    </div>
-<script>
-var stepsData = {steps_js};
-var allOverlays = {overlay_ids_js};
-var currentStep = -1;
-var totalSteps = stepsData.length;
-
-function applyStep(idx) {{
-    if(idx < 0 || idx >= totalSteps) return;
-    var data = stepsData[idx];
-
-    // Blur shield
-    var shield = document.getElementById('blur-shield');
-    if(shield) shield.style.opacity = data.blurOp || 0;
-
-    // Overlay visibility
-    for(var oi = 0; oi < allOverlays.length; oi++) {{
-        var el = document.getElementById(allOverlays[oi]);
-        if(!el) continue;
-        var show = false;
-        if(data.overlays) {{
-            for(var j = 0; j < data.overlays.length; j++) {{
-                if(data.overlays[j] === allOverlays[oi]) {{ show = true; break; }}
-            }}
-        }}
-        el.style.opacity = show ? '1' : '0';
-    }}
-
-    // Info box
-    var elTitle = document.getElementById('info-title');
-    var elBadges = document.getElementById('info-badges');
-    var elDesc = document.getElementById('info-desc');
-    if(elTitle) elTitle.innerText = data.title || '';
-    if(elBadges) elBadges.innerHTML = data.badges || '';
-    if(elDesc) elDesc.innerText = data.desc || '';
-
-    // Step dots — active + done classes
-    var dots = document.querySelectorAll('.step-dot');
-    for(var di = 0; di < dots.length; di++) {{
-        dots[di].classList.remove('active');
-        dots[di].classList.remove('done');
-        if(di < idx) dots[di].classList.add('done');
-        if(di === idx) dots[di].classList.add('active');
-    }}
-
-    // Step label
-    var slabel = document.getElementById('step-label');
-    if(slabel) slabel.innerText = 'Step ' + (idx + 1) + ' of ' + totalSteps;
-
-    // Progress bar
-    var bar = document.getElementById('step-bar');
-    if(bar) bar.style.width = Math.round((idx + 1) / totalSteps * 100) + '%';
-
-    // Next button — keep visible on last step but change label to "View Formula →"
-    var btn = document.getElementById('btn-next');
-    if(btn) {{
-        btn.style.display = 'inline-block';
-        if(idx === totalSteps - 1) {{
-            btn.textContent = 'View Formula \u25B6';
-            btn.style.background = 'linear-gradient(135deg,#4338ca,#7c3aed)';
-            btn.style.boxShadow = '0 4px 14px rgba(124,58,237,0.35)';
-        }} else {{
-            btn.textContent = 'Next Step \u25B6';
-            btn.style.background = '';
-            btn.style.boxShadow = '';
-        }}
-    }}
-}}
-
-function nextStep() {{
-    if(currentStep < totalSteps - 1) {{
-        currentStep++;
-        applyStep(currentStep);
-    }} else {{
-        // Animation complete — open Scene 6 (Main Formula)
-        if(typeof window.qanim_showScene6 === 'function') {{
-            var svgCont = document.querySelector('.svg-container');
-            if(svgCont) {{
-                svgCont.style.transition = 'opacity .45s ease';
-                svgCont.style.opacity = '0';
-                setTimeout(function(){{ window.qanim_showScene6(); }}, 460);
-            }} else {{
-                window.qanim_showScene6();
-            }}
-        }}
-    }}
-}}
-
-function resetAnim() {{
-    currentStep = 0;
-    var bar = document.getElementById('step-bar');
-    if(bar) bar.style.width = '0%';
-    // Restore svg container opacity if it was faded
-    var svgCont = document.querySelector('.svg-container');
-    if(svgCont) {{ svgCont.style.opacity = '1'; }}
-    applyStep(0);
-    var btn = document.getElementById('btn-next');
-    if(btn) {{
-        btn.style.display = 'inline-block';
-        btn.textContent = 'Next Step \u25B6';
-        btn.style.background = '';
-        btn.style.boxShadow = '';
-    }}
-}}
-
-setTimeout(function() {{ resetAnim(); }}, 80);
-</script>
-</body>
-</html>"""
-        return page
-
-    @classmethod
-    async def build_async(cls, question: str, scene_script: dict) -> str:
-        # No asyncio.wait_for timeout — removed because it was the direct
-        # cause of the "Gemini took too long" error. Gemini 3.1 Pro with
-        # mandatory thinking can take 120-300s on heavy questions; cutting
-        # it off at 240s meant the request was cancelled mid-generation and
-        # the user got an error page instead of a result. The Gemini SDK's
-        # own HTTP transport handles true network failures. We just await
-        # the executor and let Gemini finish however long it needs.
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, cls.build, question, scene_script)
 
 
 # ===========================================================================
@@ -6040,11 +4986,128 @@ Rules:
 - Pure JSON only — no markdown, no fences."""
 
 
+class GeminiGlossaryAnalyzer:
+
+    @classmethod
+    def analyze(cls, question: str) -> dict:
+        if _gemini_client is None:
+            return {"terms": []}
+        # This call runs CONCURRENTLY with the scene analyzer and solution
+        # generator (asyncio.gather in the pipeline), which makes it the
+        # most likely of the three to get rate-limited or come back
+        # truncated. The previous version had ZERO retries of its own --
+        # any single hiccup (a 429 that _call_gemini's own retries didn't
+        # fully absorb, or JSON truncated at the old 800-token budget)
+        # silently returned {"terms": []} and the button just never
+        # appeared, with no visibility into why. That's the actual root
+        # cause of the recurring "glossary missing" reports: it wasn't
+        # missing by design, it was failing silently and often.
+        MAX_ATTEMPTS = 3
+        last_raw = ""
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                raw = GeminiSolutionGenerator._call_gemini(
+                    f"Question: {question[:800]}",
+                    _GLOSSARY_SYSTEM_GEMINI,
+                    max_tokens=1536,  # was 800 -- too tight, caused truncated/invalid JSON
+                )
+                last_raw = raw
+                cleaned = _sanitize_json_str(raw)
+                data = json.loads(cleaned)
+                terms = []
+                for t in (data.get("terms") or [])[:8]:
+                    term    = str(t.get("term", "") or "").strip()
+                    meaning = str(t.get("meaning", "") or "").strip()
+                    if term and meaning:
+                        terms.append({"term": term, "meaning": meaning})
+                if terms:
+                    QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s) (attempt {attempt})")
+                else:
+                    QAnimLogger.info("GlossaryAnalyzer", f"Parsed OK, 0 difficult words (attempt {attempt}) — genuinely none for this question")
+                return {"terms": terms}
+            except Exception as e:
+                QAnimLogger.warn(
+                    "GlossaryAnalyzer",
+                    f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {e} — "
+                    f"raw response was: {last_raw[:300]!r}",
+                )
+                if attempt < MAX_ATTEMPTS:
+                    continue
+        QAnimLogger.error("GlossaryAnalyzer", f"All {MAX_ATTEMPTS} attempts failed — skipping glossary for this generation")
+        return {"terms": []}
+
+    @classmethod
+    async def analyze_async(cls, question: str) -> dict:
+        loop = asyncio.get_event_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(None, cls.analyze, question),
+                timeout=STAGE_TIMEOUT_SMALL,
+            )
+        except asyncio.TimeoutError:
+            QAnimLogger.error("GlossaryAnalyzer", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — skipping glossary")
+            return {"terms": []}
 
 
+# ===========================================================================
+#  TOPIC CLASSIFIER (Gemini-based)
+# ===========================================================================
+
+async def _classify_topic_async(question: str) -> str:
+    q = question.lower()
+    TOPICS = [
+        (["mass transfer","evaporation","concentration","diffusion"],       "ENGINEERING"),
+        (["heat transfer","thermal","conduction","convection","radiation"], "ENGINEERING"),
+        (["fluid","flow","pressure","viscosity","bernoulli"],              "ENGINEERING"),
+        (["gear","crank","mechanism","slider","linkage","cam","flywheel"], "ENGINEERING"),
+        (["force","newton","velocity","acceleration","momentum"],          "PHYSICS"),
+        (["circuit","voltage","current","resistance","ohm","capacitor"],   "PHYSICS"),
+        (["integral","derivative","matrix","calculus","theorem"],         "MATH"),
+        (["cell","dna","protein","photosynthesis","enzyme","organism"],    "BIOLOGY"),
+    ]
+    for keywords, label in TOPICS:
+        if any(k in q for k in keywords):
+            return label
+    return "ENGINEERING"
 
 
+# ===========================================================================
+#  SCENE COUNT DETECTOR
+# ===========================================================================
 
+def _detect_scene_count(question: str) -> int:
+    q   = question.strip()
+    ql  = q.lower()
+    length = len(q)
+
+    jee_kw = ["jee","neet","iit","assertion","reason","column i","column ii","match the"]
+    if any(k in ql for k in jee_kw):
+        return 8
+
+    subq_count = sum(len(re.findall(p, ql)) for p in [r'\(\s*i+\s*\)', r'\(\s*[a-d]\s*\)', r'\bpart\s+[a-d1-4]\b'])
+    if subq_count >= 2:
+        return 8
+
+    derive_kw = ["derive","prove","hence show","show that"]
+    if any(k in ql for k in derive_kw):
+        return 7
+
+    find_count = len(re.findall(r'\b(?:find|calculate|determine|evaluate|compute|obtain)\b', ql))
+    if find_count >= 2:
+        return 7
+
+    if length >= 400:
+        return 7
+
+    if length >= 200 or find_count >= 1:
+        return 6
+
+    return 5
+
+
+# ===========================================================================
+#  PUBLIC ENTRY POINT
+# ===========================================================================
 
 async def generate_question_animation(question: str) -> dict:
     """
@@ -6062,7 +5125,16 @@ async def generate_question_animation(question: str) -> dict:
         # ceiling anywhere in the call chain, so "taking much longer than
         # expected" could mean anywhere from 2 minutes to 10+ minutes with
         # nothing to cut it off. Now the worst case is bounded and known.
-        return await _run_generation_pipeline(question)
+        return await asyncio.wait_for(
+            _run_generation_pipeline(question), timeout=PIPELINE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        QAnimLogger.error("Pipeline", f"TOTAL pipeline exceeded {PIPELINE_TIMEOUT}s — returning fallback")
+        return _build_failure_result(
+            question,
+            f"Generation took longer than {int(PIPELINE_TIMEOUT)}s (Gemini was slow/overloaded) — "
+            f"showing a fallback animation instead of hanging indefinitely. Please try again.",
+        )
     except Exception as e:
         QAnimLogger.error("Pipeline", f"UNHANDLED error: {_err_msg(e)}")
         return _build_failure_result(question, f"Unexpected error: {_err_msg(e)}")
@@ -6105,106 +5177,175 @@ def _inject_fallback_warning_banner(html: str) -> str:
 
 async def _run_generation_pipeline(question: str) -> dict:
     """
-    PIPELINE v3.0 (zero-stage, single Gemini call):
+    PIPELINE v2.0 (Steps 1-9 only, no SVG animation):
 
-    Stage  C: GeminiAnimationBuilder — ONE Gemini call that:
-              • Generates all 6 SVG animation steps (1-6)
-              • Solves the problem and embeds solution data in
-                <script id="__qanim_scene_data__"> JSON block
-              • Includes dot placeholders for Steps 7/8/9 (modals)
-    Post:   Extract __qanim_scene_data__ → build scene_script + gemini_sol
-            Inject Scene 6 (Formula), Scene 7 (Substitution), Scene 9
-            (Final Answer) modals using the extracted data
-            Inject all other panels unchanged
-
-    No preprocessing, no extraction, no analysis stages.
-    The builder receives the raw question and generates everything.
+    Stage -1: LargeInputPreprocessor (sync, regex-based)
+    Stage  0: ToFind + GivenValues extraction (sync, no AI)
+    Stage  B1: GeminiSolutionGenerator (Gemini)  ─┐ concurrent
+    Stage  B2: GeminiGlossaryAnalyzer  (Gemini)  ─┘
+    Post:  Inject all step panels (Steps 1-9) into a clean base HTML
     """
     short_q = question[:80] + ("..." if len(question) > 80 else "")
-    QAnimLogger.info("Pipeline", f"START v3.0 — '{short_q}'")
+    QAnimLogger.info("Pipeline", f"START v2.0 (Steps 1-9) — '{short_q}'")
 
-    # ── SINGLE GEMINI CALL ───────────────────────────────────────────────
-    # GeminiAnimationBuilder receives the raw question and generates the
-    # complete 9-step animation (Steps 1-6 SVG + Steps 7/8/9 modals) in
-    # one call. No preprocessing, no extraction, no analysis stages.
-    # ─────────────────────────────────────────────────────────────────────
-    QAnimLogger.info("Pipeline", "Building 9-step animation (single Gemini call)...")
-
-    animation_html = None
-    for _build_attempt in range(1, 3):  # 2 total attempts (retry on API error only)
-        try:
-            _candidate = await GeminiAnimationBuilder.build_async(question, {})
-            if _candidate and "Animation Could Not Render" not in _candidate and len(_candidate) > 3000:
-                animation_html = _candidate
-                break
-            else:
-                QAnimLogger.warn("Pipeline", f"Build attempt {_build_attempt}: got fallback/short HTML — retrying")
-        except Exception as e:
-            QAnimLogger.error("Pipeline", f"Build attempt {_build_attempt} failed: {_err_msg(e)}")
-            if _build_attempt < 2:
-                QAnimLogger.info("Pipeline", "Retrying build immediately (no sleep — timeout removed)...")
-    if animation_html is None:
-        QAnimLogger.error("Pipeline", "Both build attempts failed — using fallback page")
-        animation_html = RecoveryEngine.fallback_html(
-            question,
-            "Animation build error: Gemini took too long to respond and the request was cancelled "
-            "(the model may be overloaded, or the response was unusually large). "
-            "This is a timeout, not a code error \u2014 please try again."
-        )
-
-    # ── Extract embedded solution data from the generated HTML ───────────
-    # The builder embeds <script id="__qanim_scene_data__"> with scene_script
-    # and solution JSON so Scene 6/7/9 injectors have real formula/answer
-    # content without any extra Gemini calls.
-    scene_script = {}
-    gemini_sol   = dict(_GEMINI_SOL_FALLBACK)
-    glossary_result = {"terms": []}
+    # Stage -1: preprocess
     try:
-        _data_match = re.search(
-            r'<script[^>]*id=["\']__qanim_scene_data__["\'][^>]*>\s*(\{.*?\})\s*</script>',
-            animation_html, re.DOTALL | re.IGNORECASE
-        )
-        if _data_match:
-            _embedded = json.loads(_data_match.group(1))
-            scene_script = _embedded.get("scene_script") or {}
-            _sol         = _embedded.get("solution") or {}
-            if _sol:
-                gemini_sol = {
-                    "given_data":        _sol.get("given_data", []),
-                    "formulas":          _sol.get("formulas", []),
-                    "steps":             _sol.get("steps", []),
-                    "final_answer":      _sol.get("final_answer", ""),
-                    "final_answer_unit": _sol.get("final_answer_unit", ""),
-                    "key_insight":       _sol.get("key_insight", ""),
-                    "variable_meanings": _sol.get("variable_meanings", []),
-                    "formula_label":     _sol.get("formula_label", ""),
-                    "formula_why":       _sol.get("formula_why", ""),
-                }
-            glossary_result = {"terms": _embedded.get("glossary_terms", [])}
-            QAnimLogger.ok("Pipeline", f"Embedded data extracted: {len(scene_script.get('steps', []))} scene steps, {len(gemini_sol.get('steps', []))} solution steps")
-        else:
-            QAnimLogger.warn("Pipeline", "No __qanim_scene_data__ block in HTML — Scene 6/7/9 modals will use graceful fallbacks")
-    except Exception as _ex:
-        QAnimLogger.warn("Pipeline", f"Embedded data parse failed: {_ex} — using fallback dicts")
+        ai_question = LargeInputPreprocessor.compress(question)
+    except Exception as e:
+        QAnimLogger.warn("Pipeline", f"Preprocessor error: {e}")
+        ai_question = question[:LargeInputPreprocessor.HARD_LIMIT]
 
-    final_answer = scene_script.get("final_answer") or gemini_sol.get("final_answer") or ""
-    key_insight  = scene_script.get("key_insight")  or gemini_sol.get("key_insight")  or ""
+    # Stage 0: sync extraction (always on raw question)
+    to_find_targets = ToFindExtractor.extract(question)
+    given_cards     = GivenValuesExtractor.extract(question)
+    n_scenes        = _detect_scene_count(question)
+    category        = await _classify_topic_async(ai_question)
 
-    # Also build concept animation (same HTML is used for both)
+    QAnimLogger.info("Pipeline", f"ToFind: {to_find_targets}")
+    QAnimLogger.info("Pipeline", f"Category: {category}, n_scenes: {n_scenes}")
+
+    # Stages B1 + B2: run concurrently (solution + glossary only)
+    QAnimLogger.info("Pipeline", "Launching concurrent Gemini stages (solution + glossary)...")
+    solution_task = asyncio.ensure_future(GeminiSolutionGenerator.generate_async(ai_question))
+    glossary_task = asyncio.ensure_future(GeminiGlossaryAnalyzer.analyze_async(ai_question))
+
+    raw_results = await asyncio.gather(
+        solution_task, glossary_task,
+        return_exceptions=True,
+    )
+
+    # Safely unpack
+    gemini_sol      = raw_results[0] if isinstance(raw_results[0], dict) else dict(GeminiSolutionGenerator._FALLBACK)
+    glossary_result = raw_results[1] if isinstance(raw_results[1], dict) else {"terms": []}
+
+    if isinstance(raw_results[0], Exception):
+        QAnimLogger.error("Pipeline", f"SolutionGenerator task failed: {raw_results[0]} — using fallback solution")
+    if isinstance(raw_results[1], Exception):
+        QAnimLogger.error("Pipeline", f"GlossaryAnalyzer task failed: {raw_results[1]} — skipping glossary")
+
+    QAnimLogger.ok("Pipeline", f"Stages complete — {len(gemini_sol.get('steps', []))} solution steps")
+
+    # Build a minimal scene_script from solution data (for panel injectors that reference it)
+    scene_script = {
+        "title": gemini_sol.get("title") or question[:60],
+        "topic": category,
+        "final_answer": gemini_sol.get("final_answer", ""),
+        "key_insight":  gemini_sol.get("key_insight", ""),
+        "solution_steps": gemini_sol.get("steps", []),
+        "steps": [],
+    }
+
+    final_answer = gemini_sol.get("final_answer") or ""
+    key_insight  = gemini_sol.get("key_insight")  or ""
+
+    # Build the minimal base HTML page (clean, no SVG canvas)
+    q_esc    = __import__("html").escape(question[:400])
+    title_e  = __import__("html").escape(scene_script["title"])
+    animation_html = (
+        "<!DOCTYPE html>\n"
+        "<html lang=\"en\">\n"
+        "<head>\n"
+        "  <meta charset=\"UTF-8\">\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+        "  <title>" + title_e + " \u2014 Step-by-Step Solution</title>\n"
+        "  <style>\n"
+        "    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }\n"
+        "    body {\n"
+        "      font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;\n"
+        "      background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);\n"
+        "      background-attachment: fixed;\n"
+        "      color: #1e293b;\n"
+        "      display: flex;\n"
+        "      flex-direction: column;\n"
+        "      align-items: center;\n"
+        "      min-height: 100vh;\n"
+        "      padding: 28px 16px 140px;\n"
+        "    }\n"
+        "    .page-header { width:100%; max-width:900px; margin-bottom:14px; }\n"
+        "    .page-chip {\n"
+        "      display:inline-flex; align-items:center; gap:6px;\n"
+        "      padding:5px 13px; border-radius:20px;\n"
+        "      background:rgba(8,145,178,0.10); border:1px solid rgba(8,145,178,0.22);\n"
+        "      font-size:11px; font-weight:700; color:#0e7490;\n"
+        "      text-transform:uppercase; letter-spacing:0.9px;\n"
+        "    }\n"
+        "    .page-chip::before { content:'\u25b6'; font-size:8px; }\n"
+        "    .dashboard {\n"
+        "      width:100%; max-width:900px; background:#ffffff;\n"
+        "      border-radius:16px;\n"
+        "      box-shadow:0 1px 3px rgba(15,23,42,0.06),0 8px 24px rgba(15,23,42,0.08);\n"
+        "      overflow:hidden; border:1px solid #e2e8f0; position:relative;\n"
+        "    }\n"
+        "    .dashboard::before {\n"
+        "      content:''; position:absolute; top:0; left:0; right:0; height:3px;\n"
+        "      background:linear-gradient(90deg,#0e7490 0%,#7c3aed 50%,#d97706 100%);\n"
+        "      border-radius:16px 16px 0 0; z-index:2;\n"
+        "    }\n"
+        "    .question-banner {\n"
+        "      padding:22px 28px 18px;\n"
+        "      background:linear-gradient(135deg,#f8faff 0%,#f0f5ff 45%,#eef2f9 100%);\n"
+        "      border-bottom:1px solid #e2e8f0;\n"
+        "      display:flex; flex-direction:column; gap:8px;\n"
+        "    }\n"
+        "    .q-label {\n"
+        "      font-size:10.5px; font-weight:800; color:#0e7490;\n"
+        "      text-transform:uppercase; letter-spacing:1.8px;\n"
+        "      display:flex; align-items:center; gap:8px;\n"
+        "    }\n"
+        "    .q-label::before {\n"
+        "      content:''; display:inline-block; width:16px; height:16px;\n"
+        "      border-radius:5px;\n"
+        "      background:linear-gradient(135deg,#0e7490,#0891b2); flex-shrink:0;\n"
+        "    }\n"
+        "    .q-text { font-size:15px; color:#1e293b; line-height:1.6; font-weight:450; max-width:820px; }\n"
+        "    .content-area {\n"
+        "      padding:28px;\n"
+        "      background:linear-gradient(180deg,#ffffff 0%,#f9fbff 100%);\n"
+        "    }\n"
+        "    .ready-msg {\n"
+        "      text-align:center; padding:40px 20px;\n"
+        "      font-size:15px; color:#64748b; line-height:1.7;\n"
+        "    }\n"
+        "    .ready-msg .icon { font-size:42px; display:block; margin-bottom:14px; }\n"
+        "    .ready-msg strong { color:#0891b2; }\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        "  <div class=\"page-header\">\n"
+        "    <div class=\"page-chip\">Step-by-Step Solution</div>\n"
+        "  </div>\n"
+        "  <div class=\"dashboard\">\n"
+        "    <div class=\"question-banner\">\n"
+        "      <div class=\"q-label\">Problem Statement</div>\n"
+        "      <div class=\"q-text\">" + q_esc + "</div>\n"
+        "    </div>\n"
+        "    <div class=\"content-area\">\n"
+        "      <div class=\"ready-msg\">\n"
+        "        <span class=\"icon\">\U0001f4d6</span>\n"
+        "        Use the controls below to explore the <strong>step-by-step solution</strong>,\n"
+        "        check your <strong>answer</strong>, and view the <strong>main formula</strong>.\n"
+        "      </div>\n"
+        "    </div>\n"
+        "  </div>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+    # concept_html = same page (no separate concept animation)
     concept_html = animation_html
 
     # Sanitize
     animation_html = HtmlSanitizer.sanitize(animation_html)
 
-    # Centre the animation dashboard (override whatever Gemini generated)
+    # Centre the dashboard
     animation_html = inject_centering_css(animation_html)
 
+    # Surface silent solution-generation failures
+    if gemini_sol.get("_used_fallback"):
+        QAnimLogger.warn("Pipeline", "Solution generation fell back to placeholder — injecting visible warning banner")
+        animation_html = _inject_fallback_warning_banner(animation_html)
 
     # Build answer targets
-    to_find_targets = []  # Stage 0 removed — no extraction
-    given_cards     = []  # Stage 0 removed — no extraction
-    n_scenes        = 6   # Stage 0 removed — default
-    category        = "ENGINEERING"  # Stage 0 removed — default
     answer_targets = _build_answer_targets(
         to_find_targets=to_find_targets,
         gemini_sol=gemini_sol,
@@ -6212,13 +5353,10 @@ async def _run_generation_pipeline(question: str) -> dict:
         key_insight=key_insight,
     )
 
-    # Solution steps flat list — kept for result dict / backward-compat downstream
-    solution_steps = gemini_sol.get("steps", []) or scene_script.get("solution_steps", [])
+    # Solution steps flat list
+    solution_steps = gemini_sol.get("steps", [])
 
-    # ── Inject all panels through the Panel Reliability Engine ──
-    # (normalize document skeleton -> inject every panel -> verify every
-    #  required id actually landed -> repair ONLY what's missing, bounded
-    #  retries -> resolve duplicate ids -> final verified report)
+    # Inject all panels (Steps 1-9) through the Panel Reliability Engine
     panel_ctx = PanelInjectionContext(
         gemini_sol=gemini_sol,
         answer_targets=answer_targets,
@@ -6241,18 +5379,13 @@ async def _run_generation_pipeline(question: str) -> dict:
             f"All required panels verified present (repair passes used: {injection_report['repair_passes']})",
         )
 
-    # Validate
+    # Validate (SVG not required for this simpler page)
     try:
-        GenerationValidator.validate(html, require_svg=True)
+        GenerationValidator.validate(html, require_svg=False)
     except ValidationError as e:
         QAnimLogger.warn("FinalValidator", f"Post-injection: {e} — continuing")
 
-    # ── JS syntax gate ──────────────────────────────────────────────────
-    # Every earlier check only confirms certain id strings are PRESENT in
-    # the HTML. None of them confirm the JavaScript actually parses. One
-    # stray apostrophe in stepsData (prime notation like l', theta', i')
-    # is enough to silently kill nextStep/applyStep/window.onload for the
-    # WHOLE page while it still looks fine on first load. Catch that here.
+    # JS syntax gate
     js_errors = JsSyntaxValidator.find_errors(html)
     if js_errors:
         QAnimLogger.warn(
@@ -6262,30 +5395,24 @@ async def _run_generation_pipeline(question: str) -> dict:
         repaired = JsSyntaxValidator.auto_fix_stray_apostrophes(html)
         remaining = JsSyntaxValidator.find_errors(repaired)
         if not remaining:
-            QAnimLogger.ok(
-                "JsSyntaxValidator",
-                "Auto-repaired stray apostrophe(s) in JS string literal(s)",
-            )
+            QAnimLogger.ok("JsSyntaxValidator", "Auto-repaired stray apostrophe(s) in JS string literal(s)")
             html = repaired
         else:
             QAnimLogger.error(
                 "JsSyntaxValidator",
                 f"Could not auto-repair {len(remaining)} script block(s) "
-                f"({remaining}) — serving the safe fallback page instead "
-                f"of shipping one with dead buttons.",
+                f"({remaining}) — serving the safe fallback page instead.",
             )
-            html = RecoveryEngine.fallback_html(
-                question, "Generated animation had unrecoverable JavaScript errors."
-            )
+            html = RecoveryEngine.fallback_html(question, "Generated page had unrecoverable JavaScript errors.")
             concept_html = html
     else:
         QAnimLogger.ok("JsSyntaxValidator", "All inline <script> blocks parse cleanly")
 
     result = {
         "title":                  scene_script.get("title", question[:60]),
-        "explanation":            "Interactive animation",
+        "explanation":            "Step-by-step solution panels (Steps 1-9)",
         "animation_type":         category,
-        "design_strategy":        f"Gemini {GEMINI_MODEL} generated step-by-step reveal",
+        "design_strategy":        "Steps 1-9 panel injection (no SVG animation)",
         "animation_code":         html,
         "concept_animation_code": concept_html,
         "solution_steps":         solution_steps,
@@ -6303,13 +5430,13 @@ async def _run_generation_pipeline(question: str) -> dict:
         "glossary_terms":  glossary_result.get("terms", []),
         "category":        category,
         "n_scenes":        n_scenes,
-        "engine_version":  "v3.0-zero-stage",
+        "engine_version":  "v2.0-steps-only",
         "render_status":   "ok" if injection_report["all_ok"] else "panels_incomplete",
         "panel_verification": injection_report,
     }
 
     QAnimLogger.ok("Pipeline", (
-        f"DONE v3.0 — '{result['title']}' "
+        f"DONE v2.0 — '{result['title']}' "
         f"html={len(html):,} chars "
         f"steps={len(solution_steps)} "
         f"to_find={to_find_targets} "
@@ -6317,7 +5444,6 @@ async def _run_generation_pipeline(question: str) -> dict:
         f"answer_targets={len(answer_targets)}"
     ))
     return result
-
 
 def _build_failure_result(question: str, reason: str) -> dict:
     fallback = RecoveryEngine.fallback_html(question, reason)
