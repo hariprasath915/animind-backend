@@ -3599,7 +3599,7 @@ _SCENE7_DOM_TEMPLATE = """\
         <!-- Final answer card -->
         <div class="s7-final-answer-card" id="s7-final-card">
           <div class="s7-final-answer-label">&#x2705; Result</div>
-          <div class="s7-final-answer-value" id="s7-final-value">{formula_result} &rarr; Result in W</div>
+          <div class="s7-final-answer-value" id="s7-final-value">{formula_result}</div>
           <div class="s7-final-answer-unit" id="s7-final-unit">{units_hint}</div>
         </div>
       </div>
@@ -5464,7 +5464,7 @@ def _build_failure_result(question: str, reason: str) -> dict:
         "glossary_terms":         [],
         "category":               "UNKNOWN",
         "n_scenes":               4,
-        "engine_version":         "v1.2-gemini",
+        "engine_version":         "v2.0-steps-only",
         "render_status":          "error",
     }
 
