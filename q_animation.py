@@ -11,7 +11,6 @@ v2.0 -- 9-STEP WORKFLOW ENFORCEMENT (built on v1.1 Gemini rewrite):
       Step 8:    Substitution modal — step-by-step with system diagram
       Step 9:    Final Answer modal (NEW) — substitution chain + green
                  final box + key insight bar (matches reference HTML)
-  - GeminiSceneAnalyzer: mandates exactly 6 SVG steps
   - GeminiAnimationBuilder: enforces 9 dots, correct nextStep() flow
   - inject_scene9_final_answer(): new injection function
   - PanelInjectionManager: Scene9 wired into all dispatch tables
@@ -22,8 +21,6 @@ v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
   - ALL generation (analysis, scene scripting, HTML animation) now uses
     Gemini 3.1 Pro Preview exclusively.
   - Two-stage generation pipeline:
-      Stage A: GeminiSceneAnalyzer  — analyses the question, produces a
-               structured scene-by-scene script (JSON).
       Stage B: GeminiAnimationBuilder — turns the scene script into a
                complete self-contained HTML animation page following the
                reference output style (light, friendly dashboard, SVG canvas,
@@ -45,7 +42,7 @@ v1.0 -- FULL GEMINI REWRITE (replaces all Claude Sonnet/Haiku generation):
     walk through solving in-canvas, one piece at a time — no separate
     scrollable panel (the old StepAnswer module was retired for this).
   - All extraction utilities (ToFindExtractor, GivenValuesExtractor,
-    LargeInputPreprocessor, HaikuSolutionGenerator replaced by GeminiSolutionGenerator)
+    LargeInputPreprocessor, HaikuSolutionGenerator, SolutionGenerator, SceneAnalyzer all removed)
   - All validation (GenerationValidator, HtmlSanitizer)
   - All panel CSS/DOM/JS constants
   - The public entry point: generate_question_animation(question)
@@ -157,105 +154,7 @@ MAX_TOK_CONCEPT = 16000
 
 # ---------------------------------------------------------------------------
 # Hard timeout budgets — every Gemini-calling stage MUST return within these
-# windows, one way or another (real result OR a clean fallback/exception).
-# Without this, a single slow/overloaded Gemini call had no ceiling at all:
-# retry sleeps (up to 155s) plus an uncapped network call could make one
-# stage alone run for minutes with nothing to cut it off. That unbounded
-# worst case is the actual cause of "taking much longer than expected" --
-# it doesn't happen every time, only when Gemini is slow, which is why it
-# felt random/recurring instead of a clean reproducible bug.
-#
-# ROOT CAUSE OF THE "Animation build error:" (blank reason) FALLBACK:
-# gemini-3.1-pro-preview is a Gemini-3-generation model, and Google's own
-# docs state thinking CANNOT be disabled for Gemini 3 / 3.1 Pro — even with
-# thinking_level="low" every call still pays a mandatory reasoning-token
-# cost before the visible output starts streaming. The animation builder
-# asks for a single ~32k-token, fully self-contained HTML page in one shot
-# (unlike the "small" stages, which return a few hundred tokens of JSON),
-# so its realistic latency is far higher than the other stages. The old
-# STAGE_TIMEOUT_BUILD=75s budget was simply too tight for that combination,
-# so builds routinely hit asyncio.TimeoutError. That exception's message is
-# the empty string by default, so the pipeline's `except Exception as e`
-# handler produced literally "Animation build error: " with nothing after
-# the colon — which is exactly the blank box users were seeing. Both the
-# timing AND the blank-message bug are fixed below (see _err_msg()).
-# ---------------------------------------------------------------------------
-STAGE_TIMEOUT_SMALL = 180.0   # classify/solution/glossary calls. Raised from 90s to
-                              # 180s: the inner _call_gemini retry ladder uses
-                              # RETRY_DELAYS=[10,25,50] (85s of sleeping) plus up to
-                              # 3 actual API calls (~30s each), so 90s was cutting off
-                              # all retries before they could succeed on the 2nd question.
-                              # -> 90s because the retry ladder inside
-                              # GeminiSolutionGenerator._call_gemini (up to
-                              # 2 outer attempts x 3 inner retries with
-                              # 4s/8s/15s backoff = ~54s worst case) could
-                              # exceed the old 40s budget on a single 429/503,
-                              # causing generate_async() to hit asyncio.wait_for's
-                              # timeout and silently return _FALLBACK even
-                              # though the retry would have succeeded shortly
-                              # after. 90s gives the full retry ladder room
-                              # to finish before we give up.
-STAGE_TIMEOUT_SCENE = 150.0   # scene-analysis (the stage that decides WHAT
-                              # the main animation actually shows — the real
-                              # physical scene, e.g. charges/fields/forces
-                              # being placed step by step, vs. a placeholder).
-                              # This stage internally retries up to 3 times,
-                              # each asking a thinking-locked Gemini 3.1 Pro
-                              # model for up to 16,384 tokens of JSON — that
-                              # does NOT fit in the 40s budget shared by the
-                              # lightweight stages. When it timed out, the
-                              # pipeline silently fell back to a generic,
-                              # non-physical "Setup/Given/Formula/Substitute/
-                              # Solution" placeholder script instead of a real
-                              # step-by-step scene — exactly the "not
-                              # step-by-step like the reference" symptom this
-                              # constant fixes. Same class of bug as the
-                              # STAGE_TIMEOUT_BUILD fix below — give a stage
-                              # that does real multi-attempt work its own
-                              # realistic budget instead of sharing a tight one.
-                              # NOTE: 100.0 was tried first but was STILL not
-                              # enough — observed logs showed attempt1 (33s) +
-                              # attempt2 (36s) = 69s elapsed, then the 100s
-                              # timeout fired while attempt3 was still running
-                              # in the background (finishing at ~157s total),
-                              # so the async wrapper raced ahead and returned
-                              # its own fallback before the real 3rd attempt —
-                              # which had a chance to succeed — ever got to
-                              # report back. 150s gives 3 attempts a realistic
-                              # ~50s each, matching STAGE_TIMEOUT_BUILD's
-                              # single-shot budget for a similarly heavy call.
-STAGE_TIMEOUT_BUILD = 240.0   # animation HTML builder — gemini-3.1-pro-preview.
-                              # Pro has mandatory thinking tokens; complex multi-layer
-                              # problems can take 120-220s. 240s gives safe headroom.
-# IMPORTANT: the pipeline's critical path is SEQUENTIAL, not flat —
-#   Stage 0 (classify, ~instant, no API)
-#   -> concurrent gather of scene/solution/glossary  (bounded by
-#      max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL), since scene-analysis
-#      now runs on its own, longer budget than solution/glossary)
-#   -> animation HTML builder                        (bounded by STAGE_TIMEOUT_BUILD)
-#   -> sanitize/post-process (~instant, no API)
-# So the true worst case is that max(...) + STAGE_TIMEOUT_BUILD, plus a
-# margin for JSON parsing / sanitization overhead. PIPELINE_TIMEOUT must be
-# comfortably ABOVE that sum, or it becomes a guaranteed failure on any run
-# where stages simply use their normal allotted time (not just on overload).
-# An earlier version of this fix set PIPELINE_TIMEOUT=95 while the two stage
-# budgets alone summed to 110 — mathematically impossible to complete within,
-# which is why the fallback fired on ordinary, non-overloaded runs. Fixed here.
-# Keep this derived from the stage constants (never hardcode a total) so the
-# two can never drift out of sync again.
-# Pro model path timing:
-# - concurrent stages: max(150, 180) = 180s
-# - build stage: STAGE_TIMEOUT_BUILD=240s per attempt, 2 attempts, 35s gap = 515s
-# - overhead: 25s
-# Worst case: 180 + 515 + 25 = 720s. Cap at 600s (10 min).
-# BUG2 FIX: Accurate pipeline timeout calculation.
-# Happy path: concurrent stages (180s) + build (240s) + overhead (20s) = 440s
-# Retry path:  440s + retry_gap (35s) + build_retry (240s) = 715s
-# Old cap of 600s made the retry path always timeout. Raise to 750s.
-PIPELINE_TIMEOUT = min(
-    max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD * 2 + 35.0 + 35.0,
-    750.0
-)  # = 750s
+# No stage/pipeline timeouts — removed. Gemini runs until complete.
 
 
 def _err_msg(e: BaseException) -> str:
@@ -1249,401 +1148,47 @@ def inject_to_find_system(html, targets):
 #  with no separate scrollable section and no page scrolling required.
 # ===========================================================================
 
-# ===========================================================================
-#  MODULE 7.5 — GeminiSolutionGenerator
-#  Replaces HaikuSolutionGenerator. Uses Gemini 3.1 Pro Preview.
-# ===========================================================================
 
-_SOLUTION_SYSTEM = """You are an expert engineering professor generating a structured 5-step solution for students.
 
-Return ONLY valid JSON with EXACTLY this structure — no markdown fences, no extra text, no comments:
-{
-  "given_data": [
-    "rho = 1000 kg/m3",
-    "V = 2 m/s",
-    "D = 0.05 m",
-    "mu = 0.001 Pa.s"
-  ],
-  "to_find": [
-    "i) Reynolds number Re",
-    "ii) Heat transfer coefficient h",
-    "iii) Nusselt number Nu"
-  ],
-  "formulas": [
-    {"text": "Re = rho x V x D / mu", "color": "blue"},
-    {"text": "Pr = mu x c_p / k",     "color": "orange"},
-    {"text": "Nu = 0.023 x Re^0.8 x Pr^0.4", "color": "purple"},
-    {"text": "h = Nu x k / D",          "color": "pink"}
-  ],
-  "formula_note": "Evaluate all properties at bulk mean temperature T_bulk = (T_in + T_out)/2",
-  "formula_why": "One clear sentence on WHY this is the governing formula/principle for this exact problem (what physical law it comes from and when it applies).",
-  "variable_meanings": [
-    {"symbol": "rho", "meaning": "Fluid density", "unit": "kg/m3", "value": "1000"},
-    {"symbol": "V",   "meaning": "Flow velocity",  "unit": "m/s",   "value": "2"},
-    {"symbol": "D",   "meaning": "Pipe diameter",  "unit": "m",     "value": "0.05"},
-    {"symbol": "mu",  "meaning": "Dynamic viscosity", "unit": "Pa.s", "value": "0.001"}
-  ],
-  "substitution_steps": [
-    {"title": "Calculate Reynolds Number",      "expr": "Re = (1000 x 2 x 0.05) / 0.001 = 100000", "description": "We substitute the known density, velocity, diameter and viscosity to check the flow regime."},
-    {"title": "Calculate Prandtl Number",       "expr": "Pr = (0.001 x 4200) / 0.6 = 7", "description": "Pr compares momentum diffusivity to thermal diffusivity and is needed for the Nusselt correlation."},
-    {"title": "Apply Dittus-Boelter Equation",  "expr": "Nu = 0.023 x (100000)^0.8 x (7)^0.4 = 365", "description": "With Re and Pr known, the empirical correlation gives the dimensionless heat transfer number."},
-    {"title": "Find Heat Transfer Coefficient", "expr": "h = 365 x 0.6 / 0.05 = 4380 W/(m2.K)", "description": "Multiplying Nu by the fluid conductivity and dividing by the diameter converts back to a physical coefficient."}
-  ],
-  "final_answer": "h = 4380 W/(m2.K),  Re = 100000,  Nu = 365",
-  "final_answer_unit": "W/(m2.K)",
-  "key_insight": "Higher flow velocity raises Re, which boosts h through the 0.8-power relationship.",
-  "real_world_note": "One short optional sentence on where this result matters in practice (e.g. heat exchanger sizing). Set to \"\" if not meaningful."
+
+# Fallback solution dict used when no real solution is available.
+_GEMINI_SOL_FALLBACK = {
+"given_data": [
+"See question for numerical values"
+],
+"to_find": [
+"i) See question for what to find"
+],
+"formulas": [
+{"text": "Select the appropriate governing formula", "color": "blue"},
+{"text": "Substitute the given values", "color": "orange"},
+{"text": "Compute the result",  "color": "green"},
+],
+"formula_note": "",
+"formula_why": "This formula directly connects the given quantities to the unknown asked for in the question.",
+"variable_meanings": [],
+"substitution_steps": [
+{"title": "Identify Given Values",  "expr": "List all values from the question with their units.", "description": "We start by writing down everything we already know, with correct units, before touching the formula."},
+{"title": "Select Formula", "expr": "Choose the correct governing equation for this problem type.", "description": "The right formula connects the given quantities to the one we need to find."},
+{"title": "Substitute and Solve",   "expr": "Insert the known values and evaluate step by step.", "description": "Plugging in the numbers and simplifying carefully avoids arithmetic and unit errors."},
+],
+"steps": [
+"Step 1: Write down the given values from the question.",
+"Step 2: Identify what needs to be found.",
+"Step 3: Choose the correct governing formula.",
+"Step 4: Substitute values and solve step by step.",
+"Step 5: State the final answer with units.",
+],
+"final_answer": "Please re-generate for a detailed answer.",
+"final_answer_unit": "",
+"key_insight":  "Always identify given values and the target quantity before selecting a formula.",
+"real_world_note": "",
+"raw": "",
+"_used_fallback": True,   # marks this dict as placeholder content so
+  # downstream rendering can surface a visible
+  # warning instead of silently shipping generic
+  # text that looks like a real solved answer.
 }
-
-STRICT RULES:
-- given_data: Extract EVERY numerical value stated in the question. Format each as \"symbol = value unit\". Minimum 2, maximum 12 items. Never leave empty.
-- to_find: List EVERYTHING the question asks to find, prefixed i) ii) iii) etc. Never leave empty.
-- formulas: 2-6 key formulas arranged as an input-to-output chain. Each entry MUST have \"text\" (the formula expression) and \"color\" (one of: blue, orange, purple, pink, green, teal). These are rendered as a visual flowchart with arrows between them. Never leave empty.
-- formula_note: Optional note about evaluation conditions (e.g. bulk temperature). Set to \"\" if not applicable.
-- formula_why: One sentence, plain English, explaining why THIS formula/principle is the correct one to reach for. Never leave empty.
-- variable_meanings: ONE entry per distinct symbol used in given_data/formulas. Each entry MUST have \"symbol\", \"meaning\" (what the variable physically represents), \"unit\" (correct SI or given unit), and \"value\" (the given numerical value, or \"?\" if it is the unknown being solved for). This is used to teach the formula variable-by-variable — never leave empty, never invent a variable that is not actually in the formula.
-- substitution_steps: 3-6 numbered calculation steps. Each MUST have \"title\" (what this step computes), \"expr\" (the actual mathematical expression with REAL numbers substituted and the computed result shown), and \"description\" (ONE short sentence explaining WHY this step is done and what it accomplishes — the reasoning a teacher would say aloud, not just a restatement of the math). Never leave empty.
-- final_answer: Complete answer containing ALL computed numerical values with units. Must NEVER be empty.
-- final_answer_unit: The correct SI (or standard) unit of the primary requested quantity, written cleanly (e.g. \"W/(m2.K)\", \"m/s\", \"N\"). Must NEVER be empty.
-- key_insight: One clear memorable sentence about the core physics or mathematical concept. Must NEVER be empty.
-- real_world_note: One short optional real-world interpretation of the result. Set to \"\" (empty string) if nothing meaningful applies — never fabricate a forced example.
-
-ACCURACY REQUIREMENTS — NON-NEGOTIABLE:
-- The formula(s) you select MUST be the mathematically and physically correct ones for exactly what this question asks — verify the governing principle before writing anything down.
-- NEVER approximate, round prematurely, or substitute a similar-but-wrong formula. NEVER hallucinate a constant, property value, or relationship that was not given or is not a standard, correct physical constant.
-- Use correct SI units throughout (or the unit system explicitly given in the question) and correct standard variable notation for the subject (e.g. rho for density, mu for dynamic viscosity).
-- Every number in substitution_steps must be traceable to either a given value or a previously-computed intermediate result in this same solution — never introduce an unexplained number.
-- If you are not fully certain a value or formula is correct, prefer the standard textbook form for that topic rather than guessing.
-
-- CRITICAL OUTPUT FORMAT: Your response MUST start with {{ and end with }}. No preamble, no explanation, no markdown fences. Raw JSON only. If you include anything before {{ or after }}, the response will be rejected."""
-
-
-class GeminiSolutionGenerator:
-
-    _FALLBACK = {
-        "given_data": [
-            "See question for numerical values"
-        ],
-        "to_find": [
-            "i) See question for what to find"
-        ],
-        "formulas": [
-            {"text": "Select the appropriate governing formula", "color": "blue"},
-            {"text": "Substitute the given values",             "color": "orange"},
-            {"text": "Compute the result",                      "color": "green"},
-        ],
-        "formula_note": "",
-        "formula_why": "This formula directly connects the given quantities to the unknown asked for in the question.",
-        "variable_meanings": [],
-        "substitution_steps": [
-            {"title": "Identify Given Values",  "expr": "List all values from the question with their units.", "description": "We start by writing down everything we already know, with correct units, before touching the formula."},
-            {"title": "Select Formula",         "expr": "Choose the correct governing equation for this problem type.", "description": "The right formula connects the given quantities to the one we need to find."},
-            {"title": "Substitute and Solve",   "expr": "Insert the known values and evaluate step by step.", "description": "Plugging in the numbers and simplifying carefully avoids arithmetic and unit errors."},
-        ],
-        "steps": [
-            "Step 1: Write down the given values from the question.",
-            "Step 2: Identify what needs to be found.",
-            "Step 3: Choose the correct governing formula.",
-            "Step 4: Substitute values and solve step by step.",
-            "Step 5: State the final answer with units.",
-        ],
-        "final_answer": "Please re-generate for a detailed answer.",
-        "final_answer_unit": "",
-        "key_insight":  "Always identify given values and the target quantity before selecting a formula.",
-        "real_world_note": "",
-        "raw": "",
-        "_used_fallback": True,   # marks this dict as placeholder content so
-                                  # downstream rendering can surface a visible
-                                  # warning instead of silently shipping generic
-                                  # text that looks like a real solved answer.
-    }
-
-    @classmethod
-    def generate(cls, question: str) -> dict:
-        import time as _time   # FIX: _time.sleep() used in outer retry loop below
-        if _gemini_client is None:
-            QAnimLogger.warn("GeminiSolution", "Gemini client not available — using fallback")
-            return dict(cls._FALLBACK)
-
-        QAnimLogger.info("GeminiSolution", f"Generating solution via {GEMINI_MODEL}...")
-        user_prompt = (
-            f"Solve this question step by step:\n\n"
-            f"QUESTION: {question[:1500]}\n\n"
-            f"Return ONLY valid JSON — no markdown, no preamble, no explanation. "
-            f"Start your response with {{ and end with }}."
-        )
-
-        MAX_ATTEMPTS = 4   # 4 outer attempts with inter-attempt back-off (5/10/15 s)
-        last_error = None
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                raw = cls._call_gemini(user_prompt, cls._solution_system_text(), max_tokens=4096)
-                result = cls._parse(raw)
-                # Validate the result is NOT the fallback.
-                # OLD check required substitution_steps — too strict: Gemini sometimes
-                # returns real formulas + given_data but omits substitution_steps (even
-                # though the prompt forbids it), causing every attempt to be discarded.
-                # NEW check: given_data must be real (non-fallback) AND at least one
-                # formula must be real (not one of the three placeholder formula texts).
-                _fb_given    = cls._FALLBACK["given_data"]
-                _fb_fmlas    = {f["text"] for f in cls._FALLBACK.get("formulas", [])
-                                if isinstance(f, dict) and f.get("text")}
-                real_formulas = [
-                    f for f in result.get("formulas", [])
-                    if isinstance(f, dict) and f.get("text") and f["text"] not in _fb_fmlas
-                ]
-                has_real_data = (
-                    bool(result.get("given_data")) and
-                    result.get("given_data") != _fb_given and
-                    bool(real_formulas)
-                )
-                if has_real_data:
-                    QAnimLogger.ok("GeminiSolution", f"Solution generated on attempt {attempt}")
-                    return result
-                else:
-                    QAnimLogger.warn("GeminiSolution", f"Attempt {attempt}: parsed result looks like fallback — retrying")
-                    last_error = "Result contained only fallback/placeholder content"
-            except Exception as e:
-                last_error = e
-                QAnimLogger.warn("GeminiSolution", f"Attempt {attempt} failed: {e}")
-            # Brief back-off between outer attempts so the Gemini rate-limit window
-            # (60 s for most tiers) has a chance to clear before we try again.
-            # Without this, all 3–4 outer attempts fire back-to-back and all hit
-            # the same rate-limit wall, making the retries pointless.
-            if attempt < MAX_ATTEMPTS and last_error is not None:
-                _wait = attempt * 5   # 5 s, 10 s, 15 s … gentle linear back-off
-                QAnimLogger.info("GeminiSolution", f"Waiting {_wait}s before outer attempt {attempt+1}…")
-                _time.sleep(_wait)
-
-        QAnimLogger.warn("GeminiSolution", f"All {MAX_ATTEMPTS} attempts failed ({last_error}) — using fallback")
-        return dict(cls._FALLBACK)
-
-    @classmethod
-    def _solution_system_text(cls):
-        return _SOLUTION_SYSTEM
-
-    @classmethod
-    def _call_gemini(cls, user_prompt: str, system_text: str, max_tokens: int = 4096) -> str:
-        import time as _time
-        MAX_RETRIES  = 4
-        # Longer delays so rate-limit windows (typically 60s) can clear.
-        # The old [4, 8, 15] total was only 27s — not long enough to ride out
-        # a 429 / 503 between the 1st and 2nd question pipeline run.
-        RETRY_DELAYS = [10, 25, 50, 90]
-
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                if _GEMINI_SDK_STYLE == "generativeai":
-                    model_obj = _gemini_client.GenerativeModel(
-                        model_name=GEMINI_MODEL,
-                        system_instruction=system_text,
-                        generation_config={"temperature": 0.3, "max_output_tokens": max_tokens},
-                    )
-                    response = model_obj.generate_content(user_prompt)
-                    return response.text.strip()
-                else:
-                    try:
-                        config = _google_genai.types.GenerateContentConfig(
-                            system_instruction=system_text,
-                            temperature=0.3,
-                            max_output_tokens=max_tokens,
-                            thinking_config=_google_genai.types.ThinkingConfig(thinking_level="low"),
-                        )
-                    except Exception:
-                        config = _google_genai.types.GenerateContentConfig(
-                            system_instruction=system_text,
-                            temperature=0.3,
-                            max_output_tokens=max_tokens,
-                        )
-                    response = _gemini_client.models.generate_content(
-                        model=GEMINI_MODEL,
-                        contents=user_prompt,
-                        config=config,
-                    )
-                    return response.text.strip()
-            except Exception as e:
-                err_str = str(e)
-                # 429 = rate limit. 503/UNAVAILABLE/"high demand"/"overloaded"
-                # = the model itself is transiently overloaded on Google's
-                # side. Both are self-resolving if you wait and retry — but
-                # only 429 was being retried before, so every 503 (which
-                # Gemini returns fairly often at peak load) went straight to
-                # "Animation Could Not Render" on attempt 1 with no retry at
-                # all. Treat both as retryable.
-                err_lower = err_str.lower()
-                is_retryable = (
-                    "429" in err_str or "TooManyRequests" in err_str or "Resource has been exhausted" in err_str
-                    or "503" in err_str or "UNAVAILABLE" in err_str
-                    or "overloaded" in err_lower or "high demand" in err_lower
-                    or "deadline exceeded" in err_lower
-                    or "timeout" in err_lower
-                    or "connection" in err_lower
-                    or "temporarily" in err_lower
-                    or "try again" in err_lower
-                )
-                if is_retryable and attempt < MAX_RETRIES:
-                    QAnimLogger.warn("GeminiSolution", f"Retryable error (attempt {attempt}/{MAX_RETRIES}): {err_str[:80]} — waiting {RETRY_DELAYS[attempt-1]}s...")
-                    _time.sleep(RETRY_DELAYS[attempt - 1])
-                    continue
-                raise
-
-        raise RuntimeError("All Gemini retry attempts exhausted")
-
-    @classmethod
-    def _extract_json_from_raw(cls, raw: str) -> str:
-        """
-        Robustly extract the JSON object from Gemini's raw response.
-        Handles: markdown fences, preamble text, trailing commentary,
-        thinking tags, and partial wrapping.
-        """
-        # 1. Strip markdown fences (```json ... ``` or ``` ... ```)
-        raw = re.sub(r'^```(?:json)?\s*\n?', '', raw.strip(), flags=re.IGNORECASE)
-        raw = re.sub(r'\n?```\s*$', '', raw, flags=re.IGNORECASE).strip()
-
-        # 2. Strip Gemini "thinking" tags if present (<thinking>...</thinking>)
-        raw = re.sub(r'<thinking>.*?</thinking>', '', raw, flags=re.DOTALL).strip()
-
-        # 3. Try to find the outermost { ... } block via balanced-brace scan
-        start = raw.find('{')
-        if start == -1:
-            return _sanitize_json_str(raw)  # No JSON object found — let json.loads raise
-
-        depth = 0
-        in_string = False
-        escape_next = False
-        for i, ch in enumerate(raw[start:], start):
-            if escape_next:
-                escape_next = False
-                continue
-            if ch == '\\' and in_string:
-                escape_next = True
-                continue
-            if ch == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    return raw[start:i + 1]
-
-        # Partial JSON — return from start to end and let json.loads try
-        return _sanitize_json_str(raw[start:])
-
-    @classmethod
-    def _parse(cls, raw: str) -> dict:
-        raw = cls._extract_json_from_raw(raw)
-        try:
-            data = json.loads(raw)
-
-            # ── Structured 5-step fields ──────────────────────────────
-            given_data = data.get("given_data", [])
-            if not isinstance(given_data, list):
-                given_data = []
-
-            to_find = data.get("to_find", [])
-            if not isinstance(to_find, list):
-                to_find = []
-
-            formulas = data.get("formulas", [])
-            if not isinstance(formulas, list):
-                formulas = []
-            # Normalise each formula entry to {"text": ..., "color": ...}
-            COLORS = ["blue", "orange", "purple", "pink", "green", "teal"]
-            norm_formulas = []
-            for idx, f in enumerate(formulas):
-                if isinstance(f, dict):
-                    norm_formulas.append({
-                        "text":  str(f.get("text", "") or ""),
-                        "color": str(f.get("color", COLORS[idx % len(COLORS)])),
-                    })
-                else:
-                    norm_formulas.append({"text": str(f), "color": COLORS[idx % len(COLORS)]})
-
-            formula_note = str(data.get("formula_note", "") or "")
-            formula_why  = str(data.get("formula_why",  "") or "")
-
-            variable_meanings = data.get("variable_meanings", [])
-            if not isinstance(variable_meanings, list):
-                variable_meanings = []
-            norm_var_meanings = []
-            for v in variable_meanings:
-                if isinstance(v, dict):
-                    norm_var_meanings.append({
-                        "symbol":  str(v.get("symbol",  "") or ""),
-                        "meaning": str(v.get("meaning", "") or ""),
-                        "unit":    str(v.get("unit",    "") or ""),
-                        "value":   str(v.get("value",   "") or ""),
-                    })
-
-            substitution_steps = data.get("substitution_steps", [])
-            if not isinstance(substitution_steps, list):
-                substitution_steps = []
-            norm_subs = []
-            for s in substitution_steps:
-                if isinstance(s, dict):
-                    norm_subs.append({
-                        "title":       str(s.get("title", "") or ""),
-                        "expr":        str(s.get("expr", "") or ""),
-                        "description": str(s.get("description", "") or s.get("desc", "") or ""),
-                    })
-                else:
-                    norm_subs.append({"title": "Calculation", "expr": str(s), "description": ""})
-
-            final_answer      = str(data.get("final_answer", "") or "")
-            final_answer_unit = str(data.get("final_answer_unit", "") or "")
-            key_insight       = str(data.get("key_insight",  "") or "")
-            real_world_note   = str(data.get("real_world_note", "") or "")
-
-            # ── Backward-compat flat steps list ──────────────────────
-            steps = data.get("steps", [])
-            if not isinstance(steps, list) or not steps:
-                steps = [
-                    "Step 1: " + (", ".join(given_data[:3]) or "See question for given values."),
-                    "Step 2: " + (", ".join(to_find[:2])    or "See question for what to find."),
-                    "Step 3: " + (", ".join(f["text"] for f in norm_formulas[:2]) or "Apply the formula."),
-                    "Step 4: " + (norm_subs[0]["expr"] if norm_subs else "Substitute and solve."),
-                    "Step 5: " + (final_answer or "Compute the final answer."),
-                ]
-
-            return {
-                "given_data":         given_data,
-                "to_find":            to_find,
-                "formulas":           norm_formulas,
-                "formula_note":       formula_note,
-                "formula_why":        formula_why,
-                "variable_meanings":  norm_var_meanings,
-                "substitution_steps": norm_subs,
-                "steps":              steps,
-                "final_answer":       final_answer,
-                "final_answer_unit":  final_answer_unit,
-                "key_insight":        key_insight,
-                "real_world_note":    real_world_note,
-                "raw":                raw,
-            }
-        except Exception as e:
-            QAnimLogger.warn("GeminiSolution", f"JSON parse failed: {e}")
-            return dict(cls._FALLBACK)
-
-    @classmethod
-    async def generate_async(cls, question: str) -> dict:
-        loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.generate, question),
-                timeout=STAGE_TIMEOUT_SMALL,
-            )
-        except asyncio.TimeoutError:
-            QAnimLogger.error("GeminiSolution", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — using fallback solution")
-            return dict(cls._FALLBACK)
-
-
-# ===========================================================================
-#  MODULE 8 — Answer Box Panel
-# ===========================================================================
 
 def _build_answer_targets_tag(answer_targets):
     payload = {"answer_targets": answer_targets or []}
@@ -3217,7 +2762,7 @@ def inject_scene6_big_idea(html, gemini_sol, scene_script):
     # Extract formula — try structured keys first, then fallback
     formula_raw = ""
     formulas = gemini_sol.get("formulas") or []
-    _fb_fmla_texts = {f["text"] for f in GeminiSolutionGenerator._FALLBACK.get("formulas", [])
+    _fb_fmla_texts = {f["text"] for f in _GEMINI_SOL_FALLBACK.get("formulas", [])
                       if isinstance(f, dict) and f.get("text")}
     for f in formulas[:1]:
         candidate = f.get("text", "") if isinstance(f, dict) else str(f)
@@ -3969,7 +3514,7 @@ def inject_scene7_how_we_solve_it(html, gemini_sol, scene_script):
 
     # Build formula result text for the green bar
     formula_result = ""
-    _fb_fmla_texts_s7 = {f["text"] for f in GeminiSolutionGenerator._FALLBACK.get("formulas", [])
+    _fb_fmla_texts_s7 = {f["text"] for f in _GEMINI_SOL_FALLBACK.get("formulas", [])
                          if isinstance(f, dict) and f.get("text")}
     formulas = gemini_sol.get("formulas") or []
     for f in formulas[:1]:
@@ -5494,515 +5039,259 @@ class PanelInjectionManager:
 #
 #  TWO-STAGE PIPELINE:
 #
-#  Stage A — GeminiSceneAnalyzer
-#    Analyses the question and produces a structured JSON scene script:
-#    {
-#      "title": "...",
-#      "topic": "...",
-#      "steps": [
-#        {
-#          "step_number": 1,
-#          "label": "Step label for dot indicator",
-#          "title": "Step N: Human-readable title",
-#          "description": "Explanation shown in info-box",
-#          "badges": [{"text": "...", "type": "cyan|orange|green"}],
-#          "components": ["component_id_1", "component_id_2"],
-#          "focus_component": "component_id or null",
-#          "math_content": ""
-#        }, ...
-#      ],
-#      "svg_components": {
-#        "component_id": {
-#          "type": "...",
-#          "description": "what this component looks like",
-#          "motion": "rotate|translate|oscillate|trace|static",
-#          "accent_color": "#66fcf1"
-#        }, ...
-#      },
-#      "final_answer": "...",
-#      "key_insight": "..."
-#    }
-#
-#  Stage B — GeminiAnimationBuilder
-#    Takes the scene script and generates a complete self-contained HTML
-#    animation page in the reference output style.
-# ===========================================================================
 
-# ---------------------------------------------------------------------------
-# STAGE A: GeminiSceneAnalyzer  — produces the scene script JSON
-# ---------------------------------------------------------------------------
 
-_SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer — a world-class educational animation director and content planner.
+_ANIMATION_BUILDER_SYSTEM = """You are QAnim — an expert that generates COMPLETE self-contained HTML animation pages for engineering and science education.
 
-Given a student question, produce a cinematic, step-by-step animation script in JSON format that feels like a polished interactive textbook.
+You receive a question. You must:
+1. Solve it yourself — compute the exact numerical answer.
+2. Generate a complete HTML page that EXACTLY follows the structure and code patterns shown below.
 
 ════════════════════════════════════════════════════════════
-ANIMATION PHILOSOPHY — CINEMATIC REVEAL, TAUGHT LIKE A CLASSROOM TEACHER
+MANDATORY HTML SKELETON — follow this EXACTLY
 ════════════════════════════════════════════════════════════
-• This is the "Step-by-Step Concept Animation" phase of the lesson (it builds toward, then completes, the concept — think of it as the teacher drawing on the board piece by piece, not flipping on a finished diagram). NOTHING should appear instantly or all at once.
-• THIS ANIMATION IS A CONCEPTUAL / PHYSICAL SCENE, NEVER A WORKED-SOLUTION PAGE — svg_components must always be tangible objects, fields, or phenomena the question describes (charges, field lines, force vectors, wavefronts, beams, orbits, particles, molecules, circuit elements, containers of gas, etc.), never a rendering of the formula, a "given data" list, or a substitution/calculation box. Formula text, given-data callouts, and step-by-step substitution belong ONLY to the separate Main Formula and Solution scenes that are appended automatically after this animation — if you find yourself naming a component "formula", "solution", "substitution", "given_labels", or similar, stop and replace it with an actual visual element from the problem's physical scenario instead.
-• Each step is a "scene": ONE new component enters the stage with purposeful, physically correct motion — never more than one new idea per step.
-• Every step must implicitly answer, in order across the sequence: What is happening? Why is it happening? What changes? What should the student observe? What can they conclude?
-• Scene order = physical assembly order (ground → frame → driver → driven → measurement).
-• When a new component appears, prior elements dim slightly via blur-shield (opacity 0.35–0.5) so the viewer's eye is pulled — like a spotlight — to the one active thing. Inactive parts stay visibly faded, never fully hidden, so context is never lost.
-• Labels, dimension arrows, and value callouts enter AFTER their component is visible — never before. Treat each step as: reveal → (implicit pause) → explain (description) → highlight (focus_component + blur_background) → the next step continues.
-• The final step is the "answer reveal" / Concept Completion: the mechanism freezes at the exact solution state; a clean annotation layer shows the computed result. This concludes the concept phase before Main Formula and Solution take over.
-• CRITICAL — DO NOT SOLVE THE PROBLEM IN THE LAST STEP: the last step's "description" and "badges" must NOT state the governing formula, walk through substitution, or restate the numeric derivation — say only that the system has reached its solved state (e.g. "The system settles here, with every quantity in place."). A dedicated Main Formula scene and a dedicated step-by-step Solution scene are appended automatically right after this animation ends; if the last step already explains the formula and the calculation, that same explanation will then be shown two more times back-to-back, which is a defect, not a feature. Save all formula/derivation content for those two scenes.
-• Motion must reflect real physics — a crank rotates continuously, a piston oscillates with sin/cos kinematics, gears mesh at correct speed ratios, belt traces its path, heat-flow pulses along the pipe.
-• Every step description is written like a great professor thinking aloud: conversational, precise, one "aha moment" per step — never a wall of information.
 
-════════════════════════════════════════════════════════════
-VISUAL DESIGN INTENT (for the AnimationBuilder to follow)
-════════════════════════════════════════════════════════════
-• Light, airy canvas: soft blue-white radial gradient (#f0f5ff → #dce8f5 → #c8d8ed).
-• Structural parts: multi-stop metallic gradients in blue-grey (#e8f0fa → #b8cce0 → #6a8aaa).
-• Accent hierarchy: cyan #0891b2 (primary highlights), orange #ea8c00 (forces/motion), green #16a34a (results/measurements).
-• Drop-shadow filters on every major group (feDropShadow, stdDeviation 4–6).
-• Glow pulse on newly-revealed components (feGaussianBlur glow, cyan hue).
-• Stroke hierarchy: frame=2.5px, components=3px, dimension lines=1.5px (dashed), annotation arrows=1.5px.
-• Text: main labels #1e293b bold, secondary #475569, value callouts in rounded rect chips with accent fill.
-
-════════════════════════════════════════════════════════════
-OUTPUT FORMAT — Return ONLY valid JSON, no markdown, no preamble
-════════════════════════════════════════════════════════════
-{
-  "title": "Concise descriptive title (max 60 chars)",
-  "topic": "PHYSICS|MATH|CHEMISTRY|ENGINEERING|BIOLOGY|ABSTRACT",
-  "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
-  "final_answer": "Complete computed answer with all numerical values and units",
-  "key_insight": "One memorable, plain-English insight sentence",
-  "steps": [
-    {
-      "step_number": 1,
-      "label": "3–5 word pill label for the step dot",
-      "title": "Step 1: Full descriptive title (max 55 chars)",
-      "description": "2–3 sentences. Conversational, like a professor thinking aloud. State what we see, what it means, what comes next.",
-      "badges": [{"text": "symbol = value unit", "type": "cyan|orange|green"}],
-      "components_visible": ["comp_id_1"],
-      "components_new": ["comp_id_1"],
-      "focus_component": "comp_id_1",
-      "blur_background": true,
-      "motion_emphasis": "Short phrase describing how this component moves when revealed, e.g. 'crank sweeps 360° at 300 RPM'"
-    }
-  ],
-  "svg_components": {
-    "comp_id": {
-      "description": "Precise SVG visual description: shape, fill, stroke, position in 850×478 coordinate space",
-      "motion_type": "rotate|translate|oscillate|trace|pulse|flow|static",
-      "motion_description": "Exact kinematic description, e.g. rotates around pivot (425,239), driven by θ(t)=ωt where ω=300RPM×2π/60",
-      "accent_color": "#0891b2",
-      "layer_order": 1,
-      "labels": ["primary label", "value label"]
-    }
-  }
-}
-
-════════════════════════════════════════════════════════════
-STRICT RULES — 9-STEP WORKFLOW (6 SVG + 3 MODAL)
-════════════════════════════════════════════════════════════
-THE OVERALL STRUCTURE IS ALWAYS EXACTLY 9 STEPS:
-  • Steps 1–6: SVG animation steps (what you output here — exactly 6 steps).
-  • Step 7: Formula modal (auto-injected — do NOT include in your JSON).
-  • Step 8: Substitution modal (auto-injected — do NOT include in your JSON).
-  • Step 9: Final Answer modal (auto-injected — do NOT include in your JSON).
-
-YOUR JSON MUST HAVE EXACTLY 6 STEPS (steps array length = 6).
-
-STEP ASSIGNMENT FOR THE 6 SVG STEPS:
-  Step 1: Establish the physical environment — the fixed frame, ground, enclosure, body of fluid, or reference space. Show the domain visually with its boundaries. No given values yet — just the scene.
-  Step 2: Reveal the primary object, heat/energy source, or driver — the thing that sets the physics in motion. Show it appearing with its most important given parameter as a badge overlay.
-  Step 3: Reveal the first material layer, medium, or adjacent surface — e.g. a wall layer, a fluid zone, the object surface, a wire cross-section. Label its key property (thickness, conductivity, resistance, etc.).
-  Step 4: Reveal additional layers, boundaries, or components — a second material layer, convective film, adjacent body, or boundary condition that adds to the system. Give its given parameter.
-  Step 5: Reveal the ambient / far-field environment and the direction of energy/heat/current flow. Show flow arrows. Display all remaining given parameters as overlays accumulating on the SVG.
-  Step 6: Full system summary step — ALL SVG layers visible simultaneously. Show the temperature/energy profile curve (if applicable). Display a summary "Given Data" card AND a "To Find" card on the SVG. This is setup-complete. Do NOT state any formula or calculation here — those come in Steps 7–9.
-
-BADGE TYPES: "cyan" = given data, "orange" = motion/force/flow, "green" = derived/result. The "To Find" quantity (e.g. Q=?, q''=?) must always appear as a solid dark-orange badge with white text so it is clearly visible against any SVG background. In the SVG overlay, render it as a filled rect with fill="#d97706" and white text, NOT a transparent chip.
-svg_components: every component is a concrete visual object or phenomenon (frame, layer, fluid, arrows, profile curve, particles, field lines, etc.) — NEVER a formula string, a label block, or a calculation/substitution box. Place all in 850×478 space.
-final_answer: MUST contain the computed numerical result with units. Never empty.
-solution_steps: flat list of 3–8 plain-English calculation steps used to solve (these feed the Step 8 substitution modal).
-motion_type: accurately match physical behavior (rotate|translate|oscillate|trace|pulse|flow|static).
-layer_order: integer starting at 1 (lower = drawn first / behind).
-Each step's "components_visible" lists ALL components visible at that step; "components_new" lists only newly revealed ones."""
-
-_SCENE_ANALYZER_USER = """Analyse this question and produce the animation scene script:
-
-QUESTION: {question}
-
-Remember:
-- You MUST produce EXACTLY 6 steps in the "steps" array (Steps 1–6 of the 9-step workflow).
-- Steps 7, 8, 9 are the Formula / Substitution / Final Answer modals — they are auto-injected. Do NOT include them.
-- Step 1: physical environment (frame, domain). Steps 2–5: reveal each given parameter/layer one at a time. Step 6: full summary with "Given Data" + "To Find" overlays and energy profile.
-- Each step reveals exactly ONE new SVG component with its label/badge.
-- Step 6 is the setup-complete step — show all given data but NO formula or calculation.
-- Compute the actual numerical answer and include it in final_answer.
-- Include solution_steps as 3–8 plain-English calculation steps (feeds Step 8 substitution modal).
-
-Return ONLY valid JSON."""
-
-
-class GeminiSceneAnalyzer:
-    """Stage A: Analyses the question and produces a structured scene script."""
-
-    @classmethod
-    def analyze(cls, question: str) -> dict:
-        if _gemini_client is None:
-            return cls._fallback_script(question)
-
-        QAnimLogger.info("SceneAnalyzer", f"Analysing question via {GEMINI_MODEL}...")
-        # Use .replace() instead of .format() — question text may contain
-        # literal { } (e.g. set notation, LaTeX) that .format() misinterprets.
-        user_prompt = _SCENE_ANALYZER_USER.replace("{question}", question[:1800])
-
-        # Falling straight to the generic 5-step "Setup/Given/Formula/
-        # Substitute/Solution" fallback on the FIRST parse failure meant a
-        # single truncated or malformed JSON response (which _call_gemini's
-        # own retry logic doesn't catch, since it only retries API-level
-        # 429/503 errors, not a 200 response containing bad JSON) silently
-        # produced the generic template with no second attempt. Give the
-        # actual model 2 more tries at a clean JSON response before
-        # accepting the fallback.
-        last_err = None
-        last_raw_snippet = ""
-        for attempt in range(1, 4):
-            try:
-                raw = GeminiSolutionGenerator._call_gemini(
-                    user_prompt, _SCENE_ANALYZER_SYSTEM, max_tokens=16384
-                )
-                last_raw_snippet = raw[:400]
-                cleaned = _sanitize_json_str(raw)
-                data = json.loads(cleaned)
-                QAnimLogger.ok("SceneAnalyzer", f"Scene script produced: {len(data.get('steps',[]))} steps, {len(data.get('svg_components',{}))} components")
-                return data
-            except Exception as e:
-                last_err = e
-                QAnimLogger.warn("SceneAnalyzer", f"Attempt {attempt}/3 failed: {e}")
-                continue
-
-        QAnimLogger.warn(
-            "SceneAnalyzer",
-            f"All attempts failed ({last_err}) — using fallback script. "
-            f"Last raw response started with: {last_raw_snippet!r}"
-        )
-        return cls._fallback_script(question)
-
-    @classmethod
-    async def analyze_async(cls, question: str) -> dict:
-        loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.analyze, question),
-                timeout=STAGE_TIMEOUT_SCENE,
-            )
-        except asyncio.TimeoutError:
-            QAnimLogger.error("SceneAnalyzer", f"Stage exceeded {STAGE_TIMEOUT_SCENE}s — using fallback script")
-            return cls._fallback_script(question)
-
-    @classmethod
-    def _fallback_script(cls, question: str) -> dict:
-        q_short = question[:80]
-        return {
-            "title": f"Analysis: {q_short}",
-            "topic": "ENGINEERING",
-            "solution_steps": [
-                "Step 1: Identify the given values from the question.",
-                "Step 2: Define the unknown quantity clearly.",
-                "Step 3: Select the governing formula or principle.",
-                "Step 4: Substitute the known values into the formula.",
-                "Step 5: Simplify and compute the result step by step.",
-            ],
-            "final_answer": "Please regenerate for a complete answer.",
-            "key_insight": "Always identify what is given and what is required before choosing a formula.",
-            "steps": [
-                {
-                    "step_number": 1,
-                    "label": "Setup",
-                    "title": "Step 1: Problem Setup",
-                    "description": "Establish the system and identify the given values. Read the question carefully.",
-                    "badges": [{"text": "Given data", "type": "cyan"}],
-                    "components_visible": ["frame"],
-                    "components_new": ["frame"],
-                    "focus_component": "frame",
-                    "blur_background": False
-                },
-                {
-                    "step_number": 2,
-                    "label": "Given",
-                    "title": "Step 2: List Given Values",
-                    "description": "Write down every known quantity with its unit. This prevents errors later.",
-                    "badges": [{"text": "Data extracted", "type": "cyan"}],
-                    "components_visible": ["frame", "given_labels"],
-                    "components_new": ["given_labels"],
-                    "focus_component": "given_labels",
-                    "blur_background": True
-                },
-                {
-                    "step_number": 3,
-                    "label": "Formula",
-                    "title": "Step 3: Select the Formula",
-                    "description": "Choose the governing law or equation that connects the given quantities to the unknown.",
-                    "badges": [{"text": "Governing law", "type": "orange"}],
-                    "components_visible": ["frame", "given_labels", "formula_box"],
-                    "components_new": ["formula_box"],
-                    "focus_component": "formula_box",
-                    "blur_background": True
-                },
-                {
-                    "step_number": 4,
-                    "label": "Substitute",
-                    "title": "Step 4: Substitute Values",
-                    "description": "Replace each variable with its numerical value and unit. Keep the equation balanced.",
-                    "badges": [{"text": "Values plugged in", "type": "orange"}],
-                    "components_visible": ["frame", "given_labels", "formula_box", "substitution"],
-                    "components_new": ["substitution"],
-                    "focus_component": "substitution",
-                    "blur_background": True
-                },
-                {
-                    "step_number": 5,
-                    "label": "Solution",
-                    "title": "Step 5: Solve & Verify",
-                    "description": "Carry out the arithmetic. Check units and order of magnitude for the result.",
-                    "badges": [{"text": "Result computed", "type": "green"}],
-                    "components_visible": ["frame", "given_labels", "formula_box", "substitution", "solution"],
-                    "components_new": ["solution"],
-                    "focus_component": None,
-                    "blur_background": False
-                }
-            ],
-            "svg_components": {
-                "frame": {
-                    "description": "Question text and system overview in a central card",
-                    "motion_type": "static",
-                    "motion_description": "A clean label card showing the problem title",
-                    "accent_color": "#66fcf1",
-                    "labels": ["System Setup"]
-                },
-                "solution": {
-                    "description": "Math solution box with calculation steps",
-                    "motion_type": "static",
-                    "motion_description": "Solution summary card appearing",
-                    "accent_color": "#97c459",
-                    "labels": ["Solution"]
-                }
-            }
-        }
-
-
-# ---------------------------------------------------------------------------
-# STAGE B: GeminiAnimationBuilder — generates the complete HTML animation
-# ---------------------------------------------------------------------------
-
-_ANIMATION_BUILDER_SYSTEM = """You are QAnim — a specialist that generates COMPLETE self-contained HTML animation pages for engineering/science education.
-
-You receive a scene script (JSON) and produce a premium interactive animation.
-
-════════════════════════════════════════════════════════════
-PAGE STRUCTURE (required skeleton)
-════════════════════════════════════════════════════════════
-<!DOCTYPE html><html lang="en">
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>[Title] — Interactive Animation</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>[Problem Title] — Interactive Animation</title>
   <style>
-    /* CSS variables — MUST include all of these */
     :root {
-      --bg-color:#eef2f9; --card-bg:#ffffff; --text-main:#1e293b;
-      --text-sub:#64748b; --accent-cyan:#0891b2; --accent-purple:#7c3aed;
-      --accent-orange:#d97706; --accent-green:#16a34a;
-      --border-subtle:#e2e8f0; --shadow-card:0 4px 24px rgba(14,30,64,0.10);
+      --bg-color: #eef2f9; --panel-bg: #ffffff; --text-main: #1e293b;
+      --text-sub: #64748b; --text-muted: #94a3b8;
+      --accent-cyan: #0891b2; --accent-cyan-dim: #0e7490;
+      --accent-cyan-light: rgba(8,145,178,0.10);
+      --accent-orange: #d97706; --accent-green: #16a34a;
+      --border: #e2e8f0; --border-strong: #cbd5e1;
+      --border-radius: 16px; --border-radius-sm: 10px;
+      --shadow-card: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.08);
     }
-    body { margin:0; background:linear-gradient(160deg,#eef2f9,#e8f0fe,#eff6ff); background-attachment:fixed; font-family:'Segoe UI',system-ui,sans-serif; }
-    /* dashboard, question-banner, svg-container, control-panel, step-indicator,
-       step-dot(.active/.done), step-connector, step-progress-wrap/bar,
-       info-box, .badge(.badge-cyan/.badge-orange/.badge-green),
-       btn-primary, btn-secondary — define all with the light theme */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%);
+      background-attachment: fixed; color: var(--text-main);
+      display: flex; flex-direction: column; align-items: center;
+      min-height: 100vh; padding: 28px 16px 130px;
+    }
+    .page-header { width: 100%; max-width: 900px; margin-bottom: 14px; }
+    .page-chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+      border-radius: 20px; background: rgba(8,145,178,0.10);
+      border: 1px solid rgba(8,145,178,0.22); font-size: 11px; font-weight: 700;
+      color: var(--accent-cyan-dim); text-transform: uppercase; letter-spacing: 0.8px;
+    }
+    .page-chip::before { content: '▶'; font-size: 8px; }
+    .dashboard {
+      width: 100%; max-width: 900px; background: var(--panel-bg);
+      border-radius: var(--border-radius); box-shadow: var(--shadow-card);
+      overflow: hidden; border: 1px solid var(--border); position: relative;
+    }
+    .dashboard::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--accent-cyan-dim) 0%, #7c3aed 50%, var(--accent-orange) 100%);
+      border-radius: var(--border-radius) var(--border-radius) 0 0; z-index: 2;
+    }
+    .question-banner {
+      padding: 22px 28px 18px;
+      background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 40%, #eef2f9 100%);
+      border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;
+    }
+    .q-label { font-size: 10.5px; font-weight: 800; color: var(--accent-cyan-dim); text-transform: uppercase; letter-spacing: 1.8px; }
+    .q-text { font-size: 15px; color: var(--text-main); line-height: 1.6; max-width: 820px; }
+    .svg-container {
+      width: 100%; aspect-ratio: 16/9; position: relative; overflow: hidden;
+      background: radial-gradient(ellipse at 35% 38%, #eef5ff 0%, #dce8f5 45%, #c8d9ed 85%, #b8ccdf 100%);
+      border-bottom: 1px solid var(--border);
+    }
+    svg { display: block; width: 100%; height: 100%; }
+    .svg-layer { transition: opacity 0.55s cubic-bezier(0.4,0,0.2,1); }
+    .control-panel { padding: 22px 28px 26px; background: linear-gradient(180deg,#fff 0%,#f9fbff 100%); border-top: 1px solid var(--border); }
+    .step-indicator { display: flex; align-items: center; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+    .step-connector { flex: 0 0 18px; height: 1.5px; background: linear-gradient(90deg,#cbd5e1,#e2e8f0); border-radius: 2px; }
+    .step-dot {
+      padding: 6px 14px; border-radius: 20px; background: #f1f5f9;
+      border: 1.5px solid #e2e8f0; font-size: 11.5px; font-weight: 700; color: #94a3b8;
+      cursor: pointer; white-space: nowrap; user-select: none;
+      transition: background 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s, transform 0.25s;
+    }
+    .step-dot:hover:not(.active) { background: rgba(8,145,178,0.07); border-color: rgba(8,145,178,0.3); color: var(--accent-cyan-dim); }
+    .step-dot.active { background: linear-gradient(135deg,#0e7490,#0891b2); border-color: transparent; color: #fff; box-shadow: 0 3px 12px rgba(8,145,178,0.38); transform: scale(1.07); }
+    .step-dot.done { background: rgba(22,163,74,0.09); border-color: rgba(22,163,74,0.28); color: #15803d; }
+    .step-label { font-size: 11px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; margin-left: 6px; }
+    .step-progress-wrap { height: 3px; background: #f1f5f9; border-radius: 2px; margin-bottom: 20px; overflow: hidden; }
+    .step-progress-bar { height: 100%; background: linear-gradient(90deg,#0e7490,#0891b2,#38bdf8); border-radius: 2px; transition: width 0.5s; }
+    .info-box {
+      background: linear-gradient(135deg,#f8fbff,#f4f8ff); border: 1px solid #dde8f8;
+      border-left: 4px solid var(--accent-cyan); border-radius: var(--border-radius-sm);
+      padding: 20px 22px; min-height: 130px; display: flex; flex-direction: column; gap: 11px;
+    }
+    .info-box h3 { color: var(--text-main); font-size: 16.5px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+    .info-box h3::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent-cyan); flex-shrink:0; }
+    .badges { display: flex; gap: 7px; flex-wrap: wrap; }
+    .badge { padding: 4px 12px; border-radius: 20px; font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; }
+    .badge-cyan  { background:rgba(8,145,178,0.09);  border:1px solid rgba(8,145,178,0.28);  color:#0e7490; }
+    .badge-orange{ background:rgba(217,119,6,0.09);  border:1px solid rgba(217,119,6,0.28);  color:#92400e; }
+    .badge-green { background:rgba(22,163,74,0.09);  border:1px solid rgba(22,163,74,0.28);  color:#15803d; }
+    .info-desc { font-size: 14px; line-height: 1.7; color: var(--text-sub); }
+    .actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 20px; }
+    button { padding: 11px 24px; border-radius: 10px; font-size: 13.5px; font-weight: 700; font-family: inherit; cursor: pointer; border: none; outline: none; transition: all 0.2s; }
+    .btn-primary { background: linear-gradient(135deg,#0e7490,#0891b2); color: #fff; box-shadow: 0 4px 14px rgba(8,145,178,0.30); }
+    .btn-primary:hover { background: linear-gradient(135deg,#0c6680,#0e7490); transform: translateY(-2px); }
+    .btn-secondary { background: #fff; color: var(--text-sub); border: 1.5px solid var(--border-strong); }
+    .btn-secondary:hover { background: #f8fafc; color: var(--text-main); }
   </style>
 </head>
 <body>
   <div class="page-header"><div class="page-chip">Interactive Animation</div></div>
   <div class="dashboard">
     <div class="question-banner">
-      <div class="q-label"><span class="q-icon">?</span> Problem Statement</div>
-      <div class="q-text">[question text]</div>
+      <div class="q-label">Problem Statement</div>
+      <div class="q-text">[FULL QUESTION TEXT]</div>
     </div>
     <div class="svg-container">
-      <svg id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
-        <defs><!-- steel gradient, steelHi gradient, glowCyan, glowOrange, shadow, shadowDeep filters, arrowCyan/arrowOrange/arrowGreen/arrowGrey markers --></defs>
-        <rect id="canvas-bg" width="850" height="478" fill="url(#canvasBg)"/>
-        <!-- layer groups: id="layer-frame", "blur-shield"(fill=#c2d4e8,opacity=0), then one <g> per component -->
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
+        <defs><!-- gradients, filters, markers --></defs>
+        <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
+        <!-- SVG layers: <g class="svg-layer" id="layer-[name]" style="opacity:0"> ... </g> -->
+        <!-- Overlay groups: <g class="svg-layer" id="overlay-step0"> ... </g> through overlay-step5 -->
       </svg>
     </div>
-    <div class="control-panel" id="control-panel">
-      <div class="step-indicator" id="step-indicator">
-        <!-- 9 step-dot pills separated by step-connector divs (see 9-STEP RULES) -->
+    <div class="control-panel">
+      <div class="step-indicator" id="dots">
+        <!-- 6 step-dot divs with onclick="goToStep(N)" -->
+        <div class="step-connector"></div>
+        <div class="step-dot" id="dot-step7" onclick="if(typeof window.qanim_showScene6==='function')window.qanim_showScene6()">Main Formula</div>
+        <div class="step-connector"></div>
+        <div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene8==='function')window.qanim_showScene8()">Substitution</div>
+        <div class="step-connector"></div>
+        <div class="step-dot" id="dot-step9" onclick="if(typeof window.qanim_showScene9==='function')window.qanim_showScene9()">Final Answer</div>
         <div class="step-label" id="step-label">Step 1 of 9</div>
       </div>
-      <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar"></div></div>
-      <div class="info-box" id="info-box">
+      <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar" style="width:11.11%"></div></div>
+      <div class="info-box">
         <h3 id="info-title"></h3>
-        <div id="info-badges"></div>
-        <p id="info-desc"></p>
+        <div class="badges" id="info-badges"></div>
+        <div class="info-desc" id="info-desc"></div>
       </div>
-      <div class="btn-row">
-        <button class="btn-secondary" id="btn-prev" onclick="prevStep()" disabled>&#x2190; Prev</button>
-        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step &#x25B6;</button>
-        <button class="btn-secondary" onclick="resetAnim()">&#x21BA; Restart</button>
+      <div class="actions">
+        <button class="btn-secondary" onclick="resetAnim()">↺ Restart</button>
+        <button class="btn-secondary qanim-prev-btn" id="btn-prev" onclick="prevStep()" disabled>◀ Previous Step</button>
+        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step ▶</button>
       </div>
     </div>
   </div>
-  <script>/* ALL JS in one block */</script>
+
+  <script>
+    var currentStep = 0;
+    var totalSteps = 6;
+    var totalDisplaySteps = 9;
+    window.qanimRafId = null;
+    var time = 0;
+
+    var stepsData = [/* 6 entries */];
+
+    function updateDOM(idx) {
+      var data = stepsData[idx];
+      document.getElementById('blur-shield').style.opacity = data.blurOp;
+      for (var id in data.layerOpacities) { var el=document.getElementById(id); if(el) el.style.opacity=data.layerOpacities[id]; }
+      for (var i=0;i<totalSteps;i++){var ov=document.getElementById('overlay-step'+i);if(ov)ov.style.opacity=(data.overlays.indexOf('overlay-step'+i)!==-1)?1:0;}
+      document.getElementById('info-title').innerHTML = data.title;
+      document.getElementById('info-badges').innerHTML = data.badges;
+      document.getElementById('info-desc').innerHTML = data.desc;
+      var dots=document.querySelectorAll('.step-dot');
+      for(var j=0;j<dots.length;j++){dots[j].className='step-dot';if(j<idx)dots[j].className+=' done';if(j===idx)dots[j].className+=' active';}
+      document.getElementById('step-label').innerHTML='Step '+(idx+1)+' of '+totalDisplaySteps;
+      document.getElementById('step-bar').style.width=((idx+1)/totalDisplaySteps*100)+'%';
+      var bn=document.getElementById('btn-next');
+      if(bn){bn.innerHTML=(idx===totalSteps-1)?'View Formula &#x25B6;':'Next Step &#x25B6;';}
+      var bp=document.getElementById('btn-prev'); if(bp) bp.disabled=(idx<=0);
+    }
+
+    function applyStep(idx) {
+      currentStep = idx; updateDOM(idx);
+      if(window.qanimRafId){cancelAnimationFrame(window.qanimRafId);window.qanimRafId=null;}
+      if(!stepsData[idx].freezing){ window.qanimRafId=requestAnimationFrame(animLoop); }
+    }
+    window.applyStep = applyStep;
+
+    function animLoop(){time+=0.05;drawFrame(time);if(!stepsData[currentStep].freezing){window.qanimRafId=requestAnimationFrame(animLoop);}else{window.qanimRafId=null;}}
+    window.qanimStartRAF=function(){if(!window.qanimRafId)window.qanimRafId=requestAnimationFrame(animLoop);};
+
+    function nextStep(){
+      if(currentStep+1<totalSteps){applyStep(currentStep+1);}
+      else{if(typeof window.qanim_showScene6==='function'){currentStep=totalSteps;window.qanim_showScene6();}}
+    }
+    function prevStep(){if(currentStep>0)applyStep(currentStep-1);}
+    function goToStep(idx){if(idx>=0&&idx<totalSteps)applyStep(idx);}
+    function resetAnim(){
+      var ids=['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay','qanim-scene-modal-backdrop'];
+      for(var i=0;i<ids.length;i++){var el=document.getElementById(ids[i]);if(el){el.classList.remove('qanim-scene-visible');el.style.display='none';}}
+      time=0; applyStep(0);
+    }
+    function drawFrame(t){ /* SVG animation here — use setAttribute for SVG props */ }
+    window.onload=function(){applyStep(0);};
+  </script>
+
+  <script type="application/json" id="__qanim_scene_data__">
+  {
+    "scene_script": {
+      "title": "[Problem title max 60 chars]",
+      "topic": "[PHYSICS|ENGINEERING|MATH|CHEMISTRY]",
+      "final_answer": "[Computed answer with units]",
+      "key_insight": "[One sentence physical insight]",
+      "solution_steps": ["[Step 1 equation]","[Step 2 substitution]","[Step 3 result]"]
+    },
+    "solution": {
+      "given_data": [{"symbol":"[sym]","value":"[val]","unit":"[unit]","description":"[desc]"}],
+      "formulas": [{"text":"[formula]","label":"[law name]","why":"[why]"}],
+      "steps": ["[Step 1: formula]","[Step 2: values]","[Step 3: answer]"],
+      "final_answer": "[answer with units]",
+      "final_answer_unit": "[unit]",
+      "key_insight": "[insight]",
+      "variable_meanings": [{"symbol":"[sym]","meaning":"[meaning]","unit":"[unit]"}],
+      "formula_label": "[Law/Theorem name]",
+      "formula_why": "[Why this formula applies]"
+    },
+    "glossary_terms": [{"term":"[Term]","definition":"[Definition]"}]
+  }
+  </script>
+
 </body></html>
 
 ════════════════════════════════════════════════════════════
-9-STEP RULES (MANDATORY — read carefully)
+STRICT RULES
 ════════════════════════════════════════════════════════════
-The step dot bar MUST always show ALL 9 dots:
-  "1·[label]" through "6·[label]" use goToStep(N).
-  "7·Formula"  → id="dot-step7"  onclick calls qanim_showScene6()
-  "8·Substitution" → id="dot-step8" onclick calls qanim_showScene7()
-  "9·Final Answer" → id="dot-step9" onclick calls qanim_showScene9()
+1. EXACTLY 6 SVG steps (stepsData has 6 entries, indices 0–5).
+2. EXACTLY 9 step-dots: 6 named + Main Formula + Substitution + Final Answer.
+3. dot-step7 → qanim_showScene6, dot-step8 → qanim_showScene8, dot-step9 → qanim_showScene9.
+4. nextStep() calls qanim_showScene6 when currentStep reaches totalSteps.
+5. resetAnim() MUST hide all overlay divs before calling applyStep(0).
+6. window.applyStep = applyStep — MANDATORY alias.
+7. SVG animation: setAttribute('stroke-dashoffset', val) NOT .style.
+8. "To Find" badge: solid fill="#d97706" with white text.
+9. var everywhere. No const/let. No arrow functions. No backticks.
+10. ALL __qanim_scene_data__ values must be REAL computed numbers.
+11. Do NOT include <script id="qanim-*"> blocks — auto-injected.
+12. Do NOT include Scene 6/7/9 overlay divs — auto-injected.
+13. Return ONLY the complete <!DOCTYPE html>...</html>. No markdown, no fences."""
 
-Step label: "Step N of 9". Progress bar: (currentStep+1)/9*100%.
+_ANIMATION_BUILDER_USER = """Generate the complete HTML animation page for this question. Follow the skeleton in the system prompt EXACTLY.
 
-nextStep() behavior:
-  if(currentStep>=5){if(typeof qanim_showScene6==='function')qanim_showScene6();return;}
-  goToStep(currentStep+1);
-
-Step accent colors: 0=#0ea5e9, 1=#10b981, 2=#f59e0b, 3=#6366f1, 4=#f43f5e, 5=#22c55e.
-
-════════════════════════════════════════════════════════════
-SVG RULES
-════════════════════════════════════════════════════════════
-- viewBox="0 0 850 478", preserveAspectRatio="xMidYMid slice"
-- DEFS must include: steel gradient (4-stop #e8f0fa→#c8d8e8→#8aaac0→#5a7a9a), glowCyan filter, glowOrange filter, shadow/shadowDeep drop-shadow filters, arrowCyan/arrowOrange/arrowGreen/arrowGrey markers.
-- blur-shield <rect> (fill="#c2d4e8" opacity="0") sits between background and components.
-- Each component is a <g class="svg-layer"> starting at opacity:0; only layer-frame starts visible.
-- Thermal arrows: set stroke-dashoffset="0" as SVG attribute initially; animate with setAttribute('stroke-dashoffset', value) NOT .style — SVG attrs need setAttribute. Negative offset = rightward flow.
-- Hot-zone pulse: use setAttribute('opacity', value) not .style.opacity.
-- "To Find" quantity badge: solid fill="#d97706" with white text (NOT transparent).
-- All labels stay inside viewBox. Zero text-overlaps.
-
-════════════════════════════════════════════════════════════
-JAVASCRIPT RULES (CRITICAL — violations break the page)
-════════════════════════════════════════════════════════════
-- Use var everywhere. Use function(){} everywhere. NO const/let/arrow functions/backticks.
-- All JS in ONE <script> block. Zero external deps.
-- window.qanimRafId = the RAF id. window.qanimStartRAF = function to (re)start the RAF loop.
-- window.applyStep = alias for your step-update function (injected prevStep module needs this).
-- Inside step-update: var pb=document.getElementById('btn-prev'); if(pb)pb.disabled=(idx<=0);
-- Inside step-update: set btn-next text to 'View Formula ▶' when idx===5, else 'Next Step ▶'.
-- resetAnim() MUST: set display:'none' AND remove class 'qanim-scene-visible' from ALL of: #qanim-scene6-overlay, #qanim-scene7-overlay, #qanim-scene9-overlay, #qanim-scene-modal-backdrop. Then call goToStep(0).
-- NEVER put a raw apostrophe inside a single-quoted JS string. Use &#39; for primes (l&#39;, θ&#39;) and contractions (it&#39;s). One unescaped apostrophe silently kills the entire <script>.
-
-════════════════════════════════════════════════════════════
-EMBEDDED DATA BLOCK (MANDATORY — do not skip)
-════════════════════════════════════════════════════════════
-Before </body>, embed this exact block with REAL computed values:
-
-<script type="application/json" id="__qanim_scene_data__">
-{
-  "scene_script": {
-    "title": "Problem title (max 60 chars)",
-    "topic": "ENGINEERING|PHYSICS|MATH|CHEMISTRY|BIOLOGY",
-    "final_answer": "Computed numerical answer with units",
-    "key_insight": "One memorable plain-English insight sentence",
-    "solution_steps": ["Step 1: formula", "Step 2: substitute", "Step 3: result"]
-  },
-  "solution": {
-    "given_data": [{"symbol": "k", "value": "1.5", "unit": "W/mK", "description": "Thermal conductivity"}],
-    "formulas": [{"text": "Q = (T1-T2)/R_total", "label": "Fourier Heat Law", "why": "Governs steady conduction"}],
-    "steps": ["R1 = L1/k1 = 0.15/1.5 = 0.1 m²K/W", "R_total = R1+R2+R3 = 0.6 m²K/W", "Q = 1050/0.6 = 1750 W/m²"],
-    "final_answer": "Q = 1750 W/m²",
-    "final_answer_unit": "W/m²",
-    "key_insight": "Insulating layer dominates thermal resistance.",
-    "variable_meanings": [{"symbol": "Q", "meaning": "Heat flux per unit area", "unit": "W/m²"}],
-    "formula_label": "Fourier Law of Heat Conduction",
-    "formula_why": "Applies to steady-state multilayer conduction"
-  },
-  "glossary_terms": [
-    {"term": "Thermal Resistance", "definition": "Opposition to heat flow; R = L/(kA)"}
-  ]
-}
-</script>
-
-Replace ALL placeholder values above with REAL values computed from the question.
-This block feeds the Formula (Step 7), Substitution (Step 8), and Final Answer (Step 9) modals.
-Do NOT omit it. Do NOT leave placeholder text.
-
-════════════════════════════════════════════════════════════
-OUTPUT
-════════════════════════════════════════════════════════════
-Return ONLY the complete <!DOCTYPE html>...</html> as raw text. No markdown, no fences, no JSON.
-The __qanim_scene_data__ block must be inside the HTML, before </body>."""
-
-_ANIMATION_BUILDER_USER = """Generate the complete, polished 9-step animation HTML page for this engineering/science question. This is a premium educational product — quality matters at every level.
-
-QUESTION TO ANIMATE:
+QUESTION:
 {question}
 
-TOPIC HINT (use to set SVG style and physics type):
-{scene_script}
+STEPS TO FOLLOW:
+1. Read every given value from the question.
+2. Solve the problem — compute the exact numerical answer.
+3. Design 6 SVG animation steps that reveal given values one by one (Steps 1–5), then show all data + "To Find" (Step 6).
+4. Fill in ALL __qanim_scene_data__ values with real computed numbers — no placeholders.
+5. Do NOT include Scene 6/7/9 overlay divs or qanim-* scripts — those are injected automatically.
 
-WHAT TO DO:
-1. Read the question carefully. Identify all given values, the unknown to find, and the governing physics.
-2. Solve the problem yourself — compute the actual numerical answer step by step.
-3. Design a 6-step SVG animation that reveals the physical setup layer by layer (Steps 1-6).
-4. Embed the solution data in the __qanim_scene_data__ JSON block (see EMBEDDED DATA BLOCK rule).
-5. Steps 7/8/9 (Formula, Substitution, Final Answer) are auto-injected — include their dots but NOT their modal content.
+Return ONLY the complete <!DOCTYPE html>...</html>. No markdown. No fences."""
 
-════════════════════════════════════════════════════════════
-CRITICAL REMINDERS FOR THIS OUTPUT
-════════════════════════════════════════════════════════════
-
-9-STEP STRUCTURE (MANDATORY):
-0. The animation ALWAYS has exactly 9 steps total. Steps 1–6 are the SVG animation (driven by stepsData). Steps 7–9 are modals that are auto-injected after you generate the HTML — include their dots in the indicator bar but do NOT build their modal content (that's handled separately).
-   The step dot bar MUST show all 9 dots labeled:
-     "1 · [label]", "2 · [label]", ..., "6 · [label]", "7 · Formula", "8 · Substitution", "9 · Final Answer"
-   Step label text = "Step N of 9" always.
-   Progress bar width = (currentStep+1)/9 * 100% for steps 0–5.
-   Dots 7, 8, 9 have onclick that calls qanim_showScene6(), qanim_showScene7(), qanim_showScene9() respectively.
-   The nextStep() function: if(currentStep>=5){if(typeof qanim_showScene6==='function')qanim_showScene6();return;}
-   The "Next Step ▶" button on step 6 (index 5) should trigger the Step 7 Formula modal.
-
-STRUCTURE & LAYOUT:
-1. Body background: linear-gradient(160deg, #eef2f9 0%, #e8f0fe 50%, #eff6ff 100%) with background-attachment:fixed.
-2. Add page-header div with page-chip "Interactive Animation" ABOVE the .dashboard card.
-3. Dashboard has CSS ::before with 3px top gradient bar (cyan→purple→orange).
-4. Question banner: class="question-banner" — q-label with square icon box, q-text at 15px/1.6 line-height.
-
-SVG CANVAS:
-5. All defs: 4-stop steel gradient, steelHi gradient, glowCyan filter, glowOrange filter, shadow filter, shadowDeep filter, 3 color arrow markers + 1 grey marker for dimensions.
-6. blur-shield rect: fill="#c2d4e8", opacity="0", sits between layer-frame and component layers.
-7. Component colors MUST be light-theme friendly: structure=#4a6a8a, driver=#2563eb, driven=#0891b2, forces=#d97706, results=#16a34a.
-8. Value callout chips in overlays: rounded rect with rgba fill + centered text, NOT bare text floated in space.
-9. Dimension lines: dashed (#94a3b8), with arrowGrey markers on both ends.
-
-STEP COLORS — apply step-specific accent to dot border-left and control-panel background:
-   Step 0 → #0ea5e9, Step 1 → #10b981, Step 2 → #f59e0b, Step 3 → #6366f1, Step 4 → #f43f5e, Step 5 → #22c55e.
-
-STEP CONTROL:
-10. Step dots are pills with text. Between every two dots add <div class="step-connector"></div>.
-11. Add <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar"></div></div> between step-indicator and info-box.
-12. applyStep(idx) must: set blur opacity, set all layer opacities, show correct overlays, update info box, update dots (active/done), update step-label "Step N of 9", update progress bar width.
-13. Include a "Given Data" accumulator panel below the info-box that grows as each step reveals a new given parameter (steps 1–5 only; hidden on step 6 which shows the full summary overlay).
-
-PHYSICS & MOTION:
-14. Rotating parts (cranks, gears, pulleys): continuous RAF loop, angle=omega*elapsed_time. Use REAL RPM from the problem.
-15. Oscillating parts (pistons): x = r*cos(theta) + sqrt(L*L - r*r*sin(theta)*sin(theta)). Use REAL geometry.
-16. Thermal/fluid problems: animate heat flux arrows using setAttribute('stroke-dashoffset', value) NOT .style.strokeDashoffset — SVG presentation attributes require setAttribute. Always set stroke-dashoffset="0" as an SVG attribute on the element initially. The dashoffset value must increase each frame to make arrows march in the flow direction (negative offset = rightward motion for left-to-right arrows). Also animate hot-zone opacity with setAttribute('opacity', value) not .style.opacity.
-17. Each component animates on the FRAME it first becomes visible (triggered in applyStep).
-
-CODE QUALITY:
-18. NO const/let/arrow functions/backtick template literals anywhere.
-19. Use var for all variables. Use function() {} for all functions.
-20. Single <script> block. Zero external dependencies.
-21. window.qanimRafId and window.qanimStartRAF must be present (for modal back-navigation compat).
-22. CRITICAL — applyStep alias: The injected prevStep module calls window.applyStep(). Your animation must expose this. After your updateUI/applyStep/goToStep function, add: window.applyStep = function(idx) { goToStep(idx); }; (or whatever your step-apply function is named). Without this alias, the Previous Step button silently does nothing.
-23. CRITICAL — btn-prev disabled state: Inside your step-update function, always set: var pb=document.getElementById('btn-prev'); if(pb) pb.disabled=(idx<=0); This keeps the Previous Step button correctly greyed out on step 0.
-24. CRITICAL — resetAnim must hide all overlays: Your resetAnim() function must explicitly set display:'none' AND remove 'qanim-scene-visible' class from #qanim-scene6-overlay, #qanim-scene7-overlay, #qanim-scene9-overlay, and #qanim-scene-modal-backdrop. Class removal alone is not sufficient — the injected scene modules set display:'block' explicitly and it must be reversed.
-25. CRITICAL — btn-next label: On the last SVG step (step index 5), set btn-next textContent to 'View Formula ▶' instead of 'Next Step ▶' so users know what clicking it will do.
-
-Return the complete <!DOCTYPE html>...</html> page — nothing else."""
 
 
 class GeminiAnimationBuilder:
@@ -6013,67 +5302,17 @@ class GeminiAnimationBuilder:
         if _gemini_client is None:
             return RecoveryEngine.fallback_html(question, "Gemini client not available. Set GEMINI_API_KEY.")
 
-        _bm = globals().get("GEMINI_BUILD_MODEL", GEMINI_MODEL)
-        QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {_bm} (fast build model)...")
-        script_json = json.dumps(scene_script, indent=2, ensure_ascii=False)
-        # Use .replace() instead of .format() — the scene_script is JSON and
-        # contains many literal { } braces that .format() would misinterpret as
-        # positional/keyword placeholders, raising:
-        #   "Replacement index 0 out of range for positional args tuple"
-        # FIX: Compress scene_script before sending to reduce input tokens.
-        # The full script_json for a complex 3-layer problem can be 8-12k chars.
-        # With the 14k builder system prompt, that's 22k+ input tokens BEFORE
-        # thinking — which adds mandatory reasoning tokens on top.
-        # Strategy: keep the structural fields (steps, title, final_answer,
-        # key_insight, solution_steps) but truncate long svg_component
-        # descriptions that the builder doesn't need verbatim.
-        try:
-            import json as _json_compress
-            script_obj = _json_compress.loads(script_json) if isinstance(script_json, str) else scene_script
-            # Keep only what the builder actually uses; drop verbose descriptions
-            compressed = {
-                "title": script_obj.get("title", ""),
-                "topic": script_obj.get("topic", ""),
-                "final_answer": script_obj.get("final_answer", ""),
-                "key_insight": script_obj.get("key_insight", ""),
-                "solution_steps": script_obj.get("solution_steps", [])[:6],
-                "steps": [],
-                "svg_components": {},
-            }
-            for step in (script_obj.get("steps") or [])[:6]:
-                compressed["steps"].append({
-                    "step_number": step.get("step_number"),
-                    "label": step.get("label", ""),
-                    "title": step.get("title", ""),
-                    "description": step.get("description", "")[:200],
-                    "badges": step.get("badges", []),
-                    "components_new": step.get("components_new", []),
-                    "components_visible": step.get("components_visible", []),
-                    "focus_component": step.get("focus_component"),
-                    "blur_background": step.get("blur_background", False),
-                    "motion_emphasis": step.get("motion_emphasis", ""),
-                })
-            for comp_id, comp in (script_obj.get("svg_components") or {}).items():
-                compressed["svg_components"][comp_id] = {
-                    "description": str(comp.get("description", ""))[:180],
-                    "motion_type": comp.get("motion_type", "static"),
-                    "motion_description": str(comp.get("motion_description", ""))[:120],
-                    "accent_color": comp.get("accent_color", "#0891b2"),
-                    "layer_order": comp.get("layer_order", 1),
-                    "labels": comp.get("labels", []),
-                }
-            compressed_json = _json_compress.dumps(compressed, separators=(",", ":"))
-        except Exception:
-            compressed_json = script_json[:5000]
-
+        _bmodel = globals().get("GEMINI_BUILD_MODEL") or globals().get("GEMINI_MODEL") or "gemini-3.1-pro-preview"
+        QAnimLogger.info("AnimationBuilder", f"Building animation HTML via {_bmodel}...")
+        # scene_script is always {} — builder generates everything from the question.
         user_prompt = (
             _ANIMATION_BUILDER_USER
-            .replace("{question}", question[:1500])
-            .replace("{scene_script}", compressed_json[:5000])
+            .replace("{question}", question[:2000])
+            .replace("{scene_script}", "")
         )
 
         try:
-            raw = cls._call_gemini_large(user_prompt)
+            raw = cls._call_gemini_large(user_prompt, _bmodel)
             html = cls._extract_html(raw)
             if html and len(html) > 1000:
                 QAnimLogger.ok("AnimationBuilder", f"Animation HTML generated: {len(html):,} chars")
@@ -6086,19 +5325,15 @@ class GeminiAnimationBuilder:
             return RecoveryEngine.fallback_html(question, f"Animation build error: {_err_msg(e)}")
 
     @classmethod
-    def _call_gemini_large(cls, user_prompt: str) -> str:
+    def _call_gemini_large(cls, user_prompt: str, bmodel: str = None) -> str:
         import time as _time
         MAX_RETRIES  = 3
-        # Short backoff: 5s then 15s. With no outer asyncio timeout, longer
-        # waits just make the user stare at a spinner. 5s clears most
-        # transient 429s; 15s handles brief overload windows.
         RETRY_DELAYS = [5, 15, 30]
+        # Safe model resolution — globals().get() never raises NameError.
+        _bmodel = bmodel or globals().get("GEMINI_BUILD_MODEL") or globals().get("GEMINI_MODEL") or "gemini-3.1-pro-preview"
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                # Uses GEMINI_BUILD_MODEL (gemini-3.1-pro-preview).
-                # 65536 output token limit prevents truncation on large HTML pages.
-                _bmodel = globals().get("GEMINI_BUILD_MODEL", GEMINI_MODEL)
                 if _GEMINI_SDK_STYLE == "generativeai":
                     model_obj = _gemini_client.GenerativeModel(
                         model_name=_bmodel,
@@ -6108,29 +5343,19 @@ class GeminiAnimationBuilder:
                     response = model_obj.generate_content(user_prompt)
                     raw = response.text.strip()
                 else:
-                    try:
-                        config = _google_genai.types.GenerateContentConfig(
-                            system_instruction=_ANIMATION_BUILDER_SYSTEM,
-                            temperature=0.4,
-                            max_output_tokens=65536,
-                            thinking_config=_google_genai.types.ThinkingConfig(thinking_level="low"),
-                        )
-                    except Exception:
-                        config = _google_genai.types.GenerateContentConfig(
-                            system_instruction=_ANIMATION_BUILDER_SYSTEM,
-                            temperature=0.4,
-                            max_output_tokens=65536,
-                        )
+                    # Single clean config — no thinking_config (Gemini 3.1 Pro
+                    # mandatory thinking cannot be reduced; the parameter is
+                    # silently ignored and the old try/except around it was
+                    # swallowing all other config errors too).
+                    config = _google_genai.types.GenerateContentConfig(
+                        system_instruction=_ANIMATION_BUILDER_SYSTEM,
+                        temperature=0.4,
+                        max_output_tokens=65536,
+                    )
                     response = _gemini_client.models.generate_content(
                         model=_bmodel,
                         contents=user_prompt,
                         config=config,
-                        # http_options: 600s gives Gemini 3.1 Pro plenty of
-                        # headroom even with mandatory thinking on heavy questions.
-                        # This is a true network-level hang guard, not a
-                        # pipeline cancellation — the SDK raises an exception
-                        # only if the TCP connection goes completely silent for
-                        # 600s, which would indicate a real infrastructure fault.
                         http_options={"timeout": 600},
                     )
                     raw = response.text.strip()
@@ -6815,128 +6040,11 @@ Rules:
 - Pure JSON only — no markdown, no fences."""
 
 
-class GeminiGlossaryAnalyzer:
-
-    @classmethod
-    def analyze(cls, question: str) -> dict:
-        if _gemini_client is None:
-            return {"terms": []}
-        # This call runs CONCURRENTLY with the scene analyzer and solution
-        # generator (asyncio.gather in the pipeline), which makes it the
-        # most likely of the three to get rate-limited or come back
-        # truncated. The previous version had ZERO retries of its own --
-        # any single hiccup (a 429 that _call_gemini's own retries didn't
-        # fully absorb, or JSON truncated at the old 800-token budget)
-        # silently returned {"terms": []} and the button just never
-        # appeared, with no visibility into why. That's the actual root
-        # cause of the recurring "glossary missing" reports: it wasn't
-        # missing by design, it was failing silently and often.
-        MAX_ATTEMPTS = 3
-        last_raw = ""
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                raw = GeminiSolutionGenerator._call_gemini(
-                    f"Question: {question[:800]}",
-                    _GLOSSARY_SYSTEM_GEMINI,
-                    max_tokens=1536,  # was 800 -- too tight, caused truncated/invalid JSON
-                )
-                last_raw = raw
-                cleaned = _sanitize_json_str(raw)
-                data = json.loads(cleaned)
-                terms = []
-                for t in (data.get("terms") or [])[:8]:
-                    term    = str(t.get("term", "") or "").strip()
-                    meaning = str(t.get("meaning", "") or "").strip()
-                    if term and meaning:
-                        terms.append({"term": term, "meaning": meaning})
-                if terms:
-                    QAnimLogger.ok("GlossaryAnalyzer", f"Found {len(terms)} difficult word(s) (attempt {attempt})")
-                else:
-                    QAnimLogger.info("GlossaryAnalyzer", f"Parsed OK, 0 difficult words (attempt {attempt}) — genuinely none for this question")
-                return {"terms": terms}
-            except Exception as e:
-                QAnimLogger.warn(
-                    "GlossaryAnalyzer",
-                    f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {e} — "
-                    f"raw response was: {last_raw[:300]!r}",
-                )
-                if attempt < MAX_ATTEMPTS:
-                    continue
-        QAnimLogger.error("GlossaryAnalyzer", f"All {MAX_ATTEMPTS} attempts failed — skipping glossary for this generation")
-        return {"terms": []}
-
-    @classmethod
-    async def analyze_async(cls, question: str) -> dict:
-        loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, cls.analyze, question),
-                timeout=STAGE_TIMEOUT_SMALL,
-            )
-        except asyncio.TimeoutError:
-            QAnimLogger.error("GlossaryAnalyzer", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — skipping glossary")
-            return {"terms": []}
 
 
-# ===========================================================================
-#  TOPIC CLASSIFIER (Gemini-based)
-# ===========================================================================
-
-async def _classify_topic_async(question: str) -> str:
-    q = question.lower()
-    TOPICS = [
-        (["mass transfer","evaporation","concentration","diffusion"],       "ENGINEERING"),
-        (["heat transfer","thermal","conduction","convection","radiation"], "ENGINEERING"),
-        (["fluid","flow","pressure","viscosity","bernoulli"],              "ENGINEERING"),
-        (["gear","crank","mechanism","slider","linkage","cam","flywheel"], "ENGINEERING"),
-        (["force","newton","velocity","acceleration","momentum"],          "PHYSICS"),
-        (["circuit","voltage","current","resistance","ohm","capacitor"],   "PHYSICS"),
-        (["integral","derivative","matrix","calculus","theorem"],         "MATH"),
-        (["cell","dna","protein","photosynthesis","enzyme","organism"],    "BIOLOGY"),
-    ]
-    for keywords, label in TOPICS:
-        if any(k in q for k in keywords):
-            return label
-    return "ENGINEERING"
 
 
-# ===========================================================================
-#  SCENE COUNT DETECTOR
-# ===========================================================================
 
-def _detect_scene_count(question: str) -> int:
-    q   = question.strip()
-    ql  = q.lower()
-    length = len(q)
-
-    jee_kw = ["jee","neet","iit","assertion","reason","column i","column ii","match the"]
-    if any(k in ql for k in jee_kw):
-        return 8
-
-    subq_count = sum(len(re.findall(p, ql)) for p in [r'\(\s*i+\s*\)', r'\(\s*[a-d]\s*\)', r'\bpart\s+[a-d1-4]\b'])
-    if subq_count >= 2:
-        return 8
-
-    derive_kw = ["derive","prove","hence show","show that"]
-    if any(k in ql for k in derive_kw):
-        return 7
-
-    find_count = len(re.findall(r'\b(?:find|calculate|determine|evaluate|compute|obtain)\b', ql))
-    if find_count >= 2:
-        return 7
-
-    if length >= 400:
-        return 7
-
-    if length >= 200 or find_count >= 1:
-        return 6
-
-    return 5
-
-
-# ===========================================================================
-#  PUBLIC ENTRY POINT
-# ===========================================================================
 
 async def generate_question_animation(question: str) -> dict:
     """
@@ -7049,7 +6157,7 @@ async def _run_generation_pipeline(question: str) -> dict:
     # and solution JSON so Scene 6/7/9 injectors have real formula/answer
     # content without any extra Gemini calls.
     scene_script = {}
-    gemini_sol   = dict(GeminiSolutionGenerator._FALLBACK)
+    gemini_sol   = dict(_GEMINI_SOL_FALLBACK)
     glossary_result = {"terms": []}
     try:
         _data_match = re.search(
@@ -7091,19 +6199,6 @@ async def _run_generation_pipeline(question: str) -> dict:
     # Centre the animation dashboard (override whatever Gemini generated)
     animation_html = inject_centering_css(animation_html)
 
-    # ── Surface silent solution-generation failures ──────────────────────
-    # Previously, if GeminiSolutionGenerator exhausted its retries (rate
-    # limit / timeout / bad JSON), the pipeline quietly substituted
-    # cls._FALLBACK — generic text like "Select the appropriate governing
-    # formula" and "See question for numerical values" — and rendered it
-    # in the exact same styled boxes as a real solution. The page looked
-    # complete and correct, so there was no signal to the user that
-    # anything had gone wrong or that they should just retry. Now that the
-    # fallback dict is tagged with _used_fallback, inject an explicit
-    # warning banner instead of letting the placeholder pass as a result.
-    if gemini_sol.get("_used_fallback"):
-        QAnimLogger.warn("Pipeline", "Solution generation fell back to placeholder — injecting visible warning banner")
-        animation_html = _inject_fallback_warning_banner(animation_html)
 
     # Build answer targets
     to_find_targets = []  # Stage 0 removed — no extraction
