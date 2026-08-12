@@ -91,7 +91,7 @@ client = anthropic.Anthropic(
 )
 
 SIM_MODEL        = "claude-sonnet-4-6"
-CLASSIFIER_MODEL = "claude-haiku-4-5"
+CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
 
 MAX_TOK            = 32000
 MAX_TOK_CLASSIFIER = 20
