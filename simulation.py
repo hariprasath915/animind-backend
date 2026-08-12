@@ -93,7 +93,7 @@ client = anthropic.Anthropic(
 SIM_MODEL        = "claude-sonnet-4-6"
 CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
 
-MAX_TOK            = 32000
+MAX_TOK            = 16000
 MAX_TOK_CLASSIFIER = 20
 
 # Google Custom Search API (optional -- gracefully skipped if missing)
@@ -1545,20 +1545,30 @@ async def _run_generation_pipeline(topic: str) -> dict:
     # Step 3: Build prompt
     system_blocks, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate
+    # Step 4: Generate (streaming keeps the Railway gateway connection alive
+    # and prevents 502 timeouts that occur with blocking .create() on long outputs)
     try:
-        msg = client.messages.create(
+        raw_chunks = []
+        stop_reason = None
+        usage = None
+        with client.messages.stream(
             model=SIM_MODEL, max_tokens=MAX_TOK,
             system=system_blocks,
-            messages=[{"role": "user", "content": user_content}])
-        raw = msg.content[0].text.strip()
+            messages=[{"role": "user", "content": user_content}]
+        ) as stream:
+            for text_chunk in stream.text_stream:
+                raw_chunks.append(text_chunk)
+            final_msg = stream.get_final_message()
+            stop_reason = final_msg.stop_reason
+            usage = final_msg.usage
+        raw = "".join(raw_chunks).strip()
         SimLogger.info(
             "GenerationAI",
-            f"model={SIM_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}"
-            f"  cache_read={getattr(msg.usage, 'cache_read_input_tokens', 0)}"
-            f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
+            f"model={SIM_MODEL}  stop_reason={stop_reason}  len={len(raw)}"
+            f"  cache_read={getattr(usage, 'cache_read_input_tokens', 0)}"
+            f"  cache_create={getattr(usage, 'cache_creation_input_tokens', 0)}"
         )
-        if msg.stop_reason == "max_tokens":
+        if stop_reason == "max_tokens":
             SimLogger.warn("GenerationAI", "Hit max_tokens -- output may be truncated!")
     except Exception as e:
         SimLogger.error("GenerationAI", f"API call failed: {e}")
