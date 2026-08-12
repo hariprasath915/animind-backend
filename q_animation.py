@@ -4714,6 +4714,12 @@ REQUIRED_COMPONENTS = {
         "data": None, "css": None, "dom": None,
         "js":   ["qanim-js-mathtypography"],
     },
+    "InlineSolution": {
+        "data": None,
+        "css":  ["qanim-inline-steps-styles"],
+        "dom":  ["is-step-0", "btn-next", "is-progress-fill"],
+        "js":   ["qanim-js-inline-steps"],
+    },
 }
 
 # Regex fragments used to strip a component's previous output before
@@ -4772,6 +4778,11 @@ STRIP_PATTERNS = {
     ],
     "MathTypography": [
         re.compile(r'<script[^>]*id=["\']qanim-js-mathtypography["\'][^>]*>.*?</script>', re.DOTALL),
+    ],
+    "InlineSolution": [
+        re.compile(r'<style[^>]*id=["\']qanim-inline-steps-styles["\'][^>]*>.*?</style>', re.DOTALL | re.IGNORECASE),
+        re.compile(r'<div class="is-step-bar">.*?</div>\s*<div class="is-progress-wrap">.*?</div>', re.DOTALL),
+        re.compile(r'<script[^>]*id=["\']qanim-js-inline-steps["\'][^>]*>.*?</script>', re.DOTALL),
     ],
 }
 
@@ -5175,6 +5186,292 @@ def _inject_fallback_warning_banner(html: str) -> str:
     return banner + html
 
 
+def _build_solution_content_html(
+    gemini_sol: dict,
+    to_find_targets: list,
+    given_cards: list,
+) -> str:
+    """
+    Build the inline step-by-step solution panels for the content-area.
+
+    Replaces the static ready-msg placeholder with:
+      - Dot navigation bar + progress bar
+      - Step panels: Given Data, Main Formula, Calculation Steps, Final Answer
+      - Next button (btn-next) — btn-prev is injected before it by
+        inject_previous_step_button() which searches for btn-next as anchor
+      - window.stepsData, window.currentStep, window.applyStep(),
+        window.nextStep(), window.resetAnim(), window.qanimRafId,
+        window.qanimStartRAF — the full JS contract expected by
+        inject_previous_step_button, inject_scene6_autotrigger, and
+        Scene 6/7's RAF cancel/resume helpers.
+
+    On the final step, btn-next becomes disabled + shows "Finish \u2713" so
+    inject_scene6_autotrigger fires and opens the Main Formula modal.
+    """
+    _h = html_module
+
+    # ── Collect source data ───────────────────────────────────────────────
+    given_data  = gemini_sol.get("given_data") or []
+    formulas    = gemini_sol.get("formulas") or []
+    sub_steps   = gemini_sol.get("substitution_steps") or []
+    flat_steps  = gemini_sol.get("steps") or []
+    final_ans   = str(gemini_sol.get("final_answer") or "")
+    final_unit  = str(gemini_sol.get("final_answer_unit") or "")
+    key_insight = str(gemini_sol.get("key_insight") or "")
+    rw_note     = str(gemini_sol.get("real_world_note") or "")
+
+    # ── Build logical step list ───────────────────────────────────────────
+    step_list = [{"type": "given", "title": "Given Data & What to Find"}]
+
+    # Main Formula step (if data available)
+    main_formula = ""
+    for _fobj in formulas[:1]:
+        main_formula = str(_fobj.get("text") or "") if isinstance(_fobj, dict) else str(_fobj)
+    if main_formula:
+        step_list.append({"type": "formula", "title": "Main Formula", "formula": main_formula})
+
+    # Substitution / calculation steps
+    _src = sub_steps if sub_steps else flat_steps
+    for _s in _src:
+        if isinstance(_s, dict):
+            step_list.append({
+                "type":  "calc",
+                "title": str(_s.get("title") or "Calculation Step"),
+                "expr":  str(_s.get("expr") or ""),
+                "desc":  str(_s.get("description") or _s.get("desc") or ""),
+            })
+        else:
+            step_list.append({"type": "calc", "title": str(_s)[:80], "expr": "", "desc": ""})
+
+    step_list.append({"type": "result", "title": "Final Answer"})
+    n = len(step_list)
+
+    # ── stepsData JSON (for JS window.stepsData) ─────────────────────────
+    steps_json = json.dumps(
+        [{"title": _s["title"], "type": _s["type"]} for _s in step_list],
+        ensure_ascii=False,
+    )
+
+    # ── Dot navigation bar ────────────────────────────────────────────────
+    dots_parts = []
+    for _i, _s in enumerate(step_list):
+        _cls = "step-dot active" if _i == 0 else "step-dot"
+        _lbl = _h.escape(_s["title"][:22])
+        dots_parts.append(
+            '<button class="' + _cls + '" id="is-dot-' + str(_i) + '" '
+            'onclick="isGoTo(' + str(_i) + ')" title="' + _lbl + '">' + str(_i + 1) + '</button>'
+        )
+    dots_html = "\n    ".join(dots_parts)
+
+    # ── Panel 0: Given Data & To Find ────────────────────────────────────
+    given_items = []
+    for _g in (given_data or [])[:10]:
+        _ge = _h.escape(str(_g))
+        if "=" in _ge:
+            _p = _ge.split("=", 1)
+            _ge = "<strong>" + _p[0].strip() + "</strong> = " + _p[1].strip()
+        given_items.append('<div class="is-given-item">' + _ge + "</div>")
+    given_html = "\n".join(given_items) if given_items else '<div class="is-given-item">Refer to the question above.</div>'
+
+    tofind_items = []
+    for _tf in (to_find_targets or [])[:6]:
+        tofind_items.append('<div class="is-tofind-item">&#x1F3AF; ' + _h.escape(str(_tf)) + "</div>")
+    tofind_html = "\n".join(tofind_items) if tofind_items else '<div class="is-tofind-item">Refer to the question above.</div>'
+
+    _COLOR_MAP = ["blue", "orange", "purple", "pink", "green", "teal"]
+    fml_chips = []
+    for _idx_f, _fml in enumerate(formulas[:3]):
+        _fc = _COLOR_MAP[_idx_f % len(_COLOR_MAP)]
+        if isinstance(_fml, dict):
+            _fc = str(_fml.get("color") or _fc)
+            _ft = _h.escape(str(_fml.get("text") or ""))
+        else:
+            _ft = _h.escape(str(_fml))
+        if _ft:
+            fml_chips.append('<div class="is-fml-chip is-fc-' + _fc + '">' + _ft + "</div>")
+    fml_row_html = ('<div class="is-fml-row">' + "\n".join(fml_chips) + "</div>") if fml_chips else ""
+
+    panels = [
+        '<div class="is-step-panel" id="is-step-0" style="display:block">'
+        '<div class="is-step-header"><span class="is-step-badge">1</span>'
+        '<span class="is-step-ttl">Given Data &amp; What to Find</span></div>'
+        '<div class="is-two-col">'
+        '<div><div class="is-col-lbl">&#x1F4CA; Given Values</div>'
+        '<div class="is-given-list">' + given_html + "</div></div>"
+        '<div><div class="is-col-lbl">&#x1F50D; To Find</div>'
+        '<div class="is-tofind-list">' + tofind_html + "</div></div>"
+        "</div>" + fml_row_html + "</div>"
+    ]
+
+    # ── Panels 1 .. n-2: formula / calc steps ────────────────────────────
+    for _i_abs, _s in enumerate(step_list[1:-1], start=1):
+        _title_e = _h.escape(_s["title"])
+        if _s["type"] == "formula":
+            _fml_e = _h.escape(_s.get("formula", ""))
+            panels.append(
+                '<div class="is-step-panel" id="is-step-' + str(_i_abs) + '" style="display:none">'
+                '<div class="is-step-header"><span class="is-step-badge">' + str(_i_abs + 1) + '</span>'
+                '<span class="is-step-ttl">' + _title_e + '</span></div>'
+                '<div class="is-formula-display">' + _fml_e + '</div>'
+                '<div class="is-desc">Apply this formula by substituting the given values step by step.</div>'
+                "</div>"
+            )
+        else:
+            _expr_e = _h.escape(_s.get("expr", ""))
+            _desc_e = _h.escape(_s.get("desc", ""))
+            _expr_d = '<div class="is-expr">' + _expr_e + "</div>" if _expr_e else ""
+            _desc_d = '<div class="is-desc">' + _desc_e + "</div>" if _desc_e else ""
+            panels.append(
+                '<div class="is-step-panel" id="is-step-' + str(_i_abs) + '" style="display:none">'
+                '<div class="is-step-header"><span class="is-step-badge">' + str(_i_abs + 1) + '</span>'
+                '<span class="is-step-ttl">' + _title_e + '</span></div>'
+                + _expr_d + _desc_d + "</div>"
+            )
+
+    # ── Final panel: Result ───────────────────────────────────────────────
+    _last_i = n - 1
+    _ans_e  = _h.escape(final_ans) if final_ans else "See complete solution &#x2192;"
+    _unit_d = ('<div class="is-final-unit">SI Unit: <strong>' + _h.escape(final_unit) + "</strong></div>") if final_unit else ""
+    _ins_d  = ('<div class="is-final-insight">&#x1F4A1; ' + _h.escape(key_insight) + "</div>") if key_insight else ""
+    _rw_d   = ('<div class="is-final-insight">&#x1F30D; ' + _h.escape(rw_note) + "</div>") if rw_note else ""
+    panels.append(
+        '<div class="is-step-panel" id="is-step-' + str(_last_i) + '" style="display:none">'
+        '<div class="is-step-header"><span class="is-step-badge is-badge-done">&#x2713;</span>'
+        '<span class="is-step-ttl">Final Answer</span></div>'
+        '<div class="is-final-card"><div class="is-final-lbl">&#x2705; Result</div>'
+        '<div class="is-final-val">' + _ans_e + "</div>" + _unit_d + "</div>"
+        + _ins_d + _rw_d
+        + '<div class="is-hint-text">&#x2728; Click <strong>Next &#x25B6;</strong>'
+        " to view the <strong>Main Formula</strong> &amp; <strong>Solution Walkthrough</strong></div></div>"
+    )
+
+    panels_html = "\n".join(panels)
+    initial_pct = round(100 / n) if n else 100
+
+    # ── CSS (regular string — no brace-escaping needed) ───────────────────
+    css = (
+        '<style id="qanim-inline-steps-styles">\n'
+        '.is-step-bar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;'
+        'padding:12px 24px 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc;overflow-x:auto;}\n'
+        '.step-dot{width:28px;height:28px;border-radius:50%;border:2px solid #cbd5e1;'
+        'background:#fff;color:#94a3b8;font-size:12px;font-weight:700;cursor:pointer;'
+        'display:inline-flex;align-items:center;justify-content:center;'
+        'transition:all .2s;flex-shrink:0;}\n'
+        '.step-dot.active{background:#0e7490;border-color:#0e7490;color:#fff;'
+        'box-shadow:0 0 0 3px rgba(14,116,144,.25);}\n'
+        '.step-dot.done{background:#dcfce7;border-color:#86efac;color:#15803d;}\n'
+        '.is-progress-wrap{padding:0 24px;background:#f8fafc;}\n'
+        '.is-progress-bg{height:3px;background:#e2e8f0;border-radius:2px;overflow:hidden;}\n'
+        '.is-progress-fill{height:100%;background:linear-gradient(90deg,#0e7490,#7c3aed);'
+        'border-radius:2px;transition:width .4s ease;}\n'
+        '.is-step-label-bar{padding:7px 24px 6px;background:#f8fafc;font-size:11px;font-weight:700;'
+        'color:#0e7490;text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid #e2e8f0;}\n'
+        '.is-step-panel{padding:22px 28px 18px;min-height:210px;animation:is-fadeIn .3s ease;}\n'
+        '@keyframes is-fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}\n'
+        '.is-step-header{display:flex;align-items:center;gap:12px;margin-bottom:18px;}\n'
+        '.is-step-badge{width:32px;height:32px;border-radius:50%;flex-shrink:0;'
+        'background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;font-size:14px;'
+        'font-weight:800;display:flex;align-items:center;justify-content:center;}\n'
+        '.is-badge-done{background:linear-gradient(135deg,#16a34a,#22c55e)!important;font-size:16px;}\n'
+        '.is-step-ttl{font-size:16px;font-weight:800;color:#0f172a;letter-spacing:-.2px;}\n'
+        '.is-two-col{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;}\n'
+        '.is-two-col>div{flex:1;min-width:175px;}\n'
+        '.is-col-lbl{font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:7px;}\n'
+        '.is-given-list,.is-tofind-list{display:flex;flex-direction:column;gap:5px;}\n'
+        '.is-given-item{padding:8px 12px;border-radius:8px;background:#f0f9ff;border:1px solid #bae6fd;'
+        'font-size:13px;font-family:"Courier New",monospace;color:#0c4a6e;font-weight:600;line-height:1.4;}\n'
+        '.is-tofind-item{padding:8px 12px;border-radius:8px;background:#fdf4ff;border:1px solid #e9d5ff;'
+        'font-size:13px;color:#6b21a8;font-weight:600;}\n'
+        '.is-fml-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}\n'
+        '.is-fml-chip{padding:8px 16px;border-radius:10px;font-family:"Courier New",monospace;'
+        'font-size:13px;font-weight:700;border:1.5px solid;line-height:1.4;}\n'
+        '.is-fc-blue{background:#eff6ff;border-color:#3b82f6;color:#1d4ed8;}\n'
+        '.is-fc-orange{background:#fff7ed;border-color:#f59e0b;color:#d97706;}\n'
+        '.is-fc-purple{background:#faf5ff;border-color:#a855f7;color:#7c3aed;}\n'
+        '.is-fc-pink{background:#fdf2f8;border-color:#ec4899;color:#be185d;}\n'
+        '.is-fc-green{background:#f0fdf4;border-color:#22c55e;color:#15803d;}\n'
+        '.is-fc-teal{background:#f0fdfa;border-color:#14b8a6;color:#0f766e;}\n'
+        '.is-formula-display{font-family:"Courier New",Courier,monospace;font-size:22px;font-weight:800;'
+        'color:#1d4ed8;background:#eff6ff;border:2.5px solid #3b82f6;border-radius:14px;'
+        'padding:18px 22px;margin-bottom:14px;line-height:1.5;word-break:break-word;}\n'
+        '.is-expr{font-family:"Courier New",Courier,monospace;font-size:19px;font-weight:800;'
+        'color:#1d4ed8;background:#eff6ff;border:2.5px solid #3b82f6;border-radius:14px;'
+        'padding:16px 22px;margin-bottom:13px;line-height:1.5;word-break:break-word;}\n'
+        '.is-desc{font-size:13.5px;color:#475569;line-height:1.75;background:#f8fafc;'
+        'border-radius:10px;padding:13px 17px;border-left:3px solid #0891b2;}\n'
+        '.is-final-card{background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:2px solid #86efac;'
+        'border-radius:16px;padding:20px 22px;margin-bottom:13px;}\n'
+        '.is-final-lbl{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:#15803d;margin-bottom:8px;}\n'
+        '.is-final-val{font-family:"Courier New",Courier,monospace;font-size:21px;font-weight:900;'
+        'color:#1e293b;line-height:1.5;word-break:break-word;margin-bottom:5px;}\n'
+        '.is-final-unit{font-size:12px;color:#15803d;font-style:italic;margin-top:3px;}\n'
+        '.is-final-insight{font-size:13px;color:#1e293b;line-height:1.65;background:#fff;'
+        'border-radius:10px;padding:12px 15px;border:1px solid #e2e8f0;margin-bottom:10px;}\n'
+        '.is-hint-text{font-size:12.5px;color:#0891b2;font-weight:600;text-align:center;margin-top:10px;}\n'
+        '.is-nav-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;'
+        'padding:14px 28px 22px;border-top:1px solid #e2e8f0;background:#fff;}\n'
+        '#btn-next{background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;border:none;'
+        'border-radius:10px;padding:11px 28px;font-size:13.5px;font-weight:700;font-family:inherit;'
+        'cursor:pointer;transition:background .2s,transform .15s,box-shadow .2s;'
+        'box-shadow:0 4px 14px rgba(8,145,178,.28);}\n'
+        '#btn-next:hover:not(:disabled){background:linear-gradient(135deg,#0369a1,#0e7490);'
+        'transform:translateY(-1px);box-shadow:0 6px 20px rgba(8,145,178,.36);}\n'
+        '#btn-next:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none;}\n'
+        '</style>\n'
+    )
+
+    # ── JS (template substitution avoids f-string brace-escaping) ─────────
+    js = (
+        '<script id="qanim-js-inline-steps">\n'
+        '(function(){\n'
+        "  'use strict';\n"
+        '  if(window.__qanimInlineStepsInit)return; window.__qanimInlineStepsInit=true;\n'
+        '  window.stepsData=__STEPS_JSON__;\n'
+        '  var _n=__N__;\n'
+        '  window.currentStep=0;\n'
+        '  window.qanimRafId=null;\n'
+        '  window.qanimStartRAF=function(){};\n'
+        '  window.applyStep=function(idx){\n'
+        '    for(var i=0;i<_n;i++){\n'
+        "      var p=document.getElementById('is-step-'+i);\n"
+        '      if(p)p.style.display=(i===idx)?"block":"none";\n'
+        "      var d=document.getElementById('is-dot-'+i);\n"
+        "      if(d){d.classList.remove('active','done');if(i<idx)d.classList.add('done');if(i===idx)d.classList.add('active');}\n"
+        '    }\n'
+        "    var fill=document.getElementById('is-progress-fill');\n"
+        '    if(fill)fill.style.width=Math.round((idx+1)/_n*100)+"%";\n'
+        "    var lbl=document.getElementById('step-label');\n"
+        '    if(lbl)lbl.innerText=(window.stepsData[idx]||{title:""}).title;\n'
+        "    var nb=document.getElementById('btn-next');\n"
+        '    if(nb){var isLast=(idx>=_n-1);nb.disabled=isLast;nb.textContent=isLast?"Finish \u2713":"Next \u25B6";}\n'
+        '  };\n'
+        '  window.nextStep=function(){if(window.currentStep<_n-1){window.currentStep++;window.applyStep(window.currentStep);}}\n'
+        '  window.isGoTo=function(idx){window.currentStep=idx;window.applyStep(idx);};\n'
+        '  window.resetAnim=function(){window.currentStep=0;window.applyStep(0);};\n'
+        '  function _onReady(fn){if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",fn);else setTimeout(fn,0);}\n'
+        '  _onReady(function(){\n'
+        "    var nb=document.getElementById('btn-next');\n"
+        '    if(nb)nb.addEventListener("click",function(){window.nextStep();});\n'
+        '    window.applyStep(0);\n'
+        '  });\n'
+        '})();\n'
+        '</script>\n'
+    ).replace('__STEPS_JSON__', steps_json).replace('__N__', str(n))
+
+    # ── Assemble final HTML ────────────────────────────────────────────────
+    return (
+        css
+        + '<div class="is-step-bar">\n    ' + dots_html + '\n</div>\n'
+        + '<div class="is-progress-wrap"><div class="is-progress-bg">'
+        + '<div class="is-progress-fill" id="is-progress-fill" style="width:' + str(initial_pct) + '%"></div>'
+        + '</div></div>\n'
+        + '<div class="is-step-label-bar"><span id="step-label">Given Data &amp; What to Find</span></div>\n'
+        + panels_html + '\n'
+        + '<div class="is-nav-row"><button id="btn-next">Next &#x25B6;</button></div>\n'
+        + js
+    )
+
+
 async def _run_generation_pipeline(question: str) -> dict:
     """
     PIPELINE v2.0 (Steps 1-9 only, no SVG animation):
@@ -5237,6 +5534,8 @@ async def _run_generation_pipeline(question: str) -> dict:
 
     final_answer = gemini_sol.get("final_answer") or ""
     key_insight  = gemini_sol.get("key_insight")  or ""
+    # Build inline solution content for the content-area
+    inline_html  = _build_solution_content_html(gemini_sol, to_find_targets, given_cards)
 
     # Build the minimal base HTML page (clean, no SVG canvas)
     q_esc    = __import__("html").escape(question[:400])
@@ -5330,6 +5629,27 @@ async def _run_generation_pipeline(question: str) -> dict:
         "</body>\n"
         "</html>\n"
     )
+
+    # Inject inline step-by-step content to replace the static placeholder
+    _CONTENT_AREA_OLD = (
+        '    <div class="content-area">\n'
+        '      <div class="ready-msg">\n'
+        '        <span class="icon">\U0001f4d6</span>\n'
+        '        Use the controls below to explore the <strong>step-by-step solution</strong>,\n'
+        '        check your <strong>answer</strong>, and view the <strong>main formula</strong>.\n'
+        '      </div>\n'
+        '    </div>'
+    )
+    _CONTENT_AREA_NEW = (
+        '    <div class="content-area" style="padding:0">\n'
+        + inline_html
+        + '\n    </div>'
+    )
+    if _CONTENT_AREA_OLD in animation_html:
+        animation_html = animation_html.replace(_CONTENT_AREA_OLD, _CONTENT_AREA_NEW, 1)
+        QAnimLogger.ok("Pipeline", "Inline step-by-step content injected into content-area")
+    else:
+        QAnimLogger.warn("Pipeline", "Could not find content-area placeholder — inline steps skipped")
 
     # concept_html = same page (no separate concept animation)
     concept_html = animation_html
