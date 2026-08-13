@@ -1545,6 +1545,9 @@ async def upload_lesson_file(
 
 class LessonCreate(BaseModel):
     title:             str           = Field(..., min_length=1, max_length=200)
+    class_name:        Optional[str] = 'Other'
+    subject:           Optional[str] = 'other'
+    content_type:      Optional[str] = 'mixed'
     thumbnail_url:     Optional[str] = None
     theory_url:        Optional[str] = None
     animation_url:     Optional[str] = None
@@ -1558,6 +1561,9 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
     service_sb = _get_service_client()
     row = {
         "title":            payload.title.strip(),
+        "class_name":       (payload.class_name  or 'Other').strip(),
+        "subject":          (payload.subject      or 'other').strip(),
+        "content_type":     (payload.content_type or 'mixed').strip(),
         "thumbnail_url":    payload.thumbnail_url    or None,
         "theory_url":       payload.theory_url       or None,
         "animation_url":    payload.animation_url    or None,
@@ -1581,7 +1587,7 @@ def list_lessons(current_user: dict = Depends(get_current_user)):
     try:
         res = (
             service_sb.table("lessons")
-            .select("id, title, thumbnail_url, theory_url, animation_url, realworld_images, created_at")
+            .select("id, title, class_name, subject, content_type, thumbnail_url, theory_url, animation_url, realworld_images, created_at")
             .order("created_at", desc=False)
             .execute()
         )
