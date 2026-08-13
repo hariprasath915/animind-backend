@@ -1,31 +1,36 @@
 """
-╔══════════════════════════════════════════════════════════════════╗
-║     claude_client.py  v21.0.0  —  EduPage Reference Style       ║
-║     FULLY REFACTORED  ·  Matches reference HTML workflow         ║
-╠══════════════════════════════════════════════════════════════════╣
-║  v21.0 REFACTOR NOTES:                                           ║
-║                                                                  ║
-║  ✅ OUTPUT STYLE: Matches the reference HTML files               ║
-║     (stimulus_output.html, Aerobic_Anaerobic, gravition,         ║
-║     tissues) — Space Grotesk/Inter fonts, navy/blue palette,     ║
-║     left slide-out nav, floating glossary, hero section,         ║
-║     interactive pathway, flip-cards, activities, quiz.           ║
-║                                                                  ║
-║  ✅ PIPELINE: 10-section generation pipeline adapted to the      ║
-║     reference HTML workflow:                                     ║
-║     §1 Hero  §2 Definition  §3 Fundamentals  §4 Subtopics        ║
-║     §5 Types / Classification  §6 Pathway / Working Process      ║
-║     §7 Deep Concepts  §8 Real-Life / Applications                ║
-║     §9 Fun Facts  §10 Activities  §11 Quiz  §12 Revision         ║
-║     §13 Exam Ready   [+ optional Formulas / Derivation]          ║
-║                                                                  ║
-║  ✅ GENERATION: Claude generates each section's HTML content     ║
-║     with topic-specific text; the shell / page structure is      ║
-║     assembled by _assemble_html(), not re-generated each run.    ║
-║                                                                  ║
-║  ✅ CLEAN API: generate_animation(prompt) is the primary         ║
-║     entry point for integration.                                 ║
-╚══════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════╗
+║  claude_client.py  v22.0  —  EXACT Reference-HTML Method            ║
+║  Generates any topic following the EXACT pipeline, UI/UX,           ║
+║  section structure and design language of the four reference files:  ║
+║    • Aerobic___Anaerobic_Respiration.html                           ║
+║    • Respiration.html                                               ║
+║    • rocketpropulsion.html                                          ║
+║    • tissues.html                                                   ║
+║                                                                      ║
+║  EXACT MATCHES FROM REFERENCES:                                      ║
+║  ✅ CSS tokens: --bg, --card, --surface, --primary, --secondary,    ║
+║     --success, --warning, --danger, --text, --border, --shadow,     ║
+║     --radius, --radius-sm + topic-specific accent pair              ║
+║  ✅ Navigation: fixed side-nav (left) + toggle button,              ║
+║     floating glossary/fundamentals (right panel)                    ║
+║  ✅ STICKY HEADER with scroll-progress bar (rocketpropulsion style)  ║
+║  ✅ Section pipeline (13 sections):                                  ║
+║     §1 Hook  §2 Definition+Objectives  §3 Fundamentals-CTA          ║
+║     §4 Subtopics-Grid  §5 Types-Flowchart  §6 Deep-Sections         ║
+║     §7 Interactive-Visual  §8 Working-Process(Stepper/Timeline)      ║
+║     §9 Comparison-Table  §10 Games(3 tabs)  §11 Fun-Facts(flip)      ║
+║     §12 Quick-Revision  §13 Quiz(dot-progress + explanation)         ║
+║     [+ §14 Formulas  §15 Derivation  for mathematical topics]       ║
+║  ✅ Game pattern: 3-tab game area (scenario MCQ, product matcher,    ║
+║     situation challenge) — exactly as in Aerobic reference          ║
+║  ✅ Quiz: dot-progress indicators + explanation box + result card   ║
+║  ✅ Fun facts: click-to-reveal cards (fact-card pattern)            ║
+║  ✅ SVG animations and canvas elements where appropriate            ║
+║  ✅ Responsive breakpoints from references                          ║
+║  ✅ All async entry-points preserved: generate_animation(),         ║
+║     generate_genzet_book_content(), generate_edu_page()             ║
+╚══════════════════════════════════════════════════════════════════════╝
 """
 
 import asyncio
@@ -37,7 +42,7 @@ import time
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 
 try:
     from dotenv import load_dotenv
@@ -45,1838 +50,1720 @@ try:
 except ImportError:
     pass
 
-# ─── Logging ─────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-# ─── Clients ─────────────────────────────────────────────────────────────────
+# ─── Clients ──────────────────────────────────────────────────────────────────
 client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 #  MODEL CONSTANTS
-# ════════════════════════════════════════════════════════════════════════
-
+# ══════════════════════════════════════════════════════════════════════════════
 MODEL_SONNET = "claude-sonnet-4-6"
 MODEL_HAIKU  = "claude-haiku-4-5-20251001"
 
-# ════════════════════════════════════════════════════════════════════════
-#  SECTION REGISTRY
-# ════════════════════════════════════════════════════════════════════════
-
-# These are the content sections Claude generates (the page shell is static).
+# ══════════════════════════════════════════════════════════════════════════════
+#  SECTION REGISTRY  (mirrors reference-file section order exactly)
+# ══════════════════════════════════════════════════════════════════════════════
 BASE_SECTIONS: List[str] = [
-    "hero",
-    "definition",
-    "fundamentals",
-    "subtopics",
-    "types",
-    "pathway",
-    "deep_concepts",
-    "reallife",
-    "funfacts",
-    "activities",
-    "quiz",
-    "revision",
-    "exam_ready",
+    "hook",           # §1  Hero / Hook card with SVG animation
+    "definition",     # §2  Definition + Learning Objectives
+    "fundamentals",   # §3  Fundamentals CTA + glossary data
+    "subtopics",      # §4  Subtopic cards grid
+    "types",          # §5  Types flowchart (clickable)
+    "deep_sections",  # §6  Type-specific deep dive cards
+    "visual",         # §7  Interactive visual / animated diagram
+    "working",        # §8  Step-by-step working process stepper
+    "comparison",     # §9  Comparison table (side-by-side)
+    "games",          # §10 3-tab game area
+    "funfacts",       # §11 Fun facts click-to-reveal
+    "revision",       # §12 Quick revision cards + equations
+    "quiz",           # §13 10-question quiz with dot progress
 ]
 
 CONDITIONAL_SECTIONS: List[str] = ["formulas", "derivation"]
 
-ORDERED_SECTION_TEMPLATE: List[str] = [
-    "hero",
-    "definition",
-    "fundamentals",
-    "subtopics",
-    "types",
-    "pathway",
-    "formulas",
-    "derivation",
-    "deep_concepts",
-    "reallife",
-    "funfacts",
-    "activities",
-    "quiz",
-    "revision",
-    "exam_ready",
+ORDERED_SECTIONS: List[str] = [
+    "hook", "definition", "fundamentals", "subtopics", "types",
+    "deep_sections", "formulas", "derivation", "visual", "working",
+    "comparison", "games", "funfacts", "revision", "quiz",
 ]
 
 SECTION_MODEL_MAP: Dict[str, str] = {
-    "hero":          MODEL_SONNET,
+    "hook":          MODEL_SONNET,
     "definition":    MODEL_SONNET,
     "fundamentals":  MODEL_HAIKU,
     "subtopics":     MODEL_SONNET,
     "types":         MODEL_SONNET,
-    "pathway":       MODEL_SONNET,
+    "deep_sections": MODEL_SONNET,
     "formulas":      MODEL_SONNET,
     "derivation":    MODEL_SONNET,
-    "deep_concepts": MODEL_SONNET,
-    "reallife":      MODEL_HAIKU,
+    "visual":        MODEL_SONNET,
+    "working":       MODEL_SONNET,
+    "comparison":    MODEL_HAIKU,
+    "games":         MODEL_SONNET,
     "funfacts":      MODEL_HAIKU,
-    "activities":    MODEL_SONNET,
-    "quiz":          MODEL_HAIKU,
     "revision":      MODEL_HAIKU,
-    "exam_ready":    MODEL_HAIKU,
+    "quiz":          MODEL_HAIKU,
 }
 
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 #  TOPIC UTILITIES
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+_SPECIFIC_KW = (" in "," of "," for "," during "," within ",
+                " via "," through "," using "," under ")
 
-_SPECIFIC_TOPIC_KEYWORDS = (
-    " in ", " of ", " for ", " during ", " within ",
-    " via ", " through ", " using ", " under ",
-)
+def _is_specific(topic: str) -> bool:
+    return any(kw in topic.lower() for kw in _SPECIFIC_KW)
 
-def _is_specific_subtopic(topic: str) -> bool:
-    lower = topic.lower()
-    return any(kw in lower for kw in _SPECIFIC_TOPIC_KEYWORDS)
-
-
-def _build_specific_focus_note(topic: str) -> str:
-    if not _is_specific_subtopic(topic):
+def _focus(topic: str) -> str:
+    if not _is_specific(topic):
         return ""
-    return (
-        f'\n\n⚠️ SPECIFIC SUB-TOPIC — stay laser-focused on "{topic}". '
-        f'Do NOT drift into the broader parent subject.\n'
-    )
+    return (f'\n⚠️ SPECIFIC SUB-TOPIC: "{topic}". '
+            f'Every sentence must focus exclusively on this exact topic.\n')
 
-
-def _extract_subtopics_from_input(user_input: str) -> List[str]:
-    subtopics: List[str] = []
-    if " -- " in user_input:
-        _, rest = user_input.split(" -- ", 1)
-        subtopics = [s.strip() for s in rest.split(",") if s.strip()]
-    elif user_input.count(" - ") > 1:
-        parts = user_input.split(" - ")
-        if len(parts) > 1:
-            subtopics = [s.strip() for s in parts[1:] if s.strip()]
-    elif " - " in user_input:
-        parts = user_input.split(" - ", 1)
+def _extract_subtopics(raw: str) -> List[str]:
+    subs: List[str] = []
+    if " -- " in raw:
+        _, rest = raw.split(" -- ", 1)
+        subs = [s.strip() for s in rest.split(",") if s.strip()]
+    elif raw.count(" - ") > 1:
+        parts = raw.split(" - ")
+        subs = [s.strip() for s in parts[1:] if s.strip()]
+    elif " - " in raw:
+        parts = raw.split(" - ", 1)
         if len(parts) == 2:
-            subtopics = [s.strip() for s in parts[1].split(",") if s.strip()]
-
+            subs = [s.strip() for s in parts[1].split(",") if s.strip()]
     seen: set = set()
-    unique: List[str] = []
-    for s in subtopics:
-        if s.lower() not in seen:
-            seen.add(s.lower())
-            unique.append(s)
-    return unique
+    return [s for s in subs if s.lower() not in seen and not seen.add(s.lower())]  # type: ignore
 
-
-# ════════════════════════════════════════════════════════════════════════
-#  MASTER SYSTEM PROMPT
-# ════════════════════════════════════════════════════════════════════════
-
+# ══════════════════════════════════════════════════════════════════════════════
+#  MASTER SYSTEM PROMPT  (exact reference style)
+# ══════════════════════════════════════════════════════════════════════════════
 SYSTEM_PROMPT = """\
-You are a SENIOR EDUCATIONAL CONTENT ARCHITECT who creates interactive HTML
-learning pages for students aged 13–18.
+You are a SENIOR EDUCATIONAL HTML AUTHOR who writes interactive lesson pages
+for school students aged 13-18.
 
-YOUR OUTPUT STYLE matches these reference files:
-  • stimulus_output.html      (biology / Class 10 style)
-  • Aerobic_Anaerobic.html    (comparison + flowchart style)
-  • gravition.html            (physics + formulas style)
-  • tissues.html              (biology classification style)
+YOUR OUTPUT MUST MATCH THESE REFERENCE FILES EXACTLY:
+  1. Aerobic___Anaerobic_Respiration.html  (Inter+Poppins, blue/orange tokens,
+     stepper, 3-tab game area, dot-progress quiz, fact-card grid)
+  2. Respiration.html  (side-nav with overlay, right glossary panel, clickable
+     pathway steps, SVG animation, match game, progress bar quiz)
+  3. rocketpropulsion.html  (sticky header + progress bar, canvas animation,
+     timeline working process, flip-card fun facts, score-circle result)
+  4. tissues.html  (purple primary, fixed left toggle + right glossary toggle,
+     tab-based deep sections, comparison table, match-game, dot-quiz)
 
-DESIGN LANGUAGE:
-  • Fonts: Space Grotesk (headings) + Inter (body) from Google Fonts
-  • Palette: --navy #1E3A5F, --blue #4A90D9, --mint #52C97C,
-             --coral #FF6B6B, --amber #F5A623, --purple #7B61FF
-  • Cards with left-coloured border and soft box-shadow
-  • Interactive elements: clickable flowchart nodes, flip-cards,
-    step-by-step animators, drag-and-drop / sequence activities
-  • Comparison tables with navy header + alternating rows
-  • Quiz: one question at a time with progress bar + explanation
-  • "Did you know?" amber boxes inside subtopic cards
+DESIGN RULES — APPLY ALL:
+  • Fonts: Inter (body) + Poppins (headings) from Google Fonts
+  • CSS tokens match the reference set: --bg, --card/--surface, --primary,
+    --secondary/--accent, --success/--green, --warning, --danger/--red,
+    --text, --muted, --border, --shadow, --radius, --radius-sm
+    PLUS a topic-specific accent pair (color A for type 1, color B for type 2)
+  • Section labels: small ALL-CAPS uppercase eyebrow text above each h2
+  • Cards: white background, 1-2px border, rounded corners, soft box-shadow
+  • Equations: left-colored-border box with inline colored term markup
+  • Stepper: border-left timeline with ::before numbered circle bullets
+  • Flowchart: .flowchart / .flow-box / .flow-arrow / .flow-row / .flow-col
+  • Tables: colored th for each column type, alternating tr background
+  • Quiz: dot-progress (.q-dot), explanation box (.quiz-explain), result card
+  • Game tabs: .game-tab / .game-panel / .resp-btn / .game-feedback pattern
+  • Flip/reveal cards: .fact-card with .fact-front / .fact-back / .revealed
+  • Fun-fact cards click to toggle .revealed class (NO JS function name collision)
+  • nav: fixed left side-nav + toggle; right glossary panel + floating button
+  • All JavaScript: use var (not const/let) for widest browser compat
 
-OUTPUT FORMAT RULES:
-  1. Return ONLY valid HTML content (no markdown, no code fences)
-  2. Use CSS variables matching the palette above
-  3. All JavaScript must use var (not const/let) for browser compat
-  4. LaTeX: $$...$$ for display equations, $...$ inline
-  5. Keep prose paragraphs ≤ 3 lines each
-  6. End each section response exactly at its closing </div> tag — no extra text
+OUTPUT RULES:
+  1. Return ONLY valid HTML — no markdown, no code fences
+  2. Every section ends exactly at its last closing </div> or </script>
+  3. LaTeX: $$...$$ display, $...$ inline (MathJax loaded when needed)
+  4. Never produce a paragraph longer than 4 lines
+  5. JavaScript IDs/function names must be unique per section (append short suffix)
 """
 
-# ════════════════════════════════════════════════════════════════════════
-#  SECTION PROMPT BUILDER
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+#  SECTION PROMPTS
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _build_section_prompt(
-    section_name: str,
-    topic: str,
-    context: str = "",
-    subtopics_list: Optional[List[str]] = None,
-    classification: Optional[Dict] = None,
-) -> str:
-    focus = _build_specific_focus_note(topic)
-    ctx = context[:600]
+def _build_prompt(section: str, topic: str, ctx: str = "",
+                  subtopics: Optional[List[str]] = None,
+                  classification: Optional[Dict] = None) -> str:
+    focus = _focus(topic)
+    c = ctx[:700]
+    T = topic
 
-    prompts: Dict[str, str] = {
+    PROMPTS: Dict[str, str] = {
 
-        # ── §1 HERO ───────────────────────────────────────────────────
-        "hero": f"""Generate the HERO section for topic: "{topic}"
+# ─────────────────────────────────────────────────────────────────
+# §1  HOOK
+# ─────────────────────────────────────────────────────────────────
+"hook": f"""Generate the HOOK section for topic: "{T}"
 {focus}
-Return ONLY this HTML (replace ALL placeholders with real content):
+Style reference: the #hook section in Aerobic___Anaerobic_Respiration.html —
+  a full-width gradient card, section-label eyebrow, h1, 2-3 sentence hook,
+  and an optional decorative emoji as CSS ::before pseudo-content.
 
-<div class="hero-inner">
-  <span class="badge">[Subject / Class level, e.g. "Class 10 Biology" or "Physics"]</span>
-  <h1>[Engaging emoji] [Short punchy title about "{topic}"]</h1>
-  <p>[2-3 sentence hook — a surprising fact or relatable scenario that makes "{topic}" feel exciting to a 15-year-old. Use simple language.]</p>
-</div>
-<svg id="hero-svg" width="180" height="120" viewBox="0 0 180 120"
-     xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  [A simple animated SVG illustration relevant to "{topic}" —
-   2-4 shapes/paths + 1-2 <animate> or <animateTransform> elements.
-   Colors: #4A90D9, #52C97C, #F5A623. Keep it clean and minimal.]
-</svg>
-
-OUTPUT NOTHING after the closing </svg> tag.""",
-
-        # ── §2 DEFINITION ─────────────────────────────────────────────
-        "definition": f"""Generate the DEFINITION section for topic: "{topic}"
-{focus}
-Context: {ctx}
+Also produce the GLOSSARY DATA as a JSON comment block inside a <!-- --> tag
+so it can be extracted later. Format:
+<!--GLOSSARY_JSON
+[
+  {{"term":"Term","def":"Definition"}},
+  ...10-14 terms...
+]
+-->
 
 Return ONLY this HTML (replace ALL placeholders):
 
-<div class="def-grid">
-  <div class="def-card">
-    <h4>Definition</h4>
-    <p>[Plain-English definition of "{topic}" in 1-2 sentences — no jargon]</p>
-  </div>
-  <div class="def-card">
-    <h4>Key Idea</h4>
-    <p>[The single most important concept to understand about "{topic}"]</p>
-  </div>
-  <div class="def-card">
-    <h4>Where You See It</h4>
-    <p>[1-2 everyday real-world examples of "{topic}" a 15-year-old would recognize]</p>
-  </div>
-  <div class="def-card">
-    <h4>Simple Rule</h4>
-    <p>[One memorable rule, analogy, or pattern about "{topic}" — bold the key words]</p>
-  </div>
-</div>
-<div class="obj-box">
-  <h4>🎯 Learning Objectives</h4>
-  <ul>
-    <li>[Objective 1 — what the student will be able to define/explain]</li>
-    <li>[Objective 2 — what the student will be able to identify/classify]</li>
-    <li>[Objective 3 — what the student will understand about the process]</li>
-    <li>[Objective 4 — what the student will be able to apply/compare]</li>
-    <li>[Objective 5 — exam-relevant skill about "{topic}"]</li>
-  </ul>
-</div>
+<section id="hook" class="section">
+  <!-- GLOSSARY DATA — DO NOT REMOVE -->
+  <!--GLOSSARY_JSON
+  [
+    {{"term":"[Key term 1 for {T}]","def":"[Plain-English definition]"}},
+    {{"term":"[Key term 2]","def":"[Definition]"}},
+    [Continue for 10-14 total terms relevant to "{T}"]
+  ]
+  -->
 
-OUTPUT NOTHING after the closing </div> tag.""",
+  <div class="section-label">[Subject · Class level, e.g. "Class 10 Biology"]</div>
+  <h1>[Topic title with relevant emoji prefix]</h1>
+  <p>[2-3 sentence hook that surprises a 15-year-old and makes "{T}" feel exciting. Use simple language, real examples, a question or surprising fact.]</p>
+</section>
 
-        # ── §3 FUNDAMENTALS ───────────────────────────────────────────
-        "fundamentals": f"""Generate the FUNDAMENTALS glossary content for topic: "{topic}"
+OUTPUT NOTHING after the closing </section> tag.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §2  DEFINITION + OBJECTIVES
+# ─────────────────────────────────────────────────────────────────
+"definition": f"""Generate the DEFINITION + OBJECTIVES section for topic: "{T}"
+{focus}
+Context: {c}
+
+Style reference: Aerobic_Respiration.html #definition / Respiration.html #section-def.
+The card has:
+  - 2-sentence plain-English definition
+  - 2 .chip spans for the two main sub-types or key variants (colored)
+  - 1 sentence on why this matters
+  - <hr> divider
+  - h3 "🎯 Learning Objectives"
+  - <ul class="obj-list"> with 5 ✓ checkmark items
+
+Return ONLY this HTML:
+
+<section id="definition" class="section">
+  <div class="card">
+    <div class="section-label">Definition / Objective</div>
+    <h2>What is {T}?</h2>
+    <p><strong>[Key term]</strong> is [plain-English definition — 1-2 sentences, simple words].</p>
+    <p>Two aspects: <span class="chip chip-a">[Variant/Type A label]</span> <span class="chip chip-b">[Variant/Type B label]</span></p>
+    <p>[One sentence on why "{T}" matters to everyday life or science].</p>
+    <hr style="border:none;border-top:1px solid var(--border);margin:18px 0;">
+    <h3>🎯 Learning Objectives</h3>
+    <ul class="obj-list">
+      <li>[Objective 1: define/explain "{T}"]</li>
+      <li>[Objective 2: identify types or components]</li>
+      <li>[Objective 3: understand the process/mechanism]</li>
+      <li>[Objective 4: compare types or contrast with related concepts]</li>
+      <li>[Objective 5: real-world application]</li>
+    </ul>
+  </div>
+</section>
+
+OUTPUT NOTHING after the closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §3  FUNDAMENTALS CTA
+# ─────────────────────────────────────────────────────────────────
+"fundamentals": f"""Generate the FUNDAMENTALS section for topic: "{T}"
 {focus}
 
-Produce 10-14 key terms that a student must know BEFORE studying "{topic}".
-Each term: a word/phrase + a 1-sentence plain-English definition.
+Style reference: the #fundamentals section in Aerobic_Respiration.html —
+  a purple-light card with a "New words? Check the Glossary!" CTA.
 
-Return ONLY this HTML (replace ALL placeholders):
+Return ONLY this HTML:
 
-<div class="glos-grid" id="glos-grid">
-  <div class="glos-item"><h5>[Term 1]</h5><p>[1-sentence definition]</p></div>
-  <div class="glos-item"><h5>[Term 2]</h5><p>[1-sentence definition]</p></div>
-  [Continue for all 10-14 terms]
-</div>
+<section id="fundamentals" class="section">
+  <div class="card" style="background:var(--purple-light,#ede9fe);border-color:var(--purple,#7c3aed);text-align:center;padding:20px;">
+    <div style="font-size:32px;margin-bottom:8px;">🧠</div>
+    <h2 style="color:var(--purple,#7c3aed);">New words? Check the Glossary!</h2>
+    <p style="color:#5b21b6;">Tap the <strong>📖 Glossary</strong> button (bottom right) anytime to look up terms like [list 3-4 key terms for "{T}" here].</p>
+    <button onclick="toggleGlossary()" style="margin-top:10px;padding:10px 24px;background:var(--purple,#7c3aed);color:#fff;border:none;border-radius:50px;font-size:14px;font-weight:700;cursor:pointer;">Open Glossary →</button>
+  </div>
+</section>
 
-OUTPUT NOTHING after the closing </div> tag.""",
+OUTPUT NOTHING after the closing </section>.""",
 
-        # ── §4 SUBTOPICS ──────────────────────────────────────────────
-        "subtopics": f"""Generate the SUBTOPICS GRID for topic: "{topic}"
+# ─────────────────────────────────────────────────────────────────
+# §4  SUBTOPICS GRID
+# ─────────────────────────────────────────────────────────────────
+"subtopics": f"""Generate the SUBTOPICS GRID section for topic: "{T}"
 {focus}
-User-requested subtopics (generate a card for EACH, in order): {subtopics_list or '(auto-detect 6-8 key subtopics)'}
-Context: {ctx}
+User-requested subtopics: {subtopics or '(auto-detect 6-8 key subtopics)'}
+Context: {c}
 
-Each card must have:
-  • Title + 2-3 sentence explanation
-  • 2-3 keyword chips
-  • 1 "Did you know?" amber box (at least 3 out of 8 cards)
+Style reference: #subtopics in Aerobic_Respiration.html — .subtopic-grid with
+.subtopic-card elements. Each card has:
+  • .subtopic-icon (emoji)
+  • .subtopic-title
+  • .subtopic-desc (2-3 sentences)
+  • .kw-list with 2-3 .kw keyword chips
+  Generate 6-8 cards.
 
-Return ONLY this HTML (replace ALL placeholders):
+Return ONLY this HTML:
 
-<div class="sub-grid">
-  <div class="sub-card">
-    <h4>[Subtopic name]</h4>
-    <p>[2-3 sentence explanation relevant to "{topic}"]</p>
-    <div class="kw-tags">
-      <span class="kw">[Keyword 1]</span>
-      <span class="kw">[Keyword 2]</span>
+<section id="subtopics" class="section">
+  <div class="section-label">Key Topics</div>
+  <h2>📚 What You'll Learn</h2>
+  <div class="subtopic-grid">
+    <div class="subtopic-card">
+      <div class="subtopic-icon">[emoji]</div>
+      <div class="subtopic-title">[Subtopic name]</div>
+      <div class="subtopic-desc">[2-3 sentence description relevant to "{T}"]</div>
+      <div class="kw-list"><span class="kw">[kw1]</span><span class="kw">[kw2]</span></div>
     </div>
-    [Optional: <div class="dyk">💡 [Interesting "Did you know" fact]</div>]
+    [Repeat for all 6-8 subtopics — every card complete]
   </div>
-  [Repeat for all subtopics]
-</div>
+</section>
 
-OUTPUT NOTHING after the closing </div> tag.""",
+OUTPUT NOTHING after the closing </section>.""",
 
-        # ── §5 TYPES / CLASSIFICATION ─────────────────────────────────
-        "types": f"""Generate the TYPES / CLASSIFICATION section for topic: "{topic}"
+# ─────────────────────────────────────────────────────────────────
+# §5  TYPES FLOWCHART
+# ─────────────────────────────────────────────────────────────────
+"types": f"""Generate the TYPES FLOWCHART section for topic: "{T}"
 {focus}
-Context: {ctx}
+Context: {c}
 
-Build an interactive clickable flowchart that shows the classification
-tree for "{topic}". Each node is clickable and reveals an info panel below.
+Style reference: #types in Aerobic_Respiration.html — a .flowchart inside
+.card, with .flow-box.main at top, .flow-arrow, then a .flow-row with
+.flow-col branches for each main type. Each branch has its own colored
+.flow-box, sub-details, and a .flow-label at bottom.
 
-Return ONLY this HTML (replace ALL placeholders):
+Also include a small comparison summary table below the flowchart with
+colored column headers for each type.
 
-<div class="fc-wrap">
-  <div class="fc-node" onclick="showFcInfo('root')">⚡ ["{topic}" root label]</div>
-  <div class="fc-arrow">↓</div>
-  <div class="fc-branch">
-    <div class="fc-branch-col">
-      <div class="fc-arrow" style="color:var(--coral)">↙</div>
-      <div class="fc-sub ext" onclick="showFcInfo('type1')">[Type/Category 1 with emoji]</div>
-      <div class="fc-arrow" style="font-size:1.2rem;color:var(--coral)">↓</div>
-      <div style="display:flex;flex-direction:column;gap:7px;align-items:center">
-        <div class="fc-sub" style="background:#e8d5ff;color:var(--navy);font-size:.8rem;min-width:130px"
-             onclick="showFcInfo('sub1a')">[Sub-type 1a]</div>
-        <div class="fc-sub" style="background:#e8d5ff;color:var(--navy);font-size:.8rem;min-width:130px"
-             onclick="showFcInfo('sub1b')">[Sub-type 1b]</div>
+Return ONLY this HTML:
+
+<section id="types" class="section">
+  <div class="card">
+    <div class="section-label">Overview</div>
+    <h2>🌿 Types of {T}</h2>
+    <div class="flowchart" style="padding:16px 0;">
+      <div class="flow-box main">[ROOT: "{T}"]</div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-box sub">[Second-level classification or process name]<br><span style="font-size:12px;font-weight:400;color:var(--muted);">[brief subtitle]</span></div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-row">
+        <div class="flow-col">
+          <div class="flow-box" style="background:var(--color-a,#2563eb);color:#fff;">[Type A emoji + name]</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-box sub" style="border-color:var(--color-a,#2563eb);">[Key characteristic of Type A]</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-label">[Products/outcomes of Type A]</div>
+          <div style="margin-top:6px;font-size:13px;color:var(--muted);">[Example organisms or contexts]</div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-box" style="background:var(--color-b,#d97706);color:#fff;">[Type B emoji + name]</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-box sub" style="border-color:var(--color-b,#d97706);">[Key characteristic of Type B]</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-label">[Products/outcomes of Type B]</div>
+          <div style="margin-top:6px;font-size:13px;color:var(--muted);">[Example organisms or contexts]</div>
+        </div>
+        [Add a third .flow-col if there is a third main type; otherwise omit]
       </div>
     </div>
-    <div class="fc-branch-col">
-      <div class="fc-arrow" style="color:var(--mint)">↘</div>
-      <div class="fc-sub int" onclick="showFcInfo('type2')">[Type/Category 2 with emoji]</div>
-      <div class="fc-arrow" style="font-size:1.2rem;color:var(--mint)">↓</div>
-      <div style="display:flex;flex-direction:column;gap:7px;align-items:center">
-        <div class="fc-sub" style="background:#d9f5e7;color:var(--navy);font-size:.8rem;min-width:130px"
-             onclick="showFcInfo('sub2a')">[Sub-type 2a]</div>
-        <div class="fc-sub" style="background:#d9f5e7;color:var(--navy);font-size:.8rem;min-width:130px"
-             onclick="showFcInfo('sub2b')">[Sub-type 2b]</div>
+  </div>
+</section>
+
+OUTPUT NOTHING after the closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §6  DEEP SECTIONS (type-specific detail cards)
+# ─────────────────────────────────────────────────────────────────
+"deep_sections": f"""Generate DEEP TYPE DETAIL sections for topic: "{T}"
+{focus}
+Context: {c}
+
+Style reference: #aerobic and #anaerobic sections in Aerobic_Respiration.html.
+For each main type/category of "{T}", produce ONE .card with:
+  • border-top 4px solid in the type's color
+  • .section-label with color matching the type
+  • h2 with type emoji + name
+  • 1 paragraph explanation
+  • An .equation or process-visual block (colored background box)
+  • A sub-grid showing 2 variants or sub-types (if applicable)
+  • A .mito-box style highlight box for the key location/organelle/component
+
+Produce 2-3 such sections (one per main type).
+
+Return ONLY the HTML of all these sections (no outer wrapper):
+
+<section id="type-a" class="section">
+  <div class="card" style="border-top:4px solid var(--color-a,#2563eb);">
+    <div class="section-label" style="color:var(--color-a,#2563eb);">Type [1 / A]</div>
+    <h2>[Type A emoji + full name]</h2>
+    <p>[Clear explanation of Type A in context of "{T}" — what makes it different, when it happens, what is produced].</p>
+
+    <div class="equation" style="border-left-color:var(--color-a,#2563eb);">
+      <span style="color:var(--color-a,#2563eb);font-weight:800;">[Input A]</span>
+      <span class="eq-plus">[+ or →]</span>
+      <span style="color:var(--color-a,#2563eb);font-weight:800;">[Input B if any]</span>
+      <span class="eq-arrow">→</span>
+      <span>[Output 1]</span>
+      <span class="eq-plus">+</span>
+      <span>[Output 2]</span>
+      <span class="eq-plus">+</span>
+      <span style="color:var(--green,#16a34a);font-weight:800;">[Energy / Key Product]</span>
+    </div>
+
+    <!-- Inner process visual for Type A -->
+    <div style="background:var(--color-a-light,#dbeafe);border-radius:var(--radius);padding:18px;margin:16px 0;">
+      <div class="flowchart" style="gap:6px;">
+        <div style="background:var(--color-a,#2563eb);color:#fff;border-radius:var(--radius-sm);padding:8px 20px;font-weight:700;font-size:14px;">[Step 1 for Type A]</div>
+        <div class="flow-arrow">↓</div>
+        <div style="background:var(--color-a,#2563eb);color:#fff;border-radius:var(--radius-sm);padding:8px 20px;font-weight:700;font-size:14px;">[Step 2]</div>
+        <div class="flow-arrow">↓</div>
+        <div style="background:var(--green,#16a34a);color:#fff;border-radius:var(--radius-sm);padding:8px 20px;font-weight:700;font-size:14px;">⚡ [Key output / energy release]</div>
+        <div class="flow-arrow">↓</div>
+        <div style="background:var(--surface,#fff);border:2px solid var(--color-a,#2563eb);border-radius:var(--radius-sm);padding:8px 20px;font-weight:700;font-size:14px;color:var(--text);">[Final products]</div>
       </div>
     </div>
-    [Add more branch columns for additional main types if needed]
-  </div>
-</div>
-<div class="fc-info" id="fc-info-box"></div>
 
-<script>
-var fcData = {{
-  root:  {{title:'[root title]', text:'[root info text about "{topic}"]'}},
-  type1: {{title:'[Type 1 name]', text:'[description of Type 1 in context of "{topic}"]'}},
-  sub1a: {{title:'[Sub-type 1a]', text:'[description]'}},
-  sub1b: {{title:'[Sub-type 1b]', text:'[description]'}},
-  type2: {{title:'[Type 2 name]', text:'[description of Type 2 in context of "{topic}"]'}},
-  sub2a: {{title:'[Sub-type 2a]', text:'[description]'}},
-  sub2b: {{title:'[Sub-type 2b]', text:'[description]'}}
-  [add more keys as needed]
-}};
-window.showFcInfo = function(key) {{
-  var d = fcData[key];
-  if (!d) return;
-  var box = document.getElementById('fc-info-box');
-  box.innerHTML = '<h4>' + d.title + '</h4><p>' + d.text + '</p>';
-  box.classList.add('show');
-}};
-</script>
-
-Also generate a concise comparison table (3-4 columns) for the main types below the flowchart:
-
-<div style="overflow-x:auto;margin-top:28px">
-  <table class="cmp-table">
-    <thead><tr><th>Feature</th><th>[Type 1]</th><th>[Type 2]</th>[<th>[Type 3 if exists]</th>]</tr></thead>
-    <tbody>
-      <tr><td>[Feature 1]</td><td>[Value]</td><td>[Value]</td></tr>
-      <tr><td>[Feature 2]</td><td>[Value]</td><td>[Value]</td></tr>
-      <tr><td>[Feature 3]</td><td>[Value]</td><td>[Value]</td></tr>
-      <tr><td>[Feature 4]</td><td>[Value]</td><td>[Value]</td></tr>
-    </tbody>
-  </table>
-</div>
-
-OUTPUT NOTHING after the closing </div> tag.""",
-
-        # ── §6 PATHWAY / WORKING PROCESS ─────────────────────────────
-        "pathway": f"""Generate the PATHWAY / WORKING PROCESS section for topic: "{topic}"
-{focus}
-Context: {ctx}
-
-This section has TWO parts:
-
-PART A — "Step-by-Step Path" (clickable):
-Show the sequential process/pathway for "{topic}" as 5-7 clickable steps
-in a horizontal or vertical chain. Each step click reveals what happens at
-that stage.
-
-PART B — "Play Animation" flow:
-The same steps rendered as stacked boxes that light up one by one when
-the user clicks "▶ Play Animation".
-
-Return ONLY this HTML:
-
-<p style="color:var(--text-soft);font-size:.93rem;margin-bottom:18px">
-Click each step to learn what happens at that stage.
-</p>
-<div class="path-wrap" id="path-wrap">
-  <div class="path-step" onclick="showPath(0)"><span class="ico">[emoji]</span><div class="lbl">[Step 1 label]</div></div>
-  <div class="path-arrow">→</div>
-  <div class="path-step" onclick="showPath(1)"><span class="ico">[emoji]</span><div class="lbl">[Step 2 label]</div></div>
-  <div class="path-arrow">→</div>
-  [Continue for all steps]
-</div>
-<div class="path-info" id="path-info"></div>
-
-<h3 style="color:var(--navy);margin:24px 0 12px;font-size:1rem">⚙️ Step-by-Step Process</h3>
-<p style="color:var(--text-soft);font-size:.93rem;margin-bottom:18px">
-Click <strong>Play Animation</strong> to see each step light up.
-</p>
-<div class="steps-flow">
-  <div class="step-box" id="ws0">① [Step 1 description for "{topic}"]</div><div class="step-dn">↓</div>
-  <div class="step-box" id="ws1">② [Step 2 description]</div><div class="step-dn">↓</div>
-  [Continue for all steps — use ③ ④ ⑤ ⑥ ⑦ etc.]
-  <div class="step-box" id="ws[N]">⑦ [Final step description]</div>
-</div>
-<button id="play-btn" onclick="playWorkAnim()">▶ Play Animation</button>
-
-<script>
-var pathData = [
-  {{label:'[Step 1]', info:'[Detailed explanation of what happens at step 1 in "{topic}"]'}},
-  {{label:'[Step 2]', info:'[Detailed explanation of step 2]'}},
-  [Continue for all steps]
-];
-window.showPath = function(i) {{
-  document.querySelectorAll('.path-step').forEach(function(s,j){{s.classList.toggle('lit',j===i);}});
-  var box = document.getElementById('path-info');
-  box.innerHTML = pathData[i].info;
-  box.classList.add('show');
-}};
-var _wsTotal = [TOTAL_STEP_COUNT];
-var _wsIdx = 0;
-var _wsTimer = null;
-window.playWorkAnim = function() {{
-  if (_wsTimer) {{ clearInterval(_wsTimer); _wsTimer = null; }}
-  for (var k = 0; k < _wsTotal; k++) {{
-    var el = document.getElementById('ws'+k);
-    if (el) el.classList.remove('active-step');
-  }}
-  _wsIdx = 0;
-  document.getElementById('play-btn').disabled = true;
-  _wsTimer = setInterval(function() {{
-    var el = document.getElementById('ws'+_wsIdx);
-    if (el) el.classList.add('active-step');
-    _wsIdx++;
-    if (_wsIdx >= _wsTotal) {{
-      clearInterval(_wsTimer); _wsTimer = null;
-      document.getElementById('play-btn').disabled = false;
-    }}
-  }}, 900);
-}};
-</script>
-
-OUTPUT NOTHING after the closing <script> end tag.""",
-
-        # ── §7 FORMULAS ───────────────────────────────────────────────
-        "formulas": f"""Generate the FORMULAS section for topic: "{topic}"
-{focus}
-Context: {ctx}
-
-Return ONLY this HTML (2-5 formulas, each with a symbol table):
-
-<div class="formula-stack">
-  <div class="formula-card">
-    <div class="formula-name">[Formula name]</div>
-    <div class="formula-eq">$$[LaTeX formula]$$</div>
-    <table class="sym-table">
-      <tr><td class="sym-var">$$[var]$$</td><td>[Variable name and units]</td></tr>
-      [repeat for each variable]
-    </table>
-  </div>
-  [Repeat for each formula]
-</div>
-<div class="practice-box">
-  ✏️ Practice: Rearrange each formula to solve for a different variable.
-</div>
-
-OUTPUT NOTHING after the closing </div>.""",
-
-        # ── §8 DERIVATION ─────────────────────────────────────────────
-        "derivation": f"""Generate the STEP-BY-STEP DERIVATION for topic: "{topic}"
-{focus}
-Context: {ctx}
-
-Return ONLY this HTML (4-8 steps from first principles to key result):
-
-<div class="deriv-intro">
-  <p>[2-3 sentences: what equation we derive and why it matters for "{topic}"]</p>
-</div>
-<div class="deriv-steps">
-  <div class="deriv-step">
-    <div class="step-header"><span class="step-num">Step 1</span><span class="step-title">[title]</span></div>
-    <div class="step-eq">$$[LaTeX]$$</div>
-    <div class="step-explain">[1-2 sentence explanation]</div>
-  </div>
-  [Continue for all steps]
-  <div class="deriv-final">
-    <div class="final-label">🎯 Final Result</div>
-    <div class="step-eq">$$[Final equation]$$</div>
-    <div class="step-explain">[2-3 sentence meaning]</div>
-  </div>
-</div>
-
-OUTPUT NOTHING after the closing </div>.""",
-
-        # ── §9 DEEP CONCEPTS ──────────────────────────────────────────
-        "deep_concepts": f"""Generate the DEEP CONCEPTS section for topic: "{topic}"
-{focus}
-Context: {ctx}
-
-This is a "Differences / Comparisons" section with:
-  • 1-2 comparison tables (3-4 rows, navy header)
-  • 1-2 concept panels showing nuanced or advanced understanding
-
-Return ONLY this HTML:
-
-<h3 style="color:var(--navy);font-size:1.1rem;margin-bottom:14px">[First comparison title for "{topic}"]</h3>
-<div style="overflow-x:auto;margin-bottom:28px">
-  <table class="cmp-table">
-    <thead><tr><th>Feature</th><th>[Concept A]</th><th>[Concept B]</th></tr></thead>
-    <tbody>
-      <tr><td>[Feature 1]</td><td>[Value A]</td><td>[Value B]</td></tr>
-      <tr><td>[Feature 2]</td><td>[Value A]</td><td>[Value B]</td></tr>
-      <tr><td>[Feature 3]</td><td>[Value A]</td><td>[Value B]</td></tr>
-      <tr><td>[Feature 4]</td><td>[Value A]</td><td>[Value B]</td></tr>
-      <tr><td>[Feature 5]</td><td>[Value A]</td><td>[Value B]</td></tr>
-    </tbody>
-  </table>
-</div>
-
-[Optional second table or concept panel with deep-dive insight]
-
-OUTPUT NOTHING after the closing </div>.""",
-
-        # ── §10 REAL LIFE ─────────────────────────────────────────────
-        "reallife": f"""Generate the REAL-LIFE EXAMPLES section for topic: "{topic}"
-{focus}
-
-Create 6-8 flip-cards. Front shows an emoji + short scenario label.
-Back shows the concept applied (Stimulus → Response style, or the
-relevant mechanism for "{topic}").
-
-Return ONLY this HTML:
-
-<p style="color:var(--text-soft);font-size:.93rem;margin-bottom:16px">
-Tap each card to see how <strong>{topic}</strong> applies!
-</p>
-<div class="rl-grid">
-  <div class="rl-card" onclick="revealRL(this)">
-    <div class="rl-front"><div class="emoji">[emoji]</div><p>[Short scenario — 3-5 words]</p></div>
-    <div class="rl-back">[Explanation of "{topic}" in this scenario — 2-3 lines. Bold the key concept terms.]</div>
-  </div>
-  [Repeat for all 6-8 cards]
-</div>
-
-OUTPUT NOTHING after the closing </div>.""",
-
-        # ── §11 FUN FACTS ─────────────────────────────────────────────
-        "funfacts": f"""Generate FUN FACTS flip-cards for topic: "{topic}"
-{focus}
-
-Create 6 fun-fact cards. Front = intriguing question. Back = answer with
-a surprising or counterintuitive fact about "{topic}".
-
-Return ONLY this HTML:
-
-<div class="ff-grid">
-  <div class="ff-card" onclick="revealFF(this)">
-    <div class="ff-front">
-      <div style="font-size:1.8rem;margin-bottom:8px">[emoji]</div>
-      <p class="ff-q">[Intriguing question about "{topic}" — phrased as a question]</p>
+    <!-- Key location / component highlight box -->
+    <div class="mito-box">
+      <div style="font-size:40px;">[Component emoji]</div>
+      <div class="mito-text">
+        <div class="mito-label">[Highlight label e.g. "The Powerhouse"]</div>
+        <strong>[Key location or component name]</strong> is where [short explanation of its role in "{T}" Type A].
+      </div>
     </div>
-    <div class="ff-back">[Surprising answer with key terms in <strong>bold</strong>. 2-3 sentences.]</div>
   </div>
-  [Repeat for all 6 cards]
-</div>
+</section>
 
-OUTPUT NOTHING after the closing </div>.""",
+[Repeat for Type B (and Type C if applicable) with matching structure,
+ using var(--color-b,...) and appropriate content.]
 
-        # ── §12 ACTIVITIES ────────────────────────────────────────────
-        "activities": f"""Generate THREE interactive activities for topic: "{topic}"
+OUTPUT NOTHING after the final closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §7  INTERACTIVE VISUAL
+# ─────────────────────────────────────────────────────────────────
+"visual": f"""Generate the INTERACTIVE VISUAL section for topic: "{T}"
 {focus}
-Context: {ctx}
+Context: {c}
 
-ACTIVITY 1 — "Identify the Concept" (scenario MCQ):
-  5 scenario questions about "{topic}". User picks which option is
-  the correct concept/mechanism. Show ✅/❌ feedback with explanation.
+Style reference: the "See Respiration in Action" section in Aerobic_Respiration.html.
+Includes:
+  • A .resp-toggle with 2 (or 3) toggle buttons (.resp-tog-btn) to switch views
+  • A .anim-container with type-specific animated molecule rows
+  • Each molecule is a colored circle div (.anim-molecule) with @keyframes pulse
+  • An SVG diagram (viewBox ~680×150) showing both pathways side by side
+    (same style as the resp-svg in Respiration.html: two labeled boxes, arrows,
+    defs with arrowhead markers, animated circle particles)
 
-ACTIVITY 2 — "Build the Sequence" (drag-and-click ordering):
-  4-6 items to place in correct order (a process, a pathway, or a
-  hierarchy related to "{topic}").
+All JavaScript must use var, not const/let. Use unique ID suffixes to avoid
+collisions. The toggle switches between the visual representations.
 
-ACTIVITY 3 — "Challenge Round" (sequence click game):
-  User clicks items in the correct order (like a reflex arc challenge).
-  Show progress bar + score.
+Return ONLY the complete HTML + inline <style> + <script> for this section:
 
-Return ONLY this complete HTML with working JavaScript:
-
-<div class="act-tabs">
-  <button class="act-tab active" onclick="switchAct(1)">Activity 1: Identify the Concept</button>
-  <button class="act-tab" onclick="switchAct(2)">Activity 2: Build the Sequence</button>
-  <button class="act-tab" onclick="switchAct(3)">Activity 3: Challenge Round</button>
-</div>
-
-<!-- ACT 1 -->
-<div class="act-panel active" id="act1">
-  <div class="act1-scenario">
-    <div class="scene" id="a1-scene"></div>
-    <h4 id="a1-situation"></h4>
-    <p style="font-size:.88rem;color:var(--text-soft);margin-top:6px">
-      What is the <strong>[concept being identified]</strong> here?
-    </p>
+<section id="visual" class="section">
+  <div class="card">
+    <div class="section-label">Interactive Visual</div>
+    <h2>🔬 See {T} in Action</h2>
+    [toggle buttons + animated molecule rows + SVG diagram + JS]
   </div>
-  <div class="act1-opts" id="a1-opts"></div>
-  <div id="act1-result"></div>
-  <div style="text-align:center">
-    <button id="act1-next" onclick="nextA1()" style="display:none;margin-top:10px;padding:9px 22px;border-radius:50px;background:var(--navy);color:#fff;border:none;font-weight:700">
-      Next Situation →
-    </button>
-  </div>
-</div>
+</section>
 
-<!-- ACT 2 -->
-<div class="act-panel" id="act2">
-  <p style="font-size:.93rem;color:var(--text-soft);margin-bottom:14px">
-    Click the blocks in the correct order to build the sequence.
-  </p>
-  <div class="build-pool" id="build-pool"></div>
-  <div style="text-align:center;margin-bottom:8px;font-size:.85rem;color:var(--text-soft)">Your sequence:</div>
-  <div class="build-slots" id="build-slots"></div>
-  <div style="text-align:center">
-    <button id="build-check" onclick="checkBuild()" style="padding:10px 24px;border-radius:50px;background:var(--navy);color:#fff;border:none;font-weight:700;margin-right:8px">✔ Check</button>
-    <button id="build-reset" onclick="resetBuild()" style="padding:10px 24px;border-radius:50px;background:var(--coral);color:#fff;border:none;font-weight:700">↺ Reset</button>
-  </div>
-  <div id="build-feedback" style="text-align:center;font-weight:700;font-size:1rem;margin-top:10px;min-height:28px"></div>
-</div>
+OUTPUT NOTHING after the closing </section>.""",
 
-<!-- ACT 3 -->
-<div class="act-panel" id="act3">
-  <p style="font-size:.93rem;color:var(--text-soft);margin-bottom:12px">
-    Click the items in the correct order. Score: <span id="arc-score">0</span> / [N]
-  </p>
-  <div id="arc-progress2" style="height:8px;background:var(--border);border-radius:50px;overflow:hidden;margin-bottom:14px">
-    <div id="arc-bar2" style="height:100%;background:var(--mint);border-radius:50px;transition:width .4s;width:0"></div>
-  </div>
-  <div class="arc-challenge-steps" id="arc-ch-wrap"></div>
-  <div id="arc-ch-feedback" style="text-align:center;font-weight:700;font-size:1rem;min-height:28px;margin-top:10px"></div>
-  <div style="text-align:center">
-    <button id="arc-ch-retry" style="display:none;margin-top:10px;padding:9px 22px;border-radius:50px;background:var(--navy);color:#fff;border:none;font-weight:700" onclick="resetArcCh()">🔄 Try Again</button>
-  </div>
-</div>
-
-<script>
-// ── Tab switcher ──
-function switchAct(n) {{
-  document.querySelectorAll('.act-panel').forEach(function(p){{p.classList.remove('active');}});
-  document.querySelectorAll('.act-tab').forEach(function(t){{t.classList.remove('active');}});
-  document.getElementById('act'+n).classList.add('active');
-  document.querySelectorAll('.act-tab')[n-1].classList.add('active');
-}}
-
-// ── ACTIVITY 1 DATA — fill with REAL content about "{topic}" ──
-var a1Data = [
-  {{scene:'[emoji]', situation:'[Scenario 1 for "{topic}"]', opts:['A. [opt]','B. [opt]','C. [opt]','D. [opt]'], ans:[0/1/2/3], exp:'[Explanation]'}},
-  {{scene:'[emoji]', situation:'[Scenario 2]', opts:['A. [opt]','B. [opt]','C. [opt]','D. [opt]'], ans:[0/1/2/3], exp:'[Explanation]'}},
-  {{scene:'[emoji]', situation:'[Scenario 3]', opts:['A. [opt]','B. [opt]','C. [opt]','D. [opt]'], ans:[0/1/2/3], exp:'[Explanation]'}},
-  {{scene:'[emoji]', situation:'[Scenario 4]', opts:['A. [opt]','B. [opt]','C. [opt]','D. [opt]'], ans:[0/1/2/3], exp:'[Explanation]'}},
-  {{scene:'[emoji]', situation:'[Scenario 5]', opts:['A. [opt]','B. [opt]','C. [opt]','D. [opt]'], ans:[0/1/2/3], exp:'[Explanation]'}}
-];
-var a1Idx=0,a1Done=false;
-function renderA1(){{
-  a1Done=false;
-  var d=a1Data[a1Idx%a1Data.length];
-  document.getElementById('a1-scene').textContent=d.scene;
-  document.getElementById('a1-situation').textContent=d.situation;
-  document.getElementById('act1-result').innerHTML='';
-  document.getElementById('act1-next').style.display='none';
-  var optsDiv=document.getElementById('a1-opts');
-  optsDiv.innerHTML='';
-  d.opts.forEach(function(opt,i){{
-    var btn=document.createElement('button');
-    btn.className='act1-opt';btn.textContent=opt;
-    btn.onclick=function(){{checkA1(i,btn,d);}};
-    optsDiv.appendChild(btn);
-  }});
-}}
-function checkA1(i,btn,d){{
-  if(a1Done)return;a1Done=true;
-  document.querySelectorAll('.act1-opt').forEach(function(b){{b.disabled=true;}});
-  if(i===d.ans){{btn.classList.add('correct');document.getElementById('act1-result').innerHTML='✅ <span style="color:var(--mint)">Correct! '+d.exp+'</span>';}}
-  else{{btn.classList.add('wrong');document.querySelectorAll('.act1-opt')[d.ans].classList.add('correct');document.getElementById('act1-result').innerHTML='❌ <span style="color:var(--coral)">Not quite. '+d.exp+'</span>';}}
-  document.getElementById('act1-next').style.display='inline-block';
-}}
-function nextA1(){{a1Idx++;renderA1();}}
-renderA1();
-
-// ── ACTIVITY 2 DATA — fill with REAL sequence for "{topic}" ──
-var buildCorrect = ['[Step 1]','[Step 2]','[Step 3]','[Step 4]','[Step 5]'];
-var buildSelected=[];
-function initBuild(){{
-  buildSelected=[];
-  var pool=document.getElementById('build-pool');
-  var slots=document.getElementById('build-slots');
-  document.getElementById('build-feedback').textContent='';
-  var shuffled=buildCorrect.slice().sort(function(){{return Math.random()-.5;}});
-  pool.innerHTML='';slots.innerHTML='';
-  shuffled.forEach(function(item){{
-    var btn=document.createElement('button');
-    btn.className='build-block';btn.textContent=item;btn.dataset.item=item;
-    btn.onclick=function(){{selectBuild(btn,item);}};
-    pool.appendChild(btn);
-  }});
-  buildCorrect.forEach(function(_,i){{
-    var slot=document.createElement('div');
-    slot.className='build-slot';slot.dataset.idx=i;slot.textContent=(i+1)+'?';
-    slot.onclick=function(){{removeFromSlot(slot);}};
-    slots.appendChild(slot);
-  }});
-}}
-function selectBuild(btn,item){{
-  var emptySlot=document.querySelector('.build-slot:not(.filled)');
-  if(!emptySlot)return;
-  emptySlot.classList.add('filled');emptySlot.textContent=item;emptySlot.dataset.val=item;
-  btn.classList.add('used');
-}}
-function removeFromSlot(slot){{
-  if(!slot.classList.contains('filled'))return;
-  var val=slot.dataset.val;
-  document.querySelectorAll('.build-block').forEach(function(b){{if(b.dataset.item===val&&b.classList.contains('used')){{b.classList.remove('used');return;}}}});
-  slot.classList.remove('filled','correct','wrong');slot.textContent=(parseInt(slot.dataset.idx)+1)+'?';delete slot.dataset.val;
-}}
-function checkBuild(){{
-  var slots=document.querySelectorAll('.build-slot');
-  var allFilled=true,allCorrect=true;
-  slots.forEach(function(slot,i){{
-    if(!slot.classList.contains('filled')){{allFilled=false;return;}}
-    if(slot.dataset.val===buildCorrect[i])slot.classList.add('correct');
-    else{{slot.classList.add('wrong');allCorrect=false;}}
-  }});
-  if(!allFilled){{document.getElementById('build-feedback').innerHTML='<span style="color:var(--coral)">Fill all slots first!</span>';return;}}
-  document.getElementById('build-feedback').innerHTML=allCorrect?'🎉 <span style="color:var(--mint)">Perfect sequence!</span>':'<span style="color:var(--coral)">Some steps are wrong — reset and try again!</span>';
-}}
-function resetBuild(){{initBuild();}}
-initBuild();
-
-// ── ACTIVITY 3 DATA — fill with REAL ordered items for "{topic}" ──
-var arcChOrder=['[Item 1]','[Item 2]','[Item 3]','[Item 4]','[Item 5]','[Item 6]'];
-var arcChCurrent=0,arcChScore=0;
-function initArcCh(){{
-  arcChCurrent=0;arcChScore=0;
-  document.getElementById('arc-score').textContent='0';
-  document.getElementById('arc-bar2').style.width='0';
-  document.getElementById('arc-ch-feedback').textContent='';
-  document.getElementById('arc-ch-retry').style.display='none';
-  var wrap=document.getElementById('arc-ch-wrap');
-  var shuffled=arcChOrder.slice().sort(function(){{return Math.random()-.5;}});
-  wrap.innerHTML='';
-  shuffled.forEach(function(step){{
-    var btn=document.createElement('button');
-    btn.className='arc-ch-btn';btn.textContent=step;
-    btn.onclick=function(){{clickArcCh(btn,step);}};
-    wrap.appendChild(btn);
-  }});
-}}
-function clickArcCh(btn,step){{
-  if(btn.classList.contains('correct'))return;
-  if(step===arcChOrder[arcChCurrent]){{
-    btn.classList.add('correct');arcChCurrent++;arcChScore++;
-    document.getElementById('arc-score').textContent=arcChScore;
-    document.getElementById('arc-bar2').style.width=(arcChCurrent/arcChOrder.length*100)+'%';
-    if(arcChCurrent===arcChOrder.length){{
-      document.getElementById('arc-ch-feedback').innerHTML='🏆 <span style="color:var(--mint)">Excellent! Full sequence complete! Score: '+arcChScore+'/'+arcChOrder.length+'</span>';
-      document.getElementById('arc-ch-retry').style.display='inline-block';
-    }}else{{
-      document.getElementById('arc-ch-feedback').innerHTML='✅ Next: <strong>'+arcChOrder[arcChCurrent]+'</strong>';
-    }}
-  }}else{{
-    btn.classList.add('wrong-ans');
-    setTimeout(function(){{btn.classList.remove('wrong-ans');}},400);
-    document.getElementById('arc-ch-feedback').innerHTML='❌ <span style="color:var(--coral)">Wrong order! Next should be: <strong>'+arcChOrder[arcChCurrent]+'</strong></span>';
-  }}
-}}
-function resetArcCh(){{initArcCh();}}
-initArcCh();
-</script>
-
-CRITICAL: Replace ALL [placeholder] values with REAL content about "{topic}".
-Replace [N] with the actual count of arcChOrder items.
-OUTPUT NOTHING after the closing </script> tag.""",
-
-        # ── §13 QUIZ ──────────────────────────────────────────────────
-        "quiz": f"""Generate a 10-question quiz about topic: "{topic}"
+# ─────────────────────────────────────────────────────────────────
+# §8  WORKING PROCESS (stepper)
+# ─────────────────────────────────────────────────────────────────
+"working": f"""Generate the WORKING PROCESS section for topic: "{T}"
 {focus}
-Context: {ctx}
+Context: {c}
 
-Rules:
-  • 10 MCQ questions, difficulty rising: Q1-3 Easy, Q4-7 Medium, Q8-10 Hard
-  • 3-4 options per question; exactly ONE correct answer
-  • Include explanation text for each question
-  • Use the one-at-a-time display style with progress bar
+Style reference: #working in Aerobic_Respiration.html.
+A two-column grid (.process-grid) with one .stepper per main type.
+Each stepper has 4-6 .step elements with:
+  - data-n="N" attribute
+  - ::before circle badge via CSS (aerobic-step or anaerobic-step class)
+  - .step-title and .step-desc
 
-Return ONLY this complete HTML with working JavaScript:
+If the topic has only one main pathway (not two types), use a single-column
+timeline like rocketpropulsion.html #process (.timeline > .tl-item > .tl-dot + .tl-card).
 
-<div id="quiz-wrap">
-  <div id="quiz-progress"><div id="quiz-bar"></div></div>
-  <div class="quiz-qnum" id="quiz-qnum">Question 1 of 10</div>
-  <div class="quiz-q" id="quiz-q"></div>
-  <div class="quiz-opts" id="quiz-opts"></div>
-  <div id="quiz-exp"></div>
-  <button id="quiz-next" onclick="nextQuiz()" style="display:none;margin-top:14px;padding:11px 28px;border-radius:50px;background:var(--navy);color:#fff;border:none;font-weight:700;font-size:.95rem">Next Question →</button>
-</div>
-<div id="quiz-result" style="display:none;text-align:center">
-  <div class="score-big" id="quiz-score-big"></div>
-  <div class="score-msg" id="quiz-score-msg"></div>
-  <button onclick="resetQuiz()" style="padding:12px 30px;border-radius:50px;background:var(--navy);color:#fff;border:none;font-weight:700;font-size:1rem">🔄 Try Again</button>
-</div>
+Return ONLY this HTML:
 
+<section id="working" class="section">
+  <div class="card">
+    <div class="section-label">Step by Step</div>
+    <h2>⚙️ Working Process</h2>
+    <div class="process-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div>
+        <h3 style="color:var(--color-a,#2563eb);margin-bottom:12px;">[Type A emoji + name]</h3>
+        <div class="stepper">
+          <div class="step step-a" data-n="1">
+            <div><div class="step-title">[Step 1 title for Type A]</div><div class="step-desc">[1-2 sentence description]</div></div>
+          </div>
+          <div class="step step-a" data-n="2">
+            <div><div class="step-title">[Step 2]</div><div class="step-desc">[Description]</div></div>
+          </div>
+          [3-6 steps total]
+        </div>
+      </div>
+      <div>
+        <h3 style="color:var(--color-b,#d97706);margin-bottom:12px;">[Type B emoji + name]</h3>
+        <div class="stepper">
+          <div class="step step-b" data-n="1">
+            <div><div class="step-title">[Step 1 for Type B]</div><div class="step-desc">[Description]</div></div>
+          </div>
+          [3-6 steps]
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+OUTPUT NOTHING after the closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §9  COMPARISON TABLE
+# ─────────────────────────────────────────────────────────────────
+"comparison": f"""Generate the COMPARISON TABLE section for topic: "{T}"
+{focus}
+Context: {c}
+
+Style reference: #comparison in Aerobic_Respiration.html.
+A .compare-table-wrap > .compare-table with:
+  • th for each column (first col muted bg, type-A col color, type-B col color)
+  • 6-8 feature rows including: key requirement, breakdown type, energy output,
+    products/byproducts, location (site), speed, examples
+
+Return ONLY this HTML:
+
+<section id="comparison" class="section">
+  <div class="card">
+    <div class="section-label">Side by Side</div>
+    <h2>⚖️ [Type A] vs [Type B]</h2>
+    <div class="compare-table-wrap">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>[Type A emoji + label]</th>
+            <th>[Type B emoji + label]</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>[Feature 1]</td><td>[A value]</td><td>[B value]</td></tr>
+          <tr><td>[Feature 2]</td><td>[A value]</td><td>[B value]</td></tr>
+          <tr><td>[Feature 3]</td><td>[A value]</td><td>[B value]</td></tr>
+          <tr><td>[Feature 4]</td><td>[A value]</td><td>[B value]</td></tr>
+          <tr><td>[Feature 5]</td><td>[A value]</td><td>[B value]</td></tr>
+          <tr><td>[Feature 6]</td><td>[A value]</td><td>[B value]</td></tr>
+          <tr><td>[Feature 7]</td><td>[A value]</td><td>[B value]</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+OUTPUT NOTHING after the closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §10  GAMES (3-tab)
+# ─────────────────────────────────────────────────────────────────
+"games": f"""Generate the 3-TAB GAMES section for topic: "{T}"
+{focus}
+Context: {c}
+
+Style reference: #games in Aerobic_Respiration.html.
+EXACTLY THREE GAMES:
+  Game 1 — "Which Type?" scenario MCQ (like the oxygen-available game)
+  Game 2 — "Product Matcher" click-and-place (like match-cards/match-drop)
+  Game 3 — "Situation Challenge" 5-question MCQ with score badge
+
+Use the EXACT class names from the reference:
+  .game-area, .game-tabs, .game-tab, .game-panel.active, .game-question,
+  .btn-row, .resp-btn (.correct/.wrong), .game-feedback (.good/.bad),
+  .score-badge, .match-area, .match-col, .match-col-title, .match-drop,
+  .match-cards, .match-card, .btn-primary, .btn-ghost
+
+All JavaScript must use var. Use unique IDs/function names (append "G" + short suffix).
+Populate all game data arrays with REAL, ACCURATE content about "{T}".
+
+Return ONLY the complete HTML + <script> for this section:
+
+<section id="games" class="section">
+  <div class="section-label">Interactive Activities</div>
+  <h2>🎮 Games — Test Your Knowledge</h2>
+  <div class="game-area">
+    <div class="game-tabs">
+      <button class="game-tab active" onclick="switchGameX(0)">[Game 1 short title]</button>
+      <button class="game-tab" onclick="switchGameX(1)">[Game 2 short title]</button>
+      <button class="game-tab" onclick="switchGameX(2)">[Game 3 short title]</button>
+    </div>
+    <!-- GAME 1 -->
+    <div class="game-panel active" id="gameX0">
+      [Which-type scenario game with answer reveal]
+    </div>
+    <!-- GAME 2 -->
+    <div class="game-panel" id="gameX1">
+      [Product/concept matcher game]
+    </div>
+    <!-- GAME 3 -->
+    <div class="game-panel" id="gameX2">
+      [Situation challenge MCQ with score counter]
+    </div>
+  </div>
+</section>
+
+Replace X with a unique 2-character suffix for all IDs and function names.
+OUTPUT NOTHING after the closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §11  FUN FACTS
+# ─────────────────────────────────────────────────────────────────
+"funfacts": f"""Generate the FUN FACTS section for topic: "{T}"
+{focus}
+
+Style reference: #funfacts in Aerobic_Respiration.html.
+6 .fact-card elements in a .facts-grid. Each card has:
+  • .fact-front: large emoji icon + .fact-tap "👆 Tap to Reveal" text
+  • .fact-back: 2-3 sentence surprising fact about "{T}" (hidden initially)
+  • onclick="revealFact(this)" toggles .revealed class
+
+Return ONLY this HTML:
+
+<section id="funfacts" class="section">
+  <div class="section-label">Did You Know?</div>
+  <h2>💡 Fun Facts — Tap to Reveal!</h2>
+  <div class="facts-grid">
+    <div class="fact-card" onclick="revealFact(this)">
+      <div class="fact-front"><div style="font-size:36px;">[emoji]</div></div>
+      <div class="fact-tap">👆 Tap to Reveal</div>
+      <div class="fact-back">[Surprising fact about "{T}" — 2-3 sentences, bold key numbers/terms]</div>
+    </div>
+    [Repeat for 5 more cards — all with REAL facts about "{T}"]
+  </div>
+</section>
+
+OUTPUT NOTHING after the closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §12  QUICK REVISION
+# ─────────────────────────────────────────────────────────────────
+"revision": f"""Generate the QUICK REVISION section for topic: "{T}"
+{focus}
+Context: {c}
+
+Style reference: #revision in Aerobic_Respiration.html.
+A .card with:
+  • .rev-grid (2×2 or 2×3 grid) of .rev-card elements (classes: .a, .b, .g, .p
+    for different background colors)
+  • Each .rev-card has .big (key summary phrase) and .small (detail)
+  • Below: a section with key equations/word-equations as .equation boxes
+    (border-left colored per type)
+
+Return ONLY this HTML:
+
+<section id="revision" class="section">
+  <div class="card">
+    <div class="section-label">1-Minute Revision</div>
+    <h2>📝 Quick Revision</h2>
+    <div class="rev-grid" style="margin-bottom:14px;">
+      <div class="rev-card a">
+        <div class="big">[Key fact about Type A — short, memorable]</div>
+        <div class="small">[Sub-detail]</div>
+      </div>
+      <div class="rev-card b">
+        <div class="big">[Key fact about Type B]</div>
+        <div class="small">[Sub-detail]</div>
+      </div>
+      <div class="rev-card g">
+        <div class="big">[Third key fact or comparison]</div>
+        <div class="small">[Sub-detail]</div>
+      </div>
+      <div class="rev-card p">
+        <div class="big">[Fourth key fact]</div>
+        <div class="small">[Sub-detail]</div>
+      </div>
+    </div>
+    <div style="background:var(--bg);border-radius:var(--radius-sm);padding:16px;margin-top:8px;">
+      <p style="font-weight:700;margin-bottom:10px;font-size:14px;">📌 Remember These Equations / Definitions:</p>
+      <div class="equation" style="margin-bottom:8px;">
+        <span style="font-weight:800;">[Left side of equation/definition for "{T}"]</span>
+        <span class="eq-arrow">→</span>
+        <span>[Right side]</span>
+        <span class="eq-plus">+</span>
+        <span style="color:var(--green,#16a34a);font-weight:800;">[Key product / energy]</span>
+      </div>
+      [1-2 more .equation boxes for other key relationships]
+    </div>
+  </div>
+</section>
+
+OUTPUT NOTHING after the closing </section>.""",
+
+# ─────────────────────────────────────────────────────────────────
+# §13  QUIZ
+# ─────────────────────────────────────────────────────────────────
+"quiz": f"""Generate the QUIZ section for topic: "{T}"
+{focus}
+Context: {c}
+
+Style reference: #quiz in Aerobic_Respiration.html.
+EXACTLY 10 questions. Include:
+  • .quiz-progress div with .q-dot elements (one per question)
+    → .answered class on answered, .correct-q/.wrong-q for right/wrong
+  • .quiz-q-num / .quiz-question / .quiz-options (.quiz-opt buttons)
+  • .quiz-explain (hidden, shown after answer, with 💡 prefix)
+  • quiz-next button (Next Question → / See Results 🏆)
+  • Result panel: .quiz-result with .quiz-score-big (big number), .quiz-perf,
+    .quiz-perf-sub, and a "🔄 Try Again" button
+
+All JavaScript must use var. Use unique function suffix to avoid collisions.
+Populate ALL 10 questions with REAL content about "{T}":
+  Q1-3: Easy · Q4-7: Medium · Q8-10: Hard
+
+Return ONLY the complete HTML + <script>:
+
+<section id="quiz" class="section">
+  <div class="card">
+    <div class="section-label">Test Yourself</div>
+    <h2>✏️ Quiz — 10 Questions</h2>
+    <div id="quiz-ui-Q">
+      <div class="quiz-progress" id="quiz-dots-Q"></div>
+      <div class="quiz-q-num" id="quiz-qnum-Q"></div>
+      <div class="quiz-question" id="quiz-question-Q"></div>
+      <div class="quiz-options" id="quiz-options-Q"></div>
+      <div class="quiz-explain" id="quiz-explain-Q"></div>
+      <div class="quiz-nav">
+        <button class="btn-primary" id="quiz-next-Q" onclick="nextQQ()" style="display:none;">Next Question →</button>
+      </div>
+    </div>
+    <div class="quiz-result" id="quiz-result-Q" style="display:none;">
+      <div class="quiz-score-big" id="result-score-Q"></div>
+      <div style="font-size:16px;color:var(--muted);margin-bottom:12px;">out of 10</div>
+      <div class="quiz-perf" id="result-perf-Q"></div>
+      <div class="quiz-perf-sub" id="result-sub-Q"></div>
+      <button class="btn-primary" style="margin-top:20px;" onclick="resetQQ()">🔄 Try Again</button>
+    </div>
+  </div>
+</section>
 <script>
-var quizData=[
-  {{q:'[Question 1 — Easy, about "{topic}"]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation why the correct answer is correct]'}},
-  {{q:'[Question 2 — Easy]',opts:['[A]','[B]','[C]'],ans:[0/1/2],exp:'[Explanation]'}},
-  {{q:'[Question 3 — Easy]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}},
-  {{q:'[Question 4 — Medium]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}},
-  {{q:'[Question 5 — Medium]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}},
-  {{q:'[Question 6 — Medium]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}},
-  {{q:'[Question 7 — Medium]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}},
-  {{q:'[Question 8 — Hard]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}},
-  {{q:'[Question 9 — Hard]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}},
-  {{q:'[Question 10 — Hard]',opts:['[A]','[B]','[C]','[D]'],ans:[0/1/2/3],exp:'[Explanation]'}}
+var questionsQ = [
+  {{q:"[Q1 — Easy, about {T}]",opts:["[opt A]","[opt B]","[opt C]","[opt D]"],ans:0,explain:"[explanation]"}},
+  {{q:"[Q2 — Easy]",opts:["[A]","[B]","[C]","[D]"],ans:1,explain:"[explanation]"}},
+  {{q:"[Q3 — Easy]",opts:["[A]","[B]","[C]","[D]"],ans:2,explain:"[explanation]"}},
+  {{q:"[Q4 — Medium]",opts:["[A]","[B]","[C]","[D]"],ans:3,explain:"[explanation]"}},
+  {{q:"[Q5 — Medium]",opts:["[A]","[B]","[C]","[D]"],ans:0,explain:"[explanation]"}},
+  {{q:"[Q6 — Medium]",opts:["[A]","[B]","[C]","[D]"],ans:1,explain:"[explanation]"}},
+  {{q:"[Q7 — Medium]",opts:["[A]","[B]","[C]","[D]"],ans:2,explain:"[explanation]"}},
+  {{q:"[Q8 — Hard]",opts:["[A]","[B]","[C]","[D]"],ans:3,explain:"[explanation]"}},
+  {{q:"[Q9 — Hard]",opts:["[A]","[B]","[C]","[D]"],ans:0,explain:"[explanation]"}},
+  {{q:"[Q10 — Hard]",opts:["[A]","[B]","[C]","[D]"],ans:1,explain:"[explanation]"}}
 ];
-var qIdx=0,qScore=0;
-function renderQuiz(){{
-  var d=quizData[qIdx];
-  document.getElementById('quiz-qnum').textContent='Question '+(qIdx+1)+' of 10';
-  document.getElementById('quiz-bar').style.width=(qIdx/10*100)+'%';
-  document.getElementById('quiz-q').textContent=d.q;
-  document.getElementById('quiz-exp').style.display='none';
-  document.getElementById('quiz-next').style.display='none';
-  var optsDiv=document.getElementById('quiz-opts');
-  optsDiv.innerHTML='';
-  d.opts.forEach(function(opt,i){{
+var qIdxQ=0,qScoreQ=0,qAnsweredQ=false;
+function initQQ(){{
+  var dots=document.getElementById('quiz-dots-Q');
+  dots.innerHTML='';
+  questionsQ.forEach(function(_,i){{
+    var d=document.createElement('div');
+    d.className='q-dot';d.textContent=i+1;d.id='dot-Q-'+i;
+    dots.appendChild(d);
+  }});
+  loadQQ();
+}}
+function loadQQ(){{
+  qAnsweredQ=false;
+  var q=questionsQ[qIdxQ];
+  document.getElementById('quiz-qnum-Q').textContent='Question '+(qIdxQ+1)+' of '+questionsQ.length;
+  document.getElementById('quiz-question-Q').textContent=q.q;
+  document.getElementById('quiz-explain-Q').style.display='none';
+  document.getElementById('quiz-next-Q').style.display='none';
+  var opts=document.getElementById('quiz-options-Q');
+  opts.innerHTML='';
+  q.opts.forEach(function(opt,i){{
     var btn=document.createElement('button');
     btn.className='quiz-opt';btn.textContent=opt;
-    btn.onclick=function(){{answerQuiz(i,btn);}};
-    optsDiv.appendChild(btn);
+    btn.onclick=function(){{answerQQ(i,btn);}};
+    opts.appendChild(btn);
   }});
 }}
-function answerQuiz(i,btn){{
-  var d=quizData[qIdx];
-  document.querySelectorAll('.quiz-opt').forEach(function(b){{b.disabled=true;}});
-  if(i===d.ans){{btn.classList.add('correct');qScore++;}}
-  else{{btn.classList.add('wrong');document.querySelectorAll('.quiz-opt')[d.ans].classList.add('correct');}}
-  var exp=document.getElementById('quiz-exp');
-  exp.textContent='💡 '+d.exp;exp.style.display='block';
-  document.getElementById('quiz-next').style.display='inline-block';
+function answerQQ(i,btn){{
+  if(qAnsweredQ)return;
+  qAnsweredQ=true;
+  var q=questionsQ[qIdxQ];
+  var opts=document.querySelectorAll('#quiz-options-Q .quiz-opt');
+  opts.forEach(function(b){{b.disabled=true;}});
+  opts[q.ans].classList.add('show-correct');
+  if(i===q.ans){{btn.classList.add('selected-correct');qScoreQ++;}}
+  else{{btn.classList.add('selected-wrong');}}
+  var dot=document.getElementById('dot-Q-'+qIdxQ);
+  dot.classList.add('answered');
+  dot.classList.add(i===q.ans?'correct-q':'wrong-q');
+  var exp=document.getElementById('quiz-explain-Q');
+  exp.textContent='💡 '+q.explain;exp.style.display='block';
+  var nxt=document.getElementById('quiz-next-Q');
+  nxt.style.display='inline-block';
+  if(qIdxQ===questionsQ.length-1)nxt.textContent='See Results 🏆';
 }}
-function nextQuiz(){{
-  qIdx++;
-  if(qIdx>=10)showQuizResult();
-  else renderQuiz();
+function nextQQ(){{
+  qIdxQ++;
+  if(qIdxQ>=questionsQ.length){{showResultsQQ();return;}}
+  loadQQ();
 }}
-function showQuizResult(){{
-  document.getElementById('quiz-bar').style.width='100%';
-  document.getElementById('quiz-wrap').style.display='none';
-  document.getElementById('quiz-result').style.display='block';
-  document.getElementById('quiz-score-big').textContent=qScore+'/10';
-  var msg='';
-  if(qScore>=9)msg='🌟 Outstanding! You are a "{topic}" expert!';
-  else if(qScore>=7)msg='👍 Very Good! Keep it up!';
-  else if(qScore>=5)msg='😊 Good effort! Review once more.';
-  else msg='📚 Keep practising — you have got this!';
-  document.getElementById('quiz-score-msg').textContent=msg;
+function showResultsQQ(){{
+  document.getElementById('quiz-ui-Q').style.display='none';
+  document.getElementById('quiz-result-Q').style.display='block';
+  document.getElementById('result-score-Q').textContent=qScoreQ;
+  var perf,sub;
+  if(qScoreQ>=9){{perf='Excellent! 🌟';sub='Outstanding! You have mastered {T}!';}}
+  else if(qScoreQ>=7){{perf='Very Good! 👍';sub='Great job! Review a few points.';}}
+  else if(qScoreQ>=5){{perf='Good! 📖';sub='Revise once more to strengthen your understanding.';}}
+  else{{perf="Let's learn again! 💪";sub='Revisit the lesson and try the quiz again!';}}
+  document.getElementById('result-perf-Q').textContent=perf;
+  document.getElementById('result-sub-Q').textContent=sub;
 }}
-function resetQuiz(){{
-  qIdx=0;qScore=0;
-  document.getElementById('quiz-wrap').style.display='block';
-  document.getElementById('quiz-result').style.display='none';
-  renderQuiz();
+function resetQQ(){{
+  qIdxQ=0;qScoreQ=0;qAnsweredQ=false;
+  document.getElementById('quiz-result-Q').style.display='none';
+  document.getElementById('quiz-ui-Q').style.display='block';
+  document.getElementById('quiz-next-Q').textContent='Next Question →';
+  initQQ();
 }}
-renderQuiz();
+initQQ();
 </script>
 
-CRITICAL: Replace ALL [placeholder] values (question text, options, ans index, explanation)
-with real, accurate content about "{topic}". ans must be 0-based integer.
-OUTPUT NOTHING after the closing </script> tag.""",
+CRITICAL: Replace ALL [placeholder] text with REAL questions about "{T}".
+Replace ans values (0-3) with the actual correct option index.
+OUTPUT NOTHING after the closing </script>.""",
 
-        # ── §14 REVISION ──────────────────────────────────────────────
-        "revision": f"""Generate a QUICK REVISION section for topic: "{topic}"
+# ─────────────────────────────────────────────────────────────────
+# §14  FORMULAS  (conditional: mathematical topics)
+# ─────────────────────────────────────────────────────────────────
+"formulas": f"""Generate the FORMULAS section for topic: "{T}"
 {focus}
+Context: {c}
 
-Produce 8-12 revision points — each is a bold "term:" followed by a 1-sentence summary.
+Style reference: Inspired by rocketpropulsion.html "Important Points" + tissues.html card style.
+Produce 2-5 key formulas as stacked .card elements with:
+  • .section-label "Formulas & Equations"
+  • Formula name as h3
+  • .equation box with proper LaTeX $$...$$ display math
+  • A small symbol table (2-col: symbol | meaning + units)
+  • .mito-box style highlight box at bottom for the most important formula
 
 Return ONLY this HTML:
 
-<div class="rev-grid">
-  <div class="rev-item"><strong>[Term 1]:</strong> [1-sentence summary about "{topic}"]</div>
-  <div class="rev-item"><strong>[Term 2]:</strong> [1-sentence summary]</div>
-  [Continue for all 8-12 items]
-</div>
+<section id="formulas" class="section">
+  <div class="section-label">Formulas & Equations</div>
+  <h2>📐 Key Formulas</h2>
+  <div class="card" style="margin-bottom:16px;">
+    <h3 style="color:var(--primary);">[Formula 1 name]</h3>
+    <div class="equation" style="justify-content:center;font-size:1.2em;">$$[LaTeX formula]$$</div>
+    <table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:14px;">
+      <tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:6px 10px;font-family:monospace;color:var(--primary);font-weight:700;">$$[sym]$$</td>
+        <td style="padding:6px 10px;color:var(--muted);">[meaning — units]</td>
+      </tr>
+      [1 row per variable]
+    </table>
+  </div>
+  [Repeat for each formula — separate .card per formula]
+</section>
 
-OUTPUT NOTHING after the closing </div>.""",
+OUTPUT NOTHING after the closing </section>.""",
 
-        # ── §15 EXAM READY ────────────────────────────────────────────
-        "exam_ready": f"""Generate an EXAM READY section for topic: "{topic}"
+# ─────────────────────────────────────────────────────────────────
+# §15  DERIVATION  (conditional: mathematical topics)
+# ─────────────────────────────────────────────────────────────────
+"derivation": f"""Generate the STEP-BY-STEP DERIVATION for topic: "{T}"
 {focus}
+Context: {c}
 
-Produce 4 boxes:
-  1. "Must-Know Facts" (5-6 bullet points — exam essentials)
-  2. "Common Mistakes" (4-5 bullet points — what students get wrong)
-  3. "Key Formulas / Definitions" (3-4 items — only if applicable)
-  4. "Exam Tips" (3-4 bullet points — strategy and wording advice)
+Style reference: rocketpropulsion.html #process (timeline) + Respiration.html clickable pathway.
+Produce a 4-8 step derivation using the .timeline / .tl-item / .tl-dot / .tl-card pattern
+plus inline LaTeX $$...$$ for each equation step.
 
 Return ONLY this HTML:
 
-<div class="exam-grid">
-  <div class="exam-box">
-    <h4>✅ Must-Know Facts</h4>
-    <ul>
-      <li>[Fact 1 about "{topic}" — essential for exam]</li>
-      <li>[Fact 2]</li>
-      <li>[Fact 3]</li>
-      <li>[Fact 4]</li>
-      <li>[Fact 5]</li>
-    </ul>
+<section id="derivation" class="section">
+  <div class="card">
+    <div class="section-label">Mathematical Derivation</div>
+    <h2>📊 Deriving the Key Equation</h2>
+    <p style="color:var(--muted);font-size:14px;margin-bottom:20px;">[2-3 sentences: what we derive and why it matters for "{T}"]</p>
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-dot">1</div>
+        <div class="tl-card">
+          <div class="tl-icon">[emoji]</div>
+          <h3>[Step 1 title]</h3>
+          <div style="background:var(--bg);border-radius:var(--radius-sm);padding:12px;margin:8px 0;text-align:center;font-size:1.1em;">$$[LaTeX step 1]$$</div>
+          <p>[1-2 sentence explanation]</p>
+        </div>
+      </div>
+      [Continue for all steps]
+      <div class="tl-item" style="transition-delay:[Ns]">
+        <div class="tl-dot">✓</div>
+        <div class="tl-card" style="border-color:var(--success,#22c55e);">
+          <div class="tl-icon">🎯</div>
+          <h3>Final Result</h3>
+          <div style="background:var(--green-light,#dcfce7);border-radius:var(--radius-sm);padding:12px;margin:8px 0;text-align:center;font-size:1.2em;">$$[Final equation]$$</div>
+          <p>[2-3 sentences on physical significance]</p>
+        </div>
+      </div>
+    </div>
   </div>
-  <div class="exam-box warn">
-    <h4>⚠️ Common Mistakes</h4>
-    <ul>
-      <li>[Mistake 1 students make about "{topic}"]</li>
-      <li>[Mistake 2]</li>
-      <li>[Mistake 3]</li>
-      <li>[Mistake 4]</li>
-    </ul>
-  </div>
-  <div class="exam-box">
-    <h4>📐 Key Formulas / Definitions</h4>
-    <ul>
-      <li>[Formula or definition 1 — if topic is mathematical; else replace with a "Key term: definition" point]</li>
-      <li>[Formula or definition 2]</li>
-      <li>[Formula or definition 3]</li>
-    </ul>
-  </div>
-  <div class="exam-box">
-    <h4>💡 Exam Tips</h4>
-    <ul>
-      <li>[Exam strategy tip 1 for "{topic}"]</li>
-      <li>[Tip 2]</li>
-      <li>[Tip 3]</li>
-      <li>[Tip 4]</li>
-    </ul>
-  </div>
-</div>
+</section>
 
-OUTPUT NOTHING after the closing </div>.""",
+OUTPUT NOTHING after the closing </section>.""",
     }
 
-    return prompts.get(section_name, f"Generate content for section '{section_name}' about topic '{topic}'.")
+    return PROMPTS.get(section, f"Generate content for section '{section}' about '{T}'.")
 
 
-# ════════════════════════════════════════════════════════════════════════
-#  STRIP VERIFICATION TAIL
-# ════════════════════════════════════════════════════════════════════════
-
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAIL STRIPPER
+# ══════════════════════════════════════════════════════════════════════════════
 def _strip_tail(html: str) -> str:
-    """Remove any verification/commentary block after the last HTML closing tag."""
-    last_close = -1
-    for tag in ('</div>', '</script>', '</table>', '</ul>', '</ol>', '</section>'):
+    last = -1
+    for tag in ("</section>", "</div>", "</script>", "</table>", "</ul>"):
         idx = html.rfind(tag)
         if idx != -1:
             candidate = idx + len(tag)
-            if candidate > last_close:
-                last_close = candidate
-    if last_close == -1:
+            if candidate > last:
+                last = candidate
+    if last == -1:
         return html
-    tail = html[last_close:]
-    markers = ['###', 'Verification', 'Requirement', '| ---', '✅', '**', 'Status |']
+    tail = html[last:]
+    markers = ["###", "Verification", "| ---", "Status", "**", "✅ "]
     if tail.strip() and any(m in tail for m in markers):
-        return html[:last_close]
+        return html[:last]
     return html
 
 
-# ════════════════════════════════════════════════════════════════════════
-#  HTML PAGE SHELL + CSS
-# ════════════════════════════════════════════════════════════════════════
-
-def _get_page_css(topic: str) -> str:
-    """Returns the full CSS matching the reference HTML style."""
-    return """
-/* ════════════════════════════════════════════════════════
-   EduPage CSS  — matches reference HTML style
-   Fonts: Space Grotesk (headings) + Inter (body)
-   Palette: navy / blue / mint / coral / amber / purple
-════════════════════════════════════════════════════════ */
-:root{
-  --bg:#F0F4FF;--bg2:#E8EEF8;--card:#FFFFFF;
-  --navy:#1E3A5F;--blue:#4A90D9;--blue-light:#D6E9F8;
-  --amber:#F5A623;--amber-light:#FEF3DC;
-  --mint:#52C97C;--mint-light:#D9F5E7;
-  --coral:#FF6B6B;--coral-light:#FFE8E8;
-  --purple:#7B61FF;--purple-light:#EDE9FF;
-  --text:#1E3A5F;--text-soft:#5A7290;--text-xs:#8BA0B5;
-  --border:#D0DCF0;--shadow:0 2px 20px rgba(30,58,95,0.08);
-  --r:14px;--r-sm:9px;
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);
-     color:var(--text);font-size:17px;line-height:1.7;overflow-x:hidden}
-h1,h2,h3,h4,h5{font-family:'Space Grotesk',sans-serif;line-height:1.3}
-a{color:var(--blue);text-decoration:none}
-button{cursor:pointer;font-family:'Inter',sans-serif}
-img{max-width:100%;height:auto}
-
-/* ── LEFT NAV TOGGLE ── */
-#nav-btn{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:1100;
-  background:var(--navy);color:#fff;border:none;padding:16px 8px;
-  border-radius:0 12px 12px 0;writing-mode:vertical-rl;
-  font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px;
-  letter-spacing:1px;box-shadow:3px 0 16px rgba(30,58,95,0.22);transition:background .2s}
-#nav-btn:hover{background:var(--blue)}
-#side-nav{position:fixed;left:-260px;top:0;height:100vh;width:260px;
-  background:#fff;z-index:1099;border-right:2px solid var(--border);
-  box-shadow:4px 0 32px rgba(30,58,95,0.12);
-  transition:left .35s cubic-bezier(.4,0,.2,1);
-  display:flex;flex-direction:column;overflow:hidden}
-#side-nav.open{left:0}
-#side-nav .nav-head{padding:20px 18px 14px;border-bottom:2px solid var(--border);
-  display:flex;align-items:center;justify-content:space-between}
-#side-nav .nav-head h3{font-size:15px;color:var(--navy)}
-#nav-close{background:none;border:none;font-size:20px;color:var(--text-soft)}
-#side-nav nav{overflow-y:auto;flex:1;padding:8px 0}
-#side-nav nav a{display:block;padding:9px 20px;font-size:13.5px;font-weight:600;
-  color:var(--text-soft);border-left:3px solid transparent;
-  transition:all .18s;text-decoration:none}
-#side-nav nav a:hover,#side-nav nav a.active{color:var(--navy);background:var(--bg);border-left-color:var(--blue)}
-
-/* ── LAYOUT ── */
-#content{max-width:920px;margin:0 auto;padding:28px 24px 60px}
-section{margin-bottom:52px;scroll-margin-top:24px}
-.sec-title{font-size:1.55rem;color:var(--navy);margin-bottom:20px;display:flex;align-items:center;gap:10px}
-.sec-title .ic{font-size:1.4rem}
-.card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:24px;border:1px solid var(--border)}
-.badge{display:inline-block;padding:4px 14px;border-radius:50px;font-size:.8rem;font-weight:700}
-
-/* ── HERO ── */
-#hero{background:linear-gradient(135deg,var(--navy) 0%,#2A5080 60%,#1A6EAB 100%);
-  border-radius:22px;padding:44px 36px;color:#fff;position:relative;
-  overflow:hidden;margin-bottom:52px}
-#hero::before{content:'';position:absolute;top:-60px;right:-60px;width:220px;height:220px;
-  border-radius:50%;background:rgba(74,144,217,.15)}
-#hero .badge{background:var(--amber);color:#333;margin-bottom:14px}
-#hero h1{font-size:2.3rem;margin-bottom:12px;position:relative}
-#hero p{font-size:1.15rem;opacity:.92;max-width:580px;position:relative}
-#hero-svg{position:absolute;right:32px;top:50%;transform:translateY(-50%);opacity:.4}
-
-/* ── DEFINITION ── */
-.def-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
-.def-card{background:var(--bg);border-radius:var(--r-sm);padding:18px;border-left:4px solid var(--blue)}
-.def-card h4{color:var(--navy);font-size:1rem;margin-bottom:6px}
-.def-card p{font-size:.92rem;color:var(--text-soft)}
-.obj-box{background:var(--amber-light);border-radius:var(--r-sm);padding:16px 20px;border-left:4px solid var(--amber)}
-.obj-box h4{color:#a0620a;font-size:.98rem;margin-bottom:8px}
-.obj-box ul{list-style:none}
-.obj-box li{font-size:.9rem;color:var(--text);margin-bottom:4px}
-.obj-box li::before{content:"✔ ";color:var(--mint);font-weight:800}
-
-/* ── FUNDAMENTALS ── */
-#fund-btn{background:var(--navy);color:#fff;border:none;padding:12px 26px;
-  border-radius:50px;font-weight:700;font-size:1rem;
-  display:inline-flex;align-items:center;gap:9px;
-  box-shadow:0 4px 18px rgba(30,58,95,.22);transition:background .2s}
-#fund-btn:hover{background:var(--blue)}
-#fund-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:2000;
-  align-items:center;justify-content:center}
-#fund-overlay.open{display:flex}
-#fund-panel{background:#fff;border-radius:20px;padding:30px;max-width:600px;
-  width:94%;max-height:82vh;overflow-y:auto;position:relative;
-  box-shadow:0 12px 56px rgba(30,58,95,.22)}
-#fund-panel h3{color:var(--navy);font-size:1.2rem;margin-bottom:6px}
-#fund-search{width:100%;padding:9px 14px;border:2px solid var(--border);
-  border-radius:var(--r-sm);font-size:.95rem;margin:12px 0 16px;
-  font-family:'Inter',sans-serif;outline:none}
-#fund-search:focus{border-color:var(--blue)}
-.fund-close{position:absolute;top:14px;right:16px;background:none;border:none;
-  font-size:22px;color:var(--text-soft)}
-.glos-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.glos-item{background:var(--bg);border-radius:var(--r-sm);padding:13px 15px}
-.glos-item h5{color:var(--navy);font-size:.92rem;margin-bottom:4px}
-.glos-item p{font-size:.82rem;color:var(--text-soft);line-height:1.5}
-
-/* ── FLOATING GLOSSARY ── */
-#float-glos{position:fixed;right:18px;bottom:24px;z-index:1000}
-#float-btn{background:var(--blue);color:#fff;border:none;padding:12px 20px;
-  border-radius:50px;font-weight:700;font-size:.92rem;
-  box-shadow:0 4px 20px rgba(74,144,217,.4);transition:background .2s}
-#float-btn:hover{background:var(--navy)}
-#float-panel{display:none;position:fixed;right:18px;bottom:78px;width:280px;
-  max-height:400px;overflow-y:auto;background:#fff;border-radius:var(--r);
-  box-shadow:0 8px 40px rgba(30,58,95,.18);border:1px solid var(--border);
-  z-index:1001;padding:18px}
-#float-panel.open{display:block}
-#float-panel h4{color:var(--navy);font-size:1rem;margin-bottom:12px}
-.fp-close{position:absolute;top:12px;right:14px;background:none;border:none;
-  font-size:18px;color:var(--text-soft);cursor:pointer}
-.fp-item{margin-bottom:9px;border-bottom:1px solid var(--border);padding-bottom:8px}
-.fp-item:last-child{border-bottom:none}
-.fp-item strong{color:var(--navy);font-size:.88rem}
-.fp-item p{font-size:.8rem;color:var(--text-soft);margin-top:2px}
-
-/* ── SUBTOPICS ── */
-.sub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
-.sub-card{background:#fff;border-radius:var(--r-sm);padding:18px;
-  border:1px solid var(--border);border-top:4px solid var(--blue);
-  box-shadow:var(--shadow);transition:transform .2s,box-shadow .2s}
-.sub-card:hover{transform:translateY(-3px);box-shadow:0 6px 28px rgba(30,58,95,.12)}
-.sub-card h4{color:var(--navy);font-size:1rem;margin-bottom:7px}
-.sub-card p{font-size:.87rem;color:var(--text-soft);line-height:1.55}
-.sub-card .dyk{margin-top:10px;background:var(--amber-light);border-radius:6px;
-  padding:7px 10px;font-size:.8rem;color:#a0620a}
-.kw-tags{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px}
-.kw{background:var(--blue-light);color:var(--navy);border-radius:50px;
-  padding:2px 10px;font-size:.75rem;font-weight:700}
-
-/* ── TYPES FLOWCHART ── */
-.fc-wrap{display:flex;flex-direction:column;align-items:center;gap:0}
-.fc-node{background:var(--navy);color:#fff;padding:12px 30px;
-  border-radius:var(--r-sm);font-weight:700;font-size:1rem;text-align:center;
-  min-width:190px;cursor:pointer;transition:background .2s}
-.fc-node:hover{background:var(--blue)}
-.fc-arrow{color:var(--blue);font-size:1.9rem;line-height:.9;margin:1px 0}
-.fc-branch{display:flex;gap:36px;margin-top:2px;flex-wrap:wrap;justify-content:center}
-.fc-branch-col{display:flex;flex-direction:column;align-items:center}
-.fc-sub{background:var(--blue);color:#fff;padding:9px 20px;border-radius:var(--r-sm);
-  font-size:.88rem;font-weight:700;min-width:150px;text-align:center;
-  cursor:pointer;transition:background .2s}
-.fc-sub:hover,.fc-sub.active{background:var(--navy)}
-.fc-sub.ext{background:var(--coral)}
-.fc-sub.int{background:var(--mint);color:var(--navy)}
-.fc-info{margin-top:20px;background:var(--blue-light);border-radius:var(--r-sm);
-  padding:16px 20px;display:none}
-.fc-info.show{display:block}
-.fc-info h4{color:var(--navy);font-size:1rem;margin-bottom:6px}
-.fc-info p{font-size:.92rem;color:var(--text-soft)}
-
-/* ── PATHWAY ── */
-.path-wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;
-  gap:0;margin:20px 0}
-.path-step{background:#fff;border:2px solid var(--border);border-radius:var(--r-sm);
-  padding:14px 18px;text-align:center;cursor:pointer;transition:all .3s;
-  min-width:110px;position:relative}
-.path-step:hover{border-color:var(--blue);transform:translateY(-2px)}
-.path-step.lit{background:var(--blue);border-color:var(--blue);color:#fff}
-.path-step .ico{font-size:1.8rem;display:block;margin-bottom:4px}
-.path-step .lbl{font-size:.8rem;font-weight:700}
-.path-arrow{font-size:1.5rem;color:var(--blue);padding:0 4px;flex-shrink:0}
-.path-info{background:var(--navy);color:#fff;border-radius:var(--r-sm);
-  padding:14px 18px;margin-top:14px;font-size:.92rem;min-height:54px;display:none}
-.path-info.show{display:block}
-
-/* ── WORKING PROCESS ── */
-.steps-flow{display:flex;flex-direction:column;align-items:center;gap:0}
-.step-box{background:#fff;border:2px solid var(--border);border-radius:var(--r-sm);
-  padding:13px 24px;text-align:center;min-width:280px;font-weight:600;
-  font-size:.96rem;transition:background .3s,border-color .3s}
-.step-box.active-step{background:var(--blue);border-color:var(--blue);color:#fff}
-.step-dn{color:var(--blue);font-size:1.9rem;line-height:.9}
-#play-btn{margin:20px auto 0;display:block;background:var(--mint);color:var(--navy);
-  border:none;padding:11px 28px;border-radius:50px;font-weight:700;font-size:1rem;
-  transition:background .2s}
-#play-btn:hover{background:#3ab867}
-
-/* ── COMPARISON TABLE ── */
-.cmp-table{width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
-.cmp-table th{background:var(--navy);color:#fff;padding:13px 16px;font-size:.98rem}
-.cmp-table th:first-child{background:#264653}
-.cmp-table td{padding:11px 16px;font-size:.9rem;border-bottom:1px solid var(--border)}
-.cmp-table tr:nth-child(even) td{background:var(--bg)}
-.cmp-table td:first-child{font-weight:700;color:var(--navy);background:#f9fbff}
-.cmp-table tr:hover td{background:var(--blue-light)}
-
-/* ── REAL-LIFE CARDS ── */
-.rl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:15px}
-.rl-card{background:var(--navy);color:#fff;border-radius:var(--r-sm);padding:18px;
-  text-align:center;cursor:pointer;min-height:120px;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  transition:transform .2s;box-shadow:var(--shadow)}
-.rl-card:hover{transform:translateY(-3px)}
-.rl-front .emoji{font-size:2.2rem;margin-bottom:8px}
-.rl-front p{font-size:.88rem;font-weight:700;opacity:.88}
-.rl-back{display:none;font-size:.88rem;line-height:1.6}
-.rl-card.revealed .rl-front{display:none}
-.rl-card.revealed .rl-back{display:block}
-.rl-card.revealed{background:var(--amber);color:var(--text)}
-
-/* ── FUN FACTS ── */
-.ff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
-.ff-card{background:var(--purple);color:#fff;border-radius:var(--r-sm);padding:20px;
-  text-align:center;cursor:pointer;min-height:130px;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  transition:transform .2s;box-shadow:var(--shadow)}
-.ff-card:hover{transform:translateY(-3px)}
-.ff-front .ff-q{font-size:.88rem;font-weight:700;opacity:.9;line-height:1.5}
-.ff-back{display:none;font-size:.88rem;line-height:1.6}
-.ff-card.revealed .ff-front{display:none}
-.ff-card.revealed .ff-back{display:block}
-.ff-card.revealed{background:var(--mint-light);color:var(--text)}
-
-/* ── ACTIVITIES ── */
-.act-tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
-.act-tab{padding:9px 22px;border-radius:50px;border:2px solid var(--blue);
-  background:none;font-weight:700;font-size:.92rem;color:var(--navy);transition:all .2s}
-.act-tab.active,.act-tab:hover{background:var(--navy);color:#fff;border-color:var(--navy)}
-.act-panel{display:none}
-.act-panel.active{display:block}
-.act1-scenario{background:var(--bg);border-radius:var(--r-sm);padding:20px;
-  text-align:center;margin-bottom:16px}
-.act1-scenario .scene{font-size:3rem;margin-bottom:10px}
-.act1-scenario h4{font-size:1.05rem;color:var(--navy);margin-bottom:6px}
-.act1-opts{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.act1-opt{background:#fff;border:2px solid var(--border);border-radius:var(--r-sm);
-  padding:13px;text-align:center;font-weight:700;font-size:.95rem;transition:all .2s}
-.act1-opt:hover{border-color:var(--blue);background:var(--blue-light)}
-.act1-opt.correct{background:var(--mint-light);border-color:var(--mint);color:#1a7a42}
-.act1-opt.wrong{background:var(--coral-light);border-color:var(--coral);color:#c0392b}
-.build-pool{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;justify-content:center}
-.build-block{background:var(--blue-light);border:2px solid var(--blue);
-  border-radius:var(--r-sm);padding:9px 18px;font-weight:700;font-size:.92rem;
-  cursor:pointer;transition:all .2s;user-select:none}
-.build-block:hover{background:var(--blue);color:#fff}
-.build-block.used{opacity:.35;pointer-events:none}
-.build-slots{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:14px}
-.build-slot{background:#fff;border:2px dashed var(--border);border-radius:var(--r-sm);
-  padding:9px 18px;min-width:110px;text-align:center;font-weight:700;
-  font-size:.88rem;color:var(--text-soft);cursor:pointer}
-.build-slot.filled{border-style:solid;border-color:var(--blue);color:var(--navy);background:var(--blue-light)}
-.build-slot.correct{border-color:var(--mint);background:var(--mint-light);color:#1a7a42}
-.build-slot.wrong{border-color:var(--coral);background:var(--coral-light);color:#c0392b}
-.arc-challenge-steps{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:14px 0}
-.arc-ch-btn{background:#fff;border:2px solid var(--border);border-radius:var(--r-sm);
-  padding:10px 16px;font-weight:700;font-size:.88rem;cursor:pointer;transition:all .2s}
-.arc-ch-btn:hover{border-color:var(--purple)}
-.arc-ch-btn.correct{background:var(--mint);border-color:var(--mint);color:#fff;pointer-events:none}
-.arc-ch-btn.wrong-ans{animation:shake .3s;border-color:var(--coral);background:var(--coral-light)}
-@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
-
-/* ── FORMULAS ── */
-.formula-stack{display:flex;flex-direction:column;gap:20px;margin-bottom:20px}
-.formula-card{background:#fff;border:1px solid var(--border);border-radius:var(--r);
-  padding:20px;border-left:4px solid var(--purple)}
-.formula-name{font-family:'Space Grotesk',sans-serif;font-size:1.05rem;
-  font-weight:700;color:var(--purple);margin-bottom:12px}
-.formula-eq{background:var(--purple-light);border-radius:var(--r-sm);padding:18px;
-  text-align:center;font-size:1.2rem;margin:12px 0;overflow-x:auto}
-.sym-table{width:100%;border-collapse:collapse;margin-top:8px}
-.sym-table tr{border-bottom:1px solid var(--border)}
-.sym-table td{padding:6px 10px;font-size:.88rem}
-.sym-var{font-family:monospace;color:var(--purple);font-weight:700;width:80px}
-.practice-box{background:var(--amber-light);border-radius:var(--r-sm);padding:14px 18px;
-  font-weight:700;font-size:.9rem;text-align:center;color:#a0620a}
-
-/* ── DERIVATION ── */
-.deriv-intro{background:var(--mint-light);border-left:4px solid var(--mint);
-  border-radius:0 var(--r-sm) var(--r-sm) 0;padding:14px 18px;margin-bottom:20px}
-.deriv-steps{display:flex;flex-direction:column;gap:14px}
-.deriv-step{background:#fff;border:2px solid var(--border);border-radius:var(--r-sm);padding:18px}
-.step-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.step-num{background:var(--mint);color:#fff;border-radius:50px;padding:4px 12px;
-  font-size:.82rem;font-weight:800}
-.step-title{font-weight:700;color:var(--navy);font-size:1rem}
-.step-eq{background:var(--mint-light);border-radius:var(--r-sm);padding:14px;
-  text-align:center;font-size:1.1rem;margin:10px 0;overflow-x:auto}
-.step-explain{font-size:.9rem;color:var(--text-soft);line-height:1.6}
-.deriv-final{background:linear-gradient(135deg,#14532d,#166534);border-radius:var(--r);
-  padding:22px;text-align:center;color:#fff}
-.final-label{font-size:13px;font-weight:800;color:#86efac;margin-bottom:12px;
-  text-transform:uppercase;letter-spacing:.5px}
-
-/* ── QUIZ ── */
-#quiz-progress{height:8px;background:var(--border);border-radius:50px;overflow:hidden;margin-bottom:16px}
-#quiz-bar{height:100%;background:var(--blue);border-radius:50px;transition:width .4s;width:0}
-.quiz-qnum{font-size:.88rem;color:var(--text-soft);margin-bottom:8px;font-weight:600}
-.quiz-q{font-size:1.1rem;font-weight:700;color:var(--text);margin-bottom:18px}
-.quiz-opts{display:flex;flex-direction:column;gap:10px}
-.quiz-opt{background:#fff;border:2px solid var(--border);border-radius:var(--r-sm);
-  padding:12px 18px;font-size:.95rem;font-weight:600;text-align:left;
-  transition:all .2s;color:var(--text)}
-.quiz-opt:hover{border-color:var(--blue);background:var(--blue-light)}
-.quiz-opt.correct{background:var(--mint-light);border-color:var(--mint);color:#1a7a42}
-.quiz-opt.wrong{background:var(--coral-light);border-color:var(--coral);color:#c0392b}
-.quiz-opt:disabled{cursor:default}
-#quiz-exp{margin-top:12px;padding:12px 16px;border-radius:var(--r-sm);
-  background:var(--amber-light);color:var(--text);font-size:.9rem;display:none}
-.score-big{font-size:4rem;font-weight:800;font-family:'Space Grotesk',sans-serif;
-  color:var(--navy);margin-top:24px}
-.score-msg{font-size:1.15rem;font-weight:700;margin:10px 0 22px;color:var(--text-soft)}
-
-/* ── REVISION ── */
-.rev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
-.rev-item{background:var(--bg);border-radius:var(--r-sm);padding:14px 16px;
-  border-left:4px solid var(--blue);font-size:.93rem}
-.rev-item strong{color:var(--navy);display:block;margin-bottom:3px}
-
-/* ── EXAM READY ── */
-.exam-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.exam-box{background:#fff;border-radius:var(--r-sm);padding:18px;border:1px solid var(--border)}
-.exam-box h4{color:var(--navy);font-size:1rem;margin-bottom:12px;
-  padding-bottom:8px;border-bottom:2px solid var(--border)}
-.exam-box ul{list-style:none}
-.exam-box ul li{font-size:.88rem;margin-bottom:7px;color:var(--text-soft)}
-.exam-box ul li::before{content:"▸ ";color:var(--blue);font-weight:800}
-.exam-box.warn{border-color:var(--coral)}
-.exam-box.warn h4{color:var(--coral)}
-.exam-box.warn li::before{color:var(--coral)}
-
-/* ── RESPONSIVE ── */
-@media(max-width:700px){
-  #content{padding:16px 14px}
-  .def-grid,.exam-grid{grid-template-columns:1fr}
-  #hero h1{font-size:1.55rem}
-  #hero{padding:28px 20px}
-  #hero-svg{display:none}
-  .glos-grid{grid-template-columns:1fr}
-  .path-wrap{gap:4px}
-  .path-step{min-width:80px;padding:10px 8px}
-  .act1-opts{grid-template-columns:1fr}
-  .fc-branch{gap:16px}
-}
-@media(max-width:480px){
-  .cmp-table th,.cmp-table td{padding:8px 10px;font-size:.82rem}
-}
-"""
+# ══════════════════════════════════════════════════════════════════════════════
+#  TOPIC CLASSIFIER
+# ══════════════════════════════════════════════════════════════════════════════
+async def _classify(topic: str) -> Dict:
+    prompt = f"""Classify this educational topic.
+Topic: "{topic}"
+Return ONLY valid JSON (no markdown):
+{{
+  "category": "mathematical" | "semi_mathematical" | "conceptual",
+  "needs_formula": true | false,
+  "needs_derivation": true | false,
+  "subject": "Biology" | "Physics" | "Chemistry" | "Mathematics" | "Other",
+  "level": "Class 9-10" | "Class 11-12" | "University",
+  "color_a": "#hex",
+  "color_b": "#hex",
+  "color_a_light": "#hex",
+  "color_b_light": "#hex",
+  "label_a": "Type A name",
+  "label_b": "Type B name",
+  "emoji_a": "emoji",
+  "emoji_b": "emoji"
+}}
+Choose color_a / color_b to reflect the topic's two main types/aspects naturally.
+mathematical = needs_formula=true AND needs_derivation=true
+semi_mathematical = needs_formula=true, needs_derivation=false
+conceptual = needs_formula=false, needs_derivation=false"""
+    try:
+        msg = await client.messages.create(
+            model=MODEL_HAIKU, max_tokens=400,
+            messages=[{"role": "user", "content": prompt}])
+        raw = re.sub(r'```json\s*|\s*```', '', msg.content[0].text.strip())
+        result = json.loads(raw)
+        log.info(f"[classify] '{topic}' → {result.get('category')} "
+                 f"formula={result.get('needs_formula')} "
+                 f"colors={result.get('color_a')}/{result.get('color_b')}")
+        return result
+    except Exception as e:
+        log.warning(f"[classify] failed ({e}), using defaults")
+        return {"category": "conceptual", "needs_formula": False,
+                "needs_derivation": False, "subject": "Biology",
+                "level": "Class 9-10",
+                "color_a": "#2563eb", "color_b": "#d97706",
+                "color_a_light": "#dbeafe", "color_b_light": "#fef3c7",
+                "label_a": "Type A", "label_b": "Type B",
+                "emoji_a": "🟢", "emoji_b": "🔴"}
 
 
-def _assemble_html(
-    topic: str,
-    sections: Dict[str, str],
-    lesson_sections: List[str],
-    classification: Optional[Dict] = None,
-) -> str:
-    """Build the complete HTML page from section content blobs."""
+def _section_list(cls: Dict) -> List[str]:
+    out: List[str] = []
+    for s in ORDERED_SECTIONS:
+        if s == "formulas" and not cls.get("needs_formula"):
+            continue
+        if s == "derivation" and not cls.get("needs_derivation"):
+            continue
+        out.append(s)
+    return out
 
-    css = _get_page_css(topic)
 
-    # ── Section label map ──────────────────────────────────────────────
-    section_meta = {
-        "hero":          ("🌟 Hook",            "hero"),
-        "definition":    ("📖 What Is It?",      "definition"),
-        "fundamentals":  ("🔑 Fundamentals",     "fundamentals"),
-        "subtopics":     ("🧬 Subtopics",        "subtopics"),
-        "types":         ("📊 Types",            "types"),
-        "pathway":       ("⚙️ How It Works",    "pathway"),
-        "formulas":      ("📐 Formulas",         "formulas"),
-        "derivation":    ("📊 Derivation",       "derivation"),
-        "deep_concepts": ("⚖️ Key Differences", "deep_concepts"),
-        "reallife":      ("🌍 Real-Life",        "reallife"),
-        "funfacts":      ("💡 Fun Facts",        "funfacts"),
-        "activities":    ("🎮 Activities",       "activities"),
-        "quiz":          ("❓ Quiz",             "quiz"),
-        "revision":      ("📝 Revision",         "revision"),
-        "exam_ready":    ("🎯 Exam Ready",       "exam_ready"),
+# ══════════════════════════════════════════════════════════════════════════════
+#  CSS — exact reference-file token set
+# ══════════════════════════════════════════════════════════════════════════════
+def _build_css(cls: Dict, topic: str) -> str:
+    ca   = cls.get("color_a",       "#2563eb")
+    cb   = cls.get("color_b",       "#d97706")
+    cal  = cls.get("color_a_light", "#dbeafe")
+    cbl  = cls.get("color_b_light", "#fef3c7")
+    subj = cls.get("subject", "Biology")
+
+    # Pick primary from subject
+    primary_map = {
+        "Biology":     ("#2563eb", "#dbeafe", "#93c5fd"),
+        "Physics":     ("#0ea5e9", "#e0f2fe", "#7dd3fc"),
+        "Chemistry":   ("#7c3aed", "#ede9fe", "#c4b5fd"),
+        "Mathematics": ("#0f766e", "#ccfbf1", "#5eead4"),
+        "Other":       ("#4f46e5", "#e0e7ff", "#a5b4fc"),
     }
+    primary, plight, pmid = primary_map.get(subj, primary_map["Other"])
 
-    # ── Side-nav links ──────────────────────────────────────────────────
-    nav_links = "\n".join(
-        f'    <a href="#{section_meta[s][1]}" onclick="closeNav()">{section_meta[s][0]}</a>'
-        for s in lesson_sections
-        if s in section_meta
-    )
+    return f"""
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
 
-    # ── Floating glossary — pre-populate from fundamentals if available ─
-    # (will be re-populated from the generated fundamentals HTML via JS)
-    floating_glossary_items = ""
-    if "fundamentals" in sections:
-        # Extract h5 terms from the fundamentals section for the floating panel
-        terms = re.findall(r'<h5>(.*?)</h5>\s*<p>(.*?)</p>', sections["fundamentals"], re.DOTALL)
-        for term, defn in terms[:8]:  # show max 8 in floating panel
-            floating_glossary_items += (
-                f'<div class="fp-item"><strong>{term}</strong>'
-                f'<p>{defn.strip()}</p></div>\n'
-            )
+/* ══ REFERENCE-FILE TOKEN SET ══ */
+:root {{
+  --bg:          #f0f4f8;
+  --surface:     #ffffff;
+  --card:        #ffffff;
+  --primary:     {primary};
+  --primary-light: {plight};
+  --primary-mid: {pmid};
+  --secondary:   {ca};
+  --color-a:     {ca};
+  --color-b:     {cb};
+  --color-a-light: {cal};
+  --color-b-light: {cbl};
+  --success:     #22c55e;
+  --green:       #16a34a;
+  --green-light: #dcfce7;
+  --warning:     #f59e0b;
+  --danger:      #ef4444;
+  --red:         #dc2626;
+  --red-light:   #fee2e2;
+  --purple:      #7c3aed;
+  --purple-light:#ede9fe;
+  --text:        #1a202c;
+  --muted:       #64748b;
+  --border:      #e2e8f0;
+  --shadow:      0 2px 12px rgba(0,0,0,0.08);
+  --shadow-md:   0 4px 20px rgba(0,0,0,0.12);
+  --radius:      14px;
+  --radius-sm:   8px;
+}}
 
-    # ── Section bodies ──────────────────────────────────────────────────
+/* ══ RESET ══ */
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+html{{scroll-behavior:smooth}}
+body{{
+  font-family:'Inter',system-ui,sans-serif;
+  background:var(--bg);color:var(--text);
+  line-height:1.7;font-size:16px;overflow-x:hidden;
+}}
+h1,h2,h3,h4{{font-family:'Poppins',system-ui,sans-serif;line-height:1.25}}
+strong{{font-weight:700}}
+a{{color:var(--primary);text-decoration:none}}
+button{{cursor:pointer;font-family:'Inter',sans-serif}}
+img{{max-width:100%;height:auto}}
+
+/* ══ LAYOUT ══ */
+.page-wrapper{{display:flex;min-height:100vh}}
+.main-content{{
+  flex:1;padding:24px 24px 100px 24px;
+  max-width:860px;margin:0 auto;width:100%;
+}}
+section.section{{margin-bottom:36px;scroll-margin-top:80px}}
+
+/* ══ STICKY HEADER (rocketpropulsion style) ══ */
+#site-header{{
+  position:sticky;top:0;z-index:997;
+  background:rgba(255,255,255,0.95);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--border);
+  box-shadow:0 2px 12px rgba(0,0,0,0.06);
+}}
+.header-inner{{
+  max-width:960px;margin:0 auto;
+  padding:10px 20px;display:flex;
+  align-items:center;gap:14px;flex-wrap:wrap;
+}}
+.header-brand{{display:flex;align-items:center;gap:10px}}
+.header-title{{font-size:17px;font-weight:700;color:var(--primary);font-family:'Poppins',sans-serif}}
+.header-section{{font-size:13px;color:var(--muted);margin-left:auto}}
+.progress-wrap{{width:100%;height:5px;background:var(--border);border-radius:99px;margin-top:4px}}
+.progress-bar{{
+  height:5px;background:linear-gradient(90deg,var(--primary),var(--color-a));
+  border-radius:99px;width:0%;transition:width .3s;
+}}
+
+/* ══ SIDE NAV ══ */
+#side-nav{{
+  position:fixed;left:0;top:50%;transform:translateY(-50%);
+  z-index:1000;transition:all .3s ease;
+}}
+#nav-toggle{{
+  background:var(--primary);color:#fff;border:none;
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  padding:12px 14px;cursor:pointer;font-size:13px;
+  font-weight:600;box-shadow:var(--shadow-md);
+  writing-mode:vertical-rl;text-orientation:mixed;
+  letter-spacing:1px;
+}}
+#nav-toggle:hover{{background:var(--secondary)}}
+#nav-panel{{
+  display:none;background:var(--surface);
+  border:1px solid var(--border);border-left:none;
+  border-radius:0 var(--radius) var(--radius) 0;
+  box-shadow:var(--shadow-md);min-width:190px;
+  max-height:80vh;overflow-y:auto;
+}}
+#nav-panel.open{{display:block}}
+.nav-header{{
+  padding:14px 16px;font-family:'Poppins',sans-serif;
+  font-weight:700;font-size:12px;color:var(--primary);
+  border-bottom:1px solid var(--border);
+  text-transform:uppercase;letter-spacing:.5px;
+}}
+.nav-item{{
+  display:block;padding:9px 16px;font-size:13px;
+  color:var(--muted);cursor:pointer;transition:all .2s;
+  border-bottom:1px solid #f1f5f9;border:none;
+  background:none;width:100%;text-align:left;
+}}
+.nav-item:hover,.nav-item.active{{
+  background:var(--primary-light);color:var(--primary);font-weight:600;
+}}
+
+/* ══ GLOSSARY PANEL ══ */
+#glossary-btn{{
+  position:fixed;bottom:24px;right:24px;z-index:200;
+  background:var(--purple);color:#fff;border:none;
+  border-radius:50px;padding:12px 20px;cursor:pointer;
+  font-size:14px;font-weight:600;
+  box-shadow:var(--shadow-md);transition:transform .2s;
+}}
+#glossary-btn:hover{{transform:scale(1.05)}}
+#glossary-panel{{
+  position:fixed;right:0;top:0;height:100vh;width:320px;
+  background:var(--surface);border-left:1px solid var(--border);
+  z-index:300;transform:translateX(100%);transition:transform .3s ease;
+  overflow-y:auto;box-shadow:-4px 0 20px rgba(0,0,0,.12);
+}}
+#glossary-panel.open{{transform:translateX(0)}}
+.glossary-header{{
+  position:sticky;top:0;background:var(--purple);color:#fff;
+  padding:16px 20px;display:flex;justify-content:space-between;
+  align-items:center;font-family:'Poppins',sans-serif;font-weight:700;
+}}
+.close-btn{{
+  background:rgba(255,255,255,.2);border:none;color:#fff;
+  border-radius:50%;width:28px;height:28px;cursor:pointer;
+  font-size:16px;display:flex;align-items:center;justify-content:center;
+}}
+#glossary-search{{
+  width:calc(100% - 24px);margin:12px;padding:9px 14px;
+  border:1.5px solid var(--border);border-radius:var(--radius-sm);
+  font-size:14px;font-family:'Inter',sans-serif;outline:none;
+}}
+#glossary-search:focus{{border-color:var(--purple)}}
+.glossary-list{{overflow-y:auto;padding:0 12px 20px}}
+.glossary-item{{padding:12px;margin-bottom:8px;background:#f5f3ff;border-radius:var(--radius-sm)}}
+.glossary-term{{font-weight:700;color:var(--purple);font-size:14px;margin-bottom:4px}}
+.glossary-def{{font-size:13px;color:var(--muted);line-height:1.5}}
+
+/* ══ CARDS / SECTIONS ══ */
+.card{{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:24px;
+  box-shadow:var(--shadow);margin-bottom:16px;
+}}
+.section-label{{
+  font-size:11px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--muted);font-weight:600;margin-bottom:6px;
+}}
+h1{{font-size:26px;color:var(--text);margin-bottom:10px}}
+h2{{font-size:20px;color:var(--text);margin-bottom:12px}}
+h3{{font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px}}
+p{{font-size:15px;color:var(--text);margin-bottom:10px}}
+.chip{{display:inline-block;padding:4px 14px;border-radius:50px;font-size:12px;font-weight:600;margin:2px}}
+.chip-a{{background:var(--color-a-light);color:var(--color-a)}}
+.chip-b{{background:var(--color-b-light);color:var(--color-b)}}
+
+/* ══ HOOK ══ */
+#hook{{
+  background:linear-gradient(135deg,#1e3a8a 0%,var(--primary) 60%,var(--color-a) 100%);
+  border-radius:var(--radius);padding:32px 28px;
+  margin-bottom:28px;position:relative;overflow:hidden;
+}}
+#hook::before{{
+  content:'';position:absolute;right:24px;top:20px;
+  font-size:64px;opacity:.18;
+}}
+#hook .section-label{{color:rgba(255,255,255,.7)}}
+#hook h1{{color:#fff;font-size:26px;margin-bottom:10px}}
+#hook p{{color:rgba(255,255,255,.9);font-size:16px;margin-bottom:0}}
+
+/* ══ OBJECTIVES ══ */
+.obj-list{{list-style:none}}
+.obj-list li{{
+  padding:8px 0;border-bottom:1px solid var(--border);
+  font-size:14px;display:flex;gap:10px;align-items:flex-start;
+}}
+.obj-list li:last-child{{border:none}}
+.obj-list li::before{{content:'✓';color:var(--success);font-weight:700;flex-shrink:0}}
+
+/* ══ SUBTOPICS ══ */
+.subtopic-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}}
+.subtopic-card{{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);
+}}
+.subtopic-icon{{font-size:24px;margin-bottom:8px}}
+.subtopic-title{{font-weight:700;font-size:14px;margin-bottom:6px;color:var(--text)}}
+.subtopic-desc{{font-size:13px;color:var(--muted);line-height:1.5}}
+.kw-list{{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}}
+.kw{{
+  font-size:11px;background:var(--bg);padding:2px 8px;
+  border-radius:50px;color:var(--muted);font-weight:600;
+}}
+
+/* ══ FLOWCHART ══ */
+.flowchart{{display:flex;flex-direction:column;align-items:center;gap:0;padding:8px 0}}
+.flow-box{{border-radius:var(--radius-sm);padding:10px 20px;font-weight:600;font-size:14px;text-align:center;min-width:140px}}
+.flow-box.main{{background:var(--text);color:#fff}}
+.flow-box.sub{{background:var(--surface);border:2px solid var(--border);color:var(--text)}}
+.flow-arrow{{font-size:20px;color:var(--muted);line-height:1}}
+.flow-row{{display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;justify-content:center}}
+.flow-col{{display:flex;flex-direction:column;align-items:center;gap:4px}}
+.flow-label{{font-size:13px;color:var(--muted);font-style:italic}}
+
+/* ══ EQUATION BOXES ══ */
+.equation{{
+  background:var(--bg);border-left:4px solid var(--color-a);
+  border-radius:var(--radius-sm);padding:14px 18px;
+  font-size:15px;font-weight:600;margin:12px 0;
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+}}
+.equation.eq-b{{border-left-color:var(--color-b)}}
+.eq-plus,.eq-arrow{{color:var(--muted)}}
+
+/* ══ MITO BOX ══ */
+.mito-box{{
+  background:#fffbeb;border:2px solid #fcd34d;
+  border-radius:var(--radius);padding:16px;
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:12px;
+}}
+.mito-text{{flex:1;min-width:160px}}
+.mito-label{{font-size:12px;color:var(--color-b);font-weight:700;text-transform:uppercase;margin-bottom:6px}}
+
+/* ══ STEPPER ══ */
+.stepper{{display:flex;flex-direction:column;gap:0}}
+.step{{
+  display:flex;gap:14px;padding:12px 0;
+  border-left:3px solid var(--border);margin-left:12px;
+  padding-left:20px;position:relative;
+}}
+.step::before{{
+  content:attr(data-n);position:absolute;left:-14px;top:14px;
+  width:24px;height:24px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:#fff;
+}}
+.step-a::before{{background:var(--color-a)}}
+.step-b::before{{background:var(--color-b)}}
+.step-title{{font-weight:700;font-size:14px;margin-bottom:2px;color:var(--text)}}
+.step-desc{{font-size:13px;color:var(--muted)}}
+
+/* ══ TIMELINE (rocketpropulsion style) ══ */
+.timeline{{margin-top:20px;position:relative}}
+.timeline::before{{
+  content:'';position:absolute;left:32px;top:0;bottom:0;
+  width:3px;background:linear-gradient(180deg,var(--primary),var(--color-a));
+  border-radius:99px;
+}}
+.tl-item{{
+  display:flex;align-items:flex-start;gap:24px;
+  margin-bottom:36px;position:relative;padding-left:72px;
+}}
+.tl-dot{{
+  position:absolute;left:12px;top:8px;width:40px;height:40px;
+  border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--color-a));
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:16px;font-weight:900;box-shadow:0 4px 12px rgba(0,0,0,.15);
+  flex-shrink:0;
+}}
+.tl-card{{
+  background:var(--surface);border-radius:var(--radius);
+  border:1.5px solid var(--border);padding:18px 22px;
+  box-shadow:var(--shadow);flex:1;
+}}
+.tl-card h3{{color:var(--primary);font-size:16px;margin-bottom:6px}}
+.tl-card p{{font-size:14px;color:var(--muted)}}
+.tl-icon{{font-size:26px;margin-bottom:6px}}
+
+/* ══ COMPARISON TABLE ══ */
+.compare-table-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
+.compare-table{{width:100%;border-collapse:collapse;min-width:480px}}
+.compare-table th{{padding:12px 16px;text-align:left;font-size:13px;text-transform:uppercase;letter-spacing:.5px;font-weight:700}}
+.compare-table th:nth-child(2){{background:var(--color-a);color:#fff}}
+.compare-table th:nth-child(3){{background:var(--color-b);color:#fff}}
+.compare-table th:first-child{{background:var(--bg);color:var(--muted)}}
+.compare-table td{{padding:12px 16px;font-size:14px;border-top:1px solid var(--border);vertical-align:top}}
+.compare-table tr:hover td{{background:#f8fafc}}
+.compare-table td:first-child{{font-weight:600;color:var(--muted);font-size:13px}}
+
+/* ══ GAMES ══ */
+.game-area{{background:var(--bg);border-radius:var(--radius);padding:24px}}
+.game-tabs{{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}}
+.game-tab{{
+  padding:8px 18px;border-radius:50px;border:2px solid var(--border);
+  background:var(--surface);cursor:pointer;font-size:13px;
+  font-weight:600;transition:all .2s;color:var(--muted);
+}}
+.game-tab.active{{background:var(--primary);color:#fff;border-color:var(--primary)}}
+.game-panel{{display:none}}
+.game-panel.active{{display:block}}
+.game-question{{font-size:17px;font-weight:700;margin-bottom:16px;line-height:1.4}}
+.btn-row{{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}}
+.resp-btn{{
+  padding:12px 24px;border-radius:var(--radius-sm);border:2px solid var(--border);
+  background:var(--surface);font-size:14px;font-weight:600;cursor:pointer;
+  transition:all .2s;color:var(--text);
+}}
+.resp-btn:hover{{border-color:var(--primary);color:var(--primary);background:var(--primary-light)}}
+.resp-btn.correct{{background:var(--green-light);border-color:var(--green);color:var(--green)}}
+.resp-btn.wrong{{background:var(--red-light);border-color:var(--red);color:var(--red)}}
+.game-feedback{{
+  padding:12px 16px;border-radius:var(--radius-sm);font-size:14px;
+  font-weight:600;display:none;margin-bottom:16px;
+}}
+.game-feedback.good{{background:var(--green-light);color:var(--green);display:block}}
+.game-feedback.bad{{background:var(--red-light);color:var(--red);display:block}}
+.score-badge{{
+  display:inline-block;padding:4px 14px;background:var(--purple-light);
+  color:var(--purple);border-radius:50px;font-size:13px;font-weight:700;
+}}
+.match-area{{display:flex;gap:16px;flex-wrap:wrap}}
+.match-col{{flex:1;min-width:180px}}
+.match-col-title{{
+  text-align:center;padding:10px;border-radius:var(--radius-sm);
+  font-weight:700;font-size:14px;margin-bottom:8px;
+}}
+.match-col-title.col-a{{background:var(--color-a);color:#fff}}
+.match-col-title.col-b{{background:var(--color-b);color:#fff}}
+.match-drop{{
+  min-height:80px;border:2px dashed var(--border);
+  border-radius:var(--radius-sm);padding:8px;
+  display:flex;flex-direction:column;gap:6px;
+}}
+.match-cards{{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}}
+.match-card{{
+  padding:8px 14px;background:var(--surface);border:2px solid var(--border);
+  border-radius:50px;font-size:13px;font-weight:600;cursor:pointer;
+  transition:all .2s;user-select:none;
+}}
+.match-card:hover{{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}}
+.match-card.placed-a{{background:var(--color-a-light);border-color:var(--color-a);color:var(--color-a)}}
+.match-card.placed-b{{background:var(--color-b-light);border-color:var(--color-b);color:var(--color-b)}}
+.match-card.correct-placed{{background:var(--green-light);border-color:var(--green);color:var(--green)}}
+.match-card.wrong-placed{{background:var(--red-light);border-color:var(--red);color:var(--red)}}
+.btn-primary{{
+  padding:12px 24px;background:var(--primary);color:#fff;
+  border:none;border-radius:var(--radius-sm);font-size:14px;
+  font-weight:700;cursor:pointer;transition:opacity .2s;
+}}
+.btn-primary:hover{{opacity:.88}}
+.btn-ghost{{
+  padding:12px 24px;background:var(--surface);color:var(--text);
+  border:2px solid var(--border);border-radius:var(--radius-sm);
+  font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;
+}}
+.btn-ghost:hover{{border-color:var(--primary);color:var(--primary)}}
+
+/* ══ FUN FACTS ══ */
+.facts-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}}
+.fact-card{{
+  background:var(--surface);border:2px solid var(--border);
+  border-radius:var(--radius);padding:20px;cursor:pointer;
+  transition:all .2s;min-height:110px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;
+}}
+.fact-card:hover{{border-color:var(--success);box-shadow:var(--shadow-md);transform:translateY(-2px)}}
+.fact-card.revealed{{border-color:var(--success);background:var(--green-light)}}
+.fact-front{{font-size:28px;margin-bottom:8px}}
+.fact-tap{{font-size:12px;color:var(--muted);font-style:italic}}
+.fact-back{{display:none;font-size:14px;color:#166534;line-height:1.5;font-weight:500}}
+.fact-card.revealed .fact-front,.fact-card.revealed .fact-tap{{display:none}}
+.fact-card.revealed .fact-back{{display:block}}
+
+/* ══ REVISION ══ */
+.rev-grid{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+.rev-card{{border-radius:var(--radius-sm);padding:16px;text-align:center;font-weight:700}}
+.rev-card.a{{background:var(--color-a-light);color:var(--color-a)}}
+.rev-card.b{{background:var(--color-b-light);color:var(--color-b)}}
+.rev-card.g{{background:var(--green-light);color:var(--green)}}
+.rev-card.p{{background:var(--purple-light);color:var(--purple)}}
+.rev-card .big{{font-size:18px;font-weight:800}}
+.rev-card .small{{font-size:12px;margin-top:4px;opacity:.8}}
+
+/* ══ QUIZ ══ */
+.quiz-progress{{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}}
+.q-dot{{
+  width:28px;height:28px;border-radius:50%;
+  background:var(--border);display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;color:var(--muted);transition:all .3s;
+}}
+.q-dot.answered{{background:var(--primary);color:#fff}}
+.q-dot.correct-q{{background:var(--success)}}
+.q-dot.wrong-q{{background:var(--danger)}}
+.quiz-q-num{{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:600}}
+.quiz-question{{font-size:18px;font-weight:700;margin-bottom:18px;line-height:1.4}}
+.quiz-options{{display:flex;flex-direction:column;gap:10px}}
+.quiz-opt{{
+  padding:13px 18px;border-radius:var(--radius-sm);border:2px solid var(--border);
+  background:var(--surface);font-size:15px;cursor:pointer;
+  transition:all .2s;text-align:left;font-weight:500;
+}}
+.quiz-opt:hover:not(:disabled){{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}}
+.quiz-opt.selected-correct{{background:var(--green-light);border-color:var(--success);color:#166534;font-weight:700}}
+.quiz-opt.selected-wrong{{background:var(--red-light);border-color:var(--red);color:#7f1d1d;font-weight:700}}
+.quiz-opt.show-correct{{background:var(--green-light);border-color:var(--success);color:#166534}}
+.quiz-opt:disabled{{cursor:not-allowed}}
+.quiz-explain{{
+  padding:12px 16px;background:#f0fdf4;border:1px solid #bbf7d0;
+  border-radius:var(--radius-sm);font-size:14px;color:#166534;
+  margin-top:12px;display:none;
+}}
+.quiz-nav{{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}}
+.quiz-result{{text-align:center;display:none;padding:28px}}
+.quiz-score-big{{font-size:64px;font-family:'Poppins',sans-serif;font-weight:800;color:var(--primary)}}
+.quiz-perf{{font-size:22px;font-weight:700;margin:8px 0}}
+.quiz-perf-sub{{color:var(--muted);font-size:15px}}
+
+/* ══ PROCESS GRID RESPONSIVE ══ */
+@media(max-width:640px){{
+  .main-content{{padding:16px 14px 80px}}
+  h1{{font-size:22px}}
+  h2{{font-size:17px}}
+  #hook{{padding:22px 18px}}
+  .rev-grid{{grid-template-columns:1fr}}
+  .flow-row{{flex-direction:column;align-items:center;gap:4px}}
+  #side-nav{{top:auto;bottom:60px;transform:none}}
+  #nav-toggle{{writing-mode:horizontal-tb;font-size:20px;border-radius:var(--radius-sm) var(--radius-sm) 0 0}}
+  .match-area{{flex-direction:column}}
+  .compare-table-wrap{{margin:0 -14px;padding:0 14px}}
+  .facts-grid{{grid-template-columns:1fr 1fr}}
+  .process-grid{{grid-template-columns:1fr!important}}
+}}
+@media(max-width:400px){{
+  .facts-grid{{grid-template-columns:1fr}}
+  .subtopic-grid{{grid-template-columns:1fr}}
+}}
+"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PAGE ASSEMBLER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _extract_glossary(hook_html: str) -> List[Dict]:
+    """Extract glossary JSON from the <!--GLOSSARY_JSON ... --> comment."""
+    m = re.search(r'<!--GLOSSARY_JSON\s*(.*?)\s*-->', hook_html, re.DOTALL)
+    if not m:
+        return []
+    try:
+        return json.loads(m.group(1).strip())
+    except Exception:
+        return []
+
+
+def _build_nav_items(sections: List[str]) -> str:
+    labels = {
+        "hook":          "🎣 Hook",
+        "definition":    "📌 Definition",
+        "fundamentals":  "🧠 Fundamentals",
+        "subtopics":     "🔬 Subtopics",
+        "types":         "🌿 Types",
+        "deep_sections": "🔍 Deep Dive",
+        "formulas":      "📐 Formulas",
+        "derivation":    "📊 Derivation",
+        "visual":        "🎥 Visual",
+        "working":       "⚙️ Working Process",
+        "comparison":    "⚖️ Comparison",
+        "games":         "🎮 Games",
+        "funfacts":      "💡 Fun Facts",
+        "revision":      "📝 Revision",
+        "quiz":          "✏️ Quiz",
+    }
+    items = ""
+    for s in sections:
+        label = labels.get(s, s.replace("_", " ").title())
+        items += (f'<div class="nav-item" onclick="scrollToSection(\'{s}\')">'
+                  f'{label}</div>\n')
+    return items
+
+
+def _assemble_html(topic: str, sections: Dict[str, str],
+                   section_list: List[str], cls: Dict) -> str:
+    css = _build_css(cls, topic)
+    subj = cls.get("subject", "Biology")
+    level = cls.get("level", "Class 10")
+
+    # Glossary from hook section
+    glossary_terms = _extract_glossary(sections.get("hook", ""))
+    glossary_items = ""
+    for t in glossary_terms:
+        glossary_items += (
+            f'<div class="glossary-item">'
+            f'<div class="glossary-term">{t.get("term","")}</div>'
+            f'<div class="glossary-def">{t.get("def","")}</div>'
+            f'</div>\n'
+        )
+
+    nav_items = _build_nav_items(section_list)
+
+    # Section bodies
     section_bodies = ""
-    for s in lesson_sections:
-        meta = section_meta.get(s, (s.replace("_", " ").title(), s))
-        label, anchor_id = meta
+    for s in section_list:
         content = sections.get(s, "")
-
-        # Hero is special — no .card wrapper
-        if s == "hero":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    {content}
-  </section>
-"""
-        elif s == "fundamentals":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">🔑</span> Fundamentals</h2>
-    <div class="card">
-      <p style="color:var(--text-soft);font-size:.95rem;margin-bottom:16px">
-        New to some words? Open the Fundamentals panel to quickly look up any key term!
-      </p>
-      <button id="fund-btn" onclick="openFund()">📚 Open Fundamentals Panel</button>
-    </div>
-  </section>
-"""
-        elif s == "quiz":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">❓</span> Quiz — 10 Questions</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
-        elif s == "activities":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">🎮</span> Interactive Activities</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
-        elif s == "funfacts":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">💡</span> Fun Facts — Tap to Reveal!</h2>
-    {content}
-  </section>
-"""
-        elif s == "reallife":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">🌍</span> {topic} Around Us</h2>
-    {content}
-  </section>
-"""
-        elif s == "revision":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">📝</span> Quick Revision</h2>
-    {content}
-  </section>
-"""
-        elif s == "exam_ready":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">🎯</span> Exam Ready</h2>
-    {content}
-  </section>
-"""
-        elif s == "subtopics":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">🧬</span> Important Subtopics</h2>
-    {content}
-  </section>
-"""
-        elif s == "types":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">📊</span> Types & Classification</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
-        elif s == "pathway":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">⚙️</span> How It Works — Step by Step</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
-        elif s == "deep_concepts":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">⚖️</span> Key Differences & Concepts</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
-        elif s == "formulas":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">📐</span> Formulas & Equations</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
-        elif s == "derivation":
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">📊</span> Mathematical Derivation</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
+        # For hook, deep_sections, quiz — content already has <section> wrapper
+        if s in ("hook", "deep_sections", "quiz"):
+            section_bodies += f"\n{content}\n"
         else:
-            section_bodies += f"""
-  <section id="{anchor_id}">
-    <h2 class="sec-title"><span class="ic">{label.split()[0]}</span> {' '.join(label.split()[1:])}</h2>
-    <div class="card">
-      {content}
-    </div>
-  </section>
-"""
+            section_bodies += f"\n{content}\n"
 
-    # ── MathJax ────────────────────────────────────────────────────────
-    needs_mathjax = any(s in lesson_sections for s in ("formulas", "derivation"))
-    mathjax_block = ""
+    # MathJax only if needed
+    needs_mathjax = any(s in section_list for s in ("formulas", "derivation"))
+    mathjax = ""
     if needs_mathjax:
-        mathjax_block = """\
+        mathjax = """\
 <script>
-MathJax = {
-  tex: { inlineMath: [['$','$'],['\\\\(','\\\\)']], displayMath: [['$$','$$'],['\\\\[','\\\\]']] },
-  svg: { fontCache: 'global' }
-};
+MathJax={tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],['\\\\[','\\\\]']]},svg:{fontCache:'global'}};
 </script>
-<script id="MathJax-script" async
-  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>"""
-
-    # ── Fund overlay HTML ───────────────────────────────────────────────
-    fund_html = sections.get("fundamentals", "")
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{topic} — Interactive Learning</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-{mathjax_block}
+<title>{topic} — {level} {subj}</title>
+{mathjax}
 <style>
 {css}
 </style>
 </head>
 <body>
 
-<!-- ═══ LEFT NAV ═══ -->
-<button id="nav-btn" onclick="toggleNav()" aria-label="Open sections menu">☰ Sections</button>
+<!-- ═══ STICKY HEADER ═══ -->
+<header id="site-header">
+  <div class="header-inner">
+    <div class="header-brand">
+      <span style="font-size:22px;">📚</span>
+      <span class="header-title">{topic}</span>
+    </div>
+    <span class="header-section" id="currentSection">{level} {subj}</span>
+    <div class="progress-wrap" style="width:100%">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ SIDE NAV ═══ -->
 <div id="side-nav">
-  <div class="nav-head">
-    <h3>📚 Sections</h3>
-    <button id="nav-close" onclick="toggleNav()" aria-label="Close menu">✕</button>
+  <button id="nav-toggle" onclick="toggleNav()" title="Sections Menu">☰ Sections</button>
+  <div id="nav-panel">
+    <div class="nav-header">📚 Sections</div>
+{nav_items}
   </div>
-  <nav>
-{nav_links}
-  </nav>
 </div>
 
-<!-- ═══ FLOATING GLOSSARY ═══ -->
-<div id="float-glos">
-  <div id="float-panel" style="position:relative">
-    <button class="fp-close" onclick="toggleFloat()">✕</button>
-    <h4>📖 Quick Glossary</h4>
-    {floating_glossary_items}
+<!-- ═══ GLOSSARY BUTTON + PANEL ═══ -->
+<button id="glossary-btn" onclick="toggleGlossary()">📖 Glossary</button>
+<div id="glossary-panel">
+  <div class="glossary-header">
+    📖 Fundamentals
+    <button class="close-btn" onclick="toggleGlossary()">✕</button>
   </div>
-  <button id="float-btn" onclick="toggleFloat()">📖 Glossary</button>
-</div>
-
-<!-- ═══ FUNDAMENTALS OVERLAY ═══ -->
-<div id="fund-overlay">
-  <div id="fund-panel">
-    <button class="fund-close" onclick="closeFund()">✕</button>
-    <h3>🔑 Fundamentals — Key Terms</h3>
-    <p style="font-size:.88rem;color:var(--text-soft);margin-bottom:4px">Tap any term to understand it before diving in.</p>
-    <input id="fund-search" type="text" placeholder="Search a term..." oninput="filterGlos(this.value)" />
-    {fund_html}
+  <input type="search" id="glossary-search" placeholder="Search a term…"
+         oninput="filterGlossary(this.value)" />
+  <div class="glossary-list" id="glossary-list">
+{glossary_items}
   </div>
 </div>
 
 <!-- ═══ MAIN CONTENT ═══ -->
-<main id="content">
+<div class="main-content">
 {section_bodies}
-</main>
+</div><!-- /main-content -->
 
 <script>
-// ── NAV ──────────────────────────────────────────────────────────
+/* ── NAV ── */
 function toggleNav(){{
-  document.getElementById('side-nav').classList.toggle('open');
+  var p=document.getElementById('nav-panel');
+  p.classList.toggle('open');
 }}
-function closeNav(){{
-  document.getElementById('side-nav').classList.remove('open');
-}}
-
-// ── FLOATING GLOSSARY ─────────────────────────────────────────────
-function toggleFloat(){{
-  document.getElementById('float-panel').classList.toggle('open');
+function scrollToSection(id){{
+  var el=document.getElementById(id);
+  if(el)el.scrollIntoView({{behavior:'smooth'}});
+  document.getElementById('nav-panel').classList.remove('open');
 }}
 
-// ── FUNDAMENTALS OVERLAY ─────────────────────────────────────────
-function openFund(){{
-  document.getElementById('fund-overlay').classList.add('open');
+/* ── GLOSSARY ── */
+function toggleGlossary(){{
+  document.getElementById('glossary-panel').classList.toggle('open');
 }}
-function closeFund(){{
-  document.getElementById('fund-overlay').classList.remove('open');
-}}
-function filterGlos(q){{
-  document.querySelectorAll('.glos-item').forEach(function(item){{
-    var term = item.querySelector('h5') ? item.querySelector('h5').textContent.toLowerCase() : '';
-    var def  = item.querySelector('p')  ? item.querySelector('p').textContent.toLowerCase() : '';
-    item.style.display = (term.includes(q.toLowerCase()) || def.includes(q.toLowerCase())) ? '' : 'none';
+function filterGlossary(q){{
+  var q2=q.toLowerCase();
+  document.querySelectorAll('.glossary-item').forEach(function(el){{
+    var t=el.textContent.toLowerCase();
+    el.style.display=t.includes(q2)?'':'none';
   }});
 }}
 
-// ── SCROLL SPY ────────────────────────────────────────────────────
-var sections = document.querySelectorAll('section[id]');
-var navLinks = document.querySelectorAll('#side-nav nav a');
-window.addEventListener('scroll', function(){{
-  var scrollY = window.pageYOffset;
-  sections.forEach(function(s){{
-    var top = s.offsetTop - 60;
-    var bottom = top + s.offsetHeight;
-    if(scrollY >= top && scrollY < bottom){{
-      navLinks.forEach(function(a){{
-        a.classList.toggle('active', a.getAttribute('href') === '#' + s.id);
-      }});
-    }}
+/* ── FUN FACTS ── */
+function revealFact(card){{card.classList.toggle('revealed');}}
+
+/* ── SCROLL PROGRESS + SECTION HIGHLIGHT ── */
+var _sectionIds=[{", ".join(f'"{s}"' for s in section_list)}];
+window.addEventListener('scroll',function(){{
+  var st=document.documentElement.scrollTop;
+  var sh=document.documentElement.scrollHeight-window.innerHeight;
+  var pct=sh>0?Math.round(st/sh*100):0;
+  document.getElementById('progressBar').style.width=pct+'%';
+  var cur='';
+  _sectionIds.forEach(function(id){{
+    var el=document.getElementById(id);
+    if(el&&window.scrollY>=el.offsetTop-120)cur=id;
   }});
+  document.querySelectorAll('.nav-item').forEach(function(n){{
+    n.classList.toggle('active',n.getAttribute('onclick')&&n.getAttribute('onclick').includes(cur));
+  }});
+  var names={{
+    hook:'Hook',definition:'Definition',fundamentals:'Fundamentals',
+    subtopics:'Subtopics',types:'Types',deep_sections:'Deep Dive',
+    formulas:'Formulas',derivation:'Derivation',visual:'Visual',
+    working:'Working Process',comparison:'Comparison',games:'Games',
+    funfacts:'Fun Facts',revision:'Revision',quiz:'Quiz'
+  }};
+  if(cur)document.getElementById('currentSection').textContent=names[cur]||'{level} {subj}';
 }});
-
-// ── REAL-LIFE CARD FLIP ───────────────────────────────────────────
-function revealRL(card){{ card.classList.toggle('revealed'); }}
-
-// ── FUN FACTS FLIP ────────────────────────────────────────────────
-function revealFF(card){{ card.classList.toggle('revealed'); }}
 </script>
-
 </body>
 </html>"""
 
 
-# ════════════════════════════════════════════════════════════════════════
-#  TOPIC CLASSIFIER
-# ════════════════════════════════════════════════════════════════════════
-
-async def _classify_topic(topic: str) -> Dict:
-    prompt = f"""Classify this educational topic for content generation.
-
-Topic: "{topic}"
-
-Return ONLY valid JSON, no markdown:
-{{
-  "category": "mathematical" | "semi_mathematical" | "conceptual",
-  "needs_formula": true | false,
-  "needs_derivation": true | false,
-  "subject": "Biology" | "Physics" | "Chemistry" | "Mathematics" | "History" | "Geography" | "Other",
-  "level": "Primary" | "Class 9-10" | "Class 11-12" | "University",
-  "primary_phenomenon": "brief phrase describing the core process"
-}}
-
-"mathematical" = needs_formula=true AND needs_derivation=true
-  (optics, thermodynamics, mechanics, waves, electromagnetism, signal processing)
-"semi_mathematical" = needs_formula=true, needs_derivation=false
-  (basic laws with useful formulas but no deep derivation)
-"conceptual" = needs_formula=false, needs_derivation=false
-  (biology overviews, history, classification, purely qualitative topics)"""
-
-    try:
-        msg = await client.messages.create(
-            model=MODEL_HAIKU,
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = re.sub(r'```json\s*|\s*```', '', msg.content[0].text.strip())
-        result = json.loads(raw)
-        log.info(
-            f"[_classify_topic] '{topic}' → {result.get('category')} | "
-            f"formula={result.get('needs_formula')} | deriv={result.get('needs_derivation')} | "
-            f"subject={result.get('subject')}"
-        )
-        return result
-    except Exception as e:
-        log.warning(f"[_classify_topic] failed ({e}), defaulting to conceptual")
-        return {
-            "category": "conceptual",
-            "needs_formula": False,
-            "needs_derivation": False,
-            "subject": "Other",
-            "level": "Class 9-10",
-            "primary_phenomenon": topic,
-        }
-
-
-# ════════════════════════════════════════════════════════════════════════
-#  SECTION LIST BUILDER
-# ════════════════════════════════════════════════════════════════════════
-
-def _build_section_list(classification: Dict) -> List[str]:
-    sections: List[str] = []
-    for s in ORDERED_SECTION_TEMPLATE:
-        if s == "formulas":
-            if classification.get("needs_formula"):
-                sections.append(s)
-        elif s == "derivation":
-            if classification.get("needs_derivation"):
-                sections.append(s)
-        else:
-            sections.append(s)
-    return sections
-
-
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 #  CORE GENERATOR CLASS
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 
 class EduPageGenerator:
 
     def __init__(self, api_key: Optional[str] = None):
-        self._client = (
-            anthropic.AsyncAnthropic(api_key=api_key)
-            if api_key
-            else client
-        )
+        self._client = (anthropic.AsyncAnthropic(api_key=api_key)
+                        if api_key else client)
 
-    # ──────────────────────────────────────────────────────────────────
-    #  GENERATE SINGLE SECTION
-    # ──────────────────────────────────────────────────────────────────
-
-    async def generate_section(
-        self,
-        section_name: str,
-        topic: str,
-        context: str = "",
-        subtopics_list: Optional[List[str]] = None,
-        classification: Optional[Dict] = None,
-        max_retries: int = 2,
-    ) -> str:
-        prompt = _build_section_prompt(
-            section_name, topic, context,
-            subtopics_list=subtopics_list,
-            classification=classification,
-        )
-        model = SECTION_MODEL_MAP.get(section_name, MODEL_SONNET)
-        log.info(f"  Generating [{section_name}] with {model.split('-')[1]} …")
-
-        for attempt in range(1, max_retries + 1):
+    async def _generate_section(self, section: str, topic: str,
+                                 ctx: str = "",
+                                 subtopics: Optional[List[str]] = None,
+                                 cls: Optional[Dict] = None,
+                                 retries: int = 2) -> str:
+        prompt = _build_prompt(section, topic, ctx,
+                               subtopics=subtopics, classification=cls)
+        model = SECTION_MODEL_MAP.get(section, MODEL_SONNET)
+        log.info(f"  [{section}] → {model.split('-')[1]} …")
+        for attempt in range(1, retries + 1):
             try:
                 msg = await self._client.messages.create(
-                    model=model,
-                    max_tokens=12000,
+                    model=model, max_tokens=14000,
                     system=SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                content = msg.content[0].text.strip()
-                content = re.sub(r'```html\s*|\s*```', '', content).strip()
-                content = _strip_tail(content)
-                log.info(f"  ✅ [{section_name}] done ({len(content):,} chars)")
-                return content
+                    messages=[{"role": "user", "content": prompt}])
+                text = msg.content[0].text.strip()
+                text = re.sub(r'```html\s*|\s*```', '', text).strip()
+                text = _strip_tail(text)
+                log.info(f"  ✅ [{section}] {len(text):,} chars")
+                return text
             except Exception as e:
-                log.warning(f"  ⚠️ [{section_name}] attempt {attempt}/{max_retries}: {e}")
-                if attempt < max_retries:
+                log.warning(f"  ⚠️ [{section}] attempt {attempt}: {e}")
+                if attempt < retries:
                     await asyncio.sleep(2)
+        log.error(f"  ❌ [{section}] failed")
+        return (f'<section id="{section}" class="section">'
+                f'<div class="card" style="color:#dc2626;">'
+                f'⚠️ Section <strong>{section}</strong> could not be generated.'
+                f'</div></section>')
 
-        log.error(f"  ❌ [{section_name}] FAILED after {max_retries} attempts")
-        return (
-            f'<div style="padding:16px;background:#fee2e2;border-radius:8px;color:#7f1d1d;">'
-            f'⚠️ Section <strong>{section_name}</strong> could not be generated.'
-            f'</div>'
-        )
+    async def generate_page(self, topic: str,
+                            subtopics: Optional[List[str]] = None) -> Dict:
+        log.info(f"\n{'═'*60}")
+        log.info(f"[EduPage v22] topic='{topic}'")
+        if subtopics:
+            log.info(f"[EduPage v22] subtopics={subtopics}")
+        log.info(f"{'═'*60}")
 
-    # ──────────────────────────────────────────────────────────────────
-    #  GENERATE COMPLETE PAGE
-    # ──────────────────────────────────────────────────────────────────
+        # Classify
+        log.info("[STAGE 0] Classifying …")
+        cls = await _classify(topic)
+        ctx = json.dumps(cls)
 
-    async def generate_complete_page(
-        self,
-        topic: str,
-        subtopics_list: Optional[List[str]] = None,
-    ) -> Dict:
-        log.info(f"\n{'═'*64}")
-        log.info(f"[EduPageGenerator v21.0] topic='{topic}'")
-        log.info(f"[EduPageGenerator v21.0] specific={_is_specific_subtopic(topic)}")
-        if subtopics_list:
-            log.info(f"[EduPageGenerator v21.0] subtopics={subtopics_list}")
-        log.info(f"{'═'*64}")
+        # Section list
+        sl = _section_list(cls)
+        log.info(f"[STAGE 0] Sections: {sl}")
 
-        # Stage 0 — classify
-        log.info("[STAGE 0] Classifying topic …")
-        classification = await _classify_topic(topic)
-        context = json.dumps(classification)
-
-        # Stage 1 — build section list
-        lesson_sections = _build_section_list(classification)
-        log.info(f"[STAGE 0] Sections: {lesson_sections}")
-
-        # Stage 2 — generate all sections in parallel
-        log.info(f"[STAGE 1] Generating {len(lesson_sections)} sections in parallel …")
+        # Generate all sections in parallel
+        log.info(f"[STAGE 1] Generating {len(sl)} sections …")
 
         async def _gen(s: str) -> str:
-            return await self.generate_section(
-                s, topic, context,
-                subtopics_list=(subtopics_list if s == "subtopics" else None),
-                classification=classification,
-            )
+            return await self._generate_section(
+                s, topic, ctx,
+                subtopics=(subtopics if s == "subtopics" else None),
+                cls=cls)
 
-        section_contents = await asyncio.gather(*[_gen(s) for s in lesson_sections])
-        sections = dict(zip(lesson_sections, section_contents))
+        contents = await asyncio.gather(*[_gen(s) for s in sl])
+        sections = dict(zip(sl, contents))
 
-        # Stage 3 — assemble
-        log.info("[STAGE 2] Assembling HTML page …")
-        html = _assemble_html(topic, sections, lesson_sections, classification)
+        # Assemble
+        log.info("[STAGE 2] Assembling HTML …")
+        html = _assemble_html(topic, sections, sl, cls)
 
-        # Metadata
-        total_words = sum(len(c.split()) for c in section_contents)
-        metadata = {
-            "topic":                  topic,
-            "is_specific_subtopic":   _is_specific_subtopic(topic),
-            "total_sections":         len(lesson_sections),
-            "sections_generated":     lesson_sections,
-            "classification":         classification,
-            "total_words":            total_words,
-            "estimated_read_minutes": round(total_words / 200, 1),
-            "generation_timestamp":   time.strftime("%Y-%m-%d %H:%M:%S"),
+        total_words = sum(len(c.split()) for c in contents)
+        meta = {
+            "topic":             topic,
+            "is_specific":       _is_specific(topic),
+            "sections":          sl,
+            "total_sections":    len(sl),
+            "total_words":       total_words,
+            "read_minutes":      round(total_words / 200, 1),
+            "classification":    cls,
+            "timestamp":         time.strftime("%Y-%m-%d %H:%M:%S"),
         }
-
-        log.info(
-            f"[COMPLETE] ✅ {len(html):,} chars | {total_words:,} words | "
-            f"{len(lesson_sections)} sections"
-        )
-        return {"sections": sections, "html": html, "metadata": metadata}
+        log.info(f"[DONE] {len(html):,} chars | {total_words:,} words")
+        return {"sections": sections, "html": html, "metadata": meta}
 
 
-# ════════════════════════════════════════════════════════════════════════
-#  PRIMARY ENTRY POINT — generate_animation
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+#  PUBLIC ENTRY POINTS  (all backward-compatible)
+# ══════════════════════════════════════════════════════════════════════════════
 
 async def generate_animation(prompt: str) -> dict:
     """
-    Primary backend entry point.
-    Accepts a user prompt (topic name, with optional subtopics via ' - ' or ' -- ').
-    Returns:
-        {
-          "title":          str,
-          "explanation":    str,   # short summary (~220 chars)
-          "animation_code": str,   # complete HTML page
-        }
+    Primary async entry point.
+    Returns {"title": str, "explanation": str, "animation_code": str}
     """
     if not prompt or not prompt.strip():
         raise ValueError("Prompt cannot be empty")
-
     prompt = prompt.strip()
-    log.info(f"\n{'═'*64}")
-    log.info(f"[generate_animation v21.0] prompt='{prompt}'")
-    log.info(f"{'═'*64}")
+    log.info(f"[generate_animation v22] prompt='{prompt}'")
 
-    subtopics_list = _extract_subtopics_from_input(prompt)
-
-    # Parse topic from prompt
+    subtopics = _extract_subtopics(prompt)
     if " -- " in prompt:
         topic = prompt.split(" -- ", 1)[0].strip()
     elif prompt.count(" - ") > 1:
@@ -1884,131 +1771,65 @@ async def generate_animation(prompt: str) -> dict:
     elif " - " in prompt:
         parts = prompt.split(" - ", 1)
         topic = parts[0].strip()
-        if not subtopics_list:
-            subtopic = parts[1].strip() if len(parts) > 1 else ""
-            topic = f"{topic} — {subtopic}" if subtopic else topic
+        if not subtopics:
+            sub = parts[1].strip()
+            topic = f"{topic} — {sub}" if sub else topic
     else:
         topic = prompt
 
-    log.info(f"[generate_animation] topic='{topic}' | subtopics={subtopics_list}")
-
-    generator = EduPageGenerator()
-    result = await generator.generate_complete_page(
-        topic=topic,
-        subtopics_list=subtopics_list if subtopics_list else None,
-    )
-
+    gen = EduPageGenerator()
+    result = await gen.generate_page(topic=topic,
+                                     subtopics=subtopics or None)
     html = result["html"]
-
-    # Build short explanation from definition section
     def_html = result["sections"].get("definition", "")
     explanation = re.sub(r"<[^>]+>", " ", def_html)
     explanation = " ".join(explanation.split())[:220]
     if not explanation:
-        explanation = f"A complete interactive learning page on {topic}."
-
-    log.info(f"[generate_animation] ✅ HTML={len(html):,} chars")
-
-    return {
-        "title":          topic,
-        "explanation":    explanation,
-        "animation_code": html,
-    }
+        explanation = f"A complete interactive lesson on {topic}."
+    return {"title": topic, "explanation": explanation, "animation_code": html}
 
 
-# ════════════════════════════════════════════════════════════════════════
-#  PUBLIC ASYNC API
-# ════════════════════════════════════════════════════════════════════════
-
-async def generate_edu_page(
-    topic: str,
-    output_file: Optional[str] = None,
-    subtopics_list: Optional[List[str]] = None,
-) -> Dict:
-    """
-    High-level async API — generates a complete educational HTML page.
-    Optionally saves to output_file.
-    Returns the full result dict.
-    """
-    generator = EduPageGenerator()
-    result = await generator.generate_complete_page(
-        topic=topic,
-        subtopics_list=subtopics_list,
-    )
+async def generate_edu_page(topic: str,
+                             output_file: Optional[str] = None,
+                             subtopics_list: Optional[List[str]] = None) -> Dict:
+    gen = EduPageGenerator()
+    result = await gen.generate_page(topic=topic, subtopics=subtopics_list)
     if output_file:
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(result["html"])
-        log.info(f"💾 Saved HTML to: {output_file}")
+        log.info(f"💾 Saved → {output_file}")
     return result
 
 
-def generate_edu_page_sync(
-    topic: str,
-    output_file: Optional[str] = None,
-    subtopics_list: Optional[List[str]] = None,
-) -> Dict:
-    """Synchronous wrapper around generate_edu_page."""
-    return asyncio.run(
-        generate_edu_page(
-            topic=topic,
-            output_file=output_file,
-            subtopics_list=subtopics_list,
-        )
-    )
+def generate_edu_page_sync(topic: str,
+                            output_file: Optional[str] = None,
+                            subtopics_list: Optional[List[str]] = None) -> Dict:
+    return asyncio.run(generate_edu_page(topic=topic,
+                                         output_file=output_file,
+                                         subtopics_list=subtopics_list))
 
 
-# ════════════════════════════════════════════════════════════════════════
-#  GENZET BOOK CONTENT ENTRY POINT (backward-compatible)
-# ════════════════════════════════════════════════════════════════════════
-
-async def generate_genzet_book_content(
-    topic: str,
-    subtopic: str,
-    pdf_context: str = "",
-    subtopics_list: Optional[List[str]] = None,
-) -> dict:
-    """
-    Backward-compatible entry point for book-context generation.
-    Assembles a full_topic string and delegates to generate_animation.
-    """
-    topic    = (topic    or "").strip()
+async def generate_genzet_book_content(topic: str, subtopic: str,
+                                        pdf_context: str = "",
+                                        subtopics_list: Optional[List[str]] = None) -> dict:
+    """Backward-compatible entry point for book-context generation."""
+    topic   = (topic   or "").strip()
     subtopic = (subtopic or "").strip()
     if not topic:
         raise ValueError("topic cannot be empty")
-
-    full_topic = (
-        f"{topic} — {subtopic}"
-        if subtopic and subtopic.lower() != topic.lower()
-        else topic
-    )
-
-    log.info(f"[generate_genzet_book_content] topic='{full_topic}' | "
-             f"pdf_ctx={len(pdf_context)} chars | subtopics={len(subtopics_list or [])}")
-
-    # If we have PDF context inject it as a hint via the subtopics mechanism
-    generator = EduPageGenerator()
-    result = await generator.generate_complete_page(
-        topic=full_topic,
-        subtopics_list=subtopics_list if subtopics_list else None,
-    )
-
+    full = (f"{topic} — {subtopic}"
+            if subtopic and subtopic.lower() != topic.lower() else topic)
+    log.info(f"[generate_genzet_book_content v22] topic='{full}'")
+    gen = EduPageGenerator()
+    result = await gen.generate_page(topic=full, subtopics=subtopics_list)
     html = result["html"]
     def_html = result["sections"].get("definition", "")
     explanation = re.sub(r"<[^>]+>", " ", def_html)
     explanation = " ".join(explanation.split())[:220]
     if not explanation:
-        explanation = f"A complete textbook-grounded lesson on {full_topic}."
+        explanation = f"A complete textbook-grounded lesson on {full}."
+    return {"title": full, "explanation": explanation, "animation_code": html}
 
-    return {
-        "title":          full_topic,
-        "explanation":    explanation,
-        "animation_code": html,
-    }
-
-
-# ════════════════════════════════════════════════════════════════════════
-#  subtopics_json_to_genzet_args  (unchanged helper)
-# ════════════════════════════════════════════════════════════════════════
 
 def subtopics_json_to_genzet_args(subtopics_json_str: str, subtopic: str) -> dict:
     try:
@@ -2016,95 +1837,71 @@ def subtopics_json_to_genzet_args(subtopics_json_str: str, subtopic: str) -> dic
     except Exception:
         items = [s.strip() for s in str(subtopics_json_str).split(",") if s.strip()]
         return {"subtopics_list": items or [subtopic]}
-
-    collected: list = []
+    collected: List[str] = []
     if isinstance(data, list):
         collected = [str(v) for v in data if v]
     elif isinstance(data, dict):
-        sbq = data.get("subtopics_by_query", {})
-        if isinstance(sbq, dict):
-            for val in sbq.values():
-                if isinstance(val, list):
-                    collected.extend(str(v) for v in val if v)
-        if not collected:
-            all_sub = data.get("all_subtopics", [])
-            if isinstance(all_sub, list):
-                collected = [str(v) for v in all_sub if v]
-        if not collected:
-            for val in data.values():
-                if isinstance(val, list):
-                    collected.extend(str(v) for v in val if v)
-                elif isinstance(val, str) and val:
-                    collected.append(val)
-
+        for val in data.values():
+            if isinstance(val, list):
+                collected.extend(str(v) for v in val if v)
+            elif isinstance(val, str) and val:
+                collected.append(val)
     seen: set = set()
-    unique: list = []
-    for item in collected:
-        if item not in seen:
-            seen.add(item)
-            unique.append(item)
-
-    log.info(f"[subtopics_json_to_genzet_args] parsed {len(unique)} subtopics")
+    unique = [x for x in collected if x not in seen and not seen.add(x)]  # type: ignore
     return {"subtopics_list": unique or [subtopic]}
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 #  CLI
-# ════════════════════════════════════════════════════════════════════════
-
+# ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python claude_client.py <topic> [-- sub1, sub2, sub3]")
-        print("       python claude_client.py <topic> [- sub1, sub2]")
+        print("Usage: python claude_client.py <topic> [-- sub1, sub2]")
+        print("       python claude_client.py <topic> [- sub1 - sub2]")
         print()
         print("Examples:")
-        print("  python claude_client.py 'Stimulus'")
-        print("  python claude_client.py 'Photosynthesis'")
-        print("  python claude_client.py 'Gravitation' -- 'Kepler Laws, Orbital Velocity'")
         print("  python claude_client.py 'Aerobic and Anaerobic Respiration'")
+        print("  python claude_client.py 'Rocket Propulsion'")
+        print("  python claude_client.py 'Tissues -- Epithelial, Connective, Muscular'")
         print("  python claude_client.py 'Convective Heat Transfer'")
         sys.exit(1)
 
-    raw_input = " ".join(sys.argv[1:])
-    subtopics = _extract_subtopics_from_input(raw_input)
+    raw = " ".join(sys.argv[1:])
+    subs = _extract_subtopics(raw)
 
-    if " -- " in raw_input:
-        topic = raw_input.split(" -- ", 1)[0].strip()
-    elif raw_input.count(" - ") > 1:
-        topic = raw_input.split(" - ", 1)[0].strip()
-    elif " - " in raw_input:
-        topic = raw_input.split(" - ", 1)[0].strip()
+    if " -- " in raw:
+        topic = raw.split(" -- ", 1)[0].strip()
+    elif raw.count(" - ") > 1:
+        topic = raw.split(" - ", 1)[0].strip()
+    elif " - " in raw:
+        topic = raw.split(" - ", 1)[0].strip()
     else:
-        topic = raw_input
+        topic = raw
 
-    safe_name = re.sub(r'[^\w\-]', '_', topic.lower())[:60]
-    output_file = f"edupage_{safe_name}.html"
+    safe = re.sub(r'[^\w\-]', '_', topic.lower())[:60]
+    out = f"edupage_{safe}.html"
 
-    print(f"\n{'='*64}")
-    print(f"EduPage Generator  v21.0  —  Reference HTML Style")
-    print(f"{'='*64}")
+    print(f"\n{'='*60}")
+    print(f"EduPage Generator v22.0 — Exact Reference-HTML Method")
+    print(f"{'='*60}")
     print(f"Topic      : {topic}")
-    print(f"Specific   : {_is_specific_subtopic(topic)}")
-    print(f"Subtopics  : {subtopics if subtopics else '(auto-detect)'}")
-    print(f"Output     : {output_file}")
-    print(f"{'='*64}\n")
+    print(f"Subtopics  : {subs if subs else '(auto-detect)'}")
+    print(f"Output     : {out}")
+    print(f"{'='*60}\n")
 
-    result = generate_edu_page_sync(
-        topic=topic,
-        output_file=output_file,
-        subtopics_list=subtopics if subtopics else None,
-    )
-
-    print(f"\n{'='*64}")
-    print(f"GENERATION COMPLETE")
-    print(f"{'='*64}")
+    result = generate_edu_page_sync(topic=topic, output_file=out,
+                                    subtopics_list=subs or None)
     meta = result["metadata"]
-    print(f"Sections   : {meta['total_sections']} — {meta['sections_generated']}")
+    print(f"\n{'='*60}")
+    print(f"COMPLETE")
+    print(f"{'='*60}")
+    print(f"Sections   : {meta['total_sections']} — {meta['sections']}")
     print(f"Words      : {meta['total_words']:,}")
-    print(f"Read time  : {meta['estimated_read_minutes']} min")
-    print(f"HTML file  : {output_file}")
-    cls = meta.get('classification', {})
-    print(f"Category   : {cls.get('category','?')} | "
-          f"formula={cls.get('needs_formula','?')} | "
-          f"deriv={cls.get('needs_derivation','?')}")
-    print(f"{'='*64}\n")
+    print(f"Read time  : {meta['read_minutes']} min")
+    print(f"HTML file  : {out}")
+    c = meta.get('classification', {})
+    print(f"Category   : {c.get('category','?')} | "
+          f"formula={c.get('needs_formula','?')} | "
+          f"deriv={c.get('needs_derivation','?')}")
+    print(f"Colors     : A={c.get('color_a','?')} B={c.get('color_b','?')}")
+    print(f"{'='*60}\n")
