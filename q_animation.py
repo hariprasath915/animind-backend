@@ -1300,103 +1300,397 @@ def _build_answer_targets(to_find_targets, gemini_sol, final_answer, key_insight
 #  MODULE 11 — Scene 6 (Main Formula) Injection
 # ===========================================================================
 
+
+# ===========================================================================
+#  MODULE 11 — Scene 6 (Step 7: Main Formula) — Full Redesign
+# ===========================================================================
+
 _SCENE6_STYLES = """\
 <style id="qanim-scene6-styles">
-#qanim-scene-modal-backdrop{display:none;position:fixed;inset:0;z-index:7400;background:rgba(15,23,42,.50);backdrop-filter:blur(6px);opacity:0;transition:opacity .25s ease;}
+/* ── Fonts ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap');
+
+/* ── Backdrop ── */
+#qanim-scene-modal-backdrop{
+  display:none;position:fixed;inset:0;z-index:7400;
+  background:rgba(10,15,30,.55);
+  backdrop-filter:blur(8px) saturate(1.4);
+  -webkit-backdrop-filter:blur(8px) saturate(1.4);
+  opacity:0;transition:opacity .3s ease;
+}
 #qanim-scene-modal-backdrop.qanim-scene-visible{display:block!important;opacity:1;}
-#qanim-scene6-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(860px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s ease,transform .3s cubic-bezier(.34,1.56,.64,1);}
-#qanim-scene6-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
-.s6-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(8,145,178,.14),0 2px 8px rgba(0,0,0,.08);border:1px solid #dde8f8;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
-.s6-title-bar{text-align:center;padding:22px 28px 18px;background:#fff;border-bottom:1px solid #e8eef8;}
-.s6-title-bar h2{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-0.3px;}
-.s6-body{padding:28px 32px 24px;background:linear-gradient(160deg,#eef2f9 0%,#e8f0fe 50%,#eff6ff 100%);}
-.s6-formula-box{background:#fff;border:2.5px solid #3b82f6;border-radius:18px;padding:20px 32px 16px;text-align:center;margin-bottom:10px;}
-.s6-formula-main{font-family:'Courier New',monospace;font-size:28px;font-weight:900;color:#1d4ed8;letter-spacing:1px;line-height:1.4;opacity:0;transform:translateY(8px);transition:opacity .5s ease,transform .5s ease;}
+
+/* ── Overlay shell ── */
+#qanim-scene6-overlay{
+  display:none;position:fixed;
+  top:50%;left:50%;
+  transform:translate(-50%,-50%) scale(.93) translateY(12px);
+  z-index:7500;
+  width:min(880px,96vw);max-height:94vh;overflow-y:auto;
+  box-sizing:border-box;opacity:0;pointer-events:none;
+  transition:opacity .35s cubic-bezier(.4,0,.2,1),
+             transform .4s cubic-bezier(.34,1.28,.64,1);
+  scrollbar-width:thin;scrollbar-color:#c7d2fe #f1f5f9;
+}
+#qanim-scene6-overlay::-webkit-scrollbar{width:5px;}
+#qanim-scene6-overlay::-webkit-scrollbar-track{background:#f1f5f9;}
+#qanim-scene6-overlay::-webkit-scrollbar-thumb{background:#c7d2fe;border-radius:4px;}
+#qanim-scene6-overlay.qanim-scene-visible{
+  display:block!important;opacity:1;pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1) translateY(0);
+}
+
+/* ── Card ── */
+.s6-card{
+  background:#fff;border-radius:24px;overflow:hidden;
+  box-shadow:0 24px 80px rgba(29,78,216,.14),0 4px 16px rgba(0,0,0,.07);
+  border:1px solid #e0e7ff;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+}
+
+/* ── Header ── */
+.s6-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 28px;height:58px;
+  background:linear-gradient(90deg,#1e3a8a 0%,#1d4ed8 50%,#2563eb 100%);
+  position:relative;overflow:hidden;
+}
+.s6-header::after{
+  content:'';position:absolute;inset:0;
+  background:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Ccircle cx='30' cy='30' r='28'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
+  pointer-events:none;
+}
+.s6-header-left{display:flex;align-items:center;gap:10px;z-index:1;}
+.s6-step-badge{
+  background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
+  border-radius:8px;padding:3px 10px;
+  font-size:10.5px;font-weight:800;letter-spacing:1.5px;color:#bfdbfe;
+  text-transform:uppercase;
+}
+.s6-header-title{font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.2px;}
+.s6-header-right{z-index:1;}
+.s6-progress-text{font-size:11px;font-weight:700;color:#93c5fd;letter-spacing:.5px;}
+
+/* ── Body ── */
+.s6-body{
+  padding:28px 32px 24px;
+  background:linear-gradient(160deg,#f8faff 0%,#eef2ff 40%,#f0f9ff 100%);
+}
+
+/* ── Phase caption row ── */
+.s6-phase-row{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:18px;min-height:22px;
+}
+.s6-phase-caption{
+  font-size:13.5px;font-weight:600;color:#475569;line-height:1.5;
+  flex:1;padding-right:16px;
+}
+.s6-phase-caption .s6-accent{color:#1d4ed8;font-weight:800;}
+.s6-phase-dots{display:flex;gap:5px;flex-shrink:0;}
+.s6-phase-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:#dde3f0;transition:background .3s,transform .25s;
+}
+.s6-phase-dot.active{background:#1d4ed8;transform:scale(1.3);}
+.s6-phase-dot.done{background:#93c5fd;}
+
+/* ── Formula box ── */
+.s6-formula-box{
+  background:#fff;
+  border:2px solid #bfdbfe;border-radius:16px;
+  padding:22px 28px 18px;text-align:center;
+  margin-bottom:22px;
+  box-shadow:0 2px 12px rgba(29,78,216,.07);
+  position:relative;overflow:hidden;
+}
+.s6-formula-box::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,#6366f1,#3b82f6,#0ea5e9);
+}
+.s6-formula-label{
+  font-size:9.5px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#94a3b8;margin-bottom:12px;
+}
+.s6-formula-main{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:30px;font-weight:700;color:#1e40af;
+  letter-spacing:1.5px;line-height:1.35;
+  opacity:0;transform:translateY(10px);
+  transition:opacity .55s cubic-bezier(.4,0,.2,1),
+             transform .55s cubic-bezier(.34,1.2,.64,1);
+}
 .s6-formula-main.s6-shown{opacity:1;transform:translateY(0);}
-.s6-formula-sublabel{font-size:11px;font-weight:700;color:#6366f1;letter-spacing:0.3px;margin-top:8px;opacity:0;transition:opacity .4s ease .2s;}
+.s6-formula-sublabel{
+  font-size:12px;font-weight:600;color:#6366f1;
+  letter-spacing:.3px;margin-top:10px;
+  opacity:0;transition:opacity .5s ease .25s;
+}
 .s6-formula-sublabel.s6-shown{opacity:1;}
-.s6-vars-row{display:flex;align-items:flex-start;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:24px;}
-.s6-var-box{display:flex;flex-direction:column;align-items:center;gap:0;min-width:120px;opacity:0;transform:translateY(12px);transition:opacity .35s ease,transform .35s cubic-bezier(.34,1.56,.64,1);}
-.s6-var-box.s6-shown{opacity:1;transform:translateY(0);}
-.s6-var-arrow{position:relative;height:24px;display:flex;align-items:flex-start;justify-content:center;width:100%;}
-.s6-var-arrow::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:2.5px;height:16px;border-radius:2px;}
-.s6-var-arrow::after{content:'';position:absolute;bottom:0;left:50%;transform:translateX(-50%);border-left:6px solid transparent;border-right:6px solid transparent;}
-.s6-var-box.s6v-red .s6-var-inner{border-color:#f43f5e;background:#fff1f2;} .s6-var-box.s6v-red .s6-var-sym{color:#be123c;} .s6-var-box.s6v-red .s6-var-arrow::before{background:#f43f5e;} .s6-var-box.s6v-red .s6-var-arrow::after{border-top:8px solid #f43f5e;}
-.s6-var-box.s6v-orange .s6-var-inner{border-color:#f59e0b;background:#fff7ed;} .s6-var-box.s6v-orange .s6-var-sym{color:#d97706;} .s6-var-box.s6v-orange .s6-var-arrow::before{background:#f59e0b;} .s6-var-box.s6v-orange .s6-var-arrow::after{border-top:8px solid #f59e0b;}
-.s6-var-box.s6v-blue .s6-var-inner{border-color:#3b82f6;background:#eff6ff;} .s6-var-box.s6v-blue .s6-var-sym{color:#1d4ed8;} .s6-var-box.s6v-blue .s6-var-arrow::before{background:#3b82f6;} .s6-var-box.s6v-blue .s6-var-arrow::after{border-top:8px solid #3b82f6;}
-.s6-var-box.s6v-green .s6-var-inner{border-color:#22c55e;background:#f0fdf4;} .s6-var-box.s6v-green .s6-var-sym{color:#15803d;} .s6-var-box.s6v-green .s6-var-arrow::before{background:#22c55e;} .s6-var-box.s6v-green .s6-var-arrow::after{border-top:8px solid #22c55e;}
-.s6-var-box.s6v-purple .s6-var-inner{border-color:#a855f7;background:#faf5ff;} .s6-var-box.s6v-purple .s6-var-sym{color:#7c3aed;} .s6-var-box.s6v-purple .s6-var-arrow::before{background:#a855f7;} .s6-var-box.s6v-purple .s6-var-arrow::after{border-top:8px solid #a855f7;}
-.s6-var-box.s6v-teal .s6-var-inner{border-color:#14b8a6;background:#f0fdfa;} .s6-var-box.s6v-teal .s6-var-sym{color:#0f766e;} .s6-var-box.s6v-teal .s6-var-arrow::before{background:#14b8a6;} .s6-var-box.s6v-teal .s6-var-arrow::after{border-top:8px solid #14b8a6;}
-.s6-var-inner{border:2px solid;border-radius:14px;padding:14px 16px 12px;text-align:center;width:100%;box-sizing:border-box;}
-.s6-var-sym{font-family:'Courier New',monospace;font-size:22px;font-weight:900;line-height:1;display:block;margin-bottom:5px;}
-.s6-var-name{font-size:11.5px;font-weight:700;color:#475569;line-height:1.35;display:block;}
-.s6-var-val{font-size:10.5px;font-weight:600;color:#94a3b8;margin-top:3px;display:block;}
-.s6-note-bar{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:22px;padding:12px 20px;background:#fff;border-radius:12px;border:1.5px solid #fde68a;opacity:0;transform:translateY(8px);transition:opacity .45s ease,transform .45s ease;}
+
+/* ── Variable cards row ── */
+.s6-vars-row{
+  display:flex;align-items:flex-start;justify-content:center;
+  gap:10px;flex-wrap:wrap;
+}
+
+/* ── Individual variable card ── */
+.s6-var-box{
+  display:flex;flex-direction:column;align-items:center;
+  min-width:126px;max-width:160px;flex:1;
+  opacity:0;transform:translateY(16px) scale(.97);
+  transition:opacity .4s cubic-bezier(.4,0,.2,1),
+             transform .4s cubic-bezier(.34,1.4,.64,1);
+}
+.s6-var-box.s6-shown{opacity:1;transform:translateY(0) scale(1);}
+
+/* connector line from formula → card */
+.s6-var-connector{
+  width:2px;height:18px;border-radius:2px;
+  flex-shrink:0;margin-bottom:0;
+  opacity:0;transition:opacity .3s ease .1s;
+}
+.s6-var-box.s6-shown .s6-var-connector{opacity:1;}
+.s6-var-connector-dot{
+  width:8px;height:8px;border-radius:50%;
+  margin:0 auto -4px;flex-shrink:0;
+  opacity:0;transition:opacity .3s ease .15s;
+}
+.s6-var-box.s6-shown .s6-var-connector-dot{opacity:1;}
+
+/* card body */
+.s6-var-inner{
+  border:2px solid;border-radius:14px;
+  padding:14px 14px 12px;text-align:center;
+  width:100%;box-sizing:border-box;
+  transition:box-shadow .3s,transform .25s cubic-bezier(.34,1.3,.64,1);
+}
+.s6-var-box.s6-active .s6-var-inner{
+  box-shadow:0 0 0 3.5px rgba(59,130,246,.25),
+             0 6px 24px rgba(29,78,216,.18);
+  transform:scale(1.06) translateY(-2px);
+}
+
+/* symbol */
+.s6-var-sym{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:24px;font-weight:800;line-height:1;
+  display:block;margin-bottom:6px;letter-spacing:.5px;
+}
+/* name */
+.s6-var-name{
+  font-family:'Inter',sans-serif;
+  font-size:11px;font-weight:600;color:#64748b;
+  line-height:1.4;display:block;
+}
+/* value chip */
+.s6-var-val-chip{
+  display:inline-flex;align-items:center;gap:4px;
+  margin-top:8px;padding:3px 8px;border-radius:20px;
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:11px;font-weight:700;
+}
+.s6-var-val-num{font-size:12.5px;}
+.s6-var-val-unit{font-size:10px;font-weight:600;opacity:.8;}
+
+/* colour themes for variable cards */
+.s6v-blue  .s6-var-inner{border-color:#3b82f6;background:linear-gradient(145deg,#eff6ff,#dbeafe);}
+.s6v-blue  .s6-var-sym{color:#1d4ed8;}
+.s6v-blue  .s6-var-connector{background:#3b82f6;}
+.s6v-blue  .s6-var-connector-dot{background:#3b82f6;}
+.s6v-blue  .s6-var-val-chip{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;}
+
+.s6v-green .s6-var-inner{border-color:#22c55e;background:linear-gradient(145deg,#f0fdf4,#dcfce7);}
+.s6v-green .s6-var-sym{color:#15803d;}
+.s6v-green .s6-var-connector{background:#22c55e;}
+.s6v-green .s6-var-connector-dot{background:#22c55e;}
+.s6v-green .s6-var-val-chip{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;}
+
+.s6v-orange .s6-var-inner{border-color:#f59e0b;background:linear-gradient(145deg,#fffbeb,#fef3c7);}
+.s6v-orange .s6-var-sym{color:#b45309;}
+.s6v-orange .s6-var-connector{background:#f59e0b;}
+.s6v-orange .s6-var-connector-dot{background:#f59e0b;}
+.s6v-orange .s6-var-val-chip{background:#fef3c7;color:#92400e;border:1px solid #fde68a;}
+
+.s6v-red    .s6-var-inner{border-color:#f43f5e;background:linear-gradient(145deg,#fff1f2,#ffe4e6);}
+.s6v-red    .s6-var-sym{color:#be123c;}
+.s6v-red    .s6-var-connector{background:#f43f5e;}
+.s6v-red    .s6-var-connector-dot{background:#f43f5e;}
+.s6v-red    .s6-var-val-chip{background:#ffe4e6;color:#be123c;border:1px solid #fecdd3;}
+
+.s6v-purple .s6-var-inner{border-color:#a855f7;background:linear-gradient(145deg,#faf5ff,#f3e8ff);}
+.s6v-purple .s6-var-sym{color:#7c3aed;}
+.s6v-purple .s6-var-connector{background:#a855f7;}
+.s6v-purple .s6-var-connector-dot{background:#a855f7;}
+.s6v-purple .s6-var-val-chip{background:#f3e8ff;color:#6d28d9;border:1px solid #e9d5ff;}
+
+.s6v-teal  .s6-var-inner{border-color:#14b8a6;background:linear-gradient(145deg,#f0fdfa,#ccfbf1);}
+.s6v-teal  .s6-var-sym{color:#0f766e;}
+.s6v-teal  .s6-var-connector{background:#14b8a6;}
+.s6v-teal  .s6-var-connector-dot{background:#14b8a6;}
+.s6v-teal  .s6-var-val-chip{background:#ccfbf1;color:#0f766e;border:1px solid #99f6e4;}
+
+/* ── Insight / note bar ── */
+.s6-note-bar{
+  display:flex;align-items:flex-start;gap:12px;
+  margin-top:22px;padding:14px 20px;
+  background:linear-gradient(135deg,#fffbeb,#fef9c3);
+  border-radius:14px;border:1.5px solid #fde68a;
+  box-shadow:0 2px 8px rgba(245,158,11,.10);
+  opacity:0;transform:translateY(10px);
+  transition:opacity .5s ease,transform .5s ease;
+}
 .s6-note-bar.s6-shown{opacity:1;transform:translateY(0);}
-.s6-note-text{font-size:13px;font-weight:700;color:#92400e;}
-.s6-phase-progress{font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#0891b2;text-align:center;margin-bottom:4px;min-height:14px;}
-.s6-phase-caption{font-size:13px;font-weight:600;color:#334155;text-align:center;margin-bottom:20px;line-height:1.5;min-height:18px;}
-.s6-var-box.s6-active .s6-var-inner{box-shadow:0 0 0 4px rgba(8,145,178,.20),0 4px 16px rgba(8,145,178,.22);transform:scale(1.05);transition:transform .3s cubic-bezier(.34,1.56,.64,1),box-shadow .3s ease;}
-.s6-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 32px 22px;border-top:1px solid #e8eef8;background:#fff;}
+.s6-note-icon{font-size:20px;flex-shrink:0;margin-top:1px;}
+.s6-note-content{}
+.s6-note-label{
+  font-size:9px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#a16207;margin-bottom:3px;
+}
+.s6-note-text{font-size:13px;font-weight:500;color:#78350f;line-height:1.6;}
+
+/* ── Navigation row ── */
+.s6-nav-row{
+  display:flex;justify-content:space-between;align-items:center;
+  gap:12px;padding:16px 28px 20px;
+  border-top:1px solid #e8eef8;background:#fdfdff;
+}
+.s6-btn{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:10px 22px;border-radius:10px;
+  font-family:'Inter',sans-serif;font-size:13.5px;font-weight:700;
+  cursor:pointer;border:none;transition:all .18s ease;letter-spacing:.1px;
+}
+.s6-btn-back{
+  background:#f1f5f9;color:#64748b;
+  border:1.5px solid #cbd5e1!important;
+}
+.s6-btn-back:hover{background:#e2e8f0;color:#334155;transform:translateX(-2px);}
+.s6-btn-next{
+  background:linear-gradient(135deg,#1d4ed8,#3b82f6);
+  color:#fff;box-shadow:0 4px 14px rgba(29,78,216,.28);
+}
+.s6-btn-next:hover{box-shadow:0 6px 20px rgba(29,78,216,.38);transform:translateY(-1px);}
+.s6-btn-finish{
+  background:linear-gradient(135deg,#6d28d9,#7c3aed);
+  color:#fff;box-shadow:0 4px 14px rgba(109,40,217,.28);
+}
+.s6-btn-finish:hover{box-shadow:0 6px 20px rgba(109,40,217,.38);transform:translateY(-1px);}
 </style>"""
 
 
 def _build_scene6_html(formula_data: dict) -> str:
-    """Build the Scene 6 (Main Formula) overlay HTML from formula_data."""
-    formula_text = html_module.escape(formula_data.get("formula_text", "Formula"))
-    formula_sublabel = html_module.escape(formula_data.get("formula_sublabel", "Governing Equation"))
-    note_text = formula_data.get("note_text", "")
-    variables = formula_data.get("variables", [])
+    """Build the Step 7 — Main Formula overlay with full design system."""
+    formula_text    = html_module.escape(formula_data.get("formula_text", "Formula"))
+    formula_sublabel= html_module.escape(formula_data.get("formula_sublabel", "Governing Equation"))
+    note_text       = formula_data.get("note_text", "")
+    variables       = formula_data.get("variables", [])
 
-    # Map color names to CSS classes
     color_map = {
-        "blue": "s6v-blue", "cyan": "s6v-teal", "orange": "s6v-orange",
-        "green": "s6v-green", "red": "s6v-red", "purple": "s6v-purple",
-        "teal": "s6v-teal",
+        "blue":   "s6v-blue",  "cyan":   "s6v-teal",   "orange": "s6v-orange",
+        "green":  "s6v-green", "red":    "s6v-red",     "purple": "s6v-purple",
+        "teal":   "s6v-teal",  "indigo": "s6v-blue",   "amber":  "s6v-orange",
+        "rose":   "s6v-red",   "violet": "s6v-purple",
     }
 
     var_boxes_html = ""
     for v in variables:
-        sym = html_module.escape(v.get("symbol", "?"))
-        name = html_module.escape(v.get("name", "Variable"))
-        val = html_module.escape(v.get("value", ""))
-        unit = html_module.escape(v.get("unit", ""))
-        color_cls = color_map.get(v.get("color", "blue"), "s6v-blue")
-        val_display = f"{val} {unit}".strip() if val else ""
+        sym        = html_module.escape(v.get("symbol", "?"))
+        name       = html_module.escape(v.get("name", "Variable"))
+        val        = html_module.escape(v.get("value", ""))
+        unit       = html_module.escape(v.get("unit", ""))
+        color_cls  = color_map.get(v.get("color", "blue"), "s6v-blue")
+        chip_html  = ""
+        if val:
+            chip_html = (
+                f'<div class="s6-var-val-chip">'
+                f'<span class="s6-var-val-num">{val}</span>'
+                + (f'<span class="s6-var-val-unit">{unit}</span>' if unit else "")
+                + f'</div>'
+            )
         var_boxes_html += f"""
           <div class="s6-var-box {color_cls}">
-            <div class="s6-var-arrow"></div>
+            <div class="s6-var-connector"></div>
+            <div class="s6-var-connector-dot"></div>
             <div class="s6-var-inner">
               <span class="s6-var-sym">{sym}</span>
               <span class="s6-var-name">{name}</span>
-              {f'<span class="s6-var-val">{val_display}</span>' if val_display else ''}
+              {chip_html}
             </div>
           </div>"""
 
+    # build phase dots (one per variable + note phase)
+    n_vars = len(variables)
+    dots_html = "".join(
+        f'<div class="s6-phase-dot" id="s6-dot-{i}"></div>'
+        for i in range(n_vars + 1)
+    )
+
     note_html = ""
     if note_text:
-        note_html = f'<div class="s6-note-bar" id="s6-note-bar"><span class="s6-note-text">{html_module.escape(note_text)}</span></div>'
+        note_html = f"""
+      <div class="s6-note-bar" id="s6-note-bar">
+        <div class="s6-note-icon">&#x1F4A1;</div>
+        <div class="s6-note-content">
+          <div class="s6-note-label">Key Insight</div>
+          <div class="s6-note-text">{html_module.escape(note_text)}</div>
+        </div>
+      </div>"""
 
     return f"""
 <div id="qanim-scene-modal-backdrop"></div>
-<div id="qanim-scene6-overlay">
+<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-label="Step 7: Main Formula">
   <div class="s6-card">
-    <div class="s6-title-bar"><h2>Step 7 &mdash; Main Formula</h2></div>
+
+    <!-- Header -->
+    <div class="s6-header">
+      <div class="s6-header-left">
+        <div class="s6-step-badge">Step 7 of 9</div>
+        <div class="s6-header-title">Main Formula</div>
+      </div>
+      <div class="s6-header-right">
+        <div class="s6-progress-text" id="s6-phase-progress">Formula</div>
+      </div>
+    </div>
+
+    <!-- Body -->
     <div class="s6-body">
-      <div class="s6-phase-progress" id="s6-phase-progress"></div>
-      <div class="s6-phase-caption" id="s6-phase-caption">This is the governing formula. Click &ldquo;Next&rdquo; to explore each variable.</div>
+
+      <!-- Caption row -->
+      <div class="s6-phase-row">
+        <div class="s6-phase-caption" id="s6-phase-caption">
+          This is the <span class="s6-accent">governing formula</span>
+          for this problem. Click <strong>Next</strong> to explore each variable.
+        </div>
+        <div class="s6-phase-dots" id="s6-phase-dots">{dots_html}</div>
+      </div>
+
+      <!-- Formula display -->
       <div class="s6-formula-box">
+        <div class="s6-formula-label">Governing Equation</div>
         <div class="s6-formula-main" id="s6-formula-text">{formula_text}</div>
         <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_sublabel}</div>
       </div>
+
+      <!-- Variable cards -->
       <div class="s6-vars-row" id="s6-vars-row">{var_boxes_html}</div>
+
+      <!-- Insight note -->
       {note_html}
-    </div>
+
+    </div><!-- /body -->
+
+    <!-- Nav -->
     <div class="s6-nav-row">
-      <button onclick="qanim_goToPrevScene()" style="background:#f1f5f9;border:1.5px solid #cbd5e1;color:#475569;padding:10px 20px;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;">&#9664; Back to Animation</button>
-      <button id="s6-next-btn" onclick="qanim_s6Advance()" style="background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;border:none;padding:10px 22px;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;">Next &#9654;</button>
+      <button class="s6-btn s6-btn-back" onclick="qanim_goToPrevScene()">
+        &#9664; Back to Animation
+      </button>
+      <button class="s6-btn s6-btn-next" id="s6-next-btn" onclick="qanim_s6Advance()">
+        Next Variable &#9654;
+      </button>
     </div>
-  </div>
+
+  </div><!-- /card -->
 </div>"""
 
 
@@ -1404,138 +1698,153 @@ _SCENE6_JS = """\
 <script id="qanim-js-scene6">
 (function initScene6(){
   'use strict';
-  if(window.__qanimScene6Init)return; window.__qanimScene6Init=true;
+  if(window.__qanimScene6Init)return;window.__qanimScene6Init=true;
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function _varBoxes(){return document.querySelectorAll('#s6-vars-row .s6-var-box');}
+  function _dots(){return document.querySelectorAll('#s6-phase-dots .s6-phase-dot');}
 
-  var s6Phase = -1;
-  var s6AutoAdvanceScheduled = false;
-  var s6AutoAdvanceTimer = null;
-  var S6_TOTAL_VAR_PHASES = 0;
+  var s6Phase=-1;
+  var s6AutoTimer=null;
+
+  var CAPTIONS=[
+    'This is the <span class="s6-accent">governing formula</span> for this problem. Click <strong>Next</strong> to explore each variable.',
+  ];
+
+  function _buildCaptions(){
+    var boxes=_varBoxes();
+    var caps=[ 'This is the <span class="s6-accent">governing formula</span> for this problem. Click <strong>Next</strong> to explore each variable.' ];
+    boxes.forEach(function(b){
+      var sym=b.querySelector('.s6-var-sym');
+      var nm=b.querySelector('.s6-var-name');
+      var chip=b.querySelector('.s6-var-val-chip');
+      var symT=sym?sym.textContent.trim():'';
+      var nmT=nm?nm.textContent.trim():'';
+      var chipT=chip?chip.textContent.trim():'';
+      var txt='<span class="s6-accent">'+symT+'</span> &mdash; <strong>'+nmT+'</strong>'+(chipT?' &ensp;<span style="font-family:\'JetBrains Mono\',monospace;font-size:12px;background:#f1f5f9;padding:2px 7px;border-radius:6px;">'+chipT+'</span>':'')+ '.';
+      caps.push(txt);
+    });
+    caps.push('All variables identified. The key insight is shown below. Click to proceed to the substitution step.');
+    return caps;
+  }
 
   function s6Render(){
-    var boxes = _varBoxes();
-    var n = boxes.length;
-    S6_TOTAL_VAR_PHASES = n;
-    var formulaEl = _el('s6-formula-text');
-    var sublabelEl = _el('s6-formula-sublabel');
-    var captionEl = _el('s6-phase-caption');
-    var progressEl = _el('s6-phase-progress');
-    var noteEl = _el('s6-note-bar');
-    var nextBtn = _el('s6-next-btn');
-    if(formulaEl) formulaEl.classList.add('s6-shown');
-    if(sublabelEl) sublabelEl.classList.add('s6-shown');
+    var boxes=_varBoxes();
+    var n=boxes.length;
+    var caps=_buildCaptions();
+    var dots=_dots();
+
+    // show formula
+    var fEl=_el('s6-formula-text');var sEl=_el('s6-formula-sublabel');
+    if(fEl)fEl.classList.add('s6-shown');
+    if(sEl)sEl.classList.add('s6-shown');
+
+    // show/highlight variable boxes
     for(var i=0;i<n;i++){
-      var b = boxes[i];
-      b.classList.remove('s6-active');
-      if(s6Phase >= i+1){ b.classList.add('s6-shown'); if(s6Phase===i+1) b.classList.add('s6-active'); }
+      var b=boxes[i];
+      if(s6Phase>=i+1) b.classList.add('s6-shown'); else b.classList.remove('s6-shown');
+      b.classList.toggle('s6-active', s6Phase===i+1);
     }
-    var showNote = s6Phase >= n+1;
-    if(noteEl) noteEl.classList.toggle('s6-shown', showNote);
-    if(showNote && !s6AutoAdvanceScheduled){
-      s6AutoAdvanceScheduled = true;
-      s6AutoAdvanceTimer = setTimeout(function(){
-        var ov = _el('qanim-scene6-overlay');
-        if(ov && ov.classList.contains('qanim-scene-visible')){
-          if(typeof window.qanim_showScene8==='function') window.qanim_showScene8();
-        }
-      }, 2800);
+
+    // dots
+    for(var d=0;d<dots.length;d++){
+      dots[d].classList.remove('active','done');
+      if(d<s6Phase) dots[d].classList.add('done');
+      if(d===s6Phase) dots[d].classList.add('active');
     }
-    if(progressEl){
-      if(s6Phase<=0) progressEl.innerText = 'Step 1 of '+(n+2)+' \u2014 The Formula';
-      else if(s6Phase<=n) progressEl.innerText = 'Step '+(s6Phase+1)+' of '+(n+2)+' \u2014 Variable '+s6Phase+' of '+n;
-      else progressEl.innerText = 'Step '+(n+2)+' of '+(n+2)+' \u2014 Key Insight';
+
+    // note bar
+    var noteEl=_el('s6-note-bar');
+    var showNote=(s6Phase>=n+1);
+    if(noteEl) noteEl.classList.toggle('s6-shown',showNote);
+
+    // caption
+    var capEl=_el('s6-phase-caption');
+    var capIdx=Math.max(0,Math.min(s6Phase<0?0:s6Phase, caps.length-1));
+    if(capEl) capEl.innerHTML=caps[capIdx]||caps[0];
+
+    // progress label
+    var progEl=_el('s6-phase-progress');
+    if(progEl){
+      if(s6Phase<=0) progEl.textContent='Formula';
+      else if(s6Phase<=n) progEl.textContent='Variable '+s6Phase+' / '+n;
+      else progEl.textContent='Insight';
     }
-    if(captionEl){
-      var cap = 'This is the governing formula. Click \u201CNext\u201D to explore each variable.';
-      if(s6Phase>=1&&s6Phase<=n){
-        var b2=boxes[s6Phase-1];
-        var symEl=b2?b2.querySelector('.s6-var-sym'):null;
-        var nameEl=b2?b2.querySelector('.s6-var-name'):null;
-        var valEl=b2?b2.querySelector('.s6-var-val'):null;
-        cap=(symEl?symEl.innerText:'')+' \u2014 '+(nameEl?nameEl.innerText:'variable')+((valEl&&valEl.innerText)?' ('+valEl.innerText+')':'')+'.'
-      } else if(s6Phase>=n+1){
-        cap='All variables identified. See the key insight below, then continue to the step-by-step solution.';
-      }
-      captionEl.innerText=cap;
-    }
-    if(nextBtn){
-      if(s6Phase>=n+1){
-        nextBtn.innerText='Step 8: Substitution \u25B6';
-        nextBtn.style.background='linear-gradient(135deg,#4338ca,#7c3aed)';
-        nextBtn.onclick=function(){ window.qanim_showScene8(); };
+
+    // next button label
+    var nb=_el('s6-next-btn');
+    if(nb){
+      if(s6Phase<n){
+        nb.innerHTML='Next Variable &#9654;';
+        nb.className='s6-btn s6-btn-next';
+        nb.onclick=function(){window.qanim_s6Advance();};
+      } else if(s6Phase===n){
+        nb.innerHTML='See Insight &#9654;';
+        nb.className='s6-btn s6-btn-next';
+        nb.onclick=function(){window.qanim_s6Advance();};
       } else {
-        nextBtn.innerText='Next \u25B6';
-        nextBtn.style.background='';
-        nextBtn.onclick=function(){ window.qanim_s6Advance(); };
+        nb.innerHTML='Step 8: Substitution &#9654;';
+        nb.className='s6-btn s6-btn-finish';
+        nb.onclick=function(){window.qanim_showScene8();};
+        // auto-advance after 3 s
+        if(!s6AutoTimer){
+          s6AutoTimer=setTimeout(function(){
+            var ov=_el('qanim-scene6-overlay');
+            if(ov&&ov.classList.contains('qanim-scene-visible')) window.qanim_showScene8();
+          },3200);
+        }
       }
     }
   }
 
-  window.qanim_s6Advance = function(){
+  window.qanim_s6Advance=function(){
     var n=_varBoxes().length;
-    if(s6Phase < n+1) s6Phase++;
+    if(s6Phase<n+1) s6Phase++;
     s6Render();
   };
 
-  function _qanimCancelRAF(){
-    if(typeof window.qanimRafId!=='undefined'&&window.qanimRafId){ cancelAnimationFrame(window.qanimRafId); window.qanimRafId=null; }
-    if(typeof window.rafId!=='undefined'&&window.rafId){ cancelAnimationFrame(window.rafId); window.rafId=null; }
+  function _cancelRAF(){
+    if(typeof window.qanimRafId!=='undefined'&&window.qanimRafId){cancelAnimationFrame(window.qanimRafId);window.qanimRafId=null;}
+    if(typeof window.rafId!=='undefined'&&window.rafId){cancelAnimationFrame(window.rafId);window.rafId=null;}
   }
-  function _qanimResumeRAF(){
-    if(typeof window.qanimStartRAF==='function'){ window.qanimStartRAF(); return; }
-    if(typeof window.startRAF==='function'){ window.startRAF(); return; }
-    if(typeof window.animate==='function'){ requestAnimationFrame(window.animate); return; }
+  function _resumeRAF(){
+    if(typeof window.qanimStartRAF==='function'){window.qanimStartRAF();return;}
+    if(typeof window.startRAF==='function'){window.startRAF();return;}
+    if(typeof window.animate==='function'){requestAnimationFrame(window.animate);}
   }
-
-  function _syncDots(idx){
+  function _syncDots7(){
     var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){ dots[i].classList.remove('active','done'); if(i<idx) dots[i].classList.add('done'); if(i===idx) dots[i].classList.add('active'); }
-    var lbl=_el('step-label'); if(lbl) lbl.innerText='Step 7 of 9: Main Formula';
-    var bar=_el('step-bar'); if(bar) bar.style.width=Math.round(7/9*100)+'%';
+    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<6)dots[i].classList.add('done');if(i===6)dots[i].classList.add('active');}
+    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 7 of 9: Main Formula';
+    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(7/9*100)+'%';
   }
 
-  window.qanim_showScene6 = function(){
-    var ov=_el('qanim-scene6-overlay'); if(ov) ov.classList.add('qanim-scene-visible');
-    var ov7=_el('qanim-scene7-overlay'); if(ov7) ov7.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay'); if(ov9) ov9.classList.remove('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop'); if(bd) bd.classList.add('qanim-scene-visible');
-    _qanimCancelRAF();
-    _syncDots(6);
-    s6Phase=0; s6AutoAdvanceScheduled=false;
-    if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
+  window.qanim_showScene6=function(){
+    var ov=_el('qanim-scene6-overlay');if(ov)ov.classList.add('qanim-scene-visible');
+    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
+    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
+    _cancelRAF();_syncDots7();
+    s6Phase=0;if(s6AutoTimer){clearTimeout(s6AutoTimer);s6AutoTimer=null;}
     s6Render();
   };
 
-  window.qanim_goToPrevScene = function(){
-    var ov6=_el('qanim-scene6-overlay'); if(ov6) ov6.classList.remove('qanim-scene-visible');
-    var ov7=_el('qanim-scene7-overlay'); if(ov7) ov7.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay'); if(ov9) ov9.classList.remove('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop'); if(bd) bd.classList.remove('qanim-scene-visible');
-    if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
-    var svgCont=document.querySelector('.svg-container'); if(svgCont){ svgCont.style.transition='opacity .45s ease'; svgCont.style.opacity='1'; }
-    if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){
-      var last=window.stepsData.length-1; window.currentStep=last; window.applyStep(last);
-    }
-    _qanimResumeRAF();
-  };
-
-  window.qanim_goToScene7 = function(){
-    var ov6=_el('qanim-scene6-overlay'); if(ov6) ov6.classList.remove('qanim-scene-visible');
-    if(s6AutoAdvanceTimer){ clearTimeout(s6AutoAdvanceTimer); s6AutoAdvanceTimer=null; }
-    if(typeof window.qanim_showScene8==='function') window.qanim_showScene8();
+  window.qanim_goToPrevScene=function(){
+    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
+    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
+    if(s6AutoTimer){clearTimeout(s6AutoTimer);s6AutoTimer=null;}
+    var svgC=document.querySelector('.svg-container');if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='1';}
+    if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){var last=window.stepsData.length-1;window.currentStep=last;window.applyStep(last);}
+    _resumeRAF();
   };
 
   _onReady(function(){
-    var _origReset=window.resetAnim;
+    var origReset=window.resetAnim;
     window.resetAnim=function(){
-      var ov6=_el('qanim-scene6-overlay'); if(ov6) ov6.classList.remove('qanim-scene-visible');
-      var ov7=_el('qanim-scene7-overlay'); if(ov7) ov7.classList.remove('qanim-scene-visible');
-      var ov9=_el('qanim-scene9-overlay'); if(ov9) ov9.classList.remove('qanim-scene-visible');
-      var bd=_el('qanim-scene-modal-backdrop'); if(bd) bd.classList.remove('qanim-scene-visible');
-      var svgCont=document.querySelector('.svg-container'); if(svgCont) svgCont.style.opacity='1';
-      if(typeof _origReset==='function') _origReset();
+      ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
+      var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
+      var svgC=document.querySelector('.svg-container');if(svgC)svgC.style.opacity='1';
+      if(typeof origReset==='function')origReset();
     };
   });
 })();
@@ -1547,17 +1856,14 @@ def inject_scene6_big_idea(html: str, gemini_sol: dict, scene_script: dict) -> s
         return html
     formula_data = scene_script.get("formula_data", {})
     if not formula_data:
-        # Build from solution data
         sol = gemini_sol or {}
-        variables = sol.get("variables", [])
         formula_data = {
-            "formula_text": sol.get("formula", "Governing Formula"),
+            "formula_text":     sol.get("formula", "Governing Formula"),
             "formula_sublabel": "Governing Equation",
-            "variables": variables,
-            "note_text": sol.get("key_insight", ""),
+            "variables":        sol.get("variables", []),
+            "note_text":        sol.get("key_insight", ""),
         }
     scene6_html = _build_scene6_html(formula_data)
-    inject = _SCENE6_STYLES + "\n" + scene6_html + "\n" + _SCENE6_JS
     if '</head>' in html:
         html = html.replace('</head>', _SCENE6_STYLES + '\n</head>', 1)
         inject_body = scene6_html + "\n" + _SCENE6_JS
@@ -1567,96 +1873,343 @@ def inject_scene6_big_idea(html: str, gemini_sol: dict, scene_script: dict) -> s
         else:
             html = html + inject_body
     else:
-        html = inject + html
-    QAnimLogger.ok("Scene6", "Main Formula panel injected")
+        html = _SCENE6_STYLES + "\n" + scene6_html + "\n" + _SCENE6_JS + html
+    QAnimLogger.ok("Scene6", "Main Formula panel injected (v2 design)")
     return html
 
 
-
 # ===========================================================================
-#  MODULE 12 — Scene 7/8 (Step-by-Step Substitution) Injection
+#  MODULE 12 — Scene 7/8 (Step 8: Substitution) — Full Redesign
 # ===========================================================================
 
 _SCENE7_STYLES = """\
 <style id="qanim-scene7-styles">
-#qanim-scene7-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(900px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s ease,transform .3s cubic-bezier(.34,1.56,.64,1);}
-#qanim-scene7-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
-.s7-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(37,99,235,.12),0 2px 8px rgba(0,0,0,.07);border:1px solid #e8eef8;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
-.s7-title-bar{text-align:center;padding:20px 28px 16px;border-bottom:1px solid #e8eef8;background:#fff;}
-.s7-title-bar h2{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-0.3px;}
-.s7-body-cols{display:flex;align-items:flex-start;gap:0;min-height:320px;}
-.s7-left-col{width:44%;min-width:200px;border-right:1.5px solid #e8eef8;padding:22px 20px 22px 26px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);display:flex;flex-direction:column;gap:0;align-self:stretch;}
-.s7-system-label{font-size:10.5px;font-weight:800;color:#1d4ed8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;}
-.s7-system-visual{background:linear-gradient(135deg,#bfdbfe 0%,#93c5fd 100%);border-radius:12px;padding:16px 14px 14px;margin-bottom:16px;text-align:center;}
-.s7-system-visual-title{font-size:13px;font-weight:800;color:#1e3a5f;margin-bottom:6px;}
-.s7-system-arrows{display:flex;justify-content:center;gap:10px;margin:8px 0;font-size:20px;color:#d97706;}
-.s7-system-label2{font-size:10px;font-weight:600;color:#1e40af;margin-top:4px;}
-.s7-right-col{flex:1;padding:22px 26px 20px 20px;display:flex;flex-direction:column;gap:16px;}
-.s7-given-section-title{font-size:13px;font-weight:900;color:#1d4ed8;margin-bottom:8px;}
-.s7-given-list{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
-.s7-given-item{font-size:12.5px;color:#334155;line-height:1.5;display:flex;align-items:flex-start;gap:7px;}
-.s7-given-item::before{content:'•';color:#3b82f6;font-weight:900;flex-shrink:0;margin-top:1px;}
-.s7-given-item strong{font-weight:700;color:#1e293b;}
-.s7-approach-section-title{font-size:13px;font-weight:900;color:#7c3aed;margin-bottom:8px;}
-.s7-approach-list{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
-.s7-approach-item{font-size:12.5px;color:#1e293b;line-height:1.5;}
-.s7-formula-result-bar{background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:2px solid #22c55e;border-radius:12px;padding:12px 18px;margin-top:auto;}
-.s7-result-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:#15803d;margin-bottom:6px;}
-.s7-result-eq{font-family:'Courier New',monospace;font-size:16px;font-weight:800;color:#14532d;line-height:1.4;}
-.s7-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 28px 20px;border-top:1px solid #e8eef8;background:#fff;}
+#qanim-scene7-overlay{
+  display:none;position:fixed;
+  top:50%;left:50%;
+  transform:translate(-50%,-50%) scale(.93) translateY(12px);
+  z-index:7500;width:min(940px,96vw);max-height:94vh;
+  overflow-y:auto;box-sizing:border-box;
+  opacity:0;pointer-events:none;
+  transition:opacity .35s cubic-bezier(.4,0,.2,1),
+             transform .4s cubic-bezier(.34,1.28,.64,1);
+  scrollbar-width:thin;scrollbar-color:#a7f3d0 #f0fdf4;
+}
+#qanim-scene7-overlay::-webkit-scrollbar{width:5px;}
+#qanim-scene7-overlay::-webkit-scrollbar-track{background:#f0fdf4;}
+#qanim-scene7-overlay::-webkit-scrollbar-thumb{background:#a7f3d0;border-radius:4px;}
+#qanim-scene7-overlay.qanim-scene-visible{
+  display:block!important;opacity:1;pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1) translateY(0);
+}
+
+.s7-card{
+  background:#fff;border-radius:24px;overflow:hidden;
+  box-shadow:0 24px 80px rgba(5,150,105,.12),0 4px 16px rgba(0,0,0,.07);
+  border:1px solid #d1fae5;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+}
+
+/* ── Header ── */
+.s7-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 28px;height:58px;
+  background:linear-gradient(90deg,#065f46 0%,#059669 55%,#10b981 100%);
+  position:relative;overflow:hidden;
+}
+.s7-header::after{
+  content:'';position:absolute;inset:0;
+  background:repeating-linear-gradient(45deg,transparent,transparent 20px,rgba(255,255,255,.03) 20px,rgba(255,255,255,.03) 40px);
+  pointer-events:none;
+}
+.s7-header-left{display:flex;align-items:center;gap:10px;z-index:1;}
+.s7-step-badge{
+  background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
+  border-radius:8px;padding:3px 10px;
+  font-size:10.5px;font-weight:800;letter-spacing:1.5px;color:#a7f3d0;
+  text-transform:uppercase;
+}
+.s7-header-title{font-size:15px;font-weight:700;color:#fff;}
+.s7-header-right{z-index:1;}
+.s7-header-system{font-size:11.5px;font-weight:600;color:#6ee7b7;letter-spacing:.2px;max-width:260px;text-align:right;line-height:1.35;}
+
+/* ── Two-column body ── */
+.s7-body{display:flex;min-height:380px;}
+
+/* ── LEFT: System diagram panel ── */
+.s7-left{
+  width:42%;min-width:220px;
+  background:linear-gradient(160deg,#ecfdf5 0%,#d1fae5 60%,#a7f3d0 100%);
+  border-right:1.5px solid #bbf7d0;
+  padding:24px 20px 22px 26px;
+  display:flex;flex-direction:column;gap:14px;
+}
+.s7-left-title{
+  font-size:9.5px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#065f46;
+}
+/* diagram card */
+.s7-diagram-card{
+  background:#fff;border:1.5px solid #a7f3d0;border-radius:16px;
+  padding:18px 16px 16px;flex:1;
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  box-shadow:0 2px 10px rgba(5,150,105,.09);
+}
+.s7-diagram-system-name{
+  font-size:14px;font-weight:800;color:#065f46;text-align:center;line-height:1.3;
+}
+.s7-diagram-icon{font-size:32px;margin:4px 0;}
+.s7-diagram-desc{
+  font-size:11.5px;color:#374151;text-align:center;line-height:1.55;
+  background:#f0fdf4;border-radius:8px;padding:8px 10px;
+  border:1px solid #d1fae5;width:100%;box-sizing:border-box;
+}
+/* given table */
+.s7-given-table{
+  background:#fff;border:1.5px solid #a7f3d0;border-radius:12px;
+  overflow:hidden;box-shadow:0 1px 6px rgba(5,150,105,.07);
+}
+.s7-given-table-head{
+  background:linear-gradient(90deg,#059669,#10b981);
+  padding:8px 14px;
+  font-size:9.5px;font-weight:800;letter-spacing:1.8px;
+  text-transform:uppercase;color:#fff;
+}
+.s7-given-row{
+  display:flex;align-items:center;gap:0;
+  border-top:1px solid #d1fae5;
+  transition:background .15s;
+}
+.s7-given-row:hover{background:#f0fdf4;}
+.s7-given-sym{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:13px;font-weight:800;color:#065f46;
+  padding:9px 12px;min-width:46px;text-align:center;
+  border-right:1px solid #d1fae5;background:#f0fdf4;
+  flex-shrink:0;
+}
+.s7-given-detail{padding:9px 12px;flex:1;}
+.s7-given-val{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:13px;font-weight:700;color:#065f46;display:block;
+}
+.s7-given-desc{font-size:10.5px;color:#6b7280;line-height:1.3;}
+
+/* ── RIGHT: Solution panel ── */
+.s7-right{
+  flex:1;padding:24px 28px 22px 22px;
+  display:flex;flex-direction:column;gap:0;
+  background:#fafffe;
+}
+
+/* section headers */
+.s7-section{margin-bottom:18px;}
+.s7-section-title{
+  display:flex;align-items:center;gap:8px;
+  font-size:10px;font-weight:800;letter-spacing:1.8px;
+  text-transform:uppercase;margin-bottom:10px;
+}
+.s7-section-title-dot{
+  width:8px;height:8px;border-radius:50%;flex-shrink:0;
+}
+
+/* approach steps */
+.s7-approach-list{display:flex;flex-direction:column;gap:8px;}
+.s7-approach-step{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:10px 14px;border-radius:10px;
+  background:#f8fffe;border:1px solid #ccfbf1;
+  transition:background .15s;
+}
+.s7-approach-step:hover{background:#ecfdf5;}
+.s7-approach-num{
+  width:22px;height:22px;border-radius:50%;
+  background:linear-gradient(135deg,#059669,#10b981);
+  color:#fff;font-size:11px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;
+}
+.s7-approach-text{
+  font-size:13px;color:#1e293b;line-height:1.55;font-weight:500;
+  font-family:'Inter',sans-serif;
+}
+.s7-approach-text code{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:12.5px;font-weight:700;color:#065f46;
+  background:#d1fae5;padding:1px 6px;border-radius:5px;
+}
+
+/* result bar */
+.s7-result-bar{
+  margin-top:auto;padding:16px 20px;
+  background:linear-gradient(135deg,#065f46,#059669);
+  border-radius:14px;
+  box-shadow:0 4px 18px rgba(5,150,105,.25);
+  display:flex;align-items:center;gap:16px;
+}
+.s7-result-bar-label{
+  font-size:9.5px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#6ee7b7;
+  writing-mode:vertical-rl;text-orientation:mixed;
+  transform:rotate(180deg);flex-shrink:0;
+}
+.s7-result-bar-eq{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:15.5px;font-weight:700;color:#fff;
+  line-height:1.45;letter-spacing:.5px;flex:1;
+}
+.s7-result-bar-eq .s7-result-final{
+  color:#86efac;font-size:18px;font-weight:900;
+}
+
+/* nav */
+.s7-nav-row{
+  display:flex;justify-content:space-between;align-items:center;
+  gap:12px;padding:15px 28px 20px;
+  border-top:1.5px solid #d1fae5;background:#f0fdf4;
+}
+.s7-btn{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:10px 22px;border-radius:10px;
+  font-family:'Inter',sans-serif;font-size:13.5px;font-weight:700;
+  cursor:pointer;border:none;transition:all .18s ease;
+}
+.s7-btn-back{background:#f1f5f9;color:#64748b;border:1.5px solid #cbd5e1!important;}
+.s7-btn-back:hover{background:#e2e8f0;color:#334155;transform:translateX(-2px);}
+.s7-btn-next{
+  background:linear-gradient(135deg,#065f46,#059669);color:#fff;
+  box-shadow:0 4px 14px rgba(5,150,105,.28);
+}
+.s7-btn-next:hover{box-shadow:0 6px 20px rgba(5,150,105,.38);transform:translateY(-1px);}
 </style>"""
 
 
 def _build_scene7_html(substitution_data: dict) -> str:
-    sub = substitution_data or {}
+    """Build Step 8 — Substitution panel with full design system."""
+    sub          = substitution_data or {}
     system_title = html_module.escape(sub.get("system_title", "Physical System"))
-    system_desc = html_module.escape(sub.get("system_description", ""))
-    given_list = sub.get("given_list", [])
+    system_desc  = html_module.escape(sub.get("system_description", ""))
+    given_list   = sub.get("given_list", [])
     approach_steps = sub.get("approach_steps", [])
-    result_bar = html_module.escape(sub.get("result_bar", ""))
+    result_bar   = sub.get("result_bar", "")
 
-    given_items_html = "".join(
-        f'<div class="s7-given-item"><strong>{html_module.escape(g)}</strong></div>'
-        for g in given_list
-    )
-    approach_items_html = "".join(
-        f'<div class="s7-approach-item">{i+1}. {html_module.escape(s)}</div>'
-        for i, s in enumerate(approach_steps)
+    # build given table rows
+    # each item is like "h = 25 W/m²·K (Convective coefficient)" → parse sym, val, desc
+    given_rows_html = ""
+    for g in given_list:
+        g_str = str(g)
+        import re as _re
+        m = _re.match(r'^([A-Za-zΔδαβγθλμρσφωΩΠπ∞₀-₉_\s\^\']+?)\s*=\s*([^\(]+?)(?:\s*\((.+?)\))?\s*$', g_str)
+        if m:
+            sym   = m.group(1).strip()
+            val   = m.group(2).strip()
+            desc  = m.group(3).strip() if m.group(3) else ""
+        else:
+            parts = g_str.split('=', 1)
+            sym   = parts[0].strip() if len(parts) > 1 else "—"
+            val   = parts[1].strip() if len(parts) > 1 else g_str
+            desc  = ""
+        given_rows_html += f"""
+          <div class="s7-given-row">
+            <div class="s7-given-sym">{html_module.escape(sym)}</div>
+            <div class="s7-given-detail">
+              <span class="s7-given-val">{html_module.escape(val)}</span>
+              {f'<span class="s7-given-desc">{html_module.escape(desc)}</span>' if desc else ''}
+            </div>
+          </div>"""
+
+    # approach steps — auto-detect code spans in equations
+    import re as _re2
+    approach_html = ""
+    for i, s in enumerate(approach_steps):
+        # wrap anything that looks like an equation in <code> tags for display
+        def _codify(text):
+            # match patterns like Q = h × A × ... or simple expressions
+            return _re2.sub(
+                r'([A-Za-z_Δδ][A-Za-z_₀-₉Δδ]?\s*(?:[=×\-+/÷·]\s*)?(?:[A-Za-z0-9_Δδ.×\-+/÷·\(\)\[\]°²³µ]+\s*)+)',
+                lambda m2: f'<code>{html_module.escape(m2.group(0).strip())}</code>',
+                html_module.escape(text)
+            )
+        approach_html += f"""
+        <div class="s7-approach-step">
+          <div class="s7-approach-num">{i+1}</div>
+          <div class="s7-approach-text">{_codify(s)}</div>
+        </div>"""
+
+    # result bar — highlight the final value
+    result_escaped = html_module.escape(result_bar)
+    # bold the last = xxx part
+    result_html = _re2.sub(
+        r'=\s*([\d.,\s\w°²³µ/·\-+]+)$',
+        lambda m3: f'= <span class="s7-result-final">{html_module.escape(m3.group(1).strip())}</span>',
+        result_escaped
     )
 
     return f"""
-<div id="qanim-scene7-overlay">
+<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-label="Step 8: Substitution">
   <div class="s7-card">
-    <div class="s7-title-bar"><h2>Step 8 &mdash; Step-by-Step Substitution</h2></div>
-    <div class="s7-body-cols">
-      <div class="s7-left-col">
-        <div class="s7-system-label">Physical System</div>
-        <div class="s7-system-visual">
-          <div class="s7-system-visual-title">{system_title}</div>
-          <div class="s7-system-arrows">&#x1F321;&#xFE0F; &rarr; &#x1F4A8;</div>
-          <div class="s7-system-label2">{system_desc[:80]}</div>
-        </div>
+
+    <!-- Header -->
+    <div class="s7-header">
+      <div class="s7-header-left">
+        <div class="s7-step-badge">Step 8 of 9</div>
+        <div class="s7-header-title">Step-by-Step Substitution</div>
       </div>
-      <div class="s7-right-col">
-        <div>
-          <div class="s7-given-section-title">Given Parameters</div>
-          <div class="s7-given-list">{given_items_html}</div>
-        </div>
-        <div>
-          <div class="s7-approach-section-title">Solution Approach</div>
-          <div class="s7-approach-list">{approach_items_html}</div>
-        </div>
-        <div class="s7-formula-result-bar">
-          <div class="s7-result-label">Formula + Result</div>
-          <div class="s7-result-eq">{result_bar}</div>
-        </div>
+      <div class="s7-header-right">
+        <div class="s7-header-system">{system_title}</div>
       </div>
     </div>
+
+    <!-- Two-col body -->
+    <div class="s7-body">
+
+      <!-- LEFT col -->
+      <div class="s7-left">
+        <div class="s7-left-title">Physical System</div>
+
+        <div class="s7-diagram-card">
+          <div class="s7-diagram-system-name">{system_title}</div>
+          <div class="s7-diagram-icon">&#x1F4D0;</div>
+          <div class="s7-diagram-desc">{system_desc[:120]}</div>
+        </div>
+
+        <div class="s7-given-table">
+          <div class="s7-given-table-head">Given Data</div>
+          {given_rows_html}
+        </div>
+      </div>
+
+      <!-- RIGHT col -->
+      <div class="s7-right">
+
+        <div class="s7-section">
+          <div class="s7-section-title" style="color:#059669;">
+            <div class="s7-section-title-dot" style="background:#059669;"></div>
+            Solution Approach
+          </div>
+          <div class="s7-approach-list">{approach_html}</div>
+        </div>
+
+        <div class="s7-result-bar">
+          <div class="s7-result-bar-label">Result</div>
+          <div class="s7-result-bar-eq">{result_html}</div>
+        </div>
+
+      </div><!-- /right -->
+    </div><!-- /body -->
+
+    <!-- Nav -->
     <div class="s7-nav-row">
-      <button onclick="if(typeof window.qanim_showScene6===\'function\') window.qanim_showScene6()" style="background:#f1f5f9;border:1.5px solid #cbd5e1;color:#475569;padding:10px 20px;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;">&#9664; Step 7: Formula</button>
-      <button onclick="if(typeof window.qanim_showScene9===\'function\') window.qanim_showScene9()" style="background:linear-gradient(135deg,#15803d,#22c55e);color:#fff;border:none;padding:10px 22px;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;">Step 9: Final Answer &#9654;</button>
+      <button class="s7-btn s7-btn-back"
+        onclick="if(typeof window.qanim_showScene6===\'function\') window.qanim_showScene6()">
+        &#9664; Step 7: Formula
+      </button>
+      <button class="s7-btn s7-btn-next"
+        onclick="if(typeof window.qanim_showScene9===\'function\') window.qanim_showScene9()">
+        Step 9: Final Answer &#9654;
+      </button>
     </div>
-  </div>
+
+  </div><!-- /card -->
 </div>"""
 
 
@@ -1664,24 +2217,22 @@ _SCENE7_JS = """\
 <script id="qanim-js-scene7">
 (function initScene7(){
   'use strict';
-  if(window.__qanimScene7Init)return; window.__qanimScene7Init=true;
+  if(window.__qanimScene7Init)return;window.__qanimScene7Init=true;
   function _el(id){return document.getElementById(id);}
-
   function _syncDots8(){
     var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){ dots[i].classList.remove('active','done'); if(i<7) dots[i].classList.add('done'); if(i===7) dots[i].classList.add('active'); }
-    var lbl=_el('step-label'); if(lbl) lbl.innerText='Step 8 of 9: Step-by-Step Substitution';
-    var bar=_el('step-bar'); if(bar) bar.style.width=Math.round(8/9*100)+'%';
+    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<7)dots[i].classList.add('done');if(i===7)dots[i].classList.add('active');}
+    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 8 of 9: Step-by-Step Substitution';
+    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(8/9*100)+'%';
   }
-
-  window.qanim_showScene8 = function(){
-    var ov6=_el('qanim-scene6-overlay'); if(ov6) ov6.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay'); if(ov9) ov9.classList.remove('qanim-scene-visible');
-    var ov7=_el('qanim-scene7-overlay'); if(ov7) ov7.classList.add('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop'); if(bd) bd.classList.add('qanim-scene-visible');
+  window.qanim_showScene8=function(){
+    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
+    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
+    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.add('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
     _syncDots8();
   };
-  window.qanim_showScene7 = window.qanim_showScene8;
+  window.qanim_showScene7=window.qanim_showScene8;
 })();
 </script>"""
 
@@ -1693,11 +2244,11 @@ def inject_scene7_how_we_solve_it(html: str, gemini_sol: dict, scene_script: dic
     if not substitution_data:
         sol = gemini_sol or {}
         substitution_data = {
-            "system_title": "Physical System",
+            "system_title":       "Physical System",
             "system_description": "",
-            "given_list": [f"{s}" for s in (sol.get("steps", []) or [])[:3]],
-            "approach_steps": sol.get("steps", [])[:3],
-            "result_bar": sol.get("final_answer", "See calculation above"),
+            "given_list":         [str(s) for s in (sol.get("steps", []) or [])[:4]],
+            "approach_steps":     sol.get("steps", [])[:3],
+            "result_bar":         sol.get("final_answer", "See calculation above"),
         }
     scene7_html = _build_scene7_html(substitution_data)
     if '</head>' in html:
@@ -1711,91 +2262,342 @@ def inject_scene7_how_we_solve_it(html: str, gemini_sol: dict, scene_script: dic
         html = html.replace('</body>', _SCENE7_JS + '\n</body>', 1)
     else:
         html = html + _SCENE7_JS
-    QAnimLogger.ok("Scene7", "Step-by-Step Substitution panel injected")
+    QAnimLogger.ok("Scene7", "Substitution panel injected (v2 design)")
     return html
 
 
-
 # ===========================================================================
-#  MODULE 13 — Scene 9 (Final Answer) Injection
+#  MODULE 13 — Scene 9 (Step 9: Final Answer) — Full Redesign
 # ===========================================================================
 
 _SCENE9_STYLES = """\
 <style id="qanim-scene9-styles">
-#qanim-scene9-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(860px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s ease,transform .3s cubic-bezier(.34,1.56,.64,1);}
-#qanim-scene9-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
-.s9-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(34,197,94,.14),0 2px 8px rgba(0,0,0,.07);border:1px solid #e8eef8;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
-.s9-title-bar{text-align:center;padding:20px 28px 16px;border-bottom:1px solid #bbf7d0;background:linear-gradient(135deg,#f0fdf4,#dcfce7);}
-.s9-title-bar h2{font-size:20px;font-weight:900;color:#14532d;}
-.s9-body{padding:24px 32px 20px;display:flex;flex-direction:column;gap:22px;}
-.s9-formula-recap{background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:14px 20px;text-align:center;}
-.s9-formula-recap-label{font-size:10.5px;font-weight:800;color:#1d4ed8;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;}
-.s9-formula-recap-eq{font-family:'Courier New',monospace;font-size:18px;font-weight:900;color:#1d4ed8;}
-.s9-sub-chain{display:flex;flex-direction:column;gap:10px;}
-.s9-sub-row{display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;opacity:0;transform:translateX(-18px);transition:opacity .4s ease,transform .4s cubic-bezier(.34,1.56,.64,1);}
+#qanim-scene9-overlay{
+  display:none;position:fixed;
+  top:50%;left:50%;
+  transform:translate(-50%,-50%) scale(.93) translateY(12px);
+  z-index:7500;width:min(880px,96vw);max-height:94vh;
+  overflow-y:auto;box-sizing:border-box;
+  opacity:0;pointer-events:none;
+  transition:opacity .35s cubic-bezier(.4,0,.2,1),
+             transform .4s cubic-bezier(.34,1.28,.64,1);
+  scrollbar-width:thin;scrollbar-color:#86efac #f0fdf4;
+}
+#qanim-scene9-overlay::-webkit-scrollbar{width:5px;}
+#qanim-scene9-overlay::-webkit-scrollbar-track{background:#f0fdf4;}
+#qanim-scene9-overlay::-webkit-scrollbar-thumb{background:#86efac;border-radius:4px;}
+#qanim-scene9-overlay.qanim-scene-visible{
+  display:block!important;opacity:1;pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1) translateY(0);
+}
+
+.s9-card{
+  background:#fff;border-radius:24px;overflow:hidden;
+  box-shadow:0 24px 80px rgba(22,163,74,.15),0 4px 16px rgba(0,0,0,.07);
+  border:1px solid #bbf7d0;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+}
+
+/* ── Header ── */
+.s9-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 28px;height:58px;
+  background:linear-gradient(90deg,#14532d 0%,#16a34a 55%,#22c55e 100%);
+  position:relative;overflow:hidden;
+}
+.s9-header::after{
+  content:'';position:absolute;inset:0;
+  background:url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40' fill='none' stroke='white' stroke-opacity='.04' stroke-width='1'/%3E%3C/svg%3E") repeat;
+  pointer-events:none;
+}
+.s9-header-left{display:flex;align-items:center;gap:10px;z-index:1;}
+.s9-step-badge{
+  background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
+  border-radius:8px;padding:3px 10px;
+  font-size:10.5px;font-weight:800;letter-spacing:1.5px;color:#86efac;
+  text-transform:uppercase;
+}
+.s9-header-title{font-size:15px;font-weight:700;color:#fff;}
+.s9-header-right{z-index:1;}
+.s9-header-target{
+  font-size:11.5px;font-weight:600;color:#86efac;text-align:right;
+  max-width:260px;line-height:1.3;
+}
+
+/* ── Body ── */
+.s9-body{padding:26px 32px 22px;display:flex;flex-direction:column;gap:20px;}
+
+/* ── Formula recap ── */
+.s9-formula-recap{
+  display:flex;align-items:center;gap:0;
+  background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:14px;
+  overflow:hidden;
+}
+.s9-formula-recap-tab{
+  background:linear-gradient(135deg,#1d4ed8,#3b82f6);
+  padding:0 18px;align-self:stretch;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  writing-mode:vertical-rl;text-orientation:mixed;transform:rotate(180deg);
+}
+.s9-formula-recap-tab-text{
+  font-size:9px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#bfdbfe;white-space:nowrap;
+}
+.s9-formula-recap-body{padding:13px 20px;flex:1;}
+.s9-formula-recap-eq{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:17px;font-weight:700;color:#1d4ed8;letter-spacing:.8px;
+  line-height:1.4;
+}
+
+/* ── Substitution chain ── */
+.s9-chain-title{
+  font-size:9.5px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#64748b;margin-bottom:10px;
+}
+.s9-sub-chain{display:flex;flex-direction:column;gap:8px;}
+.s9-sub-row{
+  display:flex;align-items:center;gap:12px;
+  background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;
+  padding:12px 18px 12px 14px;
+  opacity:0;transform:translateX(-22px);
+  transition:opacity .42s cubic-bezier(.4,0,.2,1),
+             transform .42s cubic-bezier(.34,1.2,.64,1);
+  position:relative;overflow:hidden;
+}
+.s9-sub-row::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;
+  width:3px;background:linear-gradient(to bottom,#0891b2,#6366f1);
+  border-radius:3px 0 0 3px;opacity:0;
+  transition:opacity .3s ease;
+}
 .s9-sub-row.s9-shown{opacity:1;transform:translateX(0);}
-.s9-sub-num{background:#0891b2;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;}
-.s9-sub-eq{font-family:'Courier New',monospace;font-size:15px;font-weight:700;color:#1e293b;flex:1;}
-.s9-final-box{background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:3px solid #22c55e;border-radius:18px;padding:28px 32px;text-align:center;position:relative;overflow:hidden;opacity:0;transform:scale(0.94);transition:opacity .5s ease .3s,transform .5s cubic-bezier(.34,1.56,.64,1) .3s;}
-.s9-final-box.s9-shown{opacity:1;transform:scale(1);}
-.s9-final-label{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#15803d;margin-bottom:12px;}
-.s9-final-value{font-family:'Courier New',monospace;font-size:36px;font-weight:900;color:#14532d;line-height:1.2;}
-.s9-final-value span.s9-highlight{color:#16a34a;font-size:44px;}
-.s9-final-unit{font-size:15px;color:#166534;margin-top:8px;font-weight:600;}
-.s9-insight-bar{display:flex;align-items:flex-start;gap:10px;background:#fff7ed;border:1.5px solid #fed7aa;border-radius:10px;padding:13px 18px;opacity:0;transition:opacity .4s ease .6s;}
+.s9-sub-row.s9-shown::before{opacity:1;}
+.s9-sub-row.s9-final{
+  background:linear-gradient(135deg,#f0fdf4,#dcfce7);
+  border-color:#86efac;border-width:2px;
+}
+.s9-sub-row.s9-final::before{
+  background:linear-gradient(to bottom,#22c55e,#16a34a);
+  width:4px;
+}
+.s9-sub-num{
+  width:28px;height:28px;border-radius:50%;
+  background:linear-gradient(135deg,#0891b2,#6366f1);
+  color:#fff;font-size:12px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  box-shadow:0 2px 6px rgba(8,145,178,.25);
+}
+.s9-sub-row.s9-final .s9-sub-num{
+  background:linear-gradient(135deg,#16a34a,#22c55e);
+  box-shadow:0 2px 6px rgba(22,163,74,.3);
+}
+.s9-sub-eq{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:14.5px;font-weight:700;color:#1e293b;flex:1;
+  letter-spacing:.3px;line-height:1.4;
+}
+.s9-sub-row.s9-final .s9-sub-eq{
+  font-size:16px;color:#14532d;font-weight:800;
+}
+
+/* ── Final answer box ── */
+.s9-final-box{
+  background:linear-gradient(145deg,#f0fdf4 0%,#dcfce7 50%,#bbf7d0 100%);
+  border:3px solid #22c55e;border-radius:20px;
+  padding:0;overflow:hidden;
+  opacity:0;transform:scale(.94) translateY(8px);
+  transition:opacity .55s cubic-bezier(.4,0,.2,1) .2s,
+             transform .55s cubic-bezier(.34,1.2,.64,1) .2s;
+  box-shadow:0 8px 32px rgba(22,163,74,.18);
+}
+.s9-final-box.s9-shown{opacity:1;transform:scale(1) translateY(0);}
+.s9-final-box-top{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 24px;background:rgba(22,163,74,.10);
+  border-bottom:1.5px solid #86efac;
+}
+.s9-final-box-label{
+  font-size:10px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#15803d;
+}
+.s9-final-box-check{font-size:22px;}
+.s9-final-box-body{
+  display:flex;align-items:center;justify-content:center;gap:16px;
+  padding:28px 32px;
+}
+.s9-final-value-wrap{display:flex;align-items:baseline;gap:8px;}
+.s9-final-number{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:52px;font-weight:900;color:#14532d;
+  line-height:1;letter-spacing:-1px;
+}
+.s9-final-unit-wrap{display:flex;flex-direction:column;gap:2px;}
+.s9-final-unit{
+  font-family:'JetBrains Mono','Courier New',monospace;
+  font-size:18px;font-weight:700;color:#166534;line-height:1.2;
+}
+.s9-final-unit-name{font-size:10.5px;color:#4ade80;font-weight:600;}
+
+/* ── Insight bar ── */
+.s9-insight-bar{
+  display:flex;align-items:flex-start;gap:14px;
+  background:linear-gradient(135deg,#fffbeb,#fef9c3);
+  border:1.5px solid #fde68a;border-radius:14px;
+  padding:16px 20px;
+  box-shadow:0 2px 10px rgba(245,158,11,.10);
+  opacity:0;transition:opacity .5s ease .5s;
+}
 .s9-insight-bar.s9-shown{opacity:1;}
-.s9-insight-icon{font-size:20px;flex-shrink:0;}
-.s9-insight-text{font-size:13px;color:#92400e;line-height:1.6;}
-.s9-insight-text strong{color:#78350f;}
-.s9-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 36px 22px;border-top:1px solid #bbf7d0;background:#f0fdf4;}
+.s9-insight-icon-wrap{
+  width:36px;height:36px;border-radius:10px;
+  background:linear-gradient(135deg,#f59e0b,#fbbf24);
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;box-shadow:0 2px 8px rgba(245,158,11,.25);
+}
+.s9-insight-icon{font-size:18px;}
+.s9-insight-content{flex:1;}
+.s9-insight-label{
+  font-size:9px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;color:#a16207;margin-bottom:4px;
+}
+.s9-insight-text{font-size:13.5px;color:#78350f;line-height:1.65;font-weight:500;}
+.s9-insight-text strong{color:#451a03;font-weight:800;}
+
+/* ── Nav ── */
+.s9-nav-row{
+  display:flex;justify-content:space-between;align-items:center;
+  gap:12px;padding:15px 28px 22px;
+  border-top:1.5px solid #bbf7d0;background:#f0fdf4;
+}
+.s9-btn{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:10px 22px;border-radius:10px;
+  font-family:'Inter',sans-serif;font-size:13.5px;font-weight:700;
+  cursor:pointer;border:none;transition:all .18s ease;
+}
+.s9-btn-back{background:#f1f5f9;color:#64748b;border:1.5px solid #cbd5e1!important;}
+.s9-btn-back:hover{background:#e2e8f0;color:#334155;transform:translateX(-2px);}
+.s9-btn-restart{
+  background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;
+  box-shadow:0 4px 14px rgba(14,116,144,.28);
+}
+.s9-btn-restart:hover{box-shadow:0 6px 20px rgba(14,116,144,.38);transform:translateY(-1px);}
 </style>"""
 
 
 def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answer") -> str:
-    fad = final_answer_data or {}
-    formula_recap = html_module.escape(fad.get("formula_recap", "Result = f(values)"))
-    chain = fad.get("substitution_chain", [])
-    answer_value = html_module.escape(fad.get("answer_value", "?"))
-    answer_unit = html_module.escape(fad.get("answer_unit", ""))
+    """Build Step 9 — Final Answer panel with full design system."""
+    fad              = final_answer_data or {}
+    formula_recap    = html_module.escape(fad.get("formula_recap", "Result = f(values)"))
+    chain            = fad.get("substitution_chain", [])
+    answer_value     = html_module.escape(fad.get("answer_value", "?"))
+    answer_unit      = html_module.escape(fad.get("answer_unit", ""))
     answer_highlight = html_module.escape(fad.get("answer_highlight", answer_value))
-    insight_text = fad.get("insight_text", "Apply the governing formula with the given data.")
-    label = html_module.escape(fad.get("to_find_label", to_find_label))
+    insight_text     = fad.get("insight_text", "Apply the governing formula with the given data.")
+    label            = html_module.escape(fad.get("to_find_label", to_find_label))
 
+    # derive a human-readable unit name
+    unit_names = {
+        "W": "Watts",  "kW": "Kilowatts",  "J": "Joules",  "kJ": "Kilojoules",
+        "N": "Newtons","Pa": "Pascals",     "K": "Kelvin",  "°C": "Celsius",
+        "m": "Metres", "m²": "Sq metres",  "m³": "Cu metres",
+        "s": "Seconds","kg": "Kilograms",   "m/s": "m per s", "m/s²": "m/s²",
+        "A": "Amperes","V": "Volts",       "Ω": "Ohms",    "F": "Farads",
+        "mol": "Moles","Hz": "Hertz",
+    }
+    unit_name = unit_names.get(answer_unit, "")
+
+    # build chain rows — last row gets .s9-final styling
     chain_html = ""
-    for row in chain:
-        num = row.get("num", "")
-        eq = html_module.escape(row.get("eq", ""))
+    for idx2, row in enumerate(chain):
+        num    = row.get("num", idx2 + 1)
+        eq     = html_module.escape(row.get("eq", ""))
+        is_last = (idx2 == len(chain) - 1)
+        extra  = " s9-final" if is_last else ""
         chain_html += f"""
-        <div class="s9-sub-row">
+        <div class="s9-sub-row{extra}">
           <div class="s9-sub-num">{num}</div>
           <div class="s9-sub-eq">{eq}</div>
         </div>"""
 
     return f"""
-<div id="qanim-scene9-overlay">
+<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-label="Step 9: Final Answer">
   <div class="s9-card">
-    <div class="s9-title-bar"><h2>Step 9 &mdash; Final Answer</h2></div>
+
+    <!-- Header -->
+    <div class="s9-header">
+      <div class="s9-header-left">
+        <div class="s9-step-badge">Step 9 of 9</div>
+        <div class="s9-header-title">Final Answer</div>
+      </div>
+      <div class="s9-header-right">
+        <div class="s9-header-target">Finding: {label}</div>
+      </div>
+    </div>
+
+    <!-- Body -->
     <div class="s9-body">
+
+      <!-- Formula recap -->
       <div class="s9-formula-recap">
-        <div class="s9-formula-recap-label">Governing Formula</div>
-        <div class="s9-formula-recap-eq">{formula_recap}</div>
+        <div class="s9-formula-recap-tab">
+          <span class="s9-formula-recap-tab-text">Formula</span>
+        </div>
+        <div class="s9-formula-recap-body">
+          <div class="s9-formula-recap-eq">{formula_recap}</div>
+        </div>
       </div>
-      <div class="s9-sub-chain" id="s9-sub-chain">{chain_html}</div>
+
+      <!-- Substitution chain -->
+      <div>
+        <div class="s9-chain-title">Substitution Chain</div>
+        <div class="s9-sub-chain" id="s9-sub-chain">{chain_html}</div>
+      </div>
+
+      <!-- Final answer box -->
       <div class="s9-final-box" id="s9-final-box">
-        <div class="s9-final-label">&#x2705; {label}</div>
-        <div class="s9-final-value"><span class="s9-highlight">{answer_highlight}</span></div>
-        <div class="s9-final-unit">{answer_unit}</div>
+        <div class="s9-final-box-top">
+          <div class="s9-final-box-label">&#x2705; {label}</div>
+          <div class="s9-final-box-check">&#x1F3AF;</div>
+        </div>
+        <div class="s9-final-box-body">
+          <div class="s9-final-value-wrap">
+            <div class="s9-final-number">{answer_highlight}</div>
+            <div class="s9-final-unit-wrap">
+              <div class="s9-final-unit">{answer_unit}</div>
+              {f'<div class="s9-final-unit-name">{unit_name}</div>' if unit_name else ''}
+            </div>
+          </div>
+        </div>
       </div>
+
+      <!-- Insight bar -->
       <div class="s9-insight-bar" id="s9-insight-bar">
-        <div class="s9-insight-icon">&#x1F4A1;</div>
-        <div class="s9-insight-text">{insight_text}</div>
+        <div class="s9-insight-icon-wrap">
+          <div class="s9-insight-icon">&#x1F4A1;</div>
+        </div>
+        <div class="s9-insight-content">
+          <div class="s9-insight-label">Key Insight</div>
+          <div class="s9-insight-text">{insight_text}</div>
+        </div>
       </div>
-    </div>
+
+    </div><!-- /body -->
+
+    <!-- Nav -->
     <div class="s9-nav-row">
-      <button onclick="if(typeof window.qanim_showScene8===\'function\') window.qanim_showScene8()" style="background:#f1f5f9;border:1.5px solid #cbd5e1;color:#475569;padding:10px 20px;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;">&#9664; Step 8: Substitution</button>
-      <button onclick="if(typeof window.qanim_goToPrevScene===\'function\') window.qanim_goToPrevScene()" style="background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;border:none;padding:10px 22px;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;">&#x21BA; Restart Animation</button>
+      <button class="s9-btn s9-btn-back"
+        onclick="if(typeof window.qanim_showScene8===\'function\') window.qanim_showScene8()">
+        &#9664; Step 8: Substitution
+      </button>
+      <button class="s9-btn s9-btn-restart"
+        onclick="if(typeof window.qanim_goToPrevScene===\'function\') window.qanim_goToPrevScene()">
+        &#x21BA; Restart Animation
+      </button>
     </div>
-  </div>
+
+  </div><!-- /card -->
 </div>"""
 
 
@@ -1803,42 +2605,41 @@ _SCENE9_JS = """\
 <script id="qanim-js-scene9">
 (function initScene9(){
   'use strict';
-  if(window.__qanimScene9Init)return; window.__qanimScene9Init=true;
+  if(window.__qanimScene9Init)return;window.__qanimScene9Init=true;
   function _el(id){return document.getElementById(id);}
 
   function _syncDots9(){
     var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){ dots[i].classList.remove('active','done'); if(i<8) dots[i].classList.add('done'); if(i===8) dots[i].classList.add('active'); }
-    var lbl=_el('step-label'); if(lbl) lbl.innerText='Step 9 of 9: Final Answer';
-    var bar=_el('step-bar'); if(bar) bar.style.width='100%';
+    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<8)dots[i].classList.add('done');if(i===8)dots[i].classList.add('active');}
+    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 9 of 9: Final Answer';
+    var bar=_el('step-bar');if(bar)bar.style.width='100%';
   }
 
   function _animateEntrance(){
     var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
+    var delay=180;
     for(var i=0;i<rows.length;i++){
-      (function(el,delay){ setTimeout(function(){ el.classList.add('s9-shown'); }, delay); })(rows[i], 200+i*200);
+      (function(el,d){setTimeout(function(){el.classList.add('s9-shown');},d);})(rows[i],delay+i*220);
     }
     var fb=_el('s9-final-box');
-    if(fb) setTimeout(function(){ fb.classList.add('s9-shown'); }, 200+rows.length*200);
+    if(fb) setTimeout(function(){fb.classList.add('s9-shown');},delay+rows.length*220+80);
     var ib=_el('s9-insight-bar');
-    if(ib) setTimeout(function(){ ib.classList.add('s9-shown'); }, 200+rows.length*200+300);
+    if(ib) setTimeout(function(){ib.classList.add('s9-shown');},delay+rows.length*220+380);
   }
 
   function _resetEntrance(){
     var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
     for(var i=0;i<rows.length;i++) rows[i].classList.remove('s9-shown');
-    var fb=_el('s9-final-box'); if(fb) fb.classList.remove('s9-shown');
-    var ib=_el('s9-insight-bar'); if(ib) ib.classList.remove('s9-shown');
+    var fb=_el('s9-final-box');if(fb)fb.classList.remove('s9-shown');
+    var ib=_el('s9-insight-bar');if(ib)ib.classList.remove('s9-shown');
   }
 
-  window.qanim_showScene9 = function(){
-    var ov7=_el('qanim-scene7-overlay'); if(ov7) ov7.classList.remove('qanim-scene-visible');
-    var ov6=_el('qanim-scene6-overlay'); if(ov6) ov6.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay'); if(ov9) ov9.classList.add('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop'); if(bd) bd.classList.add('qanim-scene-visible');
-    _syncDots9();
-    _resetEntrance();
-    setTimeout(_animateEntrance, 120);
+  window.qanim_showScene9=function(){
+    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
+    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
+    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.add('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
+    _syncDots9();_resetEntrance();setTimeout(_animateEntrance,120);
   };
 })();
 </script>"""
@@ -1856,20 +2657,20 @@ def inject_scene9_final_answer(html: str, gemini_sol: dict, scene_script: dict, 
                 chain_rows.append(s)
             else:
                 chain_rows.append({"num": i + 1, "eq": str(s)[:80]})
-        fa = sol.get("final_answer", "See calculation above")
+        fa   = sol.get("final_answer", "See calculation above")
         nums = re.findall(r'[-+]?\d+(?:\.\d+)?', fa)
-        val = nums[-1] if nums else fa[:20]
+        val  = nums[-1] if nums else fa[:20]
         final_answer_data = {
-            "formula_recap": sol.get("formula", "Governing formula"),
+            "formula_recap":      sol.get("formula", "Governing formula"),
             "substitution_chain": chain_rows,
-            "answer_value": val,
-            "answer_unit": "",
-            "answer_highlight": val,
-            "insight_text": sol.get("key_insight", "Apply the governing formula."),
-            "to_find_label": to_find_targets[0] if to_find_targets else "Final Answer",
+            "answer_value":       val,
+            "answer_unit":        "",
+            "answer_highlight":   val,
+            "insight_text":       sol.get("key_insight", "Apply the governing formula."),
+            "to_find_label":      to_find_targets[0] if to_find_targets else "Final Answer",
         }
     to_find_label = to_find_targets[0] if to_find_targets else "Final Answer"
-    scene9_html = _build_scene9_html(final_answer_data, to_find_label)
+    scene9_html   = _build_scene9_html(final_answer_data, to_find_label)
     if '</head>' in html:
         html = html.replace('</head>', _SCENE9_STYLES + '\n</head>', 1)
     if '<body' in html:
@@ -1879,8 +2680,10 @@ def inject_scene9_final_answer(html: str, gemini_sol: dict, scene_script: dict, 
         html = html.replace('</body>', _SCENE9_JS + '\n</body>', 1)
     else:
         html = html + _SCENE9_JS
-    QAnimLogger.ok("Scene9", "Final Answer panel injected")
+    QAnimLogger.ok("Scene9", "Final Answer panel injected (v2 design)")
     return html
+
+
 
 
 
