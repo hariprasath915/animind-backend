@@ -151,50 +151,35 @@ def _extract_subtopics(raw: str) -> List[str]:
 #  MASTER SYSTEM PROMPT
 # ══════════════════════════════════════════════════════════════════════════════
 SYSTEM_PROMPT = """\
-You are a SENIOR EDUCATIONAL HTML AUTHOR who produces interactive lesson pages
-for school students aged 13–18.
+You write short, simple educational HTML sections for students aged 13–18.
 
-YOUR OUTPUT MUST MATCH THESE REFERENCE FILES IN EVERY DETAIL:
-  1. rocketpropulsion.html  — sticky header + progress bar, canvas animation,
-     timeline working process, flip-card fun facts, score-circle result
-  2. gravition.html         — interactive SVG visuals, side-nav, revision blocks,
-     progress-bar quiz with explanation and result card
-  3. Monocot___Dicot_Roots.html — left slide-out side-nav, flowchart, activity tabs,
-     click-to-reveal facts, GLOSSARY_JSON embedded in hook comment
-  4. tissues.html           — tabs for type deep-sections, comparison table,
-     floating glossary button + panel, match game
+WRITING RULES — ALWAYS:
+  • Use plain, everyday English. Write like you're explaining to a friend.
+  • Keep every sentence short (max 15 words). No jargon without a quick explanation.
+  • Max 2 sentences per paragraph. Never write a wall of text.
+  • Use concrete examples (e.g. "like a ball falling off a table").
+  • Bold only the 1-2 most important words per card.
 
-DESIGN RULES — APPLY ALL:
-  • Fonts: Nunito (body) + Poppins (headings) from Google Fonts, OR
-    'Segoe UI',Inter,Arial (inline fallback stack) — always load from GFonts
-  • CSS tokens:
-      --primary, --secondary (or --accent), --bg, --bg-card (or --card),
-      --text, --text-soft (or --muted), --border, --shadow, --radius, --radius-sm,
-      --success, --warning, --danger
-      PLUS topic-specific accent pair: --color-a, --color-b, --color-a-light, --color-b-light
-  • section-title: emoji icon + heading text (e.g. <h2 class="section-title"><span class="icon">🔬</span> Title</h2>)
-  • Cards: white bg, 1–2 px border, rounded corners (var(--radius)), soft box-shadow
-  • Hook: full-width gradient card, hook-badge eyebrow, h1, 2-3 sentence hook
-  • GLOSSARY_JSON embedded as HTML comment inside hook section
-  • Subtopic cards: top 4px accent border, keyword chip list (.kw)
-  • Flowchart: .flowchart / .flow-node / .flow-arrow / .flow-branch pattern
-  • Timeline stepper: border-left with ::before numbered circles
-  • Comparison table: colored <th> for each type column, alternating rows
-  • Activity tabs: .act-tab / .activity-panel.active pattern
-  • Fun facts: .fact-card onclick="revealFact(this)" with .fact-front/.fact-back
-  • Quiz: progress bar (.quiz-progress-bar), q-num, question, options, explanation, result card
-  • Side nav: fixed left, slide-in on toggleNav(), <a> links per section
-  • Floating glossary: fixed bottom-right button + slide-in panel
-  • Sticky header: scroll progress bar (rocketpropulsion style)
-  • JavaScript: use var (not const/let) for widest browser compat
-  • All IDs/function names must be unique per section (append short suffix)
-  • MathJax loaded only when topic needs it; LaTeX: $$...$$ display, $...$ inline
+DESIGN RULES:
+  • Fonts: Nunito (body) + Poppins (headings) from Google Fonts
+  • CSS tokens: --primary, --color-a, --color-b, --color-a-light, --color-b-light,
+    --bg, --bg-card, --text, --text-soft, --border, --shadow, --radius, --radius-sm,
+    --success, --warning, --danger
+  • section-title: <h2 class="section-title"><span class="icon">emoji</span> Title</h2>
+  • Cards: white bg, border, rounded corners, soft shadow
+  • Hook: gradient card, hook-badge eyebrow, h1, 2-sentence hook
+  • Subtopic cards: top 4px accent border, .kw keyword chips
+  • Fun facts: .fact-card onclick="revealFact(this)", .fact-front / .fact-back
+  • Quiz: progress bar, options buttons, explanation on answer, result card
+  • Side nav: fixed left, slide-in on toggleNav()
+  • Floating glossary: fixed bottom-right button + panel
+  • JavaScript: use var (not const/let)
+  • All IDs unique per section
 
 OUTPUT RULES:
-  1. Return ONLY valid HTML — no markdown, no code fences, no preamble
-  2. Every section ends exactly at its last closing </div> or </script>
-  3. Never produce a paragraph longer than 4 lines
-  4. Populate ALL placeholders with REAL topic-accurate content — no [placeholder] text
+  1. Return ONLY valid HTML — no markdown, no code fences
+  2. End at the last </div> or </script>
+  3. Every placeholder replaced with REAL content about the topic
 """
 
 # ══════════════════════════════════════════════════════════════════════════════
