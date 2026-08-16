@@ -60,6 +60,7 @@ from claude_client import (
     subtopics_json_to_genzet_args,
     generate_ultimate_learning_content,
 )
+from simulation import generate_simulation   # FIX: was missing — caused 404→502 on /generate-simulation
 from pdf_handler import (
     extract_pdf_text,
     find_subtopics_in_pdf,
@@ -87,7 +88,7 @@ KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
 async def _keep_alive_pinger():
     self_url   = os.getenv(
         "RENDER_EXTERNAL_URL",
-        "https://animind-backend-production-2.up.railway.appp",
+        "https://animind-backend-production-2.up.railway.app",
     )
     health_url = f"{self_url.rstrip('/')}/health"
     print(f"[KEEP-ALIVE] ✅ Pinger started → {health_url} every {KEEP_ALIVE_INTERVAL}s")
@@ -273,6 +274,11 @@ class QuestionAnimRequest(BaseModel):
     question: str
 
 
+class SimulationRequest(BaseModel):
+    topic: str
+    mode: Optional[str] = None   # e.g. 'physics', 'chemistry' (informational only)
+
+
 class SkillContentRequest(BaseModel):
     topic:        str
     subject:      Optional[str]  = "Engineering"
@@ -372,6 +378,30 @@ async def create_animation(request: AnimationRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/generate-simulation")
+async def create_simulation(request: SimulationRequest):
+    """
+    Generate a complete, self-contained interactive HTML5 simulation.
+    FIX: This endpoint was missing from server.py — any deployment using
+    uvicorn server:app instead of main:app would return 404 → 502.
+    """
+    topic = (request.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+    if len(topic) > 2000:
+        raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
+
+    if request.mode and request.mode.lower() not in ("general", ""):
+        topic_with_mode = f"{topic} (subject area: {request.mode})"
+    else:
+        topic_with_mode = topic
+
+    # generate_simulation never raises — on failure render_status == "error"
+    result = await generate_simulation(topic_with_mode)
+    result["source"] = "generated"
+    return result
 
 
 @app.post("/generate-question-animation")
