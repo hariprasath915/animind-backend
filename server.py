@@ -87,7 +87,7 @@ KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
 async def _keep_alive_pinger():
     self_url   = os.getenv(
         "RENDER_EXTERNAL_URL",
-        "https://animind-backend-production-2.up.railway.appp",
+        "https://animind-backend-production-2.up.railway.app",
     )
     health_url = f"{self_url.rstrip('/')}/health"
     print(f"[KEEP-ALIVE] ✅ Pinger started → {health_url} every {KEEP_ALIVE_INTERVAL}s")
@@ -142,7 +142,7 @@ EXTRA_ORIGINS = [
 ]
 
 BASE_ORIGINS = [
-    "https://haezet.com/",
+    "https://haezet.com",
     "https://genzet-app-git-main-hari-prasath-genzet-web-project.vercel.app",
     "https://animind-gold.vercel.app",
     "http://localhost:3000",
@@ -364,7 +364,7 @@ async def _run_question_animation_job(job_id: str, question: str):
 
 @app.post("/generate-animation")
 async def create_animation(request: AnimationRequest):
-    """Generate a full 8-section HTML animation page for the topic."""
+    """Generate a full HTML animation page for the topic (via claude_client EduPageGenerator)."""
     if not request.prompt or not request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
     try:
