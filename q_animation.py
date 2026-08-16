@@ -3982,6 +3982,55 @@ async def generate_animation_async(question: str) -> str:
     """Async version of generate_animation."""
     return await generate_animation_html(question)
 
+
+async def generate_question_animation(question: str) -> dict:
+    """
+    Public async entry point imported by main.py (line 68).
+
+    Runs the full 9-step QAnim pipeline and returns a result dict:
+        {
+            "title":          str,   # first 80 chars of the question
+            "explanation":    str,   # plain-text summary (≤ 220 chars)
+            "animation_code": str,   # complete self-contained HTML page
+        }
+
+    Raises ValueError for empty/blank input so the job runner in main.py
+    can catch it cleanly and record status="error".
+    """
+    question = (question or "").strip()
+    if not question:
+        raise ValueError("'question' field cannot be empty")
+
+    QAnimLogger.info("generate_question_animation", f"question={question[:80]!r}")
+
+    html = await generate_animation_html(question)
+
+    # Build a concise plain-text explanation from the scene title/insight
+    # (best-effort — never blocks delivery of the HTML)
+    explanation: str = ""
+    try:
+        # Pull the first <h3> or <title> text as a fallback summary
+        m = re.search(r'<title[^>]*>([^<]{5,120})</title>', html, re.IGNORECASE)
+        if m:
+            explanation = m.group(1).strip()
+        if not explanation:
+            m2 = re.search(r'<h3[^>]*>([^<]{5,120})</h3>', html, re.IGNORECASE)
+            if m2:
+                explanation = re.sub(r'<[^>]+>', '', m2.group(1)).strip()
+        explanation = explanation[:220]
+    except Exception:
+        pass
+
+    if not explanation:
+        explanation = f"9-step animated solution for: {question[:160]}"
+
+    return {
+        "title":          question[:80],
+        "explanation":    explanation,
+        "animation_code": html,
+    }
+
+
 # Legacy aliases kept for backward compatibility
 analyse_question = GeminiSceneAnalyzer.analyze
 generate_solution = GeminiSolutionGenerator.generate
