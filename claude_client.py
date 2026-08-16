@@ -1671,6 +1671,59 @@ async def generate_genzet_book_content(topic: str, subtopic: str,
     return {"title": full, "explanation": explanation, "animation_code": html}
 
 
+async def generate_ultimate_learning_content(
+        topic: str,
+        subtopic: str = "",
+        pdf_context: str = "",
+        subtopics_list: Optional[List[str]] = None,
+        output_file: Optional[str] = None,
+        **kwargs) -> dict:
+    """
+    Primary entry point expected by main.py.
+
+    Accepts the same arguments as generate_genzet_book_content plus an
+    optional output_file path.  Returns the standard result dict:
+        {
+          "title":          str,
+          "explanation":    str,   # 220-char plain-text summary
+          "animation_code": str,   # full HTML page
+          "metadata":       dict,
+        }
+    and additionally writes output.html when output_file is given.
+    """
+    topic    = (topic    or "").strip()
+    subtopic = (subtopic or "").strip()
+    if not topic:
+        raise ValueError("topic cannot be empty")
+
+    full_topic = (f"{topic} — {subtopic}"
+                  if subtopic and subtopic.lower() != topic.lower()
+                  else topic)
+    log.info(f"[generate_ultimate_learning_content v23] topic='{full_topic}'")
+
+    gen    = EduPageGenerator()
+    result = await gen.generate_page(topic=full_topic, subtopics=subtopics_list)
+    html   = result["html"]
+
+    if output_file:
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(html)
+        log.info(f"💾 Saved → {output_file}")
+
+    def_html    = result["sections"].get("definition", "")
+    explanation = re.sub(r"<[^>]+>", " ", def_html)
+    explanation = " ".join(explanation.split())[:220]
+    if not explanation:
+        explanation = f"A complete interactive lesson on {full_topic}."
+
+    return {
+        "title":          full_topic,
+        "explanation":    explanation,
+        "animation_code": html,
+        "metadata":       result.get("metadata", {}),
+    }
+
+
 def subtopics_json_to_genzet_args(subtopics_json_str: str, subtopic: str) -> dict:
     try:
         data = json.loads(subtopics_json_str)
