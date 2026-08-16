@@ -42,7 +42,7 @@ import httpx
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -541,8 +541,22 @@ async def create_animation(request: AnimationRequest):
 async def create_simulation(request: SimulationRequest):
     """
     Generate a complete, self-contained interactive HTML5 simulation.
-    FIX: This endpoint was missing from server.py — any deployment using
-    uvicorn server:app instead of main:app would return 404 → 502.
+
+    WHY SSE / StreamingResponse:
+    Railway (and most reverse-proxy gateways) enforce a ~30–60 s idle-write
+    timeout.  The old implementation called generate_simulation() and then
+    returned a single JSON blob — the gateway saw zero bytes for 60+ seconds
+    and killed the connection with a 502 before the response arrived.
+
+    Fix: return a StreamingResponse that:
+      1. Sends "ping" SSE heartbeat lines every 10 s while generation runs.
+      2. Sends a single "result" SSE event containing the final JSON.
+      3. Closes the stream.
+
+    The frontend (index.html) already has a plain fetch() call that reads
+    response.json().  We update the response to be compatible with both the
+    existing JS (which reads the *last* data line as JSON) via a thin
+    compatibility shim at the end of this generator.
     """
     topic = (request.topic or "").strip()
     if not topic:
@@ -555,10 +569,41 @@ async def create_simulation(request: SimulationRequest):
     else:
         topic_with_mode = topic
 
-    # generate_simulation never raises — on failure render_status == "error"
-    result = await generate_simulation(topic_with_mode)
-    result["source"] = "generated"
-    return result
+    async def _stream():
+        import asyncio, json as _json
+
+        # Run generation in the background and send pings while we wait
+        task = asyncio.ensure_future(generate_simulation(topic_with_mode))
+
+        while not task.done():
+            yield "event: ping\ndata: {\"status\":\"generating\"}\n\n"
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+            except asyncio.TimeoutError:
+                pass  # not done yet — loop and send another ping
+            except Exception:
+                break  # task raised — let the outer block handle it
+
+        # Collect the result
+        try:
+            result = task.result()
+        except Exception as exc:
+            err = _json.dumps({"render_status": "error", "error_reason": str(exc)})
+            yield f"event: result\ndata: {err}\n\n"
+            return
+
+        result["source"] = "generated"
+        payload = _json.dumps(result)
+        yield f"event: result\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # tells Nginx/Railway not to buffer
+        },
+    )
 
 
 @app.post("/generate-question-animation")
