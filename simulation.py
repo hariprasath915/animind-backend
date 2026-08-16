@@ -83,7 +83,12 @@ import anthropic
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
-client = anthropic.Anthropic(
+# IMPORTANT: Use AsyncAnthropic so that .stream() and .create() do NOT block
+# the FastAPI/asyncio event loop. The synchronous Anthropic client's stream()
+# is a blocking call — when used inside an async def it freezes the event
+# loop, starving keep-alive heartbeats and causing the Railway/Vercel gateway
+# to return 502 after its timeout window.
+client = anthropic.AsyncAnthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
     default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     timeout=600.0,
@@ -91,7 +96,7 @@ client = anthropic.Anthropic(
 )
 
 SIM_MODEL        = "claude-sonnet-4-6"
-CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
+CLASSIFIER_MODEL = "claude-haiku-4-5"   # fixed: "claude-haiku-4-5-20251001" is not a valid model ID
 
 MAX_TOK            = 16000
 MAX_TOK_CLASSIFIER = 20
@@ -493,7 +498,8 @@ _MULTI_EXPERIMENT_TOPICS = {
 }
 
 
-def _classify_topic(topic: str) -> str:
+async def _classify_topic(topic: str) -> str:
+    # Fast keyword-match path (no API call needed)
     t = topic.lower()
     scores = {cat: sum(1 for k in kws if k in t) for cat, kws in _CATEGORY_KEYWORDS.items()}
     max_score = max(scores.values()) if scores else 0
@@ -501,8 +507,9 @@ def _classify_topic(topic: str) -> str:
         top = [c for c, s in scores.items() if s == max_score]
         if len(top) == 1:
             return top[0]
+    # Fallback: ask the model (async — does NOT block the event loop)
     try:
-        resp = client.messages.create(
+        resp = await client.messages.create(
             model=CLASSIFIER_MODEL, max_tokens=MAX_TOK_CLASSIFIER,
             system="Reply with ONLY one category word from this exact list: "
                    + ", ".join(CATEGORIES),
@@ -1535,8 +1542,8 @@ async def _run_generation_pipeline(topic: str) -> dict:
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
     SimLogger.info("Pipeline", f"START v2.1 -- '{short_topic}'")
 
-    # Step 1: Classify
-    category = _classify_topic(topic)
+    # Step 1: Classify (async — safe on the event loop)
+    category = await _classify_topic(topic)
     SimLogger.info("Classifier", f"Category: {category}")
 
     # Step 2: Image references
@@ -1545,20 +1552,22 @@ async def _run_generation_pipeline(topic: str) -> dict:
     # Step 3: Build prompt
     system_blocks, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate (streaming keeps the Railway gateway connection alive
-    # and prevents 502 timeouts that occur with blocking .create() on long outputs)
+    # Step 4: Generate — async streaming keeps the Railway gateway alive and
+    # prevents 502 timeouts. Using AsyncAnthropic + "async with" + "async for"
+    # is the only correct pattern inside an async def; the sync equivalent
+    # blocks the event loop and causes the gateway to time out.
     try:
         raw_chunks = []
         stop_reason = None
         usage = None
-        with client.messages.stream(
+        async with client.messages.stream(
             model=SIM_MODEL, max_tokens=MAX_TOK,
             system=system_blocks,
             messages=[{"role": "user", "content": user_content}]
         ) as stream:
-            for text_chunk in stream.text_stream:
+            async for text_chunk in stream.text_stream:
                 raw_chunks.append(text_chunk)
-            final_msg = stream.get_final_message()
+            final_msg = await stream.get_final_message()
             stop_reason = final_msg.stop_reason
             usage = final_msg.usage
         raw = "".join(raw_chunks).strip()
