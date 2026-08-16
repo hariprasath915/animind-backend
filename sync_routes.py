@@ -1579,18 +1579,15 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
 @router.get("/lessons", status_code=200)
 def list_lessons(current_user: dict = Depends(get_current_user)):
     """All authenticated users: list all lessons ordered by created_at asc."""
-    # Use the shared service-role client from auth_utils — it handles all
-    # env-var name variants (SUPABASE_KEY / SUPABASE_SERVICE_KEY) and is
-    # cached as a singleton so we don't open a new connection on every call.
-    from auth_utils import get_supabase as _get_supa
-    service_sb = _get_supa()
+    # Use the user-scoped client (_sb) so Supabase sees auth.role()='authenticated'.
+    # The RLS SELECT policy is: USING (auth.role() = 'authenticated')
+    # Using get_supabase() (service singleton with anon key) makes auth.role()='anon'
+    # → RLS rejects → 500 error.  The user's JWT satisfies the policy correctly.
+    supabase = _sb(current_user)
     try:
         res = (
-            service_sb.table("lessons")
-            # NOTE: class_name and subject were DROPPED in supabase_lessons_setup.sql
-            # migration (lines 28-32). Selecting them causes a 500 error.
-            # Only select columns that actually exist in the table.
-            .select("id, title, content_type, thumbnail_url, theory_url, animation_url, realworld_images, created_at")
+            supabase.table("lessons")
+            .select("*")
             .order("created_at", desc=False)
             .execute()
         )
