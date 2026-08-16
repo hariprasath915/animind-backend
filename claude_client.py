@@ -1,40 +1,30 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║  claude_client.py  v23.0  —  Reference-HTML Pipeline Edition        ║
+║  claude_client.py  v24.0  —  Interactive Simulation Edition          ║
 ║                                                                      ║
-║  Generates educational HTML following the EXACT pipeline,            ║
-║  section structure, CSS token set, UI/UX and design language of:    ║
-║    • rocketpropulsion.html   (sticky header, timeline, flip facts)   ║
-║    • gravition.html          (interactive visuals, revision, quiz)   ║
-║    • Monocot___Dicot_Roots.html  (side-nav, flowchart, activities)  ║
-║    • tissues.html            (tabs, comparison table, glossary)      ║
+║  Generates educational HTML following the reference pipeline.        ║
+║  All text is short and in simple English for students.               ║
 ║                                                                      ║
 ║  SECTION PIPELINE (ordered):                                         ║
-║   §1  hook          — hero gradient card + GLOSSARY_JSON embed       ║
-║   §2  definition    — def cards + learning objectives                ║
-║   §3  fundamentals  — CTA card + glossary modal trigger              ║
-║   §4  subtopics     — auto-fill card grid with keywords              ║
-║   §5  types         — flowchart + type comparison cards              ║
-║   §6  deep_sections — per-type deep dive (SVG / process visual)      ║
-║   §7  visual        — toggle-based interactive animated diagram      ║
-║   §8  working       — stepper / timeline process walkthrough         ║
-║   §9  comparison    — side-by-side feature table                     ║
-║  §10  activities    — 3-tab game area (scenario, matcher, MCQ)       ║
-║  §11  funfacts      — click-to-reveal fact cards                     ║
-║  §12  revision      — quick revision blocks + key equations          ║
-║  §13  quiz          — 10-Q quiz: progress bar, explanation, result   ║
-║  [+§14 formulas, §15 derivation for mathematical topics]            ║
-║                                                                      ║
-║  CSS TOKENS (exact reference set):                                   ║
-║   --primary, --secondary/--accent, --bg, --bg-card, --text,         ║
-║   --text-soft, --border, --shadow, --radius, --radius-sm,           ║
-║   --success, --warning, --danger  +  topic accent pair               ║
+║   §1  hook              — hero gradient card + GLOSSARY_JSON embed   ║
+║   §2  definition        — def cards + learning objectives            ║
+║   §3  fundamentals      — CTA card + glossary modal trigger          ║
+║   §4  subtopics         — auto-fill card grid with keywords          ║
+║   §5  types             — flowchart + type comparison cards          ║
+║   §6  interactive_sim   — hands-on HTML/JS simulation per topic      ║
+║   §7  working           — stepper / timeline process walkthrough     ║
+║   §8  comparison        — side-by-side feature table                 ║
+║   §9  activities        — 3-tab game area (scenario, matcher, MCQ)   ║
+║  §10  funfacts          — click-to-reveal fact cards                 ║
+║  §11  revision          — quick revision blocks + key equations      ║
+║  §12  quiz              — 10-Q quiz: progress bar, explanation, result║
+║  [+§13 formulas, §14 derivation for mathematical topics]            ║
 ║                                                                      ║
 ║  ENTRY POINTS (all backward-compatible):                             ║
-║   generate_animation()          — primary async entry point          ║
-║   generate_edu_page()           — async, saves to file               ║
-║   generate_edu_page_sync()      — synchronous wrapper                ║
-║   generate_genzet_book_content() — book-context entry point          ║
+║   generate_animation()            — primary async entry point        ║
+║   generate_edu_page()             — async, saves to file             ║
+║   generate_edu_page_sync()        — synchronous wrapper              ║
+║   generate_genzet_book_content()  — book-context entry point         ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """
 
@@ -72,49 +62,47 @@ MODEL_SONNET = "claude-sonnet-4-6"
 MODEL_HAIKU  = "claude-haiku-4-5-20251001"
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SECTION REGISTRY — mirrors reference-file section order exactly
+#  SECTION REGISTRY
 # ══════════════════════════════════════════════════════════════════════════════
 BASE_SECTIONS: List[str] = [
-    "hook",           # §1  Hero gradient card + embedded GLOSSARY_JSON
-    "definition",     # §2  Definition cards + learning objectives
-    "fundamentals",   # §3  CTA card + glossary modal trigger
-    "subtopics",      # §4  Subtopic card grid with keyword chips
-    "types",          # §5  Flowchart + type comparison cards
-    "deep_sections",  # §6  Per-type deep-dive (process visual, SVG)
-    "visual",         # §7  Toggle-based interactive animated diagram
-    "working",        # §8  Stepper / timeline working process
-    "comparison",     # §9  Side-by-side comparison table
-    "activities",     # §10 3-tab game area (scenario MCQ, matcher, challenge)
-    "funfacts",       # §11 Click-to-reveal fun-fact cards
-    "revision",       # §12 Quick revision blocks + equations
-    "quiz",           # §13 10-Q quiz with progress bar, explanation, result card
+    "hook",             # §1  Hero gradient card + embedded GLOSSARY_JSON
+    "definition",       # §2  Definition cards + learning objectives
+    "fundamentals",     # §3  CTA card + glossary modal trigger
+    "subtopics",        # §4  Subtopic card grid with keyword chips
+    "types",            # §5  Flowchart + type comparison cards
+    "interactive_sim",  # §6  Hands-on HTML/JS simulation
+    "working",          # §7  Stepper / timeline working process
+    "comparison",       # §8  Side-by-side comparison table
+    "activities",       # §9  3-tab game area
+    "funfacts",         # §10 Click-to-reveal fun-fact cards
+    "revision",         # §11 Quick revision blocks + equations
+    "quiz",             # §12 10-Q quiz with progress bar
 ]
 
 CONDITIONAL_SECTIONS: List[str] = ["formulas", "derivation"]
 
 ORDERED_SECTIONS: List[str] = [
     "hook", "definition", "fundamentals", "subtopics", "types",
-    "deep_sections", "formulas", "derivation", "visual", "working",
+    "formulas", "derivation", "interactive_sim", "working",
     "comparison", "activities", "funfacts", "revision", "quiz",
 ]
 
 # Model assignment: heavy creative sections → Sonnet, lightweight → Haiku
 SECTION_MODEL_MAP: Dict[str, str] = {
-    "hook":          MODEL_SONNET,
-    "definition":    MODEL_SONNET,
-    "fundamentals":  MODEL_HAIKU,
-    "subtopics":     MODEL_SONNET,
-    "types":         MODEL_SONNET,
-    "deep_sections": MODEL_SONNET,
-    "formulas":      MODEL_SONNET,
-    "derivation":    MODEL_SONNET,
-    "visual":        MODEL_SONNET,
-    "working":       MODEL_SONNET,
-    "comparison":    MODEL_HAIKU,
-    "activities":    MODEL_SONNET,
-    "funfacts":      MODEL_HAIKU,
-    "revision":      MODEL_HAIKU,
-    "quiz":          MODEL_HAIKU,
+    "hook":            MODEL_SONNET,
+    "definition":      MODEL_SONNET,
+    "fundamentals":    MODEL_HAIKU,
+    "subtopics":       MODEL_SONNET,
+    "types":           MODEL_SONNET,
+    "formulas":        MODEL_SONNET,
+    "derivation":      MODEL_SONNET,
+    "interactive_sim": MODEL_SONNET,
+    "working":         MODEL_SONNET,
+    "comparison":      MODEL_HAIKU,
+    "activities":      MODEL_SONNET,
+    "funfacts":        MODEL_HAIKU,
+    "revision":        MODEL_HAIKU,
+    "quiz":            MODEL_HAIKU,
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -154,11 +142,11 @@ SYSTEM_PROMPT = """\
 You write short, simple educational HTML sections for students aged 13–18.
 
 WRITING RULES — ALWAYS:
-  • Use plain, everyday English. Write like you're explaining to a friend.
-  • Keep every sentence short (max 15 words). No jargon without a quick explanation.
+  • Use plain, everyday English. Write like you are explaining to a friend.
+  • Keep every sentence short (max 12 words). No jargon without a quick explanation.
   • Max 2 sentences per paragraph. Never write a wall of text.
   • Use concrete examples (e.g. "like a ball falling off a table").
-  • Bold only the 1-2 most important words per card.
+  • Bold only the 1–2 most important words per card.
 
 DESIGN RULES:
   • Fonts: Nunito (body) + Poppins (headings) from Google Fonts
@@ -200,22 +188,23 @@ def _build_prompt(section: str, topic: str, ctx: str = "",
 # ─────────────────────────────────────────────────────────────────
 "hook": f"""Generate the HOOK section for: "{T}"
 {focus}
-Style: Monocot___Dicot_Roots.html #hook — gradient card, hook-badge eyebrow, h1, 2–3 sentence hook.
+Style: gradient card, hook-badge eyebrow, h1, 2-sentence hook.
 Also embed GLOSSARY_JSON (10–14 terms) inside a <!-- --> comment block.
+Use SHORT sentences. Simple words only.
 
 Return ONLY:
 
 <section id="hook">
   <!--GLOSSARY_JSON
   [
-    {{"term":"[Key term 1 for {T}]","def":"[Plain-English definition]"}},
+    {{"term":"[Key term 1 for {T}]","def":"[Simple definition in one sentence]"}},
     {{"term":"[Key term 2]","def":"[Definition]"}},
     ... (10-14 total, all relevant to "{T}")
   ]
   -->
-  <span class="hook-badge">[Subject · Level, e.g. "Class 10 Biology"]</span>
+  <span class="hook-badge">[Subject · Student Level]</span>
   <h1>[Emoji] [Topic title]</h1>
-  <p>[2-3 sentence hook: surprising fact or question that makes "{T}" exciting to a 15-year-old. Plain language, real examples.]</p>
+  <p>[2 short sentences. Make "{T}" sound exciting. Use simple words.]</p>
 </section>
 
 OUTPUT NOTHING after </section>.""",
@@ -226,8 +215,7 @@ OUTPUT NOTHING after </section>.""",
 "definition": f"""Generate the DEFINITION + OBJECTIVES section for: "{T}"
 {focus}
 Context: {c}
-
-Style: Monocot___Dicot_Roots.html #definition — .def-grid with two .def-card, then .objectives list.
+Use SHORT sentences (max 12 words each). Simple words only.
 
 Return ONLY:
 
@@ -236,22 +224,22 @@ Return ONLY:
   <div class="card">
     <div class="def-grid">
       <div class="def-card">
-        <h4>[Type A / Aspect 1 emoji + name]</h4>
-        <p>[Plain-English definition of aspect A — 2 sentences]</p>
+        <h4>[Aspect 1 emoji + name]</h4>
+        <p>[Simple definition. 2 short sentences.]</p>
       </div>
       <div class="def-card" style="border-left-color:var(--color-b);">
-        <h4>[Type B / Aspect 2 emoji + name]</h4>
-        <p>[Plain-English definition of aspect B — 2 sentences]</p>
+        <h4>[Aspect 2 emoji + name]</h4>
+        <p>[Simple definition. 2 short sentences.]</p>
       </div>
     </div>
     <div class="objectives">
       <h4>🎯 Learning Objectives</h4>
       <ul>
-        <li>[Objective 1: define/explain "{T}"]</li>
-        <li>[Objective 2: identify types or components]</li>
-        <li>[Objective 3: understand the process/mechanism]</li>
-        <li>[Objective 4: compare types or contrast with related concepts]</li>
-        <li>[Objective 5: real-world application]</li>
+        <li>[Short goal 1 — define "{T}"]</li>
+        <li>[Short goal 2 — identify types or parts]</li>
+        <li>[Short goal 3 — understand how it works]</li>
+        <li>[Short goal 4 — compare types]</li>
+        <li>[Short goal 5 — real-world use]</li>
       </ul>
     </div>
   </div>
@@ -264,22 +252,21 @@ Replace ALL placeholders with REAL content about "{T}". OUTPUT NOTHING after </s
 # ─────────────────────────────────────────────────────────────────
 "fundamentals": f"""Generate the FUNDAMENTALS section for: "{T}"
 {focus}
-
-Style: Monocot___Dicot_Roots.html #fundamentals — card with intro text, .glossary-grid (2-col, 6–8 key terms inline), and a "Open Glossary" button.
+Use SHORT sentences. Simple words only.
 
 Return ONLY:
 
 <section id="fundamentals">
   <h2 class="section-title"><span class="icon">🔑</span> Fundamentals</h2>
   <div class="card">
-    <p>[1 sentence: why understanding the key terms for "{T}" makes everything else click.]</p>
+    <p>[One short sentence: why key terms help you understand "{T}".]</p>
     <div class="glossary-grid" style="margin:16px 0;">
-      <div class="glossary-item"><h5>[Term 1]</h5><p>[Definition]</p></div>
-      <div class="glossary-item"><h5>[Term 2]</h5><p>[Definition]</p></div>
-      <div class="glossary-item"><h5>[Term 3]</h5><p>[Definition]</p></div>
-      <div class="glossary-item"><h5>[Term 4]</h5><p>[Definition]</p></div>
-      <div class="glossary-item"><h5>[Term 5]</h5><p>[Definition]</p></div>
-      <div class="glossary-item"><h5>[Term 6]</h5><p>[Definition]</p></div>
+      <div class="glossary-item"><h5>[Term 1]</h5><p>[Simple definition]</p></div>
+      <div class="glossary-item"><h5>[Term 2]</h5><p>[Simple definition]</p></div>
+      <div class="glossary-item"><h5>[Term 3]</h5><p>[Simple definition]</p></div>
+      <div class="glossary-item"><h5>[Term 4]</h5><p>[Simple definition]</p></div>
+      <div class="glossary-item"><h5>[Term 5]</h5><p>[Simple definition]</p></div>
+      <div class="glossary-item"><h5>[Term 6]</h5><p>[Simple definition]</p></div>
     </div>
     <button id="fundamentals-btn" onclick="toggleGlossary()">📖 Open Full Glossary</button>
   </div>
@@ -294,9 +281,7 @@ All terms must be real and relevant to "{T}". OUTPUT NOTHING after </section>.""
 {focus}
 Requested subtopics: {subtopics or '(auto-detect 6-8 key subtopics)'}
 Context: {c}
-
-Style: Monocot___Dicot_Roots.html #subtopics — .subtopics-grid with .subtopic-card cards.
-Each card: h4 title, p description (2–3 sentences), .keywords with .kw chips.
+Use SHORT sentences. Simple words only.
 
 Return ONLY:
 
@@ -305,7 +290,7 @@ Return ONLY:
   <div class="subtopics-grid">
     <div class="subtopic-card">
       <h4>[Emoji] [Subtopic 1 name]</h4>
-      <p>[2-3 sentence description relevant to "{T}"]</p>
+      <p>[2 short sentences. Simple words.]</p>
       <div class="keywords"><span class="kw">[kw1]</span><span class="kw">[kw2]</span></div>
     </div>
     [Repeat for all 6-8 subtopics — every card complete with real content]
@@ -320,9 +305,7 @@ OUTPUT NOTHING after </section>.""",
 "types": f"""Generate the TYPES FLOWCHART section for: "{T}"
 {focus}
 Context: {c}
-
-Style: Monocot___Dicot_Roots.html #types — .flowchart with .flow-node / .flow-arrow / .flow-branch,
-then .type-cards grid (one .type-card per main type).
+Use SHORT labels and descriptions. Simple words only.
 
 Return ONLY:
 
@@ -339,13 +322,13 @@ Return ONLY:
           <div class="flow-arrow">↙</div>
           <div class="flow-node" style="background:var(--color-a);">[Type A emoji + name]</div>
           <div class="flow-arrow" style="font-size:1.2rem;">↓</div>
-          <div class="flow-node sub" style="background:var(--color-a-light);color:var(--text);">[Key feature A]<br><small>[Example organisms/contexts]</small></div>
+          <div class="flow-node sub" style="background:var(--color-a-light);color:var(--text);">[Short key feature A]<br><small>[Example]</small></div>
         </div>
         <div class="flow-branch-item">
           <div class="flow-arrow">↘</div>
           <div class="flow-node" style="background:var(--color-b);">[Type B emoji + name]</div>
           <div class="flow-arrow" style="font-size:1.2rem;">↓</div>
-          <div class="flow-node sub" style="background:var(--color-b-light);color:var(--text);">[Key feature B]<br><small>[Example organisms/contexts]</small></div>
+          <div class="flow-node sub" style="background:var(--color-b-light);color:var(--text);">[Short key feature B]<br><small>[Example]</small></div>
         </div>
       </div>
     </div>
@@ -353,17 +336,17 @@ Return ONLY:
       <div class="type-card" style="border-color:var(--color-a);">
         <h3 style="color:var(--color-a);">[Type A emoji + name]</h3>
         <ul>
-          <li>[Characteristic 1]</li>
-          <li>[Characteristic 2]</li>
-          <li>[Characteristic 3]</li>
+          <li>[Short feature 1]</li>
+          <li>[Short feature 2]</li>
+          <li>[Short feature 3]</li>
         </ul>
       </div>
       <div class="type-card" style="border-color:var(--color-b);">
         <h3 style="color:var(--color-b);">[Type B emoji + name]</h3>
         <ul>
-          <li>[Characteristic 1]</li>
-          <li>[Characteristic 2]</li>
-          <li>[Characteristic 3]</li>
+          <li>[Short feature 1]</li>
+          <li>[Short feature 2]</li>
+          <li>[Short feature 3]</li>
         </ul>
       </div>
     </div>
@@ -373,88 +356,50 @@ Return ONLY:
 OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §6  DEEP SECTIONS
+# §6  INTERACTIVE SIMULATION
 # ─────────────────────────────────────────────────────────────────
-"deep_sections": f"""Generate DEEP TYPE DETAIL sections for: "{T}"
+"interactive_sim": f"""Generate an INTERACTIVE SIMULATION section for: "{T}"
 {focus}
 Context: {c}
 
-Style: tissues.html tab-based deep sections OR rocketpropulsion.html #explanation style.
-For each main type, produce a <section> with:
-  • Border-top 4px in the type's accent color
-  • section-title with emoji + name
-  • 1–2 paragraph explanation
-  • An inline process visual (colored flow boxes OR equation box)
-  • A highlight box for the key location/component/organelle
+Build a real, working simulation in HTML + CSS + JavaScript that runs in the browser.
+The simulation must be hands-on — the student can change values and see what happens instantly.
 
-Produce 2–3 sections (one per main type).
+SIMULATION IDEAS (pick the best one for "{T}"):
+  - Gravity / Falling objects: drop button, adjustable height, animated ball fall, shows time + speed
+  - Circuits (Voltage/Ohm's Law): sliders for V, R; auto-calculates I; animated current flow
+  - Photosynthesis: sliders for light + CO2; animated plant output meter
+  - Newton's Laws: apply force slider; animated object acceleration
+  - Chemical reactions: mix elements with buttons; animated reaction output
+  - DNA / Cell division: step-by-step animated phase buttons
+  - Ecosystems: add/remove species buttons; watch population bar change
 
-Return ONLY the HTML of all these sections (no outer wrapper):
-
-<section id="type-a">
-  <h2 class="section-title" style="color:var(--color-a);"><span class="icon">[emoji]</span> [Type A full name]</h2>
-  <div class="card" style="border-top:4px solid var(--color-a);">
-    <p>[Clear explanation of Type A — what makes it different, when it happens, key products. 2 paragraphs max.]</p>
-    <div style="background:var(--color-a-light);border-radius:var(--radius-sm);padding:16px;margin:14px 0;display:flex;flex-direction:column;align-items:center;gap:6px;">
-      <div style="background:var(--color-a);color:#fff;border-radius:var(--radius-sm);padding:8px 22px;font-weight:700;">[Step 1]</div>
-      <div style="font-size:1.4rem;color:var(--color-a);">↓</div>
-      <div style="background:var(--color-a);color:#fff;border-radius:var(--radius-sm);padding:8px 22px;font-weight:700;">[Step 2]</div>
-      <div style="font-size:1.4rem;color:var(--color-a);">↓</div>
-      <div style="background:var(--success,#22C55E);color:#fff;border-radius:var(--radius-sm);padding:8px 22px;font-weight:700;">⚡ [Key output/energy]</div>
-    </div>
-    <div style="background:#fffbeb;border:2px solid #fcd34d;border-radius:var(--radius-sm);padding:14px 18px;margin-top:10px;display:flex;align-items:center;gap:14px;">
-      <div style="font-size:2.5rem;">[Component emoji]</div>
-      <div>
-        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--color-b);margin-bottom:4px;">[Highlight label]</div>
-        <strong>[Key location/component]</strong> — [Short explanation of its role in "{T}" Type A.]
-      </div>
-    </div>
-  </div>
-</section>
-
-[Repeat pattern for Type B (id="type-b") using var(--color-b,...), and Type C if applicable.]
-
-OUTPUT NOTHING after the final </section>.""",
-
-# ─────────────────────────────────────────────────────────────────
-# §7  INTERACTIVE VISUAL
-# ─────────────────────────────────────────────────────────────────
-"visual": f"""Generate the INTERACTIVE VISUAL section for: "{T}"
-{focus}
-Context: {c}
-
-Style: rocketpropulsion.html #visual / gravition.html interactive SVG — toggle buttons that switch
-between animated views, inline SVG diagram with labeled pathways, animated elements via CSS @keyframes.
-
-Include:
-  • .resp-toggle with 2–3 toggle buttons (class "resp-tog-btn", active state)
-  • A container with type-specific animated molecule/particle rows (colored circles with pulse animation)
-  • An SVG (viewBox ~700x160) showing both pathways side by side with labels, arrows, and animated particles
-  • JavaScript using var (not const/let), unique suffix on all IDs/function names
+REQUIREMENTS:
+  • Use HTML + CSS + JavaScript (var, not const/let)
+  • Add clear labels. Use simple English for all text.
+  • All controls must work and update the display in real time.
+  • Use CSS animations or canvas for visual feedback.
+  • Unique ID suffix on all IDs to avoid conflicts.
+  • Keep the UI clean and easy for a student to use.
 
 Return ONLY the complete HTML + inline <style> + <script>:
 
-<section id="visual">
-  <h2 class="section-title"><span class="icon">🔬</span> See {T} in Action</h2>
+<section id="interactive_sim">
+  <h2 class="section-title"><span class="icon">🧪</span> Try It Yourself — {T} Simulation</h2>
   <div class="card">
-    [toggle buttons + animated views + SVG diagram + JS]
+    [controls + animated simulation area + result display + JS]
   </div>
 </section>
 
 OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §8  WORKING PROCESS (stepper / timeline)
+# §7  WORKING PROCESS (stepper / timeline)
 # ─────────────────────────────────────────────────────────────────
 "working": f"""Generate the WORKING PROCESS section for: "{T}"
 {focus}
 Context: {c}
-
-Style: rocketpropulsion.html #process (timeline) OR Monocot #working (steps-flow).
-If two main pathways: use a 2-column grid with a .timeline / .tl-item stepper in each column.
-If single pathway: use single .timeline.
-
-Each step: .tl-dot (numbered), .tl-card with h3 title and p description.
+Use SHORT sentences. Simple words only.
 
 Return ONLY:
 
@@ -469,8 +414,8 @@ Return ONLY:
             <div class="tl-dot" style="background:var(--color-a);">1</div>
             <div class="tl-card" style="border-color:var(--color-a);">
               <div class="tl-icon">[emoji]</div>
-              <h3>[Step 1 title for Type A]</h3>
-              <p>[1-2 sentence description]</p>
+              <h3>[Step 1 title]</h3>
+              <p>[1 short sentence — simple words]</p>
             </div>
           </div>
           [3-5 more .tl-item steps for Type A]
@@ -489,14 +434,12 @@ Return ONLY:
 OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §9  COMPARISON TABLE
+# §8  COMPARISON TABLE
 # ─────────────────────────────────────────────────────────────────
 "comparison": f"""Generate the COMPARISON TABLE section for: "{T}"
 {focus}
 Context: {c}
-
-Style: tissues.html #comparison — .compare-table with colored <th> for each type, 6-8 feature rows,
-alternating row hover effect.
+Use SHORT cell text. Simple words only.
 
 Return ONLY:
 
@@ -513,9 +456,9 @@ Return ONLY:
           </tr>
         </thead>
         <tbody>
-          <tr><td style="padding:11px 16px;border-top:1px solid var(--border);font-weight:600;color:var(--text-soft);font-size:13px;">[Feature 1]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[A value]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[B value]</td></tr>
-          <tr style="background:#f8fafc;"><td style="padding:11px 16px;border-top:1px solid var(--border);font-weight:600;color:var(--text-soft);font-size:13px;">[Feature 2]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[A value]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[B value]</td></tr>
-          [Continue alternating for 6-8 total rows — all with REAL content about "{T}"]
+          <tr><td style="padding:11px 16px;border-top:1px solid var(--border);font-weight:600;color:var(--text-soft);font-size:13px;">[Feature 1]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[Short A value]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[Short B value]</td></tr>
+          <tr style="background:#f8fafc;"><td style="padding:11px 16px;border-top:1px solid var(--border);font-weight:600;color:var(--text-soft);font-size:13px;">[Feature 2]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[Short A value]</td><td style="padding:11px 16px;border-top:1px solid var(--border);">[Short B value]</td></tr>
+          [Continue alternating for 6-8 total rows — all REAL content about "{T}"]
         </tbody>
       </table>
     </div>
@@ -525,14 +468,12 @@ Return ONLY:
 OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §10  ACTIVITIES (3-tab game area)
+# §9  ACTIVITIES (3-tab game area)
 # ─────────────────────────────────────────────────────────────────
 "activities": f"""Generate the 3-TAB ACTIVITIES section for: "{T}"
 {focus}
 Context: {c}
-
-Style: Monocot___Dicot_Roots.html #animation — .act-tabs with 3 .act-tab buttons,
-3 .activity-panel divs (only active one visible).
+Use SHORT sentences. Simple words only. Keep instructions brief.
 
 EXACTLY THREE ACTIVITIES:
   Activity 1 — "Which Type?" scenario MCQ (user picks Type A or B)
@@ -576,14 +517,11 @@ function switchActivity(n) {{
 OUTPUT NOTHING after </script>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §11  FUN FACTS
+# §10  FUN FACTS
 # ─────────────────────────────────────────────────────────────────
 "funfacts": f"""Generate the FUN FACTS section for: "{T}"
 {focus}
-
-Style: Monocot___Dicot_Roots.html #funfacts — .facts-grid with .fact-card elements,
-each with .fact-front (emoji + "Tap to Reveal!") and .fact-back (surprising fact).
-onclick="revealFact(this)" toggles .revealed.
+Use SHORT sentences. Simple words only.
 
 Return ONLY:
 
@@ -592,23 +530,21 @@ Return ONLY:
   <div class="facts-grid">
     <div class="fact-card" onclick="revealFact(this)">
       <div class="fact-front"><div style="font-size:2.2rem">[emoji]</div><p>Tap to Reveal!</p></div>
-      <div class="fact-back">[Surprising fact about "{T}" — 2-3 sentences, bold key numbers/terms. REAL fact.]</div>
+      <div class="fact-back">[2 short sentences. Surprising fact about "{T}". Simple words.]</div>
     </div>
-    [Repeat for 5 more cards — all with REAL facts about "{T}", different emojis]
+    [Repeat for 5 more cards — all REAL facts about "{T}", different emojis]
   </div>
 </section>
 
 OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §12  QUICK REVISION
+# §11  QUICK REVISION
 # ─────────────────────────────────────────────────────────────────
 "revision": f"""Generate the QUICK REVISION section for: "{T}"
 {focus}
 Context: {c}
-
-Style: gravition.html #revision / rocketpropulsion.html #important — .revision-grid (2×2 or 2×3)
-with .rev-block cards (alternating accent colors), plus key equations as colored border-left boxes.
+Use SHORT text. Simple words only.
 
 Return ONLY:
 
@@ -617,20 +553,20 @@ Return ONLY:
   <div class="card">
     <div class="revision-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
       <div class="rev-block" style="background:var(--color-a-light);border-radius:var(--radius-sm);padding:16px;text-align:center;font-weight:700;">
-        <div style="font-size:1.5rem;font-weight:800;color:var(--color-a);">[Key fact / value / number for Type A]</div>
-        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Sub-detail]</div>
+        <div style="font-size:1.5rem;font-weight:800;color:var(--color-a);">[Key fact for Type A]</div>
+        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Short sub-detail]</div>
       </div>
       <div class="rev-block" style="background:var(--color-b-light);border-radius:var(--radius-sm);padding:16px;text-align:center;font-weight:700;">
-        <div style="font-size:1.5rem;font-weight:800;color:var(--color-b);">[Key fact / value for Type B]</div>
-        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Sub-detail]</div>
+        <div style="font-size:1.5rem;font-weight:800;color:var(--color-b);">[Key fact for Type B]</div>
+        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Short sub-detail]</div>
       </div>
       <div class="rev-block" style="background:#dcfce7;border-radius:var(--radius-sm);padding:16px;text-align:center;font-weight:700;">
         <div style="font-size:1.5rem;font-weight:800;color:#16a34a;">[Third key fact]</div>
-        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Sub-detail]</div>
+        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Short sub-detail]</div>
       </div>
       <div class="rev-block" style="background:#ede9fe;border-radius:var(--radius-sm);padding:16px;text-align:center;font-weight:700;">
         <div style="font-size:1.5rem;font-weight:800;color:#7c3aed;">[Fourth key fact]</div>
-        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Sub-detail]</div>
+        <div style="font-size:0.9rem;margin-top:4px;color:var(--text-soft);">[Short sub-detail]</div>
       </div>
     </div>
     <div style="background:var(--bg,#f8fafc);border-radius:var(--radius-sm);padding:16px;">
@@ -650,20 +586,12 @@ Return ONLY:
 OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §13  QUIZ
+# §12  QUIZ
 # ─────────────────────────────────────────────────────────────────
 "quiz": f"""Generate the QUIZ section for: "{T}"
 {focus}
 Context: {c}
-
-Style: Monocot___Dicot_Roots.html #quiz + rocketpropulsion.html quiz — EXACTLY:
-  • .quiz-wrap with .quiz-progress-bar (width updates on each question)
-  • .quiz-q-num counter text
-  • .quiz-question text
-  • .quiz-options container (buttons for each option)
-  • #quiz-explanation (hidden until answered, shown with 💡 prefix)
-  • "Next Question →" button
-  • #quiz-result with .score-big number, .score-msg, "🔄 Try Again" button
+Write all questions in short, simple English. Easy words only.
 
 EXACTLY 10 questions: Q1-3 Easy, Q4-7 Medium, Q8-10 Hard.
 All JavaScript: use var. Unique suffix "QZ" on all IDs/function names.
@@ -695,7 +623,7 @@ Return ONLY the complete HTML + <script>:
 </section>
 <script>
 var questionsQZ = [
-  {{q:"[Q1 — Easy, real question about {T}]",opts:["[opt A]","[opt B]","[opt C]","[opt D]"],ans:0,ex:"[explanation]"}},
+  {{q:"[Q1 — Easy, simple question about {T}]",opts:["[opt A]","[opt B]","[opt C]","[opt D]"],ans:0,ex:"[Short simple explanation]"}},
   {{q:"[Q2 — Easy]",opts:["[A]","[B]","[C]","[D]"],ans:1,ex:"[explanation]"}},
   {{q:"[Q3 — Easy]",opts:["[A]","[B]","[C]","[D]"],ans:2,ex:"[explanation]"}},
   {{q:"[Q4 — Medium]",opts:["[A]","[B]","[C]","[D]"],ans:3,ex:"[explanation]"}},
@@ -759,7 +687,7 @@ function showResultsQQ(){{
   document.getElementById('quiz-barQZ').style.width='100%';
   document.getElementById('quiz-score-bigQZ').textContent=qScoreQZ;
   var perf,sub;
-  if(qScoreQZ>=9){{perf='Excellent! 🌟';sub='Outstanding! You\'ve mastered {T}!';}}
+  if(qScoreQZ>=9){{perf='Excellent! 🌟';sub='Outstanding! You have mastered {T}!';}}
   else if(qScoreQZ>=7){{perf='Very Good! 👍';sub='Great job! Review a few points to be perfect.';}}
   else if(qScoreQZ>=5){{perf='Good! 📖';sub='Revise once more to strengthen your understanding.';}}
   else{{perf="Let's learn again! 💪";sub='Revisit the lesson and try the quiz again!';}}
@@ -775,18 +703,12 @@ Set ans values (0–3) to the actual correct option index.
 OUTPUT NOTHING after </script>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §14  FORMULAS  (conditional: mathematical topics)
+# §13  FORMULAS  (conditional: mathematical topics)
 # ─────────────────────────────────────────────────────────────────
 "formulas": f"""Generate the FORMULAS section for: "{T}"
 {focus}
 Context: {c}
-
-Style: rocketpropulsion.html #important + MathJax $$...$$ display.
-2–5 key formulas as stacked .card elements, each with:
-  • Formula name as h3
-  • .equation box with LaTeX $$...$$ display math
-  • 2-col symbol table (symbol | meaning + units)
-  • Highlight box for the most important formula
+Keep all labels short. Use simple English.
 
 Return ONLY:
 
@@ -806,21 +728,19 @@ Return ONLY:
 OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §15  DERIVATION  (conditional: mathematical topics)
+# §14  DERIVATION  (conditional: mathematical topics)
 # ─────────────────────────────────────────────────────────────────
 "derivation": f"""Generate the STEP-BY-STEP DERIVATION section for: "{T}"
 {focus}
 Context: {c}
-
-Style: rocketpropulsion.html #process (timeline) + MathJax $$...$$ steps.
-4–8 step derivation using .timeline / .tl-item / .tl-dot / .tl-card pattern.
+Keep all text short. Simple words only.
 
 Return ONLY:
 
 <section id="derivation">
   <h2 class="section-title"><span class="icon">📊</span> Deriving the Key Equation</h2>
   <div class="card">
-    <p style="color:var(--text-soft);font-size:14px;margin-bottom:20px;">[2-3 sentences: what we derive and why it matters for "{T}"]</p>
+    <p style="color:var(--text-soft);font-size:14px;margin-bottom:20px;">[2 short sentences: what we derive and why it matters for "{T}"]</p>
     <div class="timeline">
       <div class="tl-item">
         <div class="tl-dot">1</div>
@@ -828,7 +748,7 @@ Return ONLY:
           <div class="tl-icon">[emoji]</div>
           <h3>[Step 1 title]</h3>
           <div style="background:var(--bg);border-radius:var(--radius-sm);padding:12px;margin:8px 0;text-align:center;font-size:1.1em;">$$[LaTeX step 1]$$</div>
-          <p>[1-2 sentence explanation]</p>
+          <p>[1 short sentence — simple words]</p>
         </div>
       </div>
       [Continue for all steps]
@@ -838,7 +758,7 @@ Return ONLY:
           <div class="tl-icon">🎯</div>
           <h3>Final Result</h3>
           <div style="background:#dcfce7;border-radius:var(--radius-sm);padding:12px;margin:8px 0;text-align:center;font-size:1.2em;">$$[Final equation]$$</div>
-          <p>[2-3 sentences on physical significance]</p>
+          <p>[2 short sentences on what this means]</p>
         </div>
       </div>
     </div>
@@ -883,7 +803,7 @@ Return ONLY valid JSON (no markdown fences):
   "needs_formula": true | false,
   "needs_derivation": true | false,
   "subject": "Biology" | "Physics" | "Chemistry" | "Mathematics" | "Other",
-  "level": "Class 9-10" | "Class 11-12" | "University",
+  "level": "Secondary" | "Senior Secondary" | "University",
   "color_a": "#hex",
   "color_b": "#hex",
   "color_a_light": "#hex",
@@ -912,7 +832,7 @@ conceptual = needs_formula=false, needs_derivation=false"""
         return {
             "category": "conceptual", "needs_formula": False,
             "needs_derivation": False, "subject": "Biology",
-            "level": "Class 9-10",
+            "level": "Secondary",
             "color_a": "#2563eb", "color_b": "#d97706",
             "color_a_light": "#dbeafe", "color_b_light": "#fef3c7",
             "label_a": "Type A", "label_b": "Type B",
@@ -932,7 +852,7 @@ def _section_list(cls: Dict) -> List[str]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CSS — exact reference-file token set (Monocot/rocketpropulsion fusion)
+#  CSS — reference-file token set
 # ══════════════════════════════════════════════════════════════════════════════
 def _build_css(cls: Dict, topic: str) -> str:
     ca   = cls.get("color_a",       "#2563eb")
@@ -941,36 +861,31 @@ def _build_css(cls: Dict, topic: str) -> str:
     cbl  = cls.get("color_b_light", "#fef3c7")
     subj = cls.get("subject", "Biology")
 
-    # Primary palette per subject (matches reference aesthetic)
     primary_map = {
-        "Biology":     ("#2D6A4F", "#D8F3DC", "#B7E4C7", "#52B788"),  # green
-        "Physics":     ("#1D4ED8", "#DBEAFE", "#93C5FD", "#3B82F6"),  # blue
-        "Chemistry":   ("#7C3AED", "#EDE9FE", "#C4B5FD", "#8B5CF6"),  # purple
-        "Mathematics": ("#0F766E", "#CCFBF1", "#5EEAD4", "#14B8A6"),  # teal
-        "Other":       ("#1E293B", "#F1F5F9", "#CBD5E1", "#64748B"),  # slate
+        "Biology":     ("#2D6A4F", "#D8F3DC", "#B7E4C7", "#52B788"),
+        "Physics":     ("#1D4ED8", "#DBEAFE", "#93C5FD", "#3B82F6"),
+        "Chemistry":   ("#7C3AED", "#EDE9FE", "#C4B5FD", "#8B5CF6"),
+        "Mathematics": ("#0F766E", "#CCFBF1", "#5EEAD4", "#14B8A6"),
+        "Other":       ("#1E293B", "#F1F5F9", "#CBD5E1", "#64748B"),
     }
     p, pbg, pmid, phl = primary_map.get(subj, primary_map["Other"])
 
     return f"""
 @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Poppins:wght@600;700;800&display=swap');
 
-/* ══ EXACT REFERENCE TOKEN SET ══ */
+/* ══ CSS TOKEN SET ══ */
 :root {{
-  /* Subject palette */
   --primary:       {p};
   --primary-bg:    {pbg};
   --primary-mid:   {pmid};
   --primary-hl:    {phl};
-  /* Topic accent pair */
   --color-a:       {ca};
   --color-b:       {cb};
   --color-a-light: {cal};
   --color-b-light: {cbl};
-  /* Semantic */
   --success:       #22C55E;
   --warning:       #F59E0B;
   --danger:        #EF4444;
-  /* Neutral */
   --bg:            #FAFCFF;
   --bg-card:       #FFFFFF;
   --card:          #FFFFFF;
@@ -995,7 +910,7 @@ strong {{font-weight:800}}
 a {{color:var(--primary);text-decoration:none}}
 button {{cursor:pointer;font-family:inherit}}
 
-/* ══ STICKY HEADER (rocketpropulsion style) ══ */
+/* ══ STICKY HEADER ══ */
 #site-header {{
   position:sticky;top:0;z-index:997;
   background:rgba(250,252,255,0.92);
@@ -1016,7 +931,7 @@ button {{cursor:pointer;font-family:inherit}}
   border-radius:99px;width:0%;transition:width .4s;
 }}
 
-/* ══ LEFT SIDE-NAV (Monocot style) ══ */
+/* ══ LEFT SIDE-NAV ══ */
 #nav-toggle {{
   position:fixed;left:0;top:50%;transform:translateY(-50%);
   z-index:1000;background:var(--primary);color:#fff;
@@ -1055,7 +970,7 @@ button {{cursor:pointer;font-family:inherit}}
   background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-soft);
 }}
 
-/* ══ FLOATING GLOSSARY (Monocot style) ══ */
+/* ══ FLOATING GLOSSARY ══ */
 #glossary-float {{position:fixed;right:18px;bottom:30px;z-index:900}}
 #glossary-btn {{
   background:var(--primary);color:#fff;border:none;cursor:pointer;
@@ -1196,7 +1111,31 @@ section {{margin-bottom:48px;scroll-margin-top:80px;}}
 .type-card ul li {{font-size:0.96rem;margin-bottom:4px;color:var(--text-soft);}}
 .type-card ul li::before {{content:"• ";font-weight:800;color:var(--primary);}}
 
-/* ══ TIMELINE (rocketpropulsion style) ══ */
+/* ══ INTERACTIVE SIM ══ */
+.sim-controls {{
+  display:flex;flex-wrap:wrap;gap:16px;margin-bottom:20px;align-items:center;
+}}
+.sim-control-group {{display:flex;flex-direction:column;gap:6px;min-width:180px;}}
+.sim-control-group label {{font-size:13px;font-weight:700;color:var(--text-soft);}}
+.sim-display {{
+  background:var(--bg);border-radius:var(--radius-sm);
+  border:2px solid var(--border);min-height:200px;
+  display:flex;align-items:center;justify-content:center;
+  position:relative;overflow:hidden;
+}}
+.sim-btn {{
+  background:var(--color-a);color:#fff;border:none;
+  padding:10px 22px;border-radius:50px;font-weight:700;
+  font-size:15px;transition:background .2s;
+}}
+.sim-btn:hover {{background:var(--primary)}}
+.sim-result {{
+  margin-top:16px;background:var(--color-a-light);
+  border-radius:var(--radius-sm);padding:14px 18px;
+  font-weight:700;color:var(--text);font-size:1rem;
+}}
+
+/* ══ TIMELINE ══ */
 .timeline {{margin-top:20px;position:relative;}}
 .timeline::before {{
   content:'';position:absolute;left:20px;top:0;bottom:0;
@@ -1318,21 +1257,20 @@ def _extract_glossary(hook_html: str) -> List[Dict]:
 
 def _build_nav_items(sections: List[str]) -> str:
     labels = {
-        "hook":          "🌱 Hook",
-        "definition":    "📖 Definition",
-        "fundamentals":  "🔑 Fundamentals",
-        "subtopics":     "🧬 Subtopics",
-        "types":         "🌿 Types",
-        "deep_sections": "🔬 Deep Dive",
-        "formulas":      "📐 Formulas",
-        "derivation":    "📊 Derivation",
-        "visual":        "🎥 Visual",
-        "working":       "⚙️ Working",
-        "comparison":    "⚖️ Comparison",
-        "activities":    "🎮 Activities",
-        "funfacts":      "💡 Fun Facts",
-        "revision":      "📝 Revision",
-        "quiz":          "❓ Quiz",
+        "hook":            "🌱 Hook",
+        "definition":      "📖 Definition",
+        "fundamentals":    "🔑 Fundamentals",
+        "subtopics":       "🧬 Subtopics",
+        "types":           "🌿 Types",
+        "formulas":        "📐 Formulas",
+        "derivation":      "📊 Derivation",
+        "interactive_sim": "🧪 Simulation",
+        "working":         "⚙️ Working",
+        "comparison":      "⚖️ Comparison",
+        "activities":      "🎮 Activities",
+        "funfacts":        "💡 Fun Facts",
+        "revision":        "📝 Revision",
+        "quiz":            "❓ Quiz",
     }
     out = ""
     for s in sections:
@@ -1346,12 +1284,11 @@ def _build_nav_items(sections: List[str]) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 def _assemble_html(topic: str, sections: Dict[str, str],
                    section_list: List[str], cls: Dict) -> str:
-    css  = _build_css(cls, topic)
-    subj = cls.get("subject", "Biology")
-    level = cls.get("level", "Class 10")
+    css   = _build_css(cls, topic)
+    subj  = cls.get("subject", "Biology")
+    level = cls.get("level", "Secondary")
     needs_mathjax = any(s in section_list for s in ("formulas", "derivation"))
 
-    # Glossary from hook
     glossary_terms = _extract_glossary(sections.get("hook", ""))
     gp_items = ""
     for t in glossary_terms:
@@ -1379,7 +1316,7 @@ MathJax={tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{topic} — {level} {subj}</title>
+<title>{topic} — {subj}</title>
 {mathjax}
 <style>
 {css}
@@ -1394,14 +1331,14 @@ MathJax={tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],
       <span style="font-size:22px;">📚</span>
       <span class="header-title">{topic}</span>
     </div>
-    <span class="header-section" id="currentSection">{level} {subj}</span>
+    <span class="header-section" id="currentSection">{subj}</span>
     <div class="progress-wrap" style="width:100%">
       <div class="progress-bar" id="progressBar"></div>
     </div>
   </div>
 </header>
 
-<!-- ═══ LEFT SIDE-NAV (Monocot style) ═══ -->
+<!-- ═══ LEFT SIDE-NAV ═══ -->
 <button id="nav-toggle" onclick="toggleNav()" aria-label="Toggle navigation">☰ Sections</button>
 <nav id="side-nav" aria-label="Page sections">
   <button id="nav-close" onclick="closeNav()" aria-label="Close navigation">✕</button>
@@ -1409,7 +1346,7 @@ MathJax={tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],
 {nav_items}
 </nav>
 
-<!-- ═══ FLOATING GLOSSARY (Monocot style) ═══ -->
+<!-- ═══ FLOATING GLOSSARY ═══ -->
 <div id="glossary-float">
   <div id="glossary-panel">
     <button class="g-close" onclick="toggleGlossary()">✕</button>
@@ -1449,8 +1386,8 @@ function revealFact(card) {{ card.classList.toggle('revealed'); }}
 var _sids = [{section_ids_js}];
 var _snames = {{
   hook:"Hook",definition:"Definition",fundamentals:"Fundamentals",
-  subtopics:"Subtopics",types:"Types",deep_sections:"Deep Dive",
-  formulas:"Formulas",derivation:"Derivation",visual:"Visual",
+  subtopics:"Subtopics",types:"Types",
+  formulas:"Formulas",derivation:"Derivation",interactive_sim:"Simulation",
   working:"Working Process",comparison:"Comparison",
   activities:"Activities",funfacts:"Fun Facts",revision:"Revision",quiz:"Quiz"
 }};
@@ -1470,7 +1407,7 @@ window.addEventListener('scroll', function() {{
   }});
   if (cur) {{
     var cs = document.getElementById('currentSection');
-    if (cs) cs.textContent = (_snames[cur] || cur) + ' — {level} {subj}';
+    if (cs) cs.textContent = (_snames[cur] || cur) + ' — {subj}';
   }}
 }});
 
@@ -1529,9 +1466,9 @@ class EduPageGenerator:
     async def generate_page(self, topic: str,
                             subtopics: Optional[List[str]] = None) -> Dict:
         log.info(f"\n{'═'*60}")
-        log.info(f"[EduPage v23] topic='{topic}'")
+        log.info(f"[EduPage v24] topic='{topic}'")
         if subtopics:
-            log.info(f"[EduPage v23] subtopics={subtopics}")
+            log.info(f"[EduPage v24] subtopics={subtopics}")
         log.info(f"{'═'*60}")
 
         # Stage 0: Classify
@@ -1585,7 +1522,7 @@ async def generate_animation(prompt: str) -> dict:
     if not prompt or not prompt.strip():
         raise ValueError("Prompt cannot be empty")
     prompt = prompt.strip()
-    log.info(f"[generate_animation v23] prompt='{prompt}'")
+    log.info(f"[generate_animation v24] prompt='{prompt}'")
 
     subtopics = _extract_subtopics(prompt)
     if " -- " in prompt:
@@ -1644,7 +1581,7 @@ async def generate_genzet_book_content(topic: str, subtopic: str,
         raise ValueError("topic cannot be empty")
     full = (f"{topic} — {subtopic}"
             if subtopic and subtopic.lower() != topic.lower() else topic)
-    log.info(f"[generate_genzet_book_content v23] topic='{full}'")
+    log.info(f"[generate_genzet_book_content v24] topic='{full}'")
     gen = EduPageGenerator()
     result = await gen.generate_page(topic=full, subtopics=subtopics_list)
     html = result["html"]
@@ -1666,15 +1603,13 @@ async def generate_ultimate_learning_content(
     """
     Primary entry point expected by main.py.
 
-    Accepts the same arguments as generate_genzet_book_content plus an
-    optional output_file path.  Returns the standard result dict:
+    Returns:
         {
           "title":          str,
           "explanation":    str,   # 220-char plain-text summary
           "animation_code": str,   # full HTML page
           "metadata":       dict,
         }
-    and additionally writes output.html when output_file is given.
     """
     topic    = (topic    or "").strip()
     subtopic = (subtopic or "").strip()
@@ -1684,7 +1619,7 @@ async def generate_ultimate_learning_content(
     full_topic = (f"{topic} — {subtopic}"
                   if subtopic and subtopic.lower() != topic.lower()
                   else topic)
-    log.info(f"[generate_ultimate_learning_content v23] topic='{full_topic}'")
+    log.info(f"[generate_ultimate_learning_content v24] topic='{full_topic}'")
 
     gen    = EduPageGenerator()
     result = await gen.generate_page(topic=full_topic, subtopics=subtopics_list)
@@ -1746,7 +1681,7 @@ if __name__ == "__main__":
         print("  python claude_client.py 'Newton Laws of Motion'")
         sys.exit(1)
 
-    raw = " ".join(sys.argv[1:])
+    raw  = " ".join(sys.argv[1:])
     subs = _extract_subtopics(raw)
 
     if " -- " in raw:
@@ -1758,11 +1693,10 @@ if __name__ == "__main__":
     else:
         topic = raw
 
-    safe = re.sub(r'[^\w\-]', '_', topic.lower())[:60]
-    out  = f"output.html"
+    out = "output.html"
 
     print(f"\n{'='*60}")
-    print(f"EduPage Generator v23.0 — Reference-HTML Pipeline")
+    print(f"EduPage Generator v24.0 — Interactive Simulation Edition")
     print(f"{'='*60}")
     print(f"Topic      : {topic}")
     print(f"Subtopics  : {subs if subs else '(auto-detect)'}")
