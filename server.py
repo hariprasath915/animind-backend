@@ -32,7 +32,6 @@ import os
 import asyncio
 import json
 import uuid
-import hashlib
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
@@ -42,15 +41,14 @@ import httpx
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
 # ── Auth + Sync ───────────────────────────────────────────────────────────────
 from auth_routes import router as auth_router
 from sync_routes import router as sync_router          # v6 normalized + legacy
-# NOTE: passkey_routes.py does not exist as a separate file — passkey endpoints
-#       are defined inline below. Importing it crashed the server at startup.
+from passkey_routes import router as passkey_router    # passkey mode protection
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 from admin_router import router as admin_router, install_error_handler
@@ -62,7 +60,6 @@ from claude_client import (
     subtopics_json_to_genzet_args,
     generate_ultimate_learning_content,
 )
-from simulation import generate_simulation   # FIX: was missing — caused 404→502 on /generate-simulation
 from pdf_handler import (
     extract_pdf_text,
     find_subtopics_in_pdf,
@@ -90,7 +87,7 @@ KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
 async def _keep_alive_pinger():
     self_url   = os.getenv(
         "RENDER_EXTERNAL_URL",
-        "https://animind-backend-production-2.up.railway.app",
+        "https://animind-backend-production-2.up.railway.appp",
     )
     health_url = f"{self_url.rstrip('/')}/health"
     print(f"[KEEP-ALIVE] ✅ Pinger started → {health_url} every {KEEP_ALIVE_INTERVAL}s")
@@ -188,7 +185,7 @@ else:
 app.include_router(auth_router)     # /auth/*
 app.include_router(sync_router)     # /sync/*
 app.include_router(admin_router)    # /admin/*
-# passkey_router removed — endpoints defined inline below
+app.include_router(passkey_router)  # /auth/verify-passkey, /auth/passkey/*
 
 install_error_handler(app)
 
@@ -276,170 +273,10 @@ class QuestionAnimRequest(BaseModel):
     question: str
 
 
-class SimulationRequest(BaseModel):
-    topic: str
-    mode: Optional[str] = None   # e.g. 'physics', 'chemistry' (informational only)
-
-
 class SkillContentRequest(BaseModel):
     topic:        str
     subject:      Optional[str]  = "Engineering"
     retry_failed: Optional[bool] = True
-
-
-class PasskeyVerifyRequest(BaseModel):
-    passkey: str
-
-
-class PasskeyGrantRequest(BaseModel):
-    passkey: str
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PASSKEY ENDPOINTS  (inline — passkey_routes.py does not exist as a file)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _pk_get_user(request: Request):
-    """Extract and verify the Supabase JWT. Returns (db, user_id, user_name, user_email)."""
-    from auth_utils import get_supabase
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    token = auth_header.split(" ", 1)[1].strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    try:
-        db = get_supabase()
-        user_res = db.auth.get_user(token)
-        user = user_res.user
-        if not user:
-            raise Exception("No user returned")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token.")
-    user_id    = str(user.id)
-    user_email = user.email or ""
-    meta       = user.user_metadata or {}
-    user_name  = meta.get("name") or meta.get("full_name") or user_email
-    return db, user_id, user_name, user_email
-
-
-@app.post("/auth/verify-passkey")
-async def verify_passkey(request: Request, body: PasskeyVerifyRequest):
-    passkey = (body.passkey or "").strip()
-    if len(passkey) < 8 or len(passkey) > 9:
-        raise HTTPException(status_code=400, detail="Passkey must be exactly 8 or 9 characters.")
-    db, user_id, user_name, user_email = _pk_get_user(request)
-    try:
-        existing = db.table("passkey_access").select("id").eq("user_id", user_id).limit(1).execute()
-        if existing.data:
-            return {"ok": True, "already_granted": True}
-        passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
-        pk_result = db.table("admin_passkeys").select("id, passkey").eq("passkey_hash", passkey_hash).limit(1).execute()
-        if not pk_result.data:
-            return {"ok": False}
-        passkey_id = pk_result.data[0]["id"]
-        claimed = db.table("passkey_access").select("user_id").eq("passkey_id", passkey_id).limit(1).execute()
-        if claimed.data and claimed.data[0]["user_id"] != user_id:
-            return {"ok": False, "detail": "already_assigned"}
-        return {"ok": True, "already_granted": False}
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[PASSKEY] ⚠ Supabase error: {e}")
-        raise HTTPException(status_code=500, detail="Passkey verification failed. Please try again.")
-
-
-@app.post("/auth/passkey/grant")
-async def passkey_grant(request: Request, body: PasskeyGrantRequest):
-    passkey = (body.passkey or "").strip()
-    if not passkey:
-        raise HTTPException(status_code=400, detail="passkey is required.")
-    db, user_id, user_name, user_email = _pk_get_user(request)
-    try:
-        existing = db.table("passkey_access").select("id").eq("user_id", user_id).limit(1).execute()
-        if existing.data:
-            return {"granted": True}
-        passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
-        pk_result = db.table("admin_passkeys").select("id, passkey").eq("passkey_hash", passkey_hash).limit(1).execute()
-        if not pk_result.data:
-            raise HTTPException(status_code=400, detail="Invalid passkey.")
-        passkey_row  = pk_result.data[0]
-        passkey_id   = passkey_row["id"]
-        passkey_text = passkey_row["passkey"]
-        db.table("passkey_access").insert({
-            "user_id": user_id, "user_name": user_name,
-            "user_email": user_email, "passkey_id": passkey_id, "passkey_used": passkey_text,
-        }).execute()
-        print(f"[PASSKEY] ✅ Grant recorded — user={user_id[:8]}…  email={user_email}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        err_str = str(e)
-        if "23505" in err_str or "duplicate" in err_str.lower():
-            raise HTTPException(status_code=409, detail="This passkey has already been claimed by another user.")
-        print(f"[PASSKEY] ⚠ Grant insert failed: {e}")
-        raise HTTPException(status_code=500, detail="Could not record access grant.")
-    return {"granted": True}
-
-
-@app.get("/auth/passkey/check")
-async def passkey_check(request: Request):
-    db, user_id, _name, _email = _pk_get_user(request)
-    try:
-        result = db.table("passkey_access").select("id").eq("user_id", user_id).limit(1).execute()
-        granted = bool(result.data)
-    except Exception as e:
-        print(f"[PASSKEY] ⚠ Access check failed: {e}")
-        granted = False
-    return {"granted": granted}
-
-
-@app.post("/admin/passkeys/add")
-async def admin_add_passkey(request: Request, body: PasskeyGrantRequest):
-    _admin_token = os.getenv("ADMIN_SECRET_TOKEN", "")
-    if not _admin_token or request.headers.get("X-Admin-Token", "") != _admin_token:
-        raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token header.")
-    from auth_utils import get_supabase
-    passkey = (body.passkey or "").strip()
-    if len(passkey) < 8 or len(passkey) > 9:
-        raise HTTPException(status_code=400, detail="Passkey must be exactly 8 or 9 characters.")
-    passkey_hash = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
-    try:
-        db = get_supabase()
-        result = db.table("admin_passkeys").insert({"passkey": passkey, "passkey_hash": passkey_hash}).execute()
-        row = result.data[0] if result.data else {}
-        return {"id": row.get("id"), "passkey": row.get("passkey"), "label": row.get("label"), "created_at": row.get("created_at")}
-    except Exception as e:
-        err_str = str(e)
-        if "23505" in err_str or "duplicate" in err_str.lower():
-            raise HTTPException(status_code=409, detail="A passkey with that value already exists.")
-        raise HTTPException(status_code=500, detail="Could not add passkey.")
-
-
-@app.get("/admin/passkeys/list")
-async def admin_list_passkeys(request: Request):
-    _admin_token = os.getenv("ADMIN_SECRET_TOKEN", "")
-    if not _admin_token or request.headers.get("X-Admin-Token", "") != _admin_token:
-        raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token header.")
-    from auth_utils import get_supabase
-    try:
-        db = get_supabase()
-        pk_res  = db.table("admin_passkeys").select("id, passkey, label, created_at").order("created_at").execute()
-        acc_res = db.table("passkey_access").select("passkey_id, user_id, user_name, user_email, granted_at").execute()
-        claims  = {row["passkey_id"]: row for row in (acc_res.data or []) if row.get("passkey_id")}
-        result  = []
-        for pk in (pk_res.data or []):
-            pk_id = pk["id"]
-            entry = {"id": pk_id, "passkey": pk["passkey"], "label": pk.get("label"),
-                     "created_at": pk.get("created_at"), "claimed": pk_id in claims}
-            if pk_id in claims:
-                claim = claims[pk_id]
-                entry["claimed_by"] = {"user_id": claim.get("user_id"), "user_name": claim.get("user_name"),
-                                       "user_email": claim.get("user_email"), "granted_at": claim.get("granted_at")}
-            result.append(entry)
-        return {"passkeys": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Could not retrieve passkeys.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -535,75 +372,6 @@ async def create_animation(request: AnimationRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/generate-simulation")
-async def create_simulation(request: SimulationRequest):
-    """
-    Generate a complete, self-contained interactive HTML5 simulation.
-
-    WHY SSE / StreamingResponse:
-    Railway (and most reverse-proxy gateways) enforce a ~30–60 s idle-write
-    timeout.  The old implementation called generate_simulation() and then
-    returned a single JSON blob — the gateway saw zero bytes for 60+ seconds
-    and killed the connection with a 502 before the response arrived.
-
-    Fix: return a StreamingResponse that:
-      1. Sends "ping" SSE heartbeat lines every 10 s while generation runs.
-      2. Sends a single "result" SSE event containing the final JSON.
-      3. Closes the stream.
-
-    The frontend (index.html) already has a plain fetch() call that reads
-    response.json().  We update the response to be compatible with both the
-    existing JS (which reads the *last* data line as JSON) via a thin
-    compatibility shim at the end of this generator.
-    """
-    topic = (request.topic or "").strip()
-    if not topic:
-        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
-    if len(topic) > 2000:
-        raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
-
-    if request.mode and request.mode.lower() not in ("general", ""):
-        topic_with_mode = f"{topic} (subject area: {request.mode})"
-    else:
-        topic_with_mode = topic
-
-    async def _stream():
-        import asyncio, json as _json
-
-        # Run generation in the background and send pings while we wait
-        task = asyncio.ensure_future(generate_simulation(topic_with_mode))
-
-        while not task.done():
-            yield "event: ping\ndata: {\"status\":\"generating\"}\n\n"
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
-            except asyncio.TimeoutError:
-                pass  # not done yet — loop and send another ping
-            except Exception:
-                break  # task raised — let the outer block handle it
-
-        # Collect the result
-        try:
-            result = task.result()
-        except Exception as exc:
-            err = _json.dumps({"render_status": "error", "error_reason": str(exc)})
-            yield f"event: result\ndata: {err}\n\n"
-            return
-
-        result["source"] = "generated"
-        payload = _json.dumps(result)
-        yield f"event: result\ndata: {payload}\n\n"
-
-    return StreamingResponse(
-        _stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # tells Nginx/Railway not to buffer
-        },
-    )
 
 
 @app.post("/generate-question-animation")
