@@ -1545,8 +1545,6 @@ async def upload_lesson_file(
 
 class LessonCreate(BaseModel):
     title:             str           = Field(..., min_length=1, max_length=200)
-    class_name:        Optional[str] = 'Other'
-    subject:           Optional[str] = 'other'
     content_type:      Optional[str] = 'mixed'
     thumbnail_url:     Optional[str] = None
     theory_url:        Optional[str] = None
@@ -1561,8 +1559,6 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
     service_sb = _get_service_client()
     row = {
         "title":            payload.title.strip(),
-        "class_name":       (payload.class_name  or 'Other').strip(),
-        "subject":          (payload.subject      or 'other').strip(),
         "content_type":     (payload.content_type or 'mixed').strip(),
         "thumbnail_url":    payload.thumbnail_url    or None,
         "theory_url":       payload.theory_url       or None,
@@ -1583,11 +1579,18 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
 @router.get("/lessons", status_code=200)
 def list_lessons(current_user: dict = Depends(get_current_user)):
     """All authenticated users: list all lessons ordered by created_at asc."""
-    service_sb = _get_service_client()
+    # Use the shared service-role client from auth_utils — it handles all
+    # env-var name variants (SUPABASE_KEY / SUPABASE_SERVICE_KEY) and is
+    # cached as a singleton so we don't open a new connection on every call.
+    from auth_utils import get_supabase as _get_supa
+    service_sb = _get_supa()
     try:
         res = (
             service_sb.table("lessons")
-            .select("id, title, class_name, subject, content_type, thumbnail_url, theory_url, animation_url, realworld_images, created_at")
+            # NOTE: class_name and subject were DROPPED in supabase_lessons_setup.sql
+            # migration (lines 28-32). Selecting them causes a 500 error.
+            # Only select columns that actually exist in the table.
+            .select("id, title, content_type, thumbnail_url, theory_url, animation_url, realworld_images, created_at")
             .order("created_at", desc=False)
             .execute()
         )
