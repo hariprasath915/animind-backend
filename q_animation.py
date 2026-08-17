@@ -35,6 +35,10 @@ v2.0 -- FULL 9-STEP WORKFLOW REFACTOR:
   - All existing infrastructure (panels, CSS/JS injection, validation,
     PanelReliabilityEngine, MathTypography, etc.) is preserved unchanged.
 
+  BUG FIX (v2.0.1):
+    GEMINI_MODEL updated from "gemini-2.5-pro-preview-06-05" (404 NOT_FOUND)
+    to "gemini-2.5-pro" (stable GA release).
+
   REQUIRED ENV VAR:
     GEMINI_API_KEY=your-key
 """
@@ -102,7 +106,14 @@ except Exception as _anthropic_init_err:
 # ---------------------------------------------------------------------------
 # Gemini client
 # ---------------------------------------------------------------------------
-GEMINI_MODEL = "gemini-2.5-pro-preview-06-05"
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  FIX: was "gemini-2.5-pro-preview-06-05" — that preview        ║
+# ║  snapshot was removed by Google (HTTP 404 NOT_FOUND).           ║
+# ║  Updated to the stable GA release "gemini-2.5-pro".            ║
+# ╚══════════════════════════════════════════════════════════════════╝
+GEMINI_MODEL = "gemini-2.5-pro"
+
 _gemini_client = None
 _GEMINI_DISABLED_REASON = None
 
@@ -608,7 +619,6 @@ def inject_step_color_css(html: str) -> str:
     return html
 
 
-
 # ===========================================================================
 #  MODULE 4 — RecoveryEngine
 # ===========================================================================
@@ -628,7 +638,7 @@ h2{{color:#0e7490;margin-bottom:8px;font-size:20px;}}
 p{{color:#475569;line-height:1.6;font-size:14px;}}
 </style></head>
 <body><div class="card">
-<h2>⚠ Animation Generation Failed</h2>
+<h2>&#9888; Animation Generation Failed</h2>
 <p><strong>Question:</strong> {q_esc}</p>
 <p class="err"><strong>Reason:</strong> {r_esc}</p>
 <p>Please wait a moment and try again. If the problem persists, check your GEMINI_API_KEY.</p>
@@ -749,7 +759,6 @@ def _insert_before_container_close(html: str, open_tag_regex: str, insertion: st
                 return html[:i] + insertion + html[i:]
         i += 1
     return html + insertion
-
 
 
 # ===========================================================================
@@ -898,7 +907,6 @@ class GeminiSolutionGenerator:
         except asyncio.TimeoutError:
             QAnimLogger.error("SolutionGenerator", f"Stage exceeded {STAGE_TIMEOUT_SMALL}s — using fallback")
             return dict(cls._FALLBACK)
-
 
 
 # ===========================================================================
@@ -1272,7 +1280,6 @@ class GeminiSceneAnalyzer:
             return cls._fallback_script(question)
 
 
-
 # ===========================================================================
 #  MODULE 10 — Panel Injection Helpers
 # ===========================================================================
@@ -1294,11 +1301,6 @@ def _build_answer_targets(to_find_targets, gemini_sol, final_answer, key_insight
         "insight": insight[:200] if insight else "See solution above.",
     })
     return targets
-
-
-# ===========================================================================
-#  MODULE 11 — Scene 6 (Main Formula) Injection
-# ===========================================================================
 
 
 # ===========================================================================
@@ -1444,7 +1446,6 @@ _SCENE6_STYLES = """\
 }
 .s6-var-box.s6-shown{opacity:1;transform:translateY(0) scale(1);}
 
-/* connector line from formula → card */
 .s6-var-connector{
   width:2px;height:18px;border-radius:2px;
   flex-shrink:0;margin-bottom:0;
@@ -1458,7 +1459,6 @@ _SCENE6_STYLES = """\
 }
 .s6-var-box.s6-shown .s6-var-connector-dot{opacity:1;}
 
-/* card body */
 .s6-var-inner{
   border:2px solid;border-radius:14px;
   padding:14px 14px 12px;text-align:center;
@@ -1471,19 +1471,16 @@ _SCENE6_STYLES = """\
   transform:scale(1.06) translateY(-2px);
 }
 
-/* symbol */
 .s6-var-sym{
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:24px;font-weight:800;line-height:1;
   display:block;margin-bottom:6px;letter-spacing:.5px;
 }
-/* name */
 .s6-var-name{
   font-family:'Inter',sans-serif;
   font-size:11px;font-weight:600;color:#64748b;
   line-height:1.4;display:block;
 }
-/* value chip */
 .s6-var-val-chip{
   display:inline-flex;align-items:center;gap:4px;
   margin-top:8px;padding:3px 8px;border-radius:20px;
@@ -1493,7 +1490,6 @@ _SCENE6_STYLES = """\
 .s6-var-val-num{font-size:12.5px;}
 .s6-var-val-unit{font-size:10px;font-weight:600;opacity:.8;}
 
-/* colour themes for variable cards */
 .s6v-blue  .s6-var-inner{border-color:#3b82f6;background:linear-gradient(145deg,#eff6ff,#dbeafe);}
 .s6v-blue  .s6-var-sym{color:#1d4ed8;}
 .s6v-blue  .s6-var-connector{background:#3b82f6;}
@@ -1580,7 +1576,6 @@ _SCENE6_STYLES = """\
 
 
 def _build_scene6_html(formula_data: dict) -> str:
-    """Build the Step 7 — Main Formula overlay with full design system."""
     formula_text    = html_module.escape(formula_data.get("formula_text", "Formula"))
     formula_sublabel= html_module.escape(formula_data.get("formula_sublabel", "Governing Equation"))
     note_text       = formula_data.get("note_text", "")
@@ -1619,7 +1614,6 @@ def _build_scene6_html(formula_data: dict) -> str:
             </div>
           </div>"""
 
-    # build phase dots (one per variable + note phase)
     n_vars = len(variables)
     dots_html = "".join(
         f'<div class="s6-phase-dot" id="s6-dot-{i}"></div>'
@@ -1641,8 +1635,6 @@ def _build_scene6_html(formula_data: dict) -> str:
 <div id="qanim-scene-modal-backdrop"></div>
 <div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-label="Step 7: Main Formula">
   <div class="s6-card">
-
-    <!-- Header -->
     <div class="s6-header">
       <div class="s6-header-left">
         <div class="s6-step-badge">Step 7 of 9</div>
@@ -1652,11 +1644,7 @@ def _build_scene6_html(formula_data: dict) -> str:
         <div class="s6-progress-text" id="s6-phase-progress">Formula</div>
       </div>
     </div>
-
-    <!-- Body -->
     <div class="s6-body">
-
-      <!-- Caption row -->
       <div class="s6-phase-row">
         <div class="s6-phase-caption" id="s6-phase-caption">
           This is the <span class="s6-accent">governing formula</span>
@@ -1664,23 +1652,14 @@ def _build_scene6_html(formula_data: dict) -> str:
         </div>
         <div class="s6-phase-dots" id="s6-phase-dots">{dots_html}</div>
       </div>
-
-      <!-- Formula display -->
       <div class="s6-formula-box">
         <div class="s6-formula-label">Governing Equation</div>
         <div class="s6-formula-main" id="s6-formula-text">{formula_text}</div>
         <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_sublabel}</div>
       </div>
-
-      <!-- Variable cards -->
       <div class="s6-vars-row" id="s6-vars-row">{var_boxes_html}</div>
-
-      <!-- Insight note -->
       {note_html}
-
-    </div><!-- /body -->
-
-    <!-- Nav -->
+    </div>
     <div class="s6-nav-row">
       <button class="s6-btn s6-btn-back" onclick="qanim_goToPrevScene()">
         &#9664; Back to Animation
@@ -1689,8 +1668,7 @@ def _build_scene6_html(formula_data: dict) -> str:
         Next Variable &#9654;
       </button>
     </div>
-
-  </div><!-- /card -->
+  </div>
 </div>"""
 
 
@@ -1706,10 +1684,6 @@ _SCENE6_JS = """\
 
   var s6Phase=-1;
   var s6AutoTimer=null;
-
-  var CAPTIONS=[
-    'This is the <span class="s6-accent">governing formula</span> for this problem. Click <strong>Next</strong> to explore each variable.',
-  ];
 
   function _buildCaptions(){
     var boxes=_varBoxes();
@@ -1734,36 +1708,30 @@ _SCENE6_JS = """\
     var caps=_buildCaptions();
     var dots=_dots();
 
-    // show formula
     var fEl=_el('s6-formula-text');var sEl=_el('s6-formula-sublabel');
     if(fEl)fEl.classList.add('s6-shown');
     if(sEl)sEl.classList.add('s6-shown');
 
-    // show/highlight variable boxes
     for(var i=0;i<n;i++){
       var b=boxes[i];
       if(s6Phase>=i+1) b.classList.add('s6-shown'); else b.classList.remove('s6-shown');
       b.classList.toggle('s6-active', s6Phase===i+1);
     }
 
-    // dots
     for(var d=0;d<dots.length;d++){
       dots[d].classList.remove('active','done');
       if(d<s6Phase) dots[d].classList.add('done');
       if(d===s6Phase) dots[d].classList.add('active');
     }
 
-    // note bar
     var noteEl=_el('s6-note-bar');
     var showNote=(s6Phase>=n+1);
     if(noteEl) noteEl.classList.toggle('s6-shown',showNote);
 
-    // caption
     var capEl=_el('s6-phase-caption');
     var capIdx=Math.max(0,Math.min(s6Phase<0?0:s6Phase, caps.length-1));
     if(capEl) capEl.innerHTML=caps[capIdx]||caps[0];
 
-    // progress label
     var progEl=_el('s6-phase-progress');
     if(progEl){
       if(s6Phase<=0) progEl.textContent='Formula';
@@ -1771,7 +1739,6 @@ _SCENE6_JS = """\
       else progEl.textContent='Insight';
     }
 
-    // next button label
     var nb=_el('s6-next-btn');
     if(nb){
       if(s6Phase<n){
@@ -1786,7 +1753,6 @@ _SCENE6_JS = """\
         nb.innerHTML='Step 8: Substitution &#9654;';
         nb.className='s6-btn s6-btn-finish';
         nb.onclick=function(){window.qanim_showScene8();};
-        // auto-advance after 3 s
         if(!s6AutoTimer){
           s6AutoTimer=setTimeout(function(){
             var ov=_el('qanim-scene6-overlay');
@@ -1910,7 +1876,6 @@ _SCENE7_STYLES = """\
   font-family:'Inter',system-ui,-apple-system,sans-serif;
 }
 
-/* ── Header ── */
 .s7-header{
   display:flex;align-items:center;justify-content:space-between;
   padding:0 28px;height:58px;
@@ -1933,10 +1898,8 @@ _SCENE7_STYLES = """\
 .s7-header-right{z-index:1;}
 .s7-header-system{font-size:11.5px;font-weight:600;color:#6ee7b7;letter-spacing:.2px;max-width:260px;text-align:right;line-height:1.35;}
 
-/* ── Two-column body ── */
 .s7-body{display:flex;min-height:380px;}
 
-/* ── LEFT: System diagram panel ── */
 .s7-left{
   width:42%;min-width:220px;
   background:linear-gradient(160deg,#ecfdf5 0%,#d1fae5 60%,#a7f3d0 100%);
@@ -1948,7 +1911,6 @@ _SCENE7_STYLES = """\
   font-size:9.5px;font-weight:800;letter-spacing:2px;
   text-transform:uppercase;color:#065f46;
 }
-/* diagram card */
 .s7-diagram-card{
   background:#fff;border:1.5px solid #a7f3d0;border-radius:16px;
   padding:18px 16px 16px;flex:1;
@@ -1964,7 +1926,6 @@ _SCENE7_STYLES = """\
   background:#f0fdf4;border-radius:8px;padding:8px 10px;
   border:1px solid #d1fae5;width:100%;box-sizing:border-box;
 }
-/* given table */
 .s7-given-table{
   background:#fff;border:1.5px solid #a7f3d0;border-radius:12px;
   overflow:hidden;box-shadow:0 1px 6px rgba(5,150,105,.07);
@@ -1995,14 +1956,12 @@ _SCENE7_STYLES = """\
 }
 .s7-given-desc{font-size:10.5px;color:#6b7280;line-height:1.3;}
 
-/* ── RIGHT: Solution panel ── */
 .s7-right{
   flex:1;padding:24px 28px 22px 22px;
   display:flex;flex-direction:column;gap:0;
   background:#fafffe;
 }
 
-/* section headers */
 .s7-section{margin-bottom:18px;}
 .s7-section-title{
   display:flex;align-items:center;gap:8px;
@@ -2013,7 +1972,6 @@ _SCENE7_STYLES = """\
   width:8px;height:8px;border-radius:50%;flex-shrink:0;
 }
 
-/* approach steps */
 .s7-approach-list{display:flex;flex-direction:column;gap:8px;}
 .s7-approach-step{
   display:flex;align-items:flex-start;gap:10px;
@@ -2038,7 +1996,6 @@ _SCENE7_STYLES = """\
   background:#d1fae5;padding:1px 6px;border-radius:5px;
 }
 
-/* result bar */
 .s7-result-bar{
   margin-top:auto;padding:16px 20px;
   background:linear-gradient(135deg,#065f46,#059669);
@@ -2061,7 +2018,6 @@ _SCENE7_STYLES = """\
   color:#86efac;font-size:18px;font-weight:900;
 }
 
-/* nav */
 .s7-nav-row{
   display:flex;justify-content:space-between;align-items:center;
   gap:12px;padding:15px 28px 20px;
@@ -2084,7 +2040,6 @@ _SCENE7_STYLES = """\
 
 
 def _build_scene7_html(substitution_data: dict) -> str:
-    """Build Step 8 — Substitution panel with full design system."""
     sub          = substitution_data or {}
     system_title = html_module.escape(sub.get("system_title", "Physical System"))
     system_desc  = html_module.escape(sub.get("system_description", ""))
@@ -2092,8 +2047,6 @@ def _build_scene7_html(substitution_data: dict) -> str:
     approach_steps = sub.get("approach_steps", [])
     result_bar   = sub.get("result_bar", "")
 
-    # build given table rows
-    # each item is like "h = 25 W/m²·K (Convective coefficient)" → parse sym, val, desc
     given_rows_html = ""
     for g in given_list:
         g_str = str(g)
@@ -2117,13 +2070,10 @@ def _build_scene7_html(substitution_data: dict) -> str:
             </div>
           </div>"""
 
-    # approach steps — auto-detect code spans in equations
     import re as _re2
     approach_html = ""
     for i, s in enumerate(approach_steps):
-        # wrap anything that looks like an equation in <code> tags for display
         def _codify(text):
-            # match patterns like Q = h × A × ... or simple expressions
             return _re2.sub(
                 r'([A-Za-z_Δδ][A-Za-z_₀-₉Δδ]?\s*(?:[=×\-+/÷·]\s*)?(?:[A-Za-z0-9_Δδ.×\-+/÷·\(\)\[\]°²³µ]+\s*)+)',
                 lambda m2: f'<code>{html_module.escape(m2.group(0).strip())}</code>',
@@ -2135,9 +2085,7 @@ def _build_scene7_html(substitution_data: dict) -> str:
           <div class="s7-approach-text">{_codify(s)}</div>
         </div>"""
 
-    # result bar — highlight the final value
     result_escaped = html_module.escape(result_bar)
-    # bold the last = xxx part
     result_html = _re2.sub(
         r'=\s*([\d.,\s\w°²³µ/·\-+]+)$',
         lambda m3: f'= <span class="s7-result-final">{html_module.escape(m3.group(1).strip())}</span>',
@@ -2147,8 +2095,6 @@ def _build_scene7_html(substitution_data: dict) -> str:
     return f"""
 <div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-label="Step 8: Substitution">
   <div class="s7-card">
-
-    <!-- Header -->
     <div class="s7-header">
       <div class="s7-header-left">
         <div class="s7-step-badge">Step 8 of 9</div>
@@ -2158,29 +2104,20 @@ def _build_scene7_html(substitution_data: dict) -> str:
         <div class="s7-header-system">{system_title}</div>
       </div>
     </div>
-
-    <!-- Two-col body -->
     <div class="s7-body">
-
-      <!-- LEFT col -->
       <div class="s7-left">
         <div class="s7-left-title">Physical System</div>
-
         <div class="s7-diagram-card">
           <div class="s7-diagram-system-name">{system_title}</div>
           <div class="s7-diagram-icon">&#x1F4D0;</div>
           <div class="s7-diagram-desc">{system_desc[:120]}</div>
         </div>
-
         <div class="s7-given-table">
           <div class="s7-given-table-head">Given Data</div>
           {given_rows_html}
         </div>
       </div>
-
-      <!-- RIGHT col -->
       <div class="s7-right">
-
         <div class="s7-section">
           <div class="s7-section-title" style="color:#059669;">
             <div class="s7-section-title-dot" style="background:#059669;"></div>
@@ -2188,16 +2125,12 @@ def _build_scene7_html(substitution_data: dict) -> str:
           </div>
           <div class="s7-approach-list">{approach_html}</div>
         </div>
-
         <div class="s7-result-bar">
           <div class="s7-result-bar-label">Result</div>
           <div class="s7-result-bar-eq">{result_html}</div>
         </div>
-
-      </div><!-- /right -->
-    </div><!-- /body -->
-
-    <!-- Nav -->
+      </div>
+    </div>
     <div class="s7-nav-row">
       <button class="s7-btn s7-btn-back"
         onclick="if(typeof window.qanim_showScene6===\'function\') window.qanim_showScene6()">
@@ -2208,8 +2141,7 @@ def _build_scene7_html(substitution_data: dict) -> str:
         Step 9: Final Answer &#9654;
       </button>
     </div>
-
-  </div><!-- /card -->
+  </div>
 </div>"""
 
 
@@ -2298,7 +2230,6 @@ _SCENE9_STYLES = """\
   font-family:'Inter',system-ui,-apple-system,sans-serif;
 }
 
-/* ── Header ── */
 .s9-header{
   display:flex;align-items:center;justify-content:space-between;
   padding:0 28px;height:58px;
@@ -2324,10 +2255,8 @@ _SCENE9_STYLES = """\
   max-width:260px;line-height:1.3;
 }
 
-/* ── Body ── */
 .s9-body{padding:26px 32px 22px;display:flex;flex-direction:column;gap:20px;}
 
-/* ── Formula recap ── */
 .s9-formula-recap{
   display:flex;align-items:center;gap:0;
   background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:14px;
@@ -2350,7 +2279,6 @@ _SCENE9_STYLES = """\
   line-height:1.4;
 }
 
-/* ── Substitution chain ── */
 .s9-chain-title{
   font-size:9.5px;font-weight:800;letter-spacing:2px;
   text-transform:uppercase;color:#64748b;margin-bottom:10px;
@@ -2401,7 +2329,6 @@ _SCENE9_STYLES = """\
   font-size:16px;color:#14532d;font-weight:800;
 }
 
-/* ── Final answer box ── */
 .s9-final-box{
   background:linear-gradient(145deg,#f0fdf4 0%,#dcfce7 50%,#bbf7d0 100%);
   border:3px solid #22c55e;border-radius:20px;
@@ -2439,7 +2366,6 @@ _SCENE9_STYLES = """\
 }
 .s9-final-unit-name{font-size:10.5px;color:#4ade80;font-weight:600;}
 
-/* ── Insight bar ── */
 .s9-insight-bar{
   display:flex;align-items:flex-start;gap:14px;
   background:linear-gradient(135deg,#fffbeb,#fef9c3);
@@ -2464,7 +2390,6 @@ _SCENE9_STYLES = """\
 .s9-insight-text{font-size:13.5px;color:#78350f;line-height:1.65;font-weight:500;}
 .s9-insight-text strong{color:#451a03;font-weight:800;}
 
-/* ── Nav ── */
 .s9-nav-row{
   display:flex;justify-content:space-between;align-items:center;
   gap:12px;padding:15px 28px 22px;
@@ -2487,7 +2412,6 @@ _SCENE9_STYLES = """\
 
 
 def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answer") -> str:
-    """Build Step 9 — Final Answer panel with full design system."""
     fad              = final_answer_data or {}
     formula_recap    = html_module.escape(fad.get("formula_recap", "Result = f(values)"))
     chain            = fad.get("substitution_chain", [])
@@ -2497,7 +2421,6 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
     insight_text     = fad.get("insight_text", "Apply the governing formula with the given data.")
     label            = html_module.escape(fad.get("to_find_label", to_find_label))
 
-    # derive a human-readable unit name
     unit_names = {
         "W": "Watts",  "kW": "Kilowatts",  "J": "Joules",  "kJ": "Kilojoules",
         "N": "Newtons","Pa": "Pascals",     "K": "Kelvin",  "°C": "Celsius",
@@ -2508,7 +2431,6 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
     }
     unit_name = unit_names.get(answer_unit, "")
 
-    # build chain rows — last row gets .s9-final styling
     chain_html = ""
     for idx2, row in enumerate(chain):
         num    = row.get("num", idx2 + 1)
@@ -2524,8 +2446,6 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
     return f"""
 <div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-label="Step 9: Final Answer">
   <div class="s9-card">
-
-    <!-- Header -->
     <div class="s9-header">
       <div class="s9-header-left">
         <div class="s9-step-badge">Step 9 of 9</div>
@@ -2535,11 +2455,7 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
         <div class="s9-header-target">Finding: {label}</div>
       </div>
     </div>
-
-    <!-- Body -->
     <div class="s9-body">
-
-      <!-- Formula recap -->
       <div class="s9-formula-recap">
         <div class="s9-formula-recap-tab">
           <span class="s9-formula-recap-tab-text">Formula</span>
@@ -2548,14 +2464,10 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
           <div class="s9-formula-recap-eq">{formula_recap}</div>
         </div>
       </div>
-
-      <!-- Substitution chain -->
       <div>
         <div class="s9-chain-title">Substitution Chain</div>
         <div class="s9-sub-chain" id="s9-sub-chain">{chain_html}</div>
       </div>
-
-      <!-- Final answer box -->
       <div class="s9-final-box" id="s9-final-box">
         <div class="s9-final-box-top">
           <div class="s9-final-box-label">&#x2705; {label}</div>
@@ -2571,8 +2483,6 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
           </div>
         </div>
       </div>
-
-      <!-- Insight bar -->
       <div class="s9-insight-bar" id="s9-insight-bar">
         <div class="s9-insight-icon-wrap">
           <div class="s9-insight-icon">&#x1F4A1;</div>
@@ -2582,10 +2492,7 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
           <div class="s9-insight-text">{insight_text}</div>
         </div>
       </div>
-
-    </div><!-- /body -->
-
-    <!-- Nav -->
+    </div>
     <div class="s9-nav-row">
       <button class="s9-btn s9-btn-back"
         onclick="if(typeof window.qanim_showScene8===\'function\') window.qanim_showScene8()">
@@ -2596,8 +2503,7 @@ def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answ
         &#x21BA; Restart Animation
       </button>
     </div>
-
-  </div><!-- /card -->
+  </div>
 </div>"""
 
 
@@ -2682,9 +2588,6 @@ def inject_scene9_final_answer(html: str, gemini_sol: dict, scene_script: dict, 
         html = html + _SCENE9_JS
     QAnimLogger.ok("Scene9", "Final Answer panel injected (v2 design)")
     return html
-
-
-
 
 
 # ===========================================================================
@@ -2856,7 +2759,7 @@ def inject_answer_box(html: str, answer_targets: list) -> str:
   var _targets=[],_currentIdx=0,abOpen=false;
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
   function _loadTargets(){try{var tag=_el('__answerbox_targets__');if(!tag)return[];return JSON.parse(tag.textContent)||[];}catch(e){return[];}}
-  function _normalize(s){return String(s).replace(/[^0-9.\\x2D]/g,'').trim();}
+  function _normalize(s){return String(s).replace(/[^0-9.\x2D]/g,'').trim();}
   function _validate(userAns,correctVal){
     var u=parseFloat(_normalize(userAns));var c=parseFloat(_normalize(correctVal));
     if(isNaN(u)||isNaN(c)) return 'unknown';
@@ -2921,7 +2824,6 @@ def inject_answer_box(html: str, answer_targets: list) -> str:
         html = html + ab_js
     QAnimLogger.ok("AnswerBox", f"Answer box injected with {len(answer_targets)} target(s)")
     return html
-
 
 
 # ===========================================================================
@@ -2989,27 +2891,15 @@ _PREVSTEP_JS = """\
 def inject_prev_step_button(html: str) -> str:
     if 'qanim-prevstep-styles' in html:
         return html
-    # Add styles to head
     if '</head>' in html:
         html = html.replace('</head>', _PREVSTEP_STYLES + '\n</head>', 1)
-    # Add the btn-prev button before btn-next in the actions div
-    # Look for the btn-next button and insert btn-prev before it
     btn_next_pattern = re.search(r'(<button[^>]*class="btn-primary"[^>]*id="btn-next"[^>]*>)', html)
     if btn_next_pattern:
         prev_btn = '<button class="btn-secondary qanim-prev-btn" id="btn-prev" disabled>&#x25C0; Previous Step</button>\n'
         html = html[:btn_next_pattern.start()] + prev_btn + html[btn_next_pattern.start():]
     elif 'id="btn-next"' in html:
-        html = html.replace(
-            'id="btn-next"',
-            'id="btn-next-placeholder-REPLACED"',
-            1
-        )
-        html = html.replace(
-            'id="btn-next-placeholder-REPLACED"',
-            'id="btn-next"',
-            1
-        )
-    # Add JS
+        html = html.replace('id="btn-next"', 'id="btn-next-placeholder-REPLACED"', 1)
+        html = html.replace('id="btn-next-placeholder-REPLACED"', 'id="btn-next"', 1)
     if '</body>' in html:
         html = html.replace('</body>', _PREVSTEP_JS + '\n</body>', 1)
     QAnimLogger.ok("PrevStep", "Previous step button injected")
@@ -3103,7 +2993,6 @@ def inject_step_controller(html: str) -> str:
         html = html + _STEP_CONTROLLER_JS + '\n' + _SCENE6_AUTOTRIGGER_JS
     QAnimLogger.ok("StepController", "Step controller + scene6 autotrigger injected")
     return html
-
 
 
 # ===========================================================================
@@ -3249,7 +3138,6 @@ async def _classify_topic_async(question: str) -> str:
 
 def _detect_scene_count(question: str) -> int:
     return 9  # Always 9 steps in the new workflow
-
 
 
 # ===========================================================================
@@ -3486,7 +3374,6 @@ class GeminiAnimationBuilder:
                 raw = GeminiSolutionGenerator._call_gemini(prompt, _ANIMATION_BUILDER_SYSTEM, max_tokens=MAX_TOK)
                 last_raw = raw
                 raw = raw.strip()
-                # Strip markdown fences
                 raw = re.sub(r'^```(?:html)?\s*\n?', '', raw, flags=re.IGNORECASE)
                 raw = re.sub(r'\n?```\s*$', '', raw)
                 raw = DocumentSkeletonNormalizer.normalize(raw)
@@ -3575,27 +3462,15 @@ Generate the complete, self-contained HTML now."""
             return RecoveryEngine.fallback_html(question, f"Animation build timed out after {STAGE_TIMEOUT_BUILD}s")
 
 
-
 # ===========================================================================
 #  MODULE 22 — PanelReliabilityEngine (post-processing passes)
 # ===========================================================================
 
 class PanelReliabilityEngine:
-    """
-    Post-processing suite that repairs common generation defects so the
-    final HTML is maximally robust before delivery.
-    """
 
-    # ── Pass 1: ensure stepsData drives dots correctly ───────────────────
     @staticmethod
     def _fix_step_dot_sync(html: str) -> str:
-        """
-        Make sure the step dots (1-9) update correctly from applyStep().
-        If the generated applyStep doesn't handle data-step attribute,
-        inject a wrapper.
-        """
         if 'data-step' not in html:
-            # Inject a tiny patch that sets data-step on every applyStep call
             patch = """\
 <script id="__datastep_patch__">
 (function(){
@@ -3611,15 +3486,10 @@ class PanelReliabilityEngine:
                 html = html.replace('</body>', patch + '\n</body>', 1)
         return html
 
-    # ── Pass 2: ensure btn-next on last SVG step triggers scene6 ─────────
     @staticmethod
     def _fix_next_button_trigger(html: str) -> str:
-        """
-        If the generated nextStep() does not call triggerScene6() or
-        qanim_showScene6() at the last step, inject a wrapper.
-        """
         if 'triggerScene6' in html or 'qanim_showScene6' in html:
-            return html  # already handled
+            return html
         patch = """\
 <script id="__nexttrigger_patch__">
 (function(){
@@ -3629,7 +3499,6 @@ class PanelReliabilityEngine:
     var ts = typeof window.totalSteps === 'number' ? window.totalSteps : 5;
     var cs = typeof window.currentStep === 'number' ? window.currentStep : 0;
     if(cs >= ts) {
-      // trigger scene6
       var svgC = document.querySelector('.svg-container');
       if(svgC){ svgC.style.transition='opacity .45s ease'; svgC.style.opacity='0'; }
       setTimeout(function(){
@@ -3645,32 +3514,26 @@ class PanelReliabilityEngine:
             html = html.replace('</body>', patch + '\n</body>', 1)
         return html
 
-    # ── Pass 3: fix SVG xmlns attribute ──────────────────────────────────
     @staticmethod
     def _fix_svg_xmlns(html: str) -> str:
         html = re.sub(
             r'<svg(?![^>]*xmlns)',
             '<svg xmlns="http://www.w3.org/2000/svg"',
-            html,
-            flags=re.IGNORECASE
+            html, flags=re.IGNORECASE
         )
         return html
 
-    # ── Pass 4: fix broken badge colors (missing class) ──────────────────
     @staticmethod
     def _fix_badge_classes(html: str) -> str:
-        # Ensure badge class names are correct
         html = re.sub(r'class="badge\s+gc-blue"',  'class="badge cyan"',   html)
         html = re.sub(r'class="badge\s+gc-teal"',  'class="badge cyan"',   html)
-        html = re.sub(r'class="badge\s+gc-amber"',  'class="badge orange"', html)
-        html = re.sub(r'class="badge\s+gc-green"',  'class="badge green"',  html)
+        html = re.sub(r'class="badge\s+gc-amber"', 'class="badge orange"', html)
+        html = re.sub(r'class="badge\s+gc-green"', 'class="badge green"',  html)
         return html
 
-    # ── Pass 5: ensure step-bar id exists ────────────────────────────────
     @staticmethod
     def _fix_step_bar_id(html: str) -> str:
         if 'id="step-bar"' not in html and 'id=\'step-bar\'' not in html:
-            # Try to add id to the progress bar div
             html = re.sub(
                 r'class="step-progress-bar"(?!\s*id=)',
                 'class="step-progress-bar" id="step-bar"',
@@ -3678,23 +3541,16 @@ class PanelReliabilityEngine:
             )
         return html
 
-    # ── Pass 6: fix stray single-quote apostrophes in JS strings ─────────
     @staticmethod
     def _fix_js_apostrophes(html: str) -> str:
         return JsSyntaxValidator.auto_fix_stray_apostrophes(html)
 
-    # ── Pass 7: ensure all SVG layers start with correct opacity ─────────
     @staticmethod
     def _fix_svg_layer_opacity(html: str, scene_script: dict) -> str:
-        """
-        For every svg_component except layer-frame, ensure the group
-        starts with opacity="0" (not 1).
-        """
         components = scene_script.get("svg_components", {})
         for layer_id, info in components.items():
             if layer_id == "layer-frame":
                 continue
-            # Check if this layer group exists and has wrong initial opacity
             pattern = re.compile(
                 rf'<g\s+id="{re.escape(layer_id)}"([^>]*?)opacity=["\']1["\']',
                 re.IGNORECASE
@@ -3706,13 +3562,11 @@ class PanelReliabilityEngine:
                 )
         return html
 
-    # ── Pass 8: ensure totalSteps is correct ─────────────────────────────
     @staticmethod
     def _fix_total_steps(html: str, scene_script: dict) -> str:
         n_steps = len(scene_script.get("steps", []))
         if n_steps > 0:
             last_idx = n_steps - 1
-            # Replace any var totalSteps = N; with the correct value
             html = re.sub(
                 r'var\s+totalSteps\s*=\s*\d+\s*;',
                 f'var totalSteps = {last_idx};',
@@ -3720,11 +3574,9 @@ class PanelReliabilityEngine:
             )
         return html
 
-    # ── Pass 9: ensure step-label id exists ──────────────────────────────
     @staticmethod
     def _fix_step_label_id(html: str) -> str:
         if 'id="step-label"' not in html:
-            # Inject a step label element near the progress bar if missing
             html = re.sub(
                 r'(<div[^>]*class="step-progress-wrap"[^>]*>)',
                 r'\1\n<div id="step-label" style="font-size:12px;font-weight:700;color:#64748b;text-align:center;margin-bottom:12px;padding-top:6px;">Step 1 of 9</div>',
@@ -3732,7 +3584,6 @@ class PanelReliabilityEngine:
             )
         return html
 
-    # ── Pass 10: inject MathJax if LaTeX detected ─────────────────────────
     @staticmethod
     def _inject_mathjax_if_needed(html: str) -> str:
         if ('\\(' in html or '\\[' in html or r'\frac' in html) and 'MathJax' not in html:
@@ -3810,11 +3661,7 @@ class MathTypography:
 
     @classmethod
     def upgrade_html_badges(cls, html: str) -> str:
-        """Upgrade typography in badge text spans only (safe — won't break code)"""
-        def _upgrade_badge(m):
-            return m.group(0)  # conservative — don't modify SVG/JS context
-        return html
-
+        return html  # conservative — don't modify SVG/JS context
 
 
 # ===========================================================================
@@ -3823,7 +3670,7 @@ class MathTypography:
 
 async def generate_animation_html(question: str) -> str:
     """
-    Full 9-step QAnim pipeline:
+    Full 9-step QAnim pipeline.
 
     Stage A: Parallel — scene analysis + solution generation + glossary analysis
     Stage B: Build HTML (GeminiAnimationBuilder)
@@ -3836,12 +3683,10 @@ async def generate_animation_html(question: str) -> str:
     if not question or not question.strip():
         return RecoveryEngine.fallback_html("(empty)", "Question was empty")
 
-    # ── Pre-processing ────────────────────────────────────────────────────
     question = LargeInputPreprocessor.compress(question) if LargeInputPreprocessor.needs_compression(question) else question
     to_find_targets = ToFindExtractor.extract(question)
     given_values    = GivenValuesExtractor.extract(question)
 
-    # ── Stage A: Parallel analysis ────────────────────────────────────────
     QAnimLogger.info("Pipeline", "Stage A: Parallel scene analysis + solution + glossary...")
     try:
         scene_task    = GeminiSceneAnalyzer.analyze_async(question)
@@ -3855,7 +3700,6 @@ async def generate_animation_html(question: str) -> str:
         QAnimLogger.error("Pipeline", f"Stage A failed catastrophically: {e}")
         return RecoveryEngine.fallback_html(question, f"Analysis stage failed: {_err_msg(e)}")
 
-    # Handle exceptions from gather
     if isinstance(scene_script, BaseException):
         QAnimLogger.warn("Pipeline", f"Scene analysis failed: {scene_script} — using fallback")
         scene_script = GeminiSceneAnalyzer._fallback_script(question)
@@ -3868,11 +3712,9 @@ async def generate_animation_html(question: str) -> str:
 
     glossary_terms = glossary_result.get("terms", []) if isinstance(glossary_result, dict) else []
 
-    # Classify topic
     topic = await _classify_topic_async(question)
     QAnimLogger.ok("Pipeline", f"Topic: {topic}, To Find: {to_find_targets}, Given values: {len(given_values)}")
 
-    # ── Stage B: Build HTML ───────────────────────────────────────────────
     QAnimLogger.info("Pipeline", "Stage B: Building HTML animation...")
     html = await GeminiAnimationBuilder.build_async(question, scene_script, sol, topic)
 
@@ -3880,13 +3722,10 @@ async def generate_animation_html(question: str) -> str:
         QAnimLogger.error("Pipeline", "Stage B produced empty/invalid HTML — returning fallback")
         return RecoveryEngine.fallback_html(question, "HTML builder returned empty content")
 
-    # ── Stage C: Post-processing ──────────────────────────────────────────
     QAnimLogger.info("Pipeline", "Stage C: Injecting 9-step panels...")
 
-    # Build answer targets for the answer box
     answer_targets = _build_answer_targets(to_find_targets, sol, scene_script.get("final_answer", ""), scene_script.get("key_insight", ""))
 
-    # Override answer targets with scene9 data if available
     fad = scene_script.get("final_answer_data", {})
     if fad.get("answer_value"):
         answer_targets = [{
@@ -3895,49 +3734,24 @@ async def generate_animation_html(question: str) -> str:
             "insight": scene_script.get("key_insight", sol.get("key_insight", "")),
         }]
 
-    # Normalize document skeleton
     html = DocumentSkeletonNormalizer.normalize(html)
-
-    # Inject Scene 6 (Step 7: Main Formula)
     html = inject_scene6_big_idea(html, sol, scene_script)
-
-    # Inject Scene 7 (Step 8: Step-by-Step Substitution)
     html = inject_scene7_how_we_solve_it(html, sol, scene_script)
-
-    # Inject Scene 9 (Step 9: Final Answer)
     html = inject_scene9_final_answer(html, sol, scene_script, to_find_targets)
-
-    # Inject To Find panel
     html = inject_to_find_system(html, to_find_targets)
-
-    # Inject Answer Box
     html = inject_answer_box(html, answer_targets)
-
-    # Inject Controls Bar (Answer Box + To Find buttons)
     html = inject_controls_bar(html)
-
-    # Inject Glossary
     if glossary_terms:
         html = inject_glossary(html, glossary_terms)
-
-    # Inject navigation patch
     html = inject_nav_patch_and_scene_desc(html)
-
-    # Inject step controller
     html = inject_step_controller(html)
-
-    # Inject Previous Step button
     html = inject_prev_step_button(html)
 
-    # ── Stage D: Final passes ─────────────────────────────────────────────
     QAnimLogger.info("Pipeline", "Stage D: Final reliability + styling passes...")
-
     html = PanelReliabilityEngine.run_all_passes(html, scene_script)
     html = HtmlSanitizer.sanitize(html)
     html = inject_centering_css(html)
     html = inject_step_color_css(html)
-
-    # Final document normalization
     html = DocumentSkeletonNormalizer.normalize(html)
 
     QAnimLogger.ok("Pipeline", f"Pipeline complete: {len(html):,} chars, {html.count('<g ')} SVG groups")
@@ -3953,7 +3767,6 @@ def generate_animation_html_sync(question: str) -> str:
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # We're inside an existing event loop (e.g., Jupyter/FastAPI)
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(asyncio.run, generate_animation_html(question))
@@ -3972,12 +3785,10 @@ def generate_animation_html_sync(question: str) -> str:
 #  MODULE 26 — Public API aliases (backward compatibility)
 # ===========================================================================
 
-# Primary entry point
 def generate_animation(question: str) -> str:
     """Generate a complete 9-step animated HTML for the given question."""
     return generate_animation_html_sync(question)
 
-# Async primary entry point
 async def generate_animation_async(question: str) -> str:
     """Async version of generate_animation."""
     return await generate_animation_html(question)
@@ -3985,17 +3796,16 @@ async def generate_animation_async(question: str) -> str:
 
 async def generate_question_animation(question: str) -> dict:
     """
-    Public async entry point imported by main.py (line 68).
+    Public async entry point imported by main.py.
 
-    Runs the full 9-step QAnim pipeline and returns a result dict:
+    Returns:
         {
-            "title":          str,   # first 80 chars of the question
-            "explanation":    str,   # plain-text summary (≤ 220 chars)
-            "animation_code": str,   # complete self-contained HTML page
+            "title":          str,
+            "explanation":    str,
+            "animation_code": str,
         }
 
-    Raises ValueError for empty/blank input so the job runner in main.py
-    can catch it cleanly and record status="error".
+    Raises ValueError for empty/blank input.
     """
     question = (question or "").strip()
     if not question:
@@ -4005,11 +3815,8 @@ async def generate_question_animation(question: str) -> dict:
 
     html = await generate_animation_html(question)
 
-    # Build a concise plain-text explanation from the scene title/insight
-    # (best-effort — never blocks delivery of the HTML)
     explanation: str = ""
     try:
-        # Pull the first <h3> or <title> text as a fallback summary
         m = re.search(r'<title[^>]*>([^<]{5,120})</title>', html, re.IGNORECASE)
         if m:
             explanation = m.group(1).strip()
@@ -4031,10 +3838,10 @@ async def generate_question_animation(question: str) -> dict:
     }
 
 
-# Legacy aliases kept for backward compatibility
-analyse_question = GeminiSceneAnalyzer.analyze
+# Legacy aliases
+analyse_question  = GeminiSceneAnalyzer.analyze
 generate_solution = GeminiSolutionGenerator.generate
-build_animation = GeminiAnimationBuilder.build
+build_animation   = GeminiAnimationBuilder.build
 
 
 # ===========================================================================
@@ -4057,7 +3864,7 @@ if __name__ == "__main__":
     out = sys.argv[2] if len(sys.argv) > 2 else "animation_output.html"
 
     print(f"\n{'='*60}")
-    print("  QAnim v2.0 — 9-Step Animation Generator")
+    print("  QAnim v2.0.1 — 9-Step Animation Generator")
     print(f"{'='*60}")
     print(f"  Question : {q[:100]}{'...' if len(q)>100 else ''}")
     print(f"  Output   : {out}")
