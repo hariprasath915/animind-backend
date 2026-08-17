@@ -39,6 +39,10 @@ v2.0 -- FULL 9-STEP WORKFLOW REFACTOR:
     GEMINI_MODEL updated from "gemini-2.5-pro-preview-06-05" (404 NOT_FOUND)
     to "gemini-2.5-pro" (stable GA release).
 
+  BUG FIX (v2.0.2):
+    GEMINI_MODEL updated from "gemini-2.5-pro" (404 NOT_FOUND — no longer
+    available to new users) to "gemini-3.1-pro-preview".
+
   REQUIRED ENV VAR:
     GEMINI_API_KEY=your-key
 """
@@ -108,11 +112,11 @@ except Exception as _anthropic_init_err:
 # ---------------------------------------------------------------------------
 
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║  FIX: was "gemini-2.5-pro-preview-06-05" — that preview        ║
-# ║  snapshot was removed by Google (HTTP 404 NOT_FOUND).           ║
-# ║  Updated to the stable GA release "gemini-2.5-pro".            ║
+# ║  FIX (v2.0.2): "gemini-2.5-pro" is no longer available to new  ║
+# ║  users (HTTP 404 NOT_FOUND).                                    ║
+# ║  Updated to "gemini-3.1-pro-preview" (latest stable release).  ║
 # ╚══════════════════════════════════════════════════════════════════╝
-GEMINI_MODEL = "gemini-2.5-pro"
+GEMINI_MODEL = "gemini-3.1-pro-preview"
 
 _gemini_client = None
 _GEMINI_DISABLED_REASON = None
