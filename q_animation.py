@@ -3118,52 +3118,103 @@ _STEP_CONTROLLER_JS = """\
 # ─────────────────────────────────────────────────────────────────────────────
 _MASTER_STEP_CONTROLLER_JS = """\
 <script id="qanim-master-step-controller">
+/*
+  QAnim Master Step Controller v4
+  ================================
+  This is the SOLE authority over step navigation for Steps 1-9.
+  It runs as the LAST script before </body>, after all Gemini-generated
+  code, and fixes every known Gemini hallucination:
+
+  KNOWN GEMINI BUGS THIS FIXES:
+  1. btn-next keeps onclick="nextStep()" → our clone+removeAttribute strips it
+  2. Gemini's nextStep() calls non-existent qanim_showScene7/8/9 → aliased here
+  3. Gemini's nextStep() uses currentStep < totalSteps-1 (off-by-one) → we own nextStep
+  4. Gemini forgets to update currentStep inside nextStep() → we own currentStep
+  5. totalSteps block-scoped var → we resolve from stepsData or DOM
+  6. qanim_showScene8/qanim_showScene9 called instead of qanim_showScene6 → aliased
+*/
 (function(){
   'use strict';
   if(window.__qanimMasterCtrl)return;
   window.__qanimMasterCtrl=true;
 
-  /* ── helpers ─────────────────────────────────────────────────── */
+  /* ── helpers ──────────────────────────────────────────────────── */
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn);
     else fn();
   }
 
-  /* ── resolve totalSteps from whatever Gemini put in the page ─── */
-  function _resolveTotalSteps(){
-    // Try window.totalSteps first (set by _fix_total_steps pass)
-    if(typeof window.totalSteps==='number') return window.totalSteps;
-    // Fall back to reading stepsData length (works even if var was block-scoped)
-    if(typeof window.stepsData!=='undefined'&&Array.isArray(window.stepsData))
-      return window.stepsData.length-1;
-    // Last resort: count step dots in the DOM
-    var dots=document.querySelectorAll('.step-dot');
-    if(dots&&dots.length>0) return dots.length-1;
-    return 5; // safe default for 6 SVG steps
+  /* ── alias ALL Gemini hallucinated show-function names ─────────
+     Gemini sometimes calls qanim_showScene7, qanim_showScene8,
+     qanim_showScene9 instead of the correct qanim_showScene6.
+     We alias them all so any of those calls opens the formula panel. */
+  function _aliasShowFunctions(){
+    // Wait until qanim_showScene6 is defined (injected by inject_scene6)
+    function _doAlias(){
+      var fn=window.qanim_showScene6;
+      if(typeof fn!=='function') return;
+      // Only alias if not already pointing to a real function
+      if(typeof window.qanim_showScene7!=='function') window.qanim_showScene7=fn;
+      if(typeof window.qanim_showScene8!=='function') window.qanim_showScene8=fn;
+      if(typeof window.qanim_showScene9!=='function') window.qanim_showScene9=fn;
+    }
+    _doAlias();
+    // Also alias after a short delay in case inject order varies
+    setTimeout(_doAlias, 200);
   }
 
-  /* ── trigger Scene6 overlay (Step 7) ────────────────────────── */
-  function _showScene6(){
+  /* ── resolve totalSteps from whatever Gemini generated ─────────
+     Tries multiple sources in order of reliability. */
+  function _resolveTotalSteps(){
+    // 1. stepsData array (most reliable — actual data Gemini generated)
+    if(typeof window.stepsData!=='undefined'&&Array.isArray(window.stepsData)&&window.stepsData.length>0)
+      return window.stepsData.length-1;
+    // 2. window.totalSteps set by _fix_total_steps regex pass
+    if(typeof window.totalSteps==='number'&&window.totalSteps>0) return window.totalSteps;
+    // 3. Count step-dot elements in the DOM
+    var dots=document.querySelectorAll('.step-dot[id^="dot-step"]');
+    // Only count SVG step dots (not the formula/sub/answer dots which have ids dot-step7/8/9)
+    var svgDots=0;
+    dots.forEach(function(d){
+      var n=parseInt((d.id||'').replace('dot-step',''),10);
+      if(!isNaN(n)&&n>=1&&n<=6) svgDots++;
+    });
+    if(svgDots>0) return svgDots-1;
+    // 4. Safe fallback
+    return 5;
+  }
+
+  /* ── trigger the formula panel (Step 7 overlay) ────────────────
+     Called when user clicks Next on the last SVG step. */
+  function _openFormulaPanel(){
     var ov6=_el('qanim-scene6-overlay');
     var ov7=_el('qanim-scene7-overlay');
     var ov9=_el('qanim-scene9-overlay');
-    // Don't re-open if any panel is already visible
+    // Already open — don't re-trigger
     if((ov6&&ov6.classList.contains('qanim-scene-visible'))||
        (ov7&&ov7.classList.contains('qanim-scene-visible'))||
        (ov9&&ov9.classList.contains('qanim-scene-visible'))) return;
-    if(typeof window.qanim_showScene6!=='function') return;
+    if(typeof window.qanim_showScene6!=='function'){
+      // qanim_showScene6 not yet defined — retry after short delay
+      setTimeout(_openFormulaPanel, 150);
+      return;
+    }
     var svgC=document.querySelector('.svg-container');
     if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='0';}
-    setTimeout(function(){window.qanim_showScene6();},svgC?460:60);
+    setTimeout(function(){
+      if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
+    }, svgC?460:60);
   }
 
-  /* ── our authoritative nextStep ──────────────────────────────── */
+  /* ── our authoritative nextStep function ───────────────────────
+     Completely replaces Gemini's nextStep(). Tracks currentStep
+     correctly and triggers the formula panel at the right moment. */
   function _nextStep(){
     var ts=_resolveTotalSteps();
     var cs=typeof window.currentStep==='number'?window.currentStep:0;
     if(cs>=ts){
-      _showScene6();
+      _openFormulaPanel();
     } else {
       var next=cs+1;
       window.currentStep=next;
@@ -3171,51 +3222,55 @@ _MASTER_STEP_CONTROLLER_JS = """\
     }
   }
 
-  /* ── wrap applyStep to keep window.currentStep in sync ────────── */
+  /* ── wrap applyStep so it always syncs window.currentStep ──────
+     Gemini's applyStep(idx) doesn't update window.currentStep.
+     Our wrapper ensures every applyStep call keeps it in sync. */
   function _patchApplyStep(){
     var _orig=window.applyStep;
     if(typeof _orig!=='function'||_orig.__masterPatched) return;
     window.applyStep=function(idx){
+      window.currentStep=idx;   // sync BEFORE calling original
       _orig(idx);
-      window.currentStep=idx;
     };
     window.applyStep.__masterPatched=true;
   }
 
-  /* ── wire btn-next safely (remove any existing onclick first) ── */
+  /* ── wire btn-next: clone to strip all listeners, then add ours ─
+     Cloning is the only reliable way to remove both inline onclick
+     AND any previously addEventListener'd handlers. */
   function _wireNextBtn(){
     var btn=_el('btn-next');
     if(!btn) return;
-    // Remove inline onclick attribute — this is the #1 cause of the bug
-    btn.removeAttribute('onclick');
-    // Remove any previously added listeners by cloning the node
     var fresh=btn.cloneNode(true);
     fresh.removeAttribute('onclick');
     btn.parentNode.replaceChild(fresh,btn);
-    // Add our single, authoritative click listener
     fresh.addEventListener('click',function(e){
       e.stopPropagation();
       _nextStep();
     });
   }
 
-  /* ── expose stepsData as window global (Gemini uses block var) ── */
-  function _exposeStepsData(){
-    if(typeof window.stepsData==='undefined'&&typeof stepsData!=='undefined')
-      window.stepsData=stepsData;
+  /* ── expose block-scoped Gemini vars as window globals ─────────
+     Gemini uses 'var stepsData' inside a <script> block which is
+     NOT automatically on window. We hoist it here. */
+  function _exposeGlobals(){
+    try{if(typeof window.stepsData==='undefined'&&typeof stepsData!=='undefined') window.stepsData=stepsData;}catch(e){}
+    try{if(typeof window.totalSteps==='undefined'&&typeof totalSteps!=='undefined') window.totalSteps=totalSteps;}catch(e){}
+    try{if(typeof window.currentStep==='undefined'&&typeof currentStep!=='undefined') window.currentStep=currentStep;}catch(e){}
   }
 
-  /* ── initialise everything at DOMContentLoaded ──────────────── */
+  /* ── main init (runs at DOMContentLoaded) ───────────────────── */
   _onReady(function(){
-    _exposeStepsData();
-    // Initialise window.currentStep if not already set
-    if(typeof window.currentStep!=='number') window.currentStep=0;
-    // Initialise window.totalSteps
+    _exposeGlobals();
+    // Re-resolve now that stepsData is exposed
     window.totalSteps=_resolveTotalSteps();
+    if(typeof window.currentStep!=='number') window.currentStep=0;
     _patchApplyStep();
     _wireNextBtn();
-    // Override window.nextStep so any remaining inline callers also work
+    // Take full ownership of window.nextStep
     window.nextStep=_nextStep;
+    // Alias hallucinated function names to the real trigger
+    _aliasShowFunctions();
   });
 })();
 </script>"""
@@ -3521,6 +3576,9 @@ window.totalSteps = stepsData.length - 1; // MUST be on window — other scripts
 var totalSteps = window.totalSteps;
 
 function applyStep(idx) {
+  // CRITICAL: sync window.currentStep on EVERY call
+  currentStep = idx;
+  window.currentStep = idx;
   // 1. Update step dots (active class on current, done class on past)
   // 2. Update progress bar width: (idx+1)/9 * 100 + '%'  (9 = total steps including scenes 7,8,9)
   // 3. Update step label text: 'Step N of 9'
@@ -3534,7 +3592,6 @@ function applyStep(idx) {
   // 8. If idx === totalSteps (last SVG step), change Next button text to 'Step 7: Formula →'
   //    Otherwise Next button text = 'Next ▶'
   document.body.setAttribute('data-step', idx);
-  window.currentStep = idx;  // CRITICAL: keep window.currentStep in sync
 }
 
 function nextStep() {
@@ -3606,18 +3663,35 @@ Each layer must contain RICH SVG content:
 IMPORTANT CONSTRAINTS:
 ═══════════════════════════
 1. The HTML must be COMPLETELY SELF-CONTAINED (no external dependencies except MathJax CDN if needed).
-2. The stepsData array MUST contain EXACTLY the steps from scene_script.steps.
+2. The stepsData array MUST contain EXACTLY the steps from scene_script.steps — no more, no fewer.
 3. ALL SVG layer IDs must match the keys in scene_script.svg_components.
-4. The var totalSteps must equal scene_script.steps.length - 1.
+4. var totalSteps MUST equal stepsData.length - 1  (i.e. the last index, NOT the count).
+   If stepsData has 6 entries, totalSteps = 5. If 7 entries, totalSteps = 6. NEVER set totalSteps = stepsData.length.
 5. The step indicator must show exactly 9 dots (Steps 1-9), where dots 7-9 represent the formula/substitution/answer scenes.
 6. Do NOT pre-build Scene 6/7/9 overlays in this HTML — they will be injected by the Python pipeline.
-7. btn-next MUST NOT have an inline onclick attribute. Leave it blank — the Python
-   pipeline injects __nexttrigger_patch__ which wires it via addEventListener so
-   window.nextStep (which handles the scene6 transition at the last SVG step) runs.
-   If you add onclick="nextStep()" the inline handler overrides the patch and breaks
-   the Step 7/8/9 transition. Omit onclick entirely.
+7. btn-next MUST NOT have an inline onclick attribute. Write it as:
+      <button class="btn-primary" id="btn-next">Next ▶</button>
+   The Python pipeline wires it via addEventListener. Adding onclick="nextStep()" will BREAK Steps 7/8/9.
 8. The step-bar progress tracks all 9 steps: width = (currentStep+1)/9 * 100 + '%'
-   (Steps 7-9 progress will be updated by the injected scene JS.)
+9. In nextStep(), ALWAYS update currentStep BEFORE calling applyStep:
+      function nextStep() {
+        if (currentStep < totalSteps) {
+          currentStep++;
+          window.currentStep = currentStep;
+          applyStep(currentStep);
+        } else {
+          if (typeof window.qanim_showScene6 === 'function') window.qanim_showScene6();
+        }
+      }
+   CRITICAL: use  currentStep < totalSteps  (NOT < totalSteps-1).
+   CRITICAL: ALWAYS call window.qanim_showScene6() — NEVER qanim_showScene7/8/9.
+   CRITICAL: ALWAYS set window.currentStep = currentStep inside applyStep AND nextStep.
+10. In applyStep(idx), ALWAYS sync window.currentStep:
+      function applyStep(idx) {
+        currentStep = idx;
+        window.currentStep = idx;
+        /* ... rest of your applyStep logic ... */
+      }
 
 Return ONLY the complete HTML — no preamble, no explanation, no markdown fences."""
 
@@ -3819,32 +3893,28 @@ class PanelReliabilityEngine:
 
     @staticmethod
     def _fix_total_steps(html: str, scene_script: dict) -> str:
-        # BUG FIX (v2.0.2): Three problems fixed:
-        # 1. Old regex only matched literal integers — missed the dynamic form
-        #    "var totalSteps = stepsData.length - 1;" that Gemini often emits.
-        # 2. 'var totalSteps' is block-scoped to its <script> tag, so
-        #    window.totalSteps was always undefined in _SCENE6_AUTOTRIGGER_JS,
-        #    which fell back to hardcoded 6 causing off-by-one/no-trigger bugs.
-        # 3. Same block-scope problem affects currentStep. Both are now exposed
-        #    as window globals so every injected script can read them correctly.
+        # Expose totalSteps/currentStep as window globals so our master
+        # controller can read them regardless of Gemini's block scoping.
+        # Also patch the Gemini nextStep() body to use window.currentStep
+        # so it stays in sync even if the master controller hasn't run yet.
         n_steps = len(scene_script.get("steps", []))
         if n_steps < 1:
             return html
         last_idx = n_steps - 1
-        # Replace literal integer form: var totalSteps = 5;
+
+        # Replace literal integer: var totalSteps = 7;  (any value Gemini generates)
         html = re.sub(
             r'var\s+totalSteps\s*=\s*\d+\s*;',
             f'var totalSteps = {last_idx}; window.totalSteps = {last_idx};',
             html
         )
-        # Replace dynamic form: var totalSteps = stepsData.length - 1;
+        # Replace dynamic: var totalSteps = stepsData.length - 1;
         html = re.sub(
             r'var\s+totalSteps\s*=\s*stepsData\.length\s*-\s*1\s*;',
             f'var totalSteps = {last_idx}; window.totalSteps = {last_idx};',
             html
         )
-        # Expose currentStep as window global (block-scoped 'var' is invisible
-        # to other <script> tags when they read window.currentStep)
+        # Expose currentStep as window global
         html = re.sub(
             r'var\s+currentStep\s*=\s*0\s*;',
             'var currentStep = 0; window.currentStep = 0;',
