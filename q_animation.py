@@ -3107,10 +3107,17 @@ _SCENE6_AUTOTRIGGER_JS = """\
 <script id="qanim-js-scene6-autotrigger">
 (function(){
   'use strict';
+  // BUG FIX (v2.0.2): This autotrigger is now a SAFETY NET only.
+  // The primary trigger is __nexttrigger_patch__ which owns window.nextStep.
+  // This script just ensures that if somehow the user is at the last SVG step
+  // and clicks Next, Scene 6 still opens — even if the primary patch failed.
   if(window.__qanimScene6AutoTrigger)return;window.__qanimScene6AutoTrigger=true;
   function _tryTrigger(){
     var cs=typeof window.currentStep==='number'?window.currentStep:-1;
-    var ts=typeof window.totalSteps==='number'?window.totalSteps:6;
+    // BUG FIX: fallback was 6 (wrong — 6 steps means last index is 5).
+    // Use stepsData.length-1 if available, else default to 5.
+    var ts=typeof window.totalSteps==='number'?window.totalSteps:
+           (typeof window.stepsData!=='undefined'&&Array.isArray(window.stepsData)?window.stepsData.length-1:5);
     var isAtEnd=(cs>=ts);
     if(!isAtEnd)return;
     var ov6=document.getElementById('qanim-scene6-overlay');
@@ -3124,9 +3131,11 @@ _SCENE6_AUTOTRIGGER_JS = """\
       if(svgCont){svgCont.style.transition='opacity .45s ease';svgCont.style.opacity='0';setTimeout(doShow,460);}else{setTimeout(doShow,120);}
     }
   }
-  function _wireBtn(){var btn=document.getElementById('btn-next');if(!btn||btn.__qanimAutoWired)return;btn.__qanimAutoWired=true;btn.addEventListener('click',function(){setTimeout(_tryTrigger,30);});}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  _onReady(function(){_wireBtn();});
+  _onReady(function(){
+    // Expose stepsData as window global if the local var exists
+    if(typeof stepsData!=='undefined'&&typeof window.stepsData==='undefined') window.stepsData=stepsData;
+  });
 })();
 </script>"""
 
@@ -3378,9 +3387,12 @@ COMPLETE HTML STRUCTURE REQUIRED:
         </div>
       </div>
       <!-- Navigation buttons -->
+      <!-- IMPORTANT: btn-next must NOT have an inline onclick attribute.       -->
+      <!-- The injected __nexttrigger_patch__ script wires it via addEventListener -->
+      <!-- so window.nextStep (which handles the scene6 transition) is used.    -->
       <div class="action-row" style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="btn-secondary" id="btn-prev" disabled onclick="prevStep()">&#x25C0; Prev</button>
-        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next &#x25B6;</button>
+        <button class="btn-primary" id="btn-next">Next &#x25B6;</button>
       </div>
     </div>
   </div>
@@ -3416,8 +3428,10 @@ JAVASCRIPT REQUIREMENTS:
 ════════════════════════════════════════
 
 var stepsData = [/* Array of ALL step objects from scene_script.steps */];
-var currentStep = 0;
-var totalSteps = stepsData.length - 1; // 0-indexed, so last SVG step = 5 (step 6)
+window.currentStep = 0;   // MUST be on window — other scripts read window.currentStep
+var currentStep = window.currentStep;
+window.totalSteps = stepsData.length - 1; // MUST be on window — other scripts read window.totalSteps
+var totalSteps = window.totalSteps;
 
 function applyStep(idx) {
   // 1. Update step dots (active class on current, done class on past)
@@ -3433,6 +3447,7 @@ function applyStep(idx) {
   // 8. If idx === totalSteps (last SVG step), change Next button text to 'Step 7: Formula →'
   //    Otherwise Next button text = 'Next ▶'
   document.body.setAttribute('data-step', idx);
+  window.currentStep = idx;  // CRITICAL: keep window.currentStep in sync
 }
 
 function nextStep() {
@@ -3509,7 +3524,11 @@ IMPORTANT CONSTRAINTS:
 4. The var totalSteps must equal scene_script.steps.length - 1.
 5. The step indicator must show exactly 9 dots (Steps 1-9), where dots 7-9 represent the formula/substitution/answer scenes.
 6. Do NOT pre-build Scene 6/7/9 overlays in this HTML — they will be injected by the Python pipeline.
-7. The Next button on step 6 (the last SVG step, index 5) must call triggerScene6() not advance further.
+7. btn-next MUST NOT have an inline onclick attribute. Leave it blank — the Python
+   pipeline injects __nexttrigger_patch__ which wires it via addEventListener so
+   window.nextStep (which handles the scene6 transition at the last SVG step) runs.
+   If you add onclick="nextStep()" the inline handler overrides the patch and breaks
+   the Step 7/8/9 transition. Omit onclick entirely.
 8. The step-bar progress tracks all 9 steps: width = (currentStep+1)/9 * 100 + '%'
    (Steps 7-9 progress will be updated by the injected scene JS.)
 
@@ -3646,30 +3665,88 @@ class PanelReliabilityEngine:
 
     @staticmethod
     def _fix_next_button_trigger(html: str) -> str:
-        if 'triggerScene6' in html or 'qanim_showScene6' in html:
+        # BUG FIX (v2.0.2): The old guard 'if triggerScene6 in html: return'
+        # fired whenever the injected scene6 script was present (always), so
+        # this patch was NEVER applied. But the original nextStep() in the
+        # Gemini-generated script is declared with 'function nextStep()' which
+        # is hoisted but NOT on window, so the autotrigger patch
+        # (window.nextStep = ...) was overridden by the hoisted declaration.
+        # Additionally, btn-next has inline onclick="nextStep()" which always
+        # calls the local hoisted function, bypassing window.nextStep patches.
+        #
+        # Fix strategy:
+        # 1. ALWAYS inject this patch (remove the early-return guard).
+        # 2. Strip the inline onclick from btn-next so the patched
+        #    window.nextStep is what actually runs.
+        # 3. Patch applyStep to keep window.currentStep in sync.
+
+        # Step A: Remove inline onclick from btn-next
+        html = re.sub(
+            r'(<button[^>]*id=["\']btn-next["\'][^>]*)\s+onclick=["\'][^"\']*["\']',
+            r'\1',
+            html
+        )
+        html = re.sub(
+            r'(<button[^>]*onclick=["\'][^"\']*["\'][^>]*id=["\']btn-next["\'][^>]*)',
+            lambda m: re.sub(r'\s+onclick=["\'][^"\']*["\']', '', m.group(0)),
+            html
+        )
+
+        # Step B: Inject the reliable nextStep patch
+        if '__nexttrigger_patch__' in html:
             return html
         patch = """\
 <script id="__nexttrigger_patch__">
 (function(){
-  var _origNext = window.nextStep;
-  if(typeof _origNext !== 'function') return;
-  window.nextStep = function() {
-    var ts = typeof window.totalSteps === 'number' ? window.totalSteps : 5;
-    var cs = typeof window.currentStep === 'number' ? window.currentStep : 0;
-    if(cs >= ts) {
-      var svgC = document.querySelector('.svg-container');
-      if(svgC){ svgC.style.transition='opacity .45s ease'; svgC.style.opacity='0'; }
-      setTimeout(function(){
-        if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
-      }, 460);
+  'use strict';
+  if(window.__nextTriggerPatched)return; window.__nextTriggerPatched=true;
+  function _doTriggerScene6(){
+    var svgC=document.querySelector('.svg-container');
+    if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='0';}
+    setTimeout(function(){
+      if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
+    }, 460);
+  }
+  // Wrap applyStep to always sync window.currentStep
+  function _patchApplyStep(){
+    var _orig=window.applyStep;
+    if(typeof _orig!=='function'||_orig.__syncPatched)return;
+    window.applyStep=function(idx){
+      _orig(idx);
+      window.currentStep=idx;
+    };
+    window.applyStep.__syncPatched=true;
+  }
+  // Install reliable nextStep on window
+  window.nextStep=function(){
+    var ts=typeof window.totalSteps==='number'?window.totalSteps:5;
+    var cs=typeof window.currentStep==='number'?window.currentStep:0;
+    if(cs>=ts){
+      _doTriggerScene6();
     } else {
-      _origNext();
+      window.currentStep=cs+1;
+      if(typeof window.applyStep==='function') window.applyStep(window.currentStep);
     }
   };
+  // Wire btn-next via addEventListener (works even without onclick attr)
+  function _wireBtn(){
+    var btn=document.getElementById('btn-next');
+    if(!btn||btn.__nextWired)return;
+    btn.__nextWired=true;
+    btn.removeAttribute('onclick');
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      window.nextStep();
+    });
+  }
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  _onReady(function(){_patchApplyStep();_wireBtn();});
 })();
 </script>"""
         if '</body>' in html:
             html = html.replace('</body>', patch + '\n</body>', 1)
+        else:
+            html = html + patch
         return html
 
     @staticmethod
@@ -3722,14 +3799,37 @@ class PanelReliabilityEngine:
 
     @staticmethod
     def _fix_total_steps(html: str, scene_script: dict) -> str:
+        # BUG FIX (v2.0.2): Three problems fixed:
+        # 1. Old regex only matched literal integers — missed the dynamic form
+        #    "var totalSteps = stepsData.length - 1;" that Gemini often emits.
+        # 2. 'var totalSteps' is block-scoped to its <script> tag, so
+        #    window.totalSteps was always undefined in _SCENE6_AUTOTRIGGER_JS,
+        #    which fell back to hardcoded 6 causing off-by-one/no-trigger bugs.
+        # 3. Same block-scope problem affects currentStep. Both are now exposed
+        #    as window globals so every injected script can read them correctly.
         n_steps = len(scene_script.get("steps", []))
-        if n_steps > 0:
-            last_idx = n_steps - 1
-            html = re.sub(
-                r'var\s+totalSteps\s*=\s*\d+\s*;',
-                f'var totalSteps = {last_idx};',
-                html
-            )
+        if n_steps < 1:
+            return html
+        last_idx = n_steps - 1
+        # Replace literal integer form: var totalSteps = 5;
+        html = re.sub(
+            r'var\s+totalSteps\s*=\s*\d+\s*;',
+            f'var totalSteps = {last_idx}; window.totalSteps = {last_idx};',
+            html
+        )
+        # Replace dynamic form: var totalSteps = stepsData.length - 1;
+        html = re.sub(
+            r'var\s+totalSteps\s*=\s*stepsData\.length\s*-\s*1\s*;',
+            f'var totalSteps = {last_idx}; window.totalSteps = {last_idx};',
+            html
+        )
+        # Expose currentStep as window global (block-scoped 'var' is invisible
+        # to other <script> tags when they read window.currentStep)
+        html = re.sub(
+            r'var\s+currentStep\s*=\s*0\s*;',
+            'var currentStep = 0; window.currentStep = 0;',
+            html, count=1
+        )
         return html
 
     @staticmethod
