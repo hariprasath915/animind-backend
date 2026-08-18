@@ -3103,41 +3103,124 @@ _STEP_CONTROLLER_JS = """\
 })();
 </script>"""
 
-_SCENE6_AUTOTRIGGER_JS = """\
-<script id="qanim-js-scene6-autotrigger">
+# ─────────────────────────────────────────────────────────────────────────────
+# MASTER STEP CONTROLLER (v3)
+#
+# This single script is the SOLE authority over step navigation.
+# It runs at </body> (after all Gemini-generated script blocks), so:
+#   • It can read stepsData / totalSteps from the Gemini scripts safely.
+#   • It REPLACES window.nextStep with its own reliable version.
+#   • It physically removes onclick="nextStep()" from btn-next at runtime.
+#   • It syncs window.currentStep on every applyStep call.
+#   • It triggers Scene6 (Step 7) when the user reaches the last SVG step.
+#
+# No regex post-processing needed — this script handles everything at runtime.
+# ─────────────────────────────────────────────────────────────────────────────
+_MASTER_STEP_CONTROLLER_JS = """\
+<script id="qanim-master-step-controller">
 (function(){
   'use strict';
-  // BUG FIX (v2.0.2): This autotrigger is now a SAFETY NET only.
-  // The primary trigger is __nexttrigger_patch__ which owns window.nextStep.
-  // This script just ensures that if somehow the user is at the last SVG step
-  // and clicks Next, Scene 6 still opens — even if the primary patch failed.
-  if(window.__qanimScene6AutoTrigger)return;window.__qanimScene6AutoTrigger=true;
-  function _tryTrigger(){
-    var cs=typeof window.currentStep==='number'?window.currentStep:-1;
-    // BUG FIX: fallback was 6 (wrong — 6 steps means last index is 5).
-    // Use stepsData.length-1 if available, else default to 5.
-    var ts=typeof window.totalSteps==='number'?window.totalSteps:
-           (typeof window.stepsData!=='undefined'&&Array.isArray(window.stepsData)?window.stepsData.length-1:5);
-    var isAtEnd=(cs>=ts);
-    if(!isAtEnd)return;
-    var ov6=document.getElementById('qanim-scene6-overlay');
-    var ov7=document.getElementById('qanim-scene7-overlay');
-    var ov9=document.getElementById('qanim-scene9-overlay');
-    var alreadyOpen=(ov6&&ov6.classList.contains('qanim-scene-visible'))||(ov7&&ov7.classList.contains('qanim-scene-visible'))||(ov9&&ov9.classList.contains('qanim-scene-visible'));
-    if(alreadyOpen)return;
-    if(typeof window.qanim_showScene6==='function'){
-      var svgCont=document.querySelector('.svg-container');
-      var doShow=function(){window.qanim_showScene6();};
-      if(svgCont){svgCont.style.transition='opacity .45s ease';svgCont.style.opacity='0';setTimeout(doShow,460);}else{setTimeout(doShow,120);}
+  if(window.__qanimMasterCtrl)return;
+  window.__qanimMasterCtrl=true;
+
+  /* ── helpers ─────────────────────────────────────────────────── */
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn);
+    else fn();
+  }
+
+  /* ── resolve totalSteps from whatever Gemini put in the page ─── */
+  function _resolveTotalSteps(){
+    // Try window.totalSteps first (set by _fix_total_steps pass)
+    if(typeof window.totalSteps==='number') return window.totalSteps;
+    // Fall back to reading stepsData length (works even if var was block-scoped)
+    if(typeof window.stepsData!=='undefined'&&Array.isArray(window.stepsData))
+      return window.stepsData.length-1;
+    // Last resort: count step dots in the DOM
+    var dots=document.querySelectorAll('.step-dot');
+    if(dots&&dots.length>0) return dots.length-1;
+    return 5; // safe default for 6 SVG steps
+  }
+
+  /* ── trigger Scene6 overlay (Step 7) ────────────────────────── */
+  function _showScene6(){
+    var ov6=_el('qanim-scene6-overlay');
+    var ov7=_el('qanim-scene7-overlay');
+    var ov9=_el('qanim-scene9-overlay');
+    // Don't re-open if any panel is already visible
+    if((ov6&&ov6.classList.contains('qanim-scene-visible'))||
+       (ov7&&ov7.classList.contains('qanim-scene-visible'))||
+       (ov9&&ov9.classList.contains('qanim-scene-visible'))) return;
+    if(typeof window.qanim_showScene6!=='function') return;
+    var svgC=document.querySelector('.svg-container');
+    if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='0';}
+    setTimeout(function(){window.qanim_showScene6();},svgC?460:60);
+  }
+
+  /* ── our authoritative nextStep ──────────────────────────────── */
+  function _nextStep(){
+    var ts=_resolveTotalSteps();
+    var cs=typeof window.currentStep==='number'?window.currentStep:0;
+    if(cs>=ts){
+      _showScene6();
+    } else {
+      var next=cs+1;
+      window.currentStep=next;
+      if(typeof window.applyStep==='function') window.applyStep(next);
     }
   }
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  /* ── wrap applyStep to keep window.currentStep in sync ────────── */
+  function _patchApplyStep(){
+    var _orig=window.applyStep;
+    if(typeof _orig!=='function'||_orig.__masterPatched) return;
+    window.applyStep=function(idx){
+      _orig(idx);
+      window.currentStep=idx;
+    };
+    window.applyStep.__masterPatched=true;
+  }
+
+  /* ── wire btn-next safely (remove any existing onclick first) ── */
+  function _wireNextBtn(){
+    var btn=_el('btn-next');
+    if(!btn) return;
+    // Remove inline onclick attribute — this is the #1 cause of the bug
+    btn.removeAttribute('onclick');
+    // Remove any previously added listeners by cloning the node
+    var fresh=btn.cloneNode(true);
+    fresh.removeAttribute('onclick');
+    btn.parentNode.replaceChild(fresh,btn);
+    // Add our single, authoritative click listener
+    fresh.addEventListener('click',function(e){
+      e.stopPropagation();
+      _nextStep();
+    });
+  }
+
+  /* ── expose stepsData as window global (Gemini uses block var) ── */
+  function _exposeStepsData(){
+    if(typeof window.stepsData==='undefined'&&typeof stepsData!=='undefined')
+      window.stepsData=stepsData;
+  }
+
+  /* ── initialise everything at DOMContentLoaded ──────────────── */
   _onReady(function(){
-    // Expose stepsData as window global if the local var exists
-    if(typeof stepsData!=='undefined'&&typeof window.stepsData==='undefined') window.stepsData=stepsData;
+    _exposeStepsData();
+    // Initialise window.currentStep if not already set
+    if(typeof window.currentStep!=='number') window.currentStep=0;
+    // Initialise window.totalSteps
+    window.totalSteps=_resolveTotalSteps();
+    _patchApplyStep();
+    _wireNextBtn();
+    // Override window.nextStep so any remaining inline callers also work
+    window.nextStep=_nextStep;
   });
 })();
 </script>"""
+
+_SCENE6_AUTOTRIGGER_JS = ""  # Replaced by _MASTER_STEP_CONTROLLER_JS
 
 
 def inject_nav_patch_and_scene_desc(html: str) -> str:
@@ -3152,13 +3235,17 @@ def inject_nav_patch_and_scene_desc(html: str) -> str:
 
 
 def inject_step_controller(html: str) -> str:
-    if 'qanim-step-controller' in html:
+    if 'qanim-master-step-controller' in html:
         return html
+    # Remove old autotrigger if present (from previous py versions)
+    html = re.sub(r'<script id="qanim-js-scene6-autotrigger">.*?</script>', '', html, flags=re.DOTALL)
+    # Inject the master controller just before </body>
+    payload = _STEP_CONTROLLER_JS + '\n' + _MASTER_STEP_CONTROLLER_JS
     if '</body>' in html:
-        html = html.replace('</body>', _STEP_CONTROLLER_JS + '\n' + _SCENE6_AUTOTRIGGER_JS + '\n</body>', 1)
+        html = html.replace('</body>', payload + '\n</body>', 1)
     else:
-        html = html + _STEP_CONTROLLER_JS + '\n' + _SCENE6_AUTOTRIGGER_JS
-    QAnimLogger.ok("StepController", "Step controller + scene6 autotrigger injected")
+        html = html + payload
+    QAnimLogger.ok("StepController", "Master step controller injected (v3)")
     return html
 
 
@@ -3665,22 +3752,11 @@ class PanelReliabilityEngine:
 
     @staticmethod
     def _fix_next_button_trigger(html: str) -> str:
-        # BUG FIX (v2.0.2): The old guard 'if triggerScene6 in html: return'
-        # fired whenever the injected scene6 script was present (always), so
-        # this patch was NEVER applied. But the original nextStep() in the
-        # Gemini-generated script is declared with 'function nextStep()' which
-        # is hoisted but NOT on window, so the autotrigger patch
-        # (window.nextStep = ...) was overridden by the hoisted declaration.
-        # Additionally, btn-next has inline onclick="nextStep()" which always
-        # calls the local hoisted function, bypassing window.nextStep patches.
-        #
-        # Fix strategy:
-        # 1. ALWAYS inject this patch (remove the early-return guard).
-        # 2. Strip the inline onclick from btn-next so the patched
-        #    window.nextStep is what actually runs.
-        # 3. Patch applyStep to keep window.currentStep in sync.
-
-        # Step A: Remove inline onclick from btn-next
+        # Best-effort static pre-pass: strip onclick="nextStep()" from btn-next
+        # in the raw HTML so it isn't present even before the master controller
+        # runs. The master controller (_MASTER_STEP_CONTROLLER_JS) handles this
+        # at runtime too via btn.removeAttribute('onclick') + node clone, so
+        # even if this regex doesn't match, the runtime fix covers it.
         html = re.sub(
             r'(<button[^>]*id=["\']btn-next["\'][^>]*)\s+onclick=["\'][^"\']*["\']',
             r'\1',
@@ -3691,62 +3767,6 @@ class PanelReliabilityEngine:
             lambda m: re.sub(r'\s+onclick=["\'][^"\']*["\']', '', m.group(0)),
             html
         )
-
-        # Step B: Inject the reliable nextStep patch
-        if '__nexttrigger_patch__' in html:
-            return html
-        patch = """\
-<script id="__nexttrigger_patch__">
-(function(){
-  'use strict';
-  if(window.__nextTriggerPatched)return; window.__nextTriggerPatched=true;
-  function _doTriggerScene6(){
-    var svgC=document.querySelector('.svg-container');
-    if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='0';}
-    setTimeout(function(){
-      if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
-    }, 460);
-  }
-  // Wrap applyStep to always sync window.currentStep
-  function _patchApplyStep(){
-    var _orig=window.applyStep;
-    if(typeof _orig!=='function'||_orig.__syncPatched)return;
-    window.applyStep=function(idx){
-      _orig(idx);
-      window.currentStep=idx;
-    };
-    window.applyStep.__syncPatched=true;
-  }
-  // Install reliable nextStep on window
-  window.nextStep=function(){
-    var ts=typeof window.totalSteps==='number'?window.totalSteps:5;
-    var cs=typeof window.currentStep==='number'?window.currentStep:0;
-    if(cs>=ts){
-      _doTriggerScene6();
-    } else {
-      window.currentStep=cs+1;
-      if(typeof window.applyStep==='function') window.applyStep(window.currentStep);
-    }
-  };
-  // Wire btn-next via addEventListener (works even without onclick attr)
-  function _wireBtn(){
-    var btn=document.getElementById('btn-next');
-    if(!btn||btn.__nextWired)return;
-    btn.__nextWired=true;
-    btn.removeAttribute('onclick');
-    btn.addEventListener('click',function(e){
-      e.stopPropagation();
-      window.nextStep();
-    });
-  }
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  _onReady(function(){_patchApplyStep();_wireBtn();});
-})();
-</script>"""
-        if '</body>' in html:
-            html = html.replace('</body>', patch + '\n</body>', 1)
-        else:
-            html = html + patch
         return html
 
     @staticmethod
@@ -3857,15 +3877,19 @@ MathJax = {tex: {inlineMath: [['\\\\(','\\\\)'],['$','$']]}, svg: {fontCache:'gl
     @classmethod
     def run_all_passes(cls, html: str, scene_script: dict) -> str:
         QAnimLogger.info("PanelReliability", "Running post-processing passes...")
+        # Static regex passes — must run BEFORE master controller injection
         html = cls._fix_step_dot_sync(html)
-        html = cls._fix_next_button_trigger(html)
+        html = cls._fix_next_button_trigger(html)   # best-effort static onclick strip
         html = cls._fix_svg_xmlns(html)
         html = cls._fix_badge_classes(html)
         html = cls._fix_step_bar_id(html)
         html = cls._fix_step_label_id(html)
         html = cls._fix_svg_layer_opacity(html, scene_script)
-        html = cls._fix_total_steps(html, scene_script)
+        html = cls._fix_total_steps(html, scene_script)  # injects window.totalSteps/currentStep
         html = cls._inject_mathjax_if_needed(html)
+        # Master controller MUST be the last injection so it runs after all
+        # Gemini-generated scripts and sees the final DOM state at DOMContentLoaded.
+        html = inject_step_controller(html)
         QAnimLogger.ok("PanelReliability", "All passes complete")
         return html
 
@@ -4013,10 +4037,11 @@ async def generate_animation_html(question: str) -> str:
     if glossary_terms:
         html = inject_glossary(html, glossary_terms)
     html = inject_nav_patch_and_scene_desc(html)
-    html = inject_step_controller(html)
     html = inject_prev_step_button(html)
 
     QAnimLogger.info("Pipeline", "Stage D: Final reliability + styling passes...")
+    # inject_step_controller is called inside run_all_passes as the final step,
+    # ensuring the master controller runs after all other scripts.
     html = PanelReliabilityEngine.run_all_passes(html, scene_script)
     html = HtmlSanitizer.sanitize(html)
     html = inject_centering_css(html)
