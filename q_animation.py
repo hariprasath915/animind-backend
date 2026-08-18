@@ -43,6 +43,26 @@ v2.0 -- FULL 9-STEP WORKFLOW REFACTOR:
     GEMINI_MODEL updated from "gemini-2.5-pro" (404 NOT_FOUND — no longer
     available to new users) to "gemini-3.1-pro-preview".
 
+    ROOT CAUSE OF INCOMPLETE OUTPUT:
+    When the Gemini API returned 404 (old model), ALL three pipeline stages
+    (SceneAnalyzer, SolutionGenerator, GlossaryAnalyzer) fell back to their
+    hardcoded placeholder data:
+      - formula_data:      "Result = f(given values)"
+      - substitution_data: "Given values from the problem"
+      - final_answer_data: answer_value="Result", to_find_label="Unknown quantity"
+    The pipeline never checked whether it was using fallback data before
+    injecting these placeholders into Scenes 6, 7, and 9.
+    Additionally, fad.get("answer_value") returned "Result" which is truthy,
+    so the AnswerBox also received the placeholder value.
+
+    FIXES APPLIED (beyond model upgrade):
+    1. Added _is_fallback_content() to detect placeholder strings.
+    2. Pipeline now merges real sol data into scene_script panels when
+       SceneAnalyzer used its fallback but SolutionGenerator succeeded.
+    3. answer_targets guard now rejects placeholder "Result" values.
+    4. inject_scene6/7/9 each validate formula/substitution/answer content
+       before rendering, falling back to sol data when placeholders detected.
+
   REQUIRED ENV VAR:
     GEMINI_API_KEY=your-key
 """
@@ -114,7 +134,7 @@ except Exception as _anthropic_init_err:
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  FIX (v2.0.2): "gemini-2.5-pro" is no longer available to new  ║
 # ║  users (HTTP 404 NOT_FOUND).                                    ║
-# ║  Updated to "gemini-3.1-pro-preview" (latest stable release).  ║
+# ║  Updated to "gemini-3.1-pro-preview" (current stable release). ║
 # ╚══════════════════════════════════════════════════════════════════╝
 GEMINI_MODEL = "gemini-3.1-pro-preview"
 
@@ -167,6 +187,118 @@ def _err_msg(e: BaseException) -> str:
     if msg:
         return f"{type(e).__name__}: {msg}"
     return f"{type(e).__name__} (no additional detail was provided by the exception)"
+
+
+# ---------------------------------------------------------------------------
+# Placeholder / fallback content detection
+# ---------------------------------------------------------------------------
+_PLACEHOLDER_STRINGS = frozenset({
+    "result = f(given values)",
+    "result = f(values)",
+    "result",
+    "unknown quantity",
+    "given values from the problem",
+    "governing equation",
+    "parameter a",
+    "computed value",
+    "see calculation above",
+    "apply the governing formula",
+    "apply governing formula",
+    "substitute values",
+    "compute the result",
+    "compute result",
+    "formula from problem domain",
+})
+
+
+def _is_fallback_content(value: str) -> bool:
+    """Return True if value is a known placeholder string from _fallback_script()."""
+    if not value:
+        return True
+    return value.strip().lower() in _PLACEHOLDER_STRINGS
+
+
+def _scene_script_is_fallback(scene_script: dict) -> bool:
+    """Return True if scene_script came from _fallback_script() (contains placeholder data)."""
+    fad = scene_script.get("final_answer_data", {})
+    if _is_fallback_content(fad.get("answer_value", "")):
+        return True
+    fd = scene_script.get("formula_data", {})
+    if _is_fallback_content(fd.get("formula_text", "")):
+        return True
+    return False
+
+
+def _merge_sol_into_scene_script(scene_script: dict, sol: dict, to_find_targets: list) -> dict:
+    """
+    When SceneAnalyzer used its fallback but SolutionGenerator has real data,
+    overwrite the placeholder fields in scene_script with data from sol.
+    This ensures Scenes 6, 7, 9 show real physics content even when the
+    SceneAnalyzer API call failed.
+    """
+    import copy
+    sc = copy.deepcopy(scene_script)
+    sol = sol or {}
+    label = to_find_targets[0] if to_find_targets else "Final Answer"
+
+    # ── formula_data (Scene 6) ──────────────────────────────────────
+    sc["formula_data"] = {
+        "formula_text":     sol.get("formula", sc.get("formula_data", {}).get("formula_text", "Governing Formula")),
+        "formula_sublabel": "Governing Equation",
+        "variables":        sol.get("variables", []),
+        "note_text":        sol.get("key_insight", ""),
+    }
+
+    # ── substitution_data (Scene 7) ─────────────────────────────────
+    steps_text = [str(s) for s in sol.get("steps", [])[:6]]
+    fa = sol.get("final_answer", "")
+    sc["substitution_data"] = {
+        "system_title":       label,
+        "system_description": scene_script.get("title", "")[:120],
+        "given_list":         steps_text[:4] if steps_text else ["See solution steps"],
+        "approach_steps":     steps_text[:3] if steps_text else ["Apply governing formula"],
+        "result_bar":         fa,
+    }
+
+    # ── final_answer_data (Scene 9) ────────────────────────────────
+    chain_raw = sol.get("substitution_chain", [])
+    chain = []
+    for i, row in enumerate(chain_raw[:6]):
+        if isinstance(row, dict):
+            chain.append(row)
+        else:
+            chain.append({"num": i + 1, "eq": str(row)[:80]})
+    if not chain:
+        for i, s in enumerate(sol.get("steps", [])[:5]):
+            chain.append({"num": i + 1, "eq": str(s)[:80]})
+
+    nums = re.findall(r'[-+]?\d+(?:\.\d+)?', fa)
+    val  = nums[-1] if nums else fa[:30]
+
+    sc["final_answer_data"] = {
+        "formula_recap":      sol.get("formula", "Governing Formula"),
+        "substitution_chain": chain,
+        "answer_value":       val,
+        "answer_unit":        _extract_unit(fa),
+        "answer_highlight":   val,
+        "insight_text":       sol.get("key_insight", "Apply the governing formula with the given data."),
+        "to_find_label":      label,
+    }
+    sc["final_answer"] = fa
+    sc["key_insight"]  = sol.get("key_insight", "")
+
+    QAnimLogger.ok("MergeSol", "Merged SolutionGenerator data into fallback scene_script")
+    return sc
+
+
+def _extract_unit(text: str) -> str:
+    """Extract unit from a final answer string like '6000 W' or 'g/4'."""
+    text = text.strip()
+    # Symbolic answers like "g/4", "g/2" — keep as-is
+    if re.match(r'^[a-zA-Z][^0-9]{0,10}$', text):
+        return text
+    m = re.search(r'\d\s*([A-Za-z°²³µ][A-Za-z°²³µ·/²³\s]*?)(?:\s|$|[,.])', text)
+    return m.group(1).strip() if m else ""
 
 
 # ===========================================================================
@@ -1825,8 +1957,11 @@ def inject_scene6_big_idea(html: str, gemini_sol: dict, scene_script: dict) -> s
     if 'qanim-scene6-styles' in html:
         return html
     formula_data = scene_script.get("formula_data", {})
-    if not formula_data:
-        sol = gemini_sol or {}
+    sol = gemini_sol or {}
+    # BUG FIX (v2.0.2): if formula_data is missing OR contains placeholder
+    # content, fall back to the real SolutionGenerator data instead of
+    # rendering "Result = f(given values)" to the user.
+    if not formula_data or _is_fallback_content(formula_data.get("formula_text", "")):
         formula_data = {
             "formula_text":     sol.get("formula", "Governing Formula"),
             "formula_sublabel": "Governing Equation",
@@ -2177,13 +2312,23 @@ def inject_scene7_how_we_solve_it(html: str, gemini_sol: dict, scene_script: dic
     if 'qanim-scene7-styles' in html:
         return html
     substitution_data = scene_script.get("substitution_data", {})
-    if not substitution_data:
-        sol = gemini_sol or {}
+    sol = gemini_sol or {}
+    # BUG FIX (v2.0.2): if substitution_data is missing OR its given_list
+    # contains placeholder text, use real SolutionGenerator data instead.
+    given_list = substitution_data.get("given_list", [])
+    _sub_is_placeholder = (
+        not substitution_data
+        or not given_list
+        or (len(given_list) == 1 and _is_fallback_content(given_list[0]))
+        or _is_fallback_content(substitution_data.get("result_bar", ""))
+    )
+    if _sub_is_placeholder:
+        sol_steps = [str(s) for s in (sol.get("steps", []) or [])[:6]]
         substitution_data = {
-            "system_title":       "Physical System",
-            "system_description": "",
-            "given_list":         [str(s) for s in (sol.get("steps", []) or [])[:4]],
-            "approach_steps":     sol.get("steps", [])[:3],
+            "system_title":       substitution_data.get("system_title", "Physical System"),
+            "system_description": substitution_data.get("system_description", ""),
+            "given_list":         sol_steps[:4] if sol_steps else ["Apply the governing formula."],
+            "approach_steps":     sol_steps[:3] if sol_steps else ["Identify formula", "Substitute values", "Compute result"],
             "result_bar":         sol.get("final_answer", "See calculation above"),
         }
     scene7_html = _build_scene7_html(substitution_data)
@@ -2559,24 +2704,33 @@ def inject_scene9_final_answer(html: str, gemini_sol: dict, scene_script: dict, 
     if 'qanim-scene9-styles' in html:
         return html
     final_answer_data = scene_script.get("final_answer_data", {})
-    if not final_answer_data:
-        sol = gemini_sol or {}
+    sol = gemini_sol or {}
+    # BUG FIX (v2.0.2): detect placeholder content in final_answer_data and
+    # replace with real SolutionGenerator data. Checks both missing data AND
+    # the case where data exists but contains placeholder values like "Result".
+    _fad_is_placeholder = (
+        not final_answer_data
+        or _is_fallback_content(final_answer_data.get("answer_value", ""))
+        or _is_fallback_content(final_answer_data.get("formula_recap", ""))
+    )
+    if _fad_is_placeholder:
+        chain_raw = sol.get("substitution_chain", sol.get("steps", []))
         chain_rows = []
-        for i, s in enumerate(sol.get("substitution_chain", sol.get("steps", []))[:5]):
+        for i, s in enumerate(chain_raw[:6]):
             if isinstance(s, dict):
                 chain_rows.append(s)
             else:
                 chain_rows.append({"num": i + 1, "eq": str(s)[:80]})
         fa   = sol.get("final_answer", "See calculation above")
         nums = re.findall(r'[-+]?\d+(?:\.\d+)?', fa)
-        val  = nums[-1] if nums else fa[:20]
+        val  = nums[-1] if nums else fa[:30]
         final_answer_data = {
-            "formula_recap":      sol.get("formula", "Governing formula"),
+            "formula_recap":      sol.get("formula", "Governing Formula"),
             "substitution_chain": chain_rows,
             "answer_value":       val,
-            "answer_unit":        "",
+            "answer_unit":        _extract_unit(fa),
             "answer_highlight":   val,
-            "insight_text":       sol.get("key_insight", "Apply the governing formula."),
+            "insight_text":       sol.get("key_insight", "Apply the governing formula with the given data."),
             "to_find_label":      to_find_targets[0] if to_find_targets else "Final Answer",
         }
     to_find_label = to_find_targets[0] if to_find_targets else "Final Answer"
@@ -3728,13 +3882,24 @@ async def generate_animation_html(question: str) -> str:
 
     QAnimLogger.info("Pipeline", "Stage C: Injecting 9-step panels...")
 
+    # ── BUG FIX (v2.0.2): If SceneAnalyzer fell back to placeholder data,
+    # merge real SolutionGenerator data into scene_script before injection.
+    # Without this, Scenes 6/7/9 render generic "Result = f(given values)"
+    # placeholders even when the solution was computed correctly. ──────────
+    if _scene_script_is_fallback(scene_script) and not sol.get("_used_fallback"):
+        QAnimLogger.warn("Pipeline", "SceneAnalyzer used fallback — merging real sol data into scene_script")
+        scene_script = _merge_sol_into_scene_script(scene_script, sol, to_find_targets)
+
     answer_targets = _build_answer_targets(to_find_targets, sol, scene_script.get("final_answer", ""), scene_script.get("key_insight", ""))
 
     fad = scene_script.get("final_answer_data", {})
-    if fad.get("answer_value"):
+    fad_value = fad.get("answer_value", "")
+    # ── BUG FIX (v2.0.2): Guard against placeholder "Result" being used as
+    # the AnswerBox target. Only use fad value when it's real content. ─────
+    if fad_value and not _is_fallback_content(fad_value):
         answer_targets = [{
             "label": fad.get("to_find_label", to_find_targets[0] if to_find_targets else "Final Answer"),
-            "value": fad.get("answer_value", ""),
+            "value": fad_value,
             "insight": scene_script.get("key_insight", sol.get("key_insight", "")),
         }]
 
@@ -3868,7 +4033,7 @@ if __name__ == "__main__":
     out = sys.argv[2] if len(sys.argv) > 2 else "animation_output.html"
 
     print(f"\n{'='*60}")
-    print("  QAnim v2.0.1 — 9-Step Animation Generator")
+    print("  QAnim v2.0.2 — 9-Step Animation Generator")
     print(f"{'='*60}")
     print(f"  Question : {q[:100]}{'...' if len(q)>100 else ''}")
     print(f"  Output   : {out}")
