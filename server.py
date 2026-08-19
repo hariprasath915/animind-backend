@@ -362,16 +362,61 @@ async def _run_question_animation_job(job_id: str, question: str):
 # AI GENERATION ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _run_animation_job(job_id: str, prompt: str):
+    try:
+        JOBS[job_id]["status"] = "running"
+        result = await generate_animation(prompt)
+        JOBS[job_id]["status"] = "done"
+        JOBS[job_id]["result"] = result
+        JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+    except ValueError as ve:
+        JOBS[job_id]["status"] = "error"
+        JOBS[job_id]["detail"] = str(ve)
+        JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+    except Exception as e:
+        JOBS[job_id]["status"] = "error"
+        JOBS[job_id]["detail"] = f"Animation generation failed: {e}"
+        JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+        print(f"[Anim Job {job_id}] ERROR: {e}")
+
+
 @app.post("/generate-animation")
 async def create_animation(request: AnimationRequest):
-    """Generate a full HTML animation page for the topic (via claude_client EduPageGenerator)."""
-    if not request.prompt or not request.prompt.strip():
+    """
+    Enqueue a full-page animation generation job and return immediately.
+    The frontend polls GET /generate-animation/status/{job_id} for the
+    result. See the JOB QUEUE comment block above for why — this pipeline
+    runs ~13 parallel Claude calls and can legitimately take well past any
+    proxy's request timeout.
+    """
+    prompt = (request.prompt or "").strip()
+    if not prompt:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    try:
-        result = await generate_animation(request.prompt.strip())
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    _cleanup_old_jobs()
+
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {
+        "status": "pending",
+        "result": None,
+        "detail": None,
+        "finished_at": None,
+    }
+    _spawn_background_task(_run_animation_job(job_id, prompt))
+
+    return {"job_id": job_id}
+
+
+@app.get("/generate-animation/status/{job_id}")
+async def get_animation_status(job_id: str):
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired job_id")
+    return {
+        "status": job["status"],       # "pending" | "running" | "done" | "error"
+        "result": job["result"],
+        "detail": job["detail"],
+    }
 
 
 @app.post("/generate-question-animation")
