@@ -164,8 +164,8 @@ if _GEMINI_AVAILABLE:
 else:
     _GEMINI_DISABLED_REASON = "No Gemini SDK installed"
 
-MAX_TOK = 18000
-MAX_TOK_CONCEPT = 16000
+MAX_TOK = 20000
+MAX_TOK_CONCEPT = 18000
 
 # ---------------------------------------------------------------------------
 # Timeout budgets
@@ -3275,7 +3275,7 @@ _MASTER_STEP_CONTROLLER_JS = """\
 })();
 </script>"""
 
-_SCENE6_AUTOTRIGGER_JS = ""  # Replaced by _MASTER_STEP_CONTROLLER_JS
+_SCENE6_AUTOTRIGGER_JS = ""  # Replaced entirely by _MASTER_STEP_CONTROLLER_JS (v4)
 
 
 def inject_nav_patch_and_scene_desc(html: str) -> str:
@@ -3292,15 +3292,28 @@ def inject_nav_patch_and_scene_desc(html: str) -> str:
 def inject_step_controller(html: str) -> str:
     if 'qanim-master-step-controller' in html:
         return html
-    # Remove old autotrigger if present (from previous py versions)
-    html = re.sub(r'<script id="qanim-js-scene6-autotrigger">.*?</script>', '', html, flags=re.DOTALL)
-    # Inject the master controller just before </body>
+
+    # Remove old autotrigger — replaced by master controller
+    html = re.sub(
+        r'<script id="qanim-js-scene6-autotrigger">.*?</script>',
+        '', html, flags=re.DOTALL
+    )
+
+    # If the old step-controller no-op is present, also remove it —
+    # the master controller subsumes all its responsibilities
+    html = re.sub(
+        r'<script id="qanim-step-controller">.*?</script>',
+        '', html, flags=re.DOTALL
+    )
+
+    # Inject legacy step-controller stub + master controller as the last scripts
     payload = _STEP_CONTROLLER_JS + '\n' + _MASTER_STEP_CONTROLLER_JS
     if '</body>' in html:
         html = html.replace('</body>', payload + '\n</body>', 1)
     else:
         html = html + payload
-    QAnimLogger.ok("StepController", "Master step controller injected (v3)")
+
+    QAnimLogger.ok("StepController", "Master step controller injected (v4)")
     return html
 
 
