@@ -1930,6 +1930,9 @@ _SCENE7_JS = """\
     s6Phase=0;if(s6AutoTimer){clearTimeout(s6AutoTimer);s6AutoTimer=null;}
     s6Render();
   };
+  // Register with early-binding so queued Gemini calls fire immediately
+  if(typeof window.__qanimRegisterShowFn==='function')
+    window.__qanimRegisterShowFn('qanim_showScene7',window.qanim_showScene7);
 
   window.qanim_goToPrevScene=function(){
     ['qanim-scene7-overlay','qanim-scene8-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
@@ -3278,6 +3281,72 @@ _MASTER_STEP_CONTROLLER_JS = """\
 _SCENE7_AUTOTRIGGER_JS = ""  # Replaced entirely by _MASTER_STEP_CONTROLLER_JS (v4)
 
 
+_EARLY_BINDING_JS = """\
+<script id="qanim-early-binding">
+/*
+  QAnim Early Binding (runs before ALL other scripts)
+  =====================================================
+  Defines stub versions of ALL known show-function names so that
+  any Gemini-generated call (qanim_showScene6/7/8/9) is queued and
+  fired as soon as the real function is registered by the injected panels.
+  This makes the pipeline robust against ALL Gemini naming variations.
+*/
+(function(){
+  if(window.__qanimEarlyBound)return;
+  window.__qanimEarlyBound=true;
+  var _pending={};
+  function _makeStub(name){
+    return function(){
+      // If the real function is now available, call it immediately
+      if(window[name]&&window[name].__isStub!==true){
+        window[name]();return;
+      }
+      // Otherwise queue the call — master controller will fire it at init
+      _pending[name]=true;
+    };
+  }
+  // Pre-define stubs for every name Gemini might call
+  var names=['qanim_showScene6','qanim_showScene7','qanim_showScene8','qanim_showScene9',
+             'qanim_showScene7Formula','qanim_goToScene7','qanim_goToScene8'];
+  for(var i=0;i<names.length;i++){
+    if(typeof window[names[i]]==='undefined'){
+      var stub=_makeStub(names[i]);
+      stub.__isStub=true;
+      window[names[i]]=stub;
+    }
+  }
+  // When real functions are registered (by injected scene scripts),
+  // overwrite the stubs and fire any pending queued calls
+  window.__qanimRegisterShowFn=function(name,fn){
+    window[name]=fn;
+    if(_pending[name]){
+      delete _pending[name];
+      setTimeout(fn,0);
+    }
+  };
+  // Also define a universal trigger that always opens Step 7
+  // regardless of what name Gemini used — wired by master controller
+  window.__qanimTriggerStep7=null;  // set by master controller at init
+})();
+</script>"""
+
+
+def inject_early_binding(html: str) -> str:
+    """Inject early-binding stubs before all other scripts so any Gemini
+    show-function call is queued and fired once real panels are registered."""
+    if 'qanim-early-binding' in html:
+        return html
+    # Inject right after <head> opens (or before first <script> tag)
+    if '<head>' in html:
+        html = html.replace('<head>', '<head>\n' + _EARLY_BINDING_JS, 1)
+    elif '<body>' in html:
+        html = html.replace('<body>', '<body>\n' + _EARLY_BINDING_JS, 1)
+    else:
+        html = _EARLY_BINDING_JS + '\n' + html
+    QAnimLogger.ok("EarlyBinding", "Early binding stubs injected")
+    return html
+
+
 def inject_nav_patch_and_scene_desc(html: str) -> str:
     if '__nav_patch__' in html:
         return html
@@ -4111,6 +4180,7 @@ async def generate_animation_html(question: str) -> str:
         }]
 
     html = DocumentSkeletonNormalizer.normalize(html)
+    html = inject_early_binding(html)          # FIRST: stubs for all show functions
     html = inject_scene7_formula(html, sol, scene_script)
     html = inject_scene8_how_we_solve_it(html, sol, scene_script)
     html = inject_scene9_final_answer(html, sol, scene_script, to_find_targets)
