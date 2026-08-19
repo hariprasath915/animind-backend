@@ -60,7 +60,7 @@ v2.0 -- FULL 9-STEP WORKFLOW REFACTOR:
     2. Pipeline now merges real sol data into scene_script panels when
        SceneAnalyzer used its fallback but SolutionGenerator succeeded.
     3. answer_targets guard now rejects placeholder "Result" values.
-    4. inject_scene6/7/9 each validate formula/substitution/answer content
+    4. inject_scene7/7/9 each validate formula/substitution/answer content
        before rendering, falling back to sol data when placeholders detected.
 
   REQUIRED ENV VAR:
@@ -164,8 +164,8 @@ if _GEMINI_AVAILABLE:
 else:
     _GEMINI_DISABLED_REASON = "No Gemini SDK installed"
 
-MAX_TOK = 20000
-MAX_TOK_CONCEPT = 18000
+MAX_TOK = 18000
+MAX_TOK_CONCEPT = 16000
 
 # ---------------------------------------------------------------------------
 # Timeout budgets
@@ -1443,8 +1443,8 @@ def _build_answer_targets(to_find_targets, gemini_sol, final_answer, key_insight
 #  MODULE 11 — Scene 6 (Step 7: Main Formula) — Full Redesign
 # ===========================================================================
 
-_SCENE6_STYLES = """\
-<style id="qanim-scene6-styles">
+_SCENE7_STYLES = """\
+<style id="qanim-scene7-styles">
 /* ── Fonts ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap');
 
@@ -1459,7 +1459,7 @@ _SCENE6_STYLES = """\
 #qanim-scene-modal-backdrop.qanim-scene-visible{display:block!important;opacity:1;}
 
 /* ── Overlay shell ── */
-#qanim-scene6-overlay{
+#qanim-scene7-overlay{
   display:none;position:fixed;
   top:50%;left:50%;
   transform:translate(-50%,-50%) scale(.93) translateY(12px);
@@ -1470,16 +1470,16 @@ _SCENE6_STYLES = """\
              transform .4s cubic-bezier(.34,1.28,.64,1);
   scrollbar-width:thin;scrollbar-color:#c7d2fe #f1f5f9;
 }
-#qanim-scene6-overlay::-webkit-scrollbar{width:5px;}
-#qanim-scene6-overlay::-webkit-scrollbar-track{background:#f1f5f9;}
-#qanim-scene6-overlay::-webkit-scrollbar-thumb{background:#c7d2fe;border-radius:4px;}
-#qanim-scene6-overlay.qanim-scene-visible{
+#qanim-scene7-overlay::-webkit-scrollbar{width:5px;}
+#qanim-scene7-overlay::-webkit-scrollbar-track{background:#f1f5f9;}
+#qanim-scene7-overlay::-webkit-scrollbar-thumb{background:#c7d2fe;border-radius:4px;}
+#qanim-scene7-overlay.qanim-scene-visible{
   display:block!important;opacity:1;pointer-events:auto;
   transform:translate(-50%,-50%) scale(1) translateY(0);
 }
 
 /* ── Card ── */
-.s6-card{
+.s7-card{
   background:#fff;border-radius:24px;overflow:hidden;
   box-shadow:0 24px 80px rgba(29,78,216,.14),0 4px 16px rgba(0,0,0,.07);
   border:1px solid #e0e7ff;
@@ -1487,54 +1487,54 @@ _SCENE6_STYLES = """\
 }
 
 /* ── Header ── */
-.s6-header{
+.s7-header{
   display:flex;align-items:center;justify-content:space-between;
   padding:0 28px;height:58px;
   background:linear-gradient(90deg,#1e3a8a 0%,#1d4ed8 50%,#2563eb 100%);
   position:relative;overflow:hidden;
 }
-.s6-header::after{
+.s7-header::after{
   content:'';position:absolute;inset:0;
   background:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Ccircle cx='30' cy='30' r='28'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
   pointer-events:none;
 }
-.s6-header-left{display:flex;align-items:center;gap:10px;z-index:1;}
-.s6-step-badge{
+.s7-header-left{display:flex;align-items:center;gap:10px;z-index:1;}
+.s7-step-badge{
   background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
   border-radius:8px;padding:3px 10px;
   font-size:10.5px;font-weight:800;letter-spacing:1.5px;color:#bfdbfe;
   text-transform:uppercase;
 }
-.s6-header-title{font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.2px;}
-.s6-header-right{z-index:1;}
-.s6-progress-text{font-size:11px;font-weight:700;color:#93c5fd;letter-spacing:.5px;}
+.s7-header-title{font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.2px;}
+.s7-header-right{z-index:1;}
+.s7-progress-text{font-size:11px;font-weight:700;color:#93c5fd;letter-spacing:.5px;}
 
 /* ── Body ── */
-.s6-body{
+.s7-body{
   padding:28px 32px 24px;
   background:linear-gradient(160deg,#f8faff 0%,#eef2ff 40%,#f0f9ff 100%);
 }
 
 /* ── Phase caption row ── */
-.s6-phase-row{
+.s7-phase-row{
   display:flex;align-items:center;justify-content:space-between;
   margin-bottom:18px;min-height:22px;
 }
-.s6-phase-caption{
+.s7-phase-caption{
   font-size:13.5px;font-weight:600;color:#475569;line-height:1.5;
   flex:1;padding-right:16px;
 }
-.s6-phase-caption .s6-accent{color:#1d4ed8;font-weight:800;}
-.s6-phase-dots{display:flex;gap:5px;flex-shrink:0;}
-.s6-phase-dot{
+.s7-phase-caption .s7-accent{color:#1d4ed8;font-weight:800;}
+.s7-phase-dots{display:flex;gap:5px;flex-shrink:0;}
+.s7-phase-dot{
   width:8px;height:8px;border-radius:50%;
   background:#dde3f0;transition:background .3s,transform .25s;
 }
-.s6-phase-dot.active{background:#1d4ed8;transform:scale(1.3);}
-.s6-phase-dot.done{background:#93c5fd;}
+.s7-phase-dot.active{background:#1d4ed8;transform:scale(1.3);}
+.s7-phase-dot.done{background:#93c5fd;}
 
 /* ── Formula box ── */
-.s6-formula-box{
+.s7-formula-box{
   background:#fff;
   border:2px solid #bfdbfe;border-radius:16px;
   padding:22px 28px 18px;text-align:center;
@@ -1542,15 +1542,15 @@ _SCENE6_STYLES = """\
   box-shadow:0 2px 12px rgba(29,78,216,.07);
   position:relative;overflow:hidden;
 }
-.s6-formula-box::before{
+.s7-formula-box::before{
   content:'';position:absolute;top:0;left:0;right:0;height:3px;
   background:linear-gradient(90deg,#6366f1,#3b82f6,#0ea5e9);
 }
-.s6-formula-label{
+.s7-formula-label{
   font-size:9.5px;font-weight:800;letter-spacing:2px;
   text-transform:uppercase;color:#94a3b8;margin-bottom:12px;
 }
-.s6-formula-main{
+.s7-formula-main{
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:30px;font-weight:700;color:#1e40af;
   letter-spacing:1.5px;line-height:1.35;
@@ -1558,112 +1558,112 @@ _SCENE6_STYLES = """\
   transition:opacity .55s cubic-bezier(.4,0,.2,1),
              transform .55s cubic-bezier(.34,1.2,.64,1);
 }
-.s6-formula-main.s6-shown{opacity:1;transform:translateY(0);}
-.s6-formula-sublabel{
+.s7-formula-main.s7-shown{opacity:1;transform:translateY(0);}
+.s7-formula-sublabel{
   font-size:12px;font-weight:600;color:#6366f1;
   letter-spacing:.3px;margin-top:10px;
   opacity:0;transition:opacity .5s ease .25s;
 }
-.s6-formula-sublabel.s6-shown{opacity:1;}
+.s7-formula-sublabel.s7-shown{opacity:1;}
 
 /* ── Variable cards row ── */
-.s6-vars-row{
+.s7-vars-row{
   display:flex;align-items:flex-start;justify-content:center;
   gap:10px;flex-wrap:wrap;
 }
 
 /* ── Individual variable card ── */
-.s6-var-box{
+.s7-var-box{
   display:flex;flex-direction:column;align-items:center;
   min-width:126px;max-width:160px;flex:1;
   opacity:0;transform:translateY(16px) scale(.97);
   transition:opacity .4s cubic-bezier(.4,0,.2,1),
              transform .4s cubic-bezier(.34,1.4,.64,1);
 }
-.s6-var-box.s6-shown{opacity:1;transform:translateY(0) scale(1);}
+.s7-var-box.s7-shown{opacity:1;transform:translateY(0) scale(1);}
 
-.s6-var-connector{
+.s7-var-connector{
   width:2px;height:18px;border-radius:2px;
   flex-shrink:0;margin-bottom:0;
   opacity:0;transition:opacity .3s ease .1s;
 }
-.s6-var-box.s6-shown .s6-var-connector{opacity:1;}
-.s6-var-connector-dot{
+.s7-var-box.s7-shown .s7-var-connector{opacity:1;}
+.s7-var-connector-dot{
   width:8px;height:8px;border-radius:50%;
   margin:0 auto -4px;flex-shrink:0;
   opacity:0;transition:opacity .3s ease .15s;
 }
-.s6-var-box.s6-shown .s6-var-connector-dot{opacity:1;}
+.s7-var-box.s7-shown .s7-var-connector-dot{opacity:1;}
 
-.s6-var-inner{
+.s7-var-inner{
   border:2px solid;border-radius:14px;
   padding:14px 14px 12px;text-align:center;
   width:100%;box-sizing:border-box;
   transition:box-shadow .3s,transform .25s cubic-bezier(.34,1.3,.64,1);
 }
-.s6-var-box.s6-active .s6-var-inner{
+.s7-var-box.s7-active .s7-var-inner{
   box-shadow:0 0 0 3.5px rgba(59,130,246,.25),
              0 6px 24px rgba(29,78,216,.18);
   transform:scale(1.06) translateY(-2px);
 }
 
-.s6-var-sym{
+.s7-var-sym{
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:24px;font-weight:800;line-height:1;
   display:block;margin-bottom:6px;letter-spacing:.5px;
 }
-.s6-var-name{
+.s7-var-name{
   font-family:'Inter',sans-serif;
   font-size:11px;font-weight:600;color:#64748b;
   line-height:1.4;display:block;
 }
-.s6-var-val-chip{
+.s7-var-val-chip{
   display:inline-flex;align-items:center;gap:4px;
   margin-top:8px;padding:3px 8px;border-radius:20px;
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:11px;font-weight:700;
 }
-.s6-var-val-num{font-size:12.5px;}
-.s6-var-val-unit{font-size:10px;font-weight:600;opacity:.8;}
+.s7-var-val-num{font-size:12.5px;}
+.s7-var-val-unit{font-size:10px;font-weight:600;opacity:.8;}
 
-.s6v-blue  .s6-var-inner{border-color:#3b82f6;background:linear-gradient(145deg,#eff6ff,#dbeafe);}
-.s6v-blue  .s6-var-sym{color:#1d4ed8;}
-.s6v-blue  .s6-var-connector{background:#3b82f6;}
-.s6v-blue  .s6-var-connector-dot{background:#3b82f6;}
-.s6v-blue  .s6-var-val-chip{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;}
+.s6v-blue  .s7-var-inner{border-color:#3b82f6;background:linear-gradient(145deg,#eff6ff,#dbeafe);}
+.s6v-blue  .s7-var-sym{color:#1d4ed8;}
+.s6v-blue  .s7-var-connector{background:#3b82f6;}
+.s6v-blue  .s7-var-connector-dot{background:#3b82f6;}
+.s6v-blue  .s7-var-val-chip{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;}
 
-.s6v-green .s6-var-inner{border-color:#22c55e;background:linear-gradient(145deg,#f0fdf4,#dcfce7);}
-.s6v-green .s6-var-sym{color:#15803d;}
-.s6v-green .s6-var-connector{background:#22c55e;}
-.s6v-green .s6-var-connector-dot{background:#22c55e;}
-.s6v-green .s6-var-val-chip{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;}
+.s6v-green .s7-var-inner{border-color:#22c55e;background:linear-gradient(145deg,#f0fdf4,#dcfce7);}
+.s6v-green .s7-var-sym{color:#15803d;}
+.s6v-green .s7-var-connector{background:#22c55e;}
+.s6v-green .s7-var-connector-dot{background:#22c55e;}
+.s6v-green .s7-var-val-chip{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;}
 
-.s6v-orange .s6-var-inner{border-color:#f59e0b;background:linear-gradient(145deg,#fffbeb,#fef3c7);}
-.s6v-orange .s6-var-sym{color:#b45309;}
-.s6v-orange .s6-var-connector{background:#f59e0b;}
-.s6v-orange .s6-var-connector-dot{background:#f59e0b;}
-.s6v-orange .s6-var-val-chip{background:#fef3c7;color:#92400e;border:1px solid #fde68a;}
+.s6v-orange .s7-var-inner{border-color:#f59e0b;background:linear-gradient(145deg,#fffbeb,#fef3c7);}
+.s6v-orange .s7-var-sym{color:#b45309;}
+.s6v-orange .s7-var-connector{background:#f59e0b;}
+.s6v-orange .s7-var-connector-dot{background:#f59e0b;}
+.s6v-orange .s7-var-val-chip{background:#fef3c7;color:#92400e;border:1px solid #fde68a;}
 
-.s6v-red    .s6-var-inner{border-color:#f43f5e;background:linear-gradient(145deg,#fff1f2,#ffe4e6);}
-.s6v-red    .s6-var-sym{color:#be123c;}
-.s6v-red    .s6-var-connector{background:#f43f5e;}
-.s6v-red    .s6-var-connector-dot{background:#f43f5e;}
-.s6v-red    .s6-var-val-chip{background:#ffe4e6;color:#be123c;border:1px solid #fecdd3;}
+.s6v-red    .s7-var-inner{border-color:#f43f5e;background:linear-gradient(145deg,#fff1f2,#ffe4e6);}
+.s6v-red    .s7-var-sym{color:#be123c;}
+.s6v-red    .s7-var-connector{background:#f43f5e;}
+.s6v-red    .s7-var-connector-dot{background:#f43f5e;}
+.s6v-red    .s7-var-val-chip{background:#ffe4e6;color:#be123c;border:1px solid #fecdd3;}
 
-.s6v-purple .s6-var-inner{border-color:#a855f7;background:linear-gradient(145deg,#faf5ff,#f3e8ff);}
-.s6v-purple .s6-var-sym{color:#7c3aed;}
-.s6v-purple .s6-var-connector{background:#a855f7;}
-.s6v-purple .s6-var-connector-dot{background:#a855f7;}
-.s6v-purple .s6-var-val-chip{background:#f3e8ff;color:#6d28d9;border:1px solid #e9d5ff;}
+.s6v-purple .s7-var-inner{border-color:#a855f7;background:linear-gradient(145deg,#faf5ff,#f3e8ff);}
+.s6v-purple .s7-var-sym{color:#7c3aed;}
+.s6v-purple .s7-var-connector{background:#a855f7;}
+.s6v-purple .s7-var-connector-dot{background:#a855f7;}
+.s6v-purple .s7-var-val-chip{background:#f3e8ff;color:#6d28d9;border:1px solid #e9d5ff;}
 
-.s6v-teal  .s6-var-inner{border-color:#14b8a6;background:linear-gradient(145deg,#f0fdfa,#ccfbf1);}
-.s6v-teal  .s6-var-sym{color:#0f766e;}
-.s6v-teal  .s6-var-connector{background:#14b8a6;}
-.s6v-teal  .s6-var-connector-dot{background:#14b8a6;}
-.s6v-teal  .s6-var-val-chip{background:#ccfbf1;color:#0f766e;border:1px solid #99f6e4;}
+.s6v-teal  .s7-var-inner{border-color:#14b8a6;background:linear-gradient(145deg,#f0fdfa,#ccfbf1);}
+.s6v-teal  .s7-var-sym{color:#0f766e;}
+.s6v-teal  .s7-var-connector{background:#14b8a6;}
+.s6v-teal  .s7-var-connector-dot{background:#14b8a6;}
+.s6v-teal  .s7-var-val-chip{background:#ccfbf1;color:#0f766e;border:1px solid #99f6e4;}
 
 /* ── Insight / note bar ── */
-.s6-note-bar{
+.s7-note-bar{
   display:flex;align-items:flex-start;gap:12px;
   margin-top:22px;padding:14px 20px;
   background:linear-gradient(135deg,#fffbeb,#fef9c3);
@@ -1672,46 +1672,46 @@ _SCENE6_STYLES = """\
   opacity:0;transform:translateY(10px);
   transition:opacity .5s ease,transform .5s ease;
 }
-.s6-note-bar.s6-shown{opacity:1;transform:translateY(0);}
-.s6-note-icon{font-size:20px;flex-shrink:0;margin-top:1px;}
-.s6-note-content{}
-.s6-note-label{
+.s7-note-bar.s7-shown{opacity:1;transform:translateY(0);}
+.s7-note-icon{font-size:20px;flex-shrink:0;margin-top:1px;}
+.s7-note-content{}
+.s7-note-label{
   font-size:9px;font-weight:800;letter-spacing:2px;
   text-transform:uppercase;color:#a16207;margin-bottom:3px;
 }
-.s6-note-text{font-size:13px;font-weight:500;color:#78350f;line-height:1.6;}
+.s7-note-text{font-size:13px;font-weight:500;color:#78350f;line-height:1.6;}
 
 /* ── Navigation row ── */
-.s6-nav-row{
+.s7-nav-row{
   display:flex;justify-content:space-between;align-items:center;
   gap:12px;padding:16px 28px 20px;
   border-top:1px solid #e8eef8;background:#fdfdff;
 }
-.s6-btn{
+.s7-btn{
   display:inline-flex;align-items:center;gap:7px;
   padding:10px 22px;border-radius:10px;
   font-family:'Inter',sans-serif;font-size:13.5px;font-weight:700;
   cursor:pointer;border:none;transition:all .18s ease;letter-spacing:.1px;
 }
-.s6-btn-back{
+.s7-btn-back{
   background:#f1f5f9;color:#64748b;
   border:1.5px solid #cbd5e1!important;
 }
-.s6-btn-back:hover{background:#e2e8f0;color:#334155;transform:translateX(-2px);}
-.s6-btn-next{
+.s7-btn-back:hover{background:#e2e8f0;color:#334155;transform:translateX(-2px);}
+.s7-btn-next{
   background:linear-gradient(135deg,#1d4ed8,#3b82f6);
   color:#fff;box-shadow:0 4px 14px rgba(29,78,216,.28);
 }
-.s6-btn-next:hover{box-shadow:0 6px 20px rgba(29,78,216,.38);transform:translateY(-1px);}
-.s6-btn-finish{
+.s7-btn-next:hover{box-shadow:0 6px 20px rgba(29,78,216,.38);transform:translateY(-1px);}
+.s7-btn-finish{
   background:linear-gradient(135deg,#6d28d9,#7c3aed);
   color:#fff;box-shadow:0 4px 14px rgba(109,40,217,.28);
 }
-.s6-btn-finish:hover{box-shadow:0 6px 20px rgba(109,40,217,.38);transform:translateY(-1px);}
+.s7-btn-finish:hover{box-shadow:0 6px 20px rgba(109,40,217,.38);transform:translateY(-1px);}
 </style>"""
 
 
-def _build_scene6_html(formula_data: dict) -> str:
+def _build_scene7_html(formula_data: dict) -> str:
     formula_text    = html_module.escape(formula_data.get("formula_text", "Formula"))
     formula_sublabel= html_module.escape(formula_data.get("formula_sublabel", "Governing Equation"))
     note_text       = formula_data.get("note_text", "")
@@ -1734,73 +1734,73 @@ def _build_scene6_html(formula_data: dict) -> str:
         chip_html  = ""
         if val:
             chip_html = (
-                f'<div class="s6-var-val-chip">'
-                f'<span class="s6-var-val-num">{val}</span>'
-                + (f'<span class="s6-var-val-unit">{unit}</span>' if unit else "")
+                f'<div class="s7-var-val-chip">'
+                f'<span class="s7-var-val-num">{val}</span>'
+                + (f'<span class="s7-var-val-unit">{unit}</span>' if unit else "")
                 + f'</div>'
             )
         var_boxes_html += f"""
-          <div class="s6-var-box {color_cls}">
-            <div class="s6-var-connector"></div>
-            <div class="s6-var-connector-dot"></div>
-            <div class="s6-var-inner">
-              <span class="s6-var-sym">{sym}</span>
-              <span class="s6-var-name">{name}</span>
+          <div class="s7-var-box {color_cls}">
+            <div class="s7-var-connector"></div>
+            <div class="s7-var-connector-dot"></div>
+            <div class="s7-var-inner">
+              <span class="s7-var-sym">{sym}</span>
+              <span class="s7-var-name">{name}</span>
               {chip_html}
             </div>
           </div>"""
 
     n_vars = len(variables)
     dots_html = "".join(
-        f'<div class="s6-phase-dot" id="s6-dot-{i}"></div>'
+        f'<div class="s7-phase-dot" id="s7-dot-{i}"></div>'
         for i in range(n_vars + 1)
     )
 
     note_html = ""
     if note_text:
         note_html = f"""
-      <div class="s6-note-bar" id="s6-note-bar">
-        <div class="s6-note-icon">&#x1F4A1;</div>
-        <div class="s6-note-content">
-          <div class="s6-note-label">Key Insight</div>
-          <div class="s6-note-text">{html_module.escape(note_text)}</div>
+      <div class="s7-note-bar" id="s7-note-bar">
+        <div class="s7-note-icon">&#x1F4A1;</div>
+        <div class="s7-note-content">
+          <div class="s7-note-label">Key Insight</div>
+          <div class="s7-note-text">{html_module.escape(note_text)}</div>
         </div>
       </div>"""
 
     return f"""
 <div id="qanim-scene-modal-backdrop"></div>
-<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-label="Step 7: Main Formula">
-  <div class="s6-card">
-    <div class="s6-header">
-      <div class="s6-header-left">
-        <div class="s6-step-badge">Step 7 of 9</div>
-        <div class="s6-header-title">Main Formula</div>
+<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-label="Step 7: Main Formula">
+  <div class="s7-card">
+    <div class="s7-header">
+      <div class="s7-header-left">
+        <div class="s7-step-badge">Step 7 of 9</div>
+        <div class="s7-header-title">Main Formula</div>
       </div>
-      <div class="s6-header-right">
-        <div class="s6-progress-text" id="s6-phase-progress">Formula</div>
+      <div class="s7-header-right">
+        <div class="s7-progress-text" id="s7-phase-progress">Formula</div>
       </div>
     </div>
-    <div class="s6-body">
-      <div class="s6-phase-row">
-        <div class="s6-phase-caption" id="s6-phase-caption">
-          This is the <span class="s6-accent">governing formula</span>
+    <div class="s7-body">
+      <div class="s7-phase-row">
+        <div class="s7-phase-caption" id="s7-phase-caption">
+          This is the <span class="s7-accent">governing formula</span>
           for this problem. Click <strong>Next</strong> to explore each variable.
         </div>
-        <div class="s6-phase-dots" id="s6-phase-dots">{dots_html}</div>
+        <div class="s7-phase-dots" id="s7-phase-dots">{dots_html}</div>
       </div>
-      <div class="s6-formula-box">
-        <div class="s6-formula-label">Governing Equation</div>
-        <div class="s6-formula-main" id="s6-formula-text">{formula_text}</div>
-        <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_sublabel}</div>
+      <div class="s7-formula-box">
+        <div class="s7-formula-label">Governing Equation</div>
+        <div class="s7-formula-main" id="s7-formula-text">{formula_text}</div>
+        <div class="s7-formula-sublabel" id="s7-formula-sublabel">{formula_sublabel}</div>
       </div>
-      <div class="s6-vars-row" id="s6-vars-row">{var_boxes_html}</div>
+      <div class="s7-vars-row" id="s7-vars-row">{var_boxes_html}</div>
       {note_html}
     </div>
-    <div class="s6-nav-row">
-      <button class="s6-btn s6-btn-back" onclick="qanim_goToPrevScene()">
+    <div class="s7-nav-row">
+      <button class="s7-btn s7-btn-back" onclick="qanim_goToPrevScene()">
         &#9664; Back to Animation
       </button>
-      <button class="s6-btn s6-btn-next" id="s6-next-btn" onclick="qanim_s6Advance()">
+      <button class="s7-btn s7-btn-next" id="s7-next-btn" onclick="qanim_s7Advance()">
         Next Variable &#9654;
       </button>
     </div>
@@ -1808,30 +1808,30 @@ def _build_scene6_html(formula_data: dict) -> str:
 </div>"""
 
 
-_SCENE6_JS = """\
-<script id="qanim-js-scene6">
-(function initScene6(){
+_SCENE7_JS = """\
+<script id="qanim-js-scene7">
+(function initScene7(){
   'use strict';
-  if(window.__qanimScene6Init)return;window.__qanimScene6Init=true;
+  if(window.__qanimScene7Init)return;window.__qanimScene7Init=true;
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  function _varBoxes(){return document.querySelectorAll('#s6-vars-row .s6-var-box');}
-  function _dots(){return document.querySelectorAll('#s6-phase-dots .s6-phase-dot');}
+  function _varBoxes(){return document.querySelectorAll('#s7-vars-row .s7-var-box');}
+  function _dots(){return document.querySelectorAll('#s7-phase-dots .s7-phase-dot');}
 
   var s6Phase=-1;
   var s6AutoTimer=null;
 
   function _buildCaptions(){
     var boxes=_varBoxes();
-    var caps=[ 'This is the <span class="s6-accent">governing formula</span> for this problem. Click <strong>Next</strong> to explore each variable.' ];
+    var caps=[ 'This is the <span class="s7-accent">governing formula</span> for this problem. Click <strong>Next</strong> to explore each variable.' ];
     boxes.forEach(function(b){
-      var sym=b.querySelector('.s6-var-sym');
-      var nm=b.querySelector('.s6-var-name');
-      var chip=b.querySelector('.s6-var-val-chip');
+      var sym=b.querySelector('.s7-var-sym');
+      var nm=b.querySelector('.s7-var-name');
+      var chip=b.querySelector('.s7-var-val-chip');
       var symT=sym?sym.textContent.trim():'';
       var nmT=nm?nm.textContent.trim():'';
       var chipT=chip?chip.textContent.trim():'';
-      var txt='<span class="s6-accent">'+symT+'</span> &mdash; <strong>'+nmT+'</strong>'+(chipT?' &ensp;<span style="font-family:\'JetBrains Mono\',monospace;font-size:12px;background:#f1f5f9;padding:2px 7px;border-radius:6px;">'+chipT+'</span>':'')+ '.';
+      var txt='<span class="s7-accent">'+symT+'</span> &mdash; <strong>'+nmT+'</strong>'+(chipT?' &ensp;<span style="font-family:\'JetBrains Mono\',monospace;font-size:12px;background:#f1f5f9;padding:2px 7px;border-radius:6px;">'+chipT+'</span>':'')+ '.';
       caps.push(txt);
     });
     caps.push('All variables identified. The key insight is shown below. Click to proceed to the substitution step.');
@@ -1844,14 +1844,14 @@ _SCENE6_JS = """\
     var caps=_buildCaptions();
     var dots=_dots();
 
-    var fEl=_el('s6-formula-text');var sEl=_el('s6-formula-sublabel');
-    if(fEl)fEl.classList.add('s6-shown');
-    if(sEl)sEl.classList.add('s6-shown');
+    var fEl=_el('s7-formula-text');var sEl=_el('s7-formula-sublabel');
+    if(fEl)fEl.classList.add('s7-shown');
+    if(sEl)sEl.classList.add('s7-shown');
 
     for(var i=0;i<n;i++){
       var b=boxes[i];
-      if(s6Phase>=i+1) b.classList.add('s6-shown'); else b.classList.remove('s6-shown');
-      b.classList.toggle('s6-active', s6Phase===i+1);
+      if(s6Phase>=i+1) b.classList.add('s7-shown'); else b.classList.remove('s7-shown');
+      b.classList.toggle('s7-active', s6Phase===i+1);
     }
 
     for(var d=0;d<dots.length;d++){
@@ -1860,38 +1860,38 @@ _SCENE6_JS = """\
       if(d===s6Phase) dots[d].classList.add('active');
     }
 
-    var noteEl=_el('s6-note-bar');
+    var noteEl=_el('s7-note-bar');
     var showNote=(s6Phase>=n+1);
-    if(noteEl) noteEl.classList.toggle('s6-shown',showNote);
+    if(noteEl) noteEl.classList.toggle('s7-shown',showNote);
 
-    var capEl=_el('s6-phase-caption');
+    var capEl=_el('s7-phase-caption');
     var capIdx=Math.max(0,Math.min(s6Phase<0?0:s6Phase, caps.length-1));
     if(capEl) capEl.innerHTML=caps[capIdx]||caps[0];
 
-    var progEl=_el('s6-phase-progress');
+    var progEl=_el('s7-phase-progress');
     if(progEl){
       if(s6Phase<=0) progEl.textContent='Formula';
       else if(s6Phase<=n) progEl.textContent='Variable '+s6Phase+' / '+n;
       else progEl.textContent='Insight';
     }
 
-    var nb=_el('s6-next-btn');
+    var nb=_el('s7-next-btn');
     if(nb){
       if(s6Phase<n){
         nb.innerHTML='Next Variable &#9654;';
-        nb.className='s6-btn s6-btn-next';
-        nb.onclick=function(){window.qanim_s6Advance();};
+        nb.className='s7-btn s7-btn-next';
+        nb.onclick=function(){window.qanim_s7Advance();};
       } else if(s6Phase===n){
         nb.innerHTML='See Insight &#9654;';
-        nb.className='s6-btn s6-btn-next';
-        nb.onclick=function(){window.qanim_s6Advance();};
+        nb.className='s7-btn s7-btn-next';
+        nb.onclick=function(){window.qanim_s7Advance();};
       } else {
         nb.innerHTML='Step 8: Substitution &#9654;';
-        nb.className='s6-btn s6-btn-finish';
+        nb.className='s7-btn s7-btn-finish';
         nb.onclick=function(){window.qanim_showScene8();};
         if(!s6AutoTimer){
           s6AutoTimer=setTimeout(function(){
-            var ov=_el('qanim-scene6-overlay');
+            var ov=_el('qanim-scene7-overlay');
             if(ov&&ov.classList.contains('qanim-scene-visible')) window.qanim_showScene8();
           },3200);
         }
@@ -1899,7 +1899,7 @@ _SCENE6_JS = """\
     }
   }
 
-  window.qanim_s6Advance=function(){
+  window.qanim_s7Advance=function(){
     var n=_varBoxes().length;
     if(s6Phase<n+1) s6Phase++;
     s6Render();
@@ -1921,9 +1921,9 @@ _SCENE6_JS = """\
     var bar=_el('step-bar');if(bar)bar.style.width=Math.round(7/9*100)+'%';
   }
 
-  window.qanim_showScene6=function(){
-    var ov=_el('qanim-scene6-overlay');if(ov)ov.classList.add('qanim-scene-visible');
-    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
+  window.qanim_showScene7=function(){
+    var ov=_el('qanim-scene7-overlay');if(ov)ov.classList.add('qanim-scene-visible');
+    var ov7=_el('qanim-scene8-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
     var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
     var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
     _cancelRAF();_syncDots7();
@@ -1932,7 +1932,7 @@ _SCENE6_JS = """\
   };
 
   window.qanim_goToPrevScene=function(){
-    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
+    ['qanim-scene7-overlay','qanim-scene8-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
     var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
     if(s6AutoTimer){clearTimeout(s6AutoTimer);s6AutoTimer=null;}
     var svgC=document.querySelector('.svg-container');if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='1';}
@@ -1943,7 +1943,7 @@ _SCENE6_JS = """\
   _onReady(function(){
     var origReset=window.resetAnim;
     window.resetAnim=function(){
-      ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
+      ['qanim-scene7-overlay','qanim-scene8-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
       var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
       var svgC=document.querySelector('.svg-container');if(svgC)svgC.style.opacity='1';
       if(typeof origReset==='function')origReset();
@@ -1953,8 +1953,8 @@ _SCENE6_JS = """\
 </script>"""
 
 
-def inject_scene6_big_idea(html: str, gemini_sol: dict, scene_script: dict) -> str:
-    if 'qanim-scene6-styles' in html:
+def inject_scene7_formula(html: str, gemini_sol: dict, scene_script: dict) -> str:
+    if 'qanim-scene7-styles' in html:
         return html
     formula_data = scene_script.get("formula_data", {})
     sol = gemini_sol or {}
@@ -1968,18 +1968,18 @@ def inject_scene6_big_idea(html: str, gemini_sol: dict, scene_script: dict) -> s
             "variables":        sol.get("variables", []),
             "note_text":        sol.get("key_insight", ""),
         }
-    scene6_html = _build_scene6_html(formula_data)
+    scene7_html = _build_scene7_html(formula_data)
     if '</head>' in html:
-        html = html.replace('</head>', _SCENE6_STYLES + '\n</head>', 1)
-        inject_body = scene6_html + "\n" + _SCENE6_JS
+        html = html.replace('</head>', _SCENE7_STYLES + '\n</head>', 1)
+        inject_body = scene7_html + "\n" + _SCENE7_JS
         if '<body' in html:
             idx = html.find('>', html.find('<body')) + 1
             html = html[:idx] + inject_body + html[idx:]
         else:
             html = html + inject_body
     else:
-        html = _SCENE6_STYLES + "\n" + scene6_html + "\n" + _SCENE6_JS + html
-    QAnimLogger.ok("Scene6", "Main Formula panel injected (v2 design)")
+        html = _SCENE7_STYLES + "\n" + scene7_html + "\n" + _SCENE7_JS + html
+    QAnimLogger.ok("Scene7", "Main Formula panel injected (v2 design)")
     return html
 
 
@@ -1988,8 +1988,8 @@ def inject_scene6_big_idea(html: str, gemini_sol: dict, scene_script: dict) -> s
 # ===========================================================================
 
 _SCENE7_STYLES = """\
-<style id="qanim-scene7-styles">
-#qanim-scene7-overlay{
+<style id="qanim-scene8-styles">
+#qanim-scene8-overlay{
   display:none;position:fixed;
   top:50%;left:50%;
   transform:translate(-50%,-50%) scale(.93) translateY(12px);
@@ -2000,185 +2000,185 @@ _SCENE7_STYLES = """\
              transform .4s cubic-bezier(.34,1.28,.64,1);
   scrollbar-width:thin;scrollbar-color:#a7f3d0 #f0fdf4;
 }
-#qanim-scene7-overlay::-webkit-scrollbar{width:5px;}
-#qanim-scene7-overlay::-webkit-scrollbar-track{background:#f0fdf4;}
-#qanim-scene7-overlay::-webkit-scrollbar-thumb{background:#a7f3d0;border-radius:4px;}
-#qanim-scene7-overlay.qanim-scene-visible{
+#qanim-scene8-overlay::-webkit-scrollbar{width:5px;}
+#qanim-scene8-overlay::-webkit-scrollbar-track{background:#f0fdf4;}
+#qanim-scene8-overlay::-webkit-scrollbar-thumb{background:#a7f3d0;border-radius:4px;}
+#qanim-scene8-overlay.qanim-scene-visible{
   display:block!important;opacity:1;pointer-events:auto;
   transform:translate(-50%,-50%) scale(1) translateY(0);
 }
 
-.s7-card{
+.s8-card{
   background:#fff;border-radius:24px;overflow:hidden;
   box-shadow:0 24px 80px rgba(5,150,105,.12),0 4px 16px rgba(0,0,0,.07);
   border:1px solid #d1fae5;
   font-family:'Inter',system-ui,-apple-system,sans-serif;
 }
 
-.s7-header{
+.s8-header{
   display:flex;align-items:center;justify-content:space-between;
   padding:0 28px;height:58px;
   background:linear-gradient(90deg,#065f46 0%,#059669 55%,#10b981 100%);
   position:relative;overflow:hidden;
 }
-.s7-header::after{
+.s8-header::after{
   content:'';position:absolute;inset:0;
   background:repeating-linear-gradient(45deg,transparent,transparent 20px,rgba(255,255,255,.03) 20px,rgba(255,255,255,.03) 40px);
   pointer-events:none;
 }
-.s7-header-left{display:flex;align-items:center;gap:10px;z-index:1;}
-.s7-step-badge{
+.s8-header-left{display:flex;align-items:center;gap:10px;z-index:1;}
+.s8-step-badge{
   background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
   border-radius:8px;padding:3px 10px;
   font-size:10.5px;font-weight:800;letter-spacing:1.5px;color:#a7f3d0;
   text-transform:uppercase;
 }
-.s7-header-title{font-size:15px;font-weight:700;color:#fff;}
-.s7-header-right{z-index:1;}
-.s7-header-system{font-size:11.5px;font-weight:600;color:#6ee7b7;letter-spacing:.2px;max-width:260px;text-align:right;line-height:1.35;}
+.s8-header-title{font-size:15px;font-weight:700;color:#fff;}
+.s8-header-right{z-index:1;}
+.s8-header-system{font-size:11.5px;font-weight:600;color:#6ee7b7;letter-spacing:.2px;max-width:260px;text-align:right;line-height:1.35;}
 
-.s7-body{display:flex;min-height:380px;}
+.s8-body{display:flex;min-height:380px;}
 
-.s7-left{
+.s8-left{
   width:42%;min-width:220px;
   background:linear-gradient(160deg,#ecfdf5 0%,#d1fae5 60%,#a7f3d0 100%);
   border-right:1.5px solid #bbf7d0;
   padding:24px 20px 22px 26px;
   display:flex;flex-direction:column;gap:14px;
 }
-.s7-left-title{
+.s8-left-title{
   font-size:9.5px;font-weight:800;letter-spacing:2px;
   text-transform:uppercase;color:#065f46;
 }
-.s7-diagram-card{
+.s8-diagram-card{
   background:#fff;border:1.5px solid #a7f3d0;border-radius:16px;
   padding:18px 16px 16px;flex:1;
   display:flex;flex-direction:column;align-items:center;gap:8px;
   box-shadow:0 2px 10px rgba(5,150,105,.09);
 }
-.s7-diagram-system-name{
+.s8-diagram-system-name{
   font-size:14px;font-weight:800;color:#065f46;text-align:center;line-height:1.3;
 }
-.s7-diagram-icon{font-size:32px;margin:4px 0;}
-.s7-diagram-desc{
+.s8-diagram-icon{font-size:32px;margin:4px 0;}
+.s8-diagram-desc{
   font-size:11.5px;color:#374151;text-align:center;line-height:1.55;
   background:#f0fdf4;border-radius:8px;padding:8px 10px;
   border:1px solid #d1fae5;width:100%;box-sizing:border-box;
 }
-.s7-given-table{
+.s8-given-table{
   background:#fff;border:1.5px solid #a7f3d0;border-radius:12px;
   overflow:hidden;box-shadow:0 1px 6px rgba(5,150,105,.07);
 }
-.s7-given-table-head{
+.s8-given-table-head{
   background:linear-gradient(90deg,#059669,#10b981);
   padding:8px 14px;
   font-size:9.5px;font-weight:800;letter-spacing:1.8px;
   text-transform:uppercase;color:#fff;
 }
-.s7-given-row{
+.s8-given-row{
   display:flex;align-items:center;gap:0;
   border-top:1px solid #d1fae5;
   transition:background .15s;
 }
-.s7-given-row:hover{background:#f0fdf4;}
-.s7-given-sym{
+.s8-given-row:hover{background:#f0fdf4;}
+.s8-given-sym{
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:13px;font-weight:800;color:#065f46;
   padding:9px 12px;min-width:46px;text-align:center;
   border-right:1px solid #d1fae5;background:#f0fdf4;
   flex-shrink:0;
 }
-.s7-given-detail{padding:9px 12px;flex:1;}
-.s7-given-val{
+.s8-given-detail{padding:9px 12px;flex:1;}
+.s8-given-val{
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:13px;font-weight:700;color:#065f46;display:block;
 }
-.s7-given-desc{font-size:10.5px;color:#6b7280;line-height:1.3;}
+.s8-given-desc{font-size:10.5px;color:#6b7280;line-height:1.3;}
 
-.s7-right{
+.s8-right{
   flex:1;padding:24px 28px 22px 22px;
   display:flex;flex-direction:column;gap:0;
   background:#fafffe;
 }
 
-.s7-section{margin-bottom:18px;}
-.s7-section-title{
+.s8-section{margin-bottom:18px;}
+.s8-section-title{
   display:flex;align-items:center;gap:8px;
   font-size:10px;font-weight:800;letter-spacing:1.8px;
   text-transform:uppercase;margin-bottom:10px;
 }
-.s7-section-title-dot{
+.s8-section-title-dot{
   width:8px;height:8px;border-radius:50%;flex-shrink:0;
 }
 
-.s7-approach-list{display:flex;flex-direction:column;gap:8px;}
-.s7-approach-step{
+.s8-approach-list{display:flex;flex-direction:column;gap:8px;}
+.s8-approach-step{
   display:flex;align-items:flex-start;gap:10px;
   padding:10px 14px;border-radius:10px;
   background:#f8fffe;border:1px solid #ccfbf1;
   transition:background .15s;
 }
-.s7-approach-step:hover{background:#ecfdf5;}
-.s7-approach-num{
+.s8-approach-step:hover{background:#ecfdf5;}
+.s8-approach-num{
   width:22px;height:22px;border-radius:50%;
   background:linear-gradient(135deg,#059669,#10b981);
   color:#fff;font-size:11px;font-weight:800;
   display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;
 }
-.s7-approach-text{
+.s8-approach-text{
   font-size:13px;color:#1e293b;line-height:1.55;font-weight:500;
   font-family:'Inter',sans-serif;
 }
-.s7-approach-text code{
+.s8-approach-text code{
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:12.5px;font-weight:700;color:#065f46;
   background:#d1fae5;padding:1px 6px;border-radius:5px;
 }
 
-.s7-result-bar{
+.s8-result-bar{
   margin-top:auto;padding:16px 20px;
   background:linear-gradient(135deg,#065f46,#059669);
   border-radius:14px;
   box-shadow:0 4px 18px rgba(5,150,105,.25);
   display:flex;align-items:center;gap:16px;
 }
-.s7-result-bar-label{
+.s8-result-bar-label{
   font-size:9.5px;font-weight:800;letter-spacing:2px;
   text-transform:uppercase;color:#6ee7b7;
   writing-mode:vertical-rl;text-orientation:mixed;
   transform:rotate(180deg);flex-shrink:0;
 }
-.s7-result-bar-eq{
+.s8-result-bar-eq{
   font-family:'JetBrains Mono','Courier New',monospace;
   font-size:15.5px;font-weight:700;color:#fff;
   line-height:1.45;letter-spacing:.5px;flex:1;
 }
-.s7-result-bar-eq .s7-result-final{
+.s8-result-bar-eq .s8-result-final{
   color:#86efac;font-size:18px;font-weight:900;
 }
 
-.s7-nav-row{
+.s8-nav-row{
   display:flex;justify-content:space-between;align-items:center;
   gap:12px;padding:15px 28px 20px;
   border-top:1.5px solid #d1fae5;background:#f0fdf4;
 }
-.s7-btn{
+.s8-btn{
   display:inline-flex;align-items:center;gap:7px;
   padding:10px 22px;border-radius:10px;
   font-family:'Inter',sans-serif;font-size:13.5px;font-weight:700;
   cursor:pointer;border:none;transition:all .18s ease;
 }
-.s7-btn-back{background:#f1f5f9;color:#64748b;border:1.5px solid #cbd5e1!important;}
-.s7-btn-back:hover{background:#e2e8f0;color:#334155;transform:translateX(-2px);}
-.s7-btn-next{
+.s8-btn-back{background:#f1f5f9;color:#64748b;border:1.5px solid #cbd5e1!important;}
+.s8-btn-back:hover{background:#e2e8f0;color:#334155;transform:translateX(-2px);}
+.s8-btn-next{
   background:linear-gradient(135deg,#065f46,#059669);color:#fff;
   box-shadow:0 4px 14px rgba(5,150,105,.28);
 }
-.s7-btn-next:hover{box-shadow:0 6px 20px rgba(5,150,105,.38);transform:translateY(-1px);}
+.s8-btn-next:hover{box-shadow:0 6px 20px rgba(5,150,105,.38);transform:translateY(-1px);}
 </style>"""
 
 
-def _build_scene7_html(substitution_data: dict) -> str:
+def _build_scene8_html(substitution_data: dict) -> str:
     sub          = substitution_data or {}
     system_title = html_module.escape(sub.get("system_title", "Physical System"))
     system_desc  = html_module.escape(sub.get("system_description", ""))
@@ -2201,11 +2201,11 @@ def _build_scene7_html(substitution_data: dict) -> str:
             val   = parts[1].strip() if len(parts) > 1 else g_str
             desc  = ""
         given_rows_html += f"""
-          <div class="s7-given-row">
-            <div class="s7-given-sym">{html_module.escape(sym)}</div>
-            <div class="s7-given-detail">
-              <span class="s7-given-val">{html_module.escape(val)}</span>
-              {f'<span class="s7-given-desc">{html_module.escape(desc)}</span>' if desc else ''}
+          <div class="s8-given-row">
+            <div class="s8-given-sym">{html_module.escape(sym)}</div>
+            <div class="s8-given-detail">
+              <span class="s8-given-val">{html_module.escape(val)}</span>
+              {f'<span class="s8-given-desc">{html_module.escape(desc)}</span>' if desc else ''}
             </div>
           </div>"""
 
@@ -2219,63 +2219,63 @@ def _build_scene7_html(substitution_data: dict) -> str:
                 html_module.escape(text)
             )
         approach_html += f"""
-        <div class="s7-approach-step">
-          <div class="s7-approach-num">{i+1}</div>
-          <div class="s7-approach-text">{_codify(s)}</div>
+        <div class="s8-approach-step">
+          <div class="s8-approach-num">{i+1}</div>
+          <div class="s8-approach-text">{_codify(s)}</div>
         </div>"""
 
     result_escaped = html_module.escape(result_bar)
     result_html = _re2.sub(
         r'=\s*([\d.,\s\w°²³µ/·\-+]+)$',
-        lambda m3: f'= <span class="s7-result-final">{html_module.escape(m3.group(1).strip())}</span>',
+        lambda m3: f'= <span class="s8-result-final">{html_module.escape(m3.group(1).strip())}</span>',
         result_escaped
     )
 
     return f"""
-<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-label="Step 8: Substitution">
-  <div class="s7-card">
-    <div class="s7-header">
-      <div class="s7-header-left">
-        <div class="s7-step-badge">Step 8 of 9</div>
-        <div class="s7-header-title">Step-by-Step Substitution</div>
+<div id="qanim-scene8-overlay" role="dialog" aria-modal="true" aria-label="Step 8: Substitution">
+  <div class="s8-card">
+    <div class="s8-header">
+      <div class="s8-header-left">
+        <div class="s8-step-badge">Step 8 of 9</div>
+        <div class="s8-header-title">Step-by-Step Substitution</div>
       </div>
-      <div class="s7-header-right">
-        <div class="s7-header-system">{system_title}</div>
+      <div class="s8-header-right">
+        <div class="s8-header-system">{system_title}</div>
       </div>
     </div>
-    <div class="s7-body">
-      <div class="s7-left">
-        <div class="s7-left-title">Physical System</div>
-        <div class="s7-diagram-card">
-          <div class="s7-diagram-system-name">{system_title}</div>
-          <div class="s7-diagram-icon">&#x1F4D0;</div>
-          <div class="s7-diagram-desc">{system_desc[:120]}</div>
+    <div class="s8-body">
+      <div class="s8-left">
+        <div class="s8-left-title">Physical System</div>
+        <div class="s8-diagram-card">
+          <div class="s8-diagram-system-name">{system_title}</div>
+          <div class="s8-diagram-icon">&#x1F4D0;</div>
+          <div class="s8-diagram-desc">{system_desc[:120]}</div>
         </div>
-        <div class="s7-given-table">
-          <div class="s7-given-table-head">Given Data</div>
+        <div class="s8-given-table">
+          <div class="s8-given-table-head">Given Data</div>
           {given_rows_html}
         </div>
       </div>
-      <div class="s7-right">
-        <div class="s7-section">
-          <div class="s7-section-title" style="color:#059669;">
-            <div class="s7-section-title-dot" style="background:#059669;"></div>
+      <div class="s8-right">
+        <div class="s8-section">
+          <div class="s8-section-title" style="color:#059669;">
+            <div class="s8-section-title-dot" style="background:#059669;"></div>
             Solution Approach
           </div>
-          <div class="s7-approach-list">{approach_html}</div>
+          <div class="s8-approach-list">{approach_html}</div>
         </div>
-        <div class="s7-result-bar">
-          <div class="s7-result-bar-label">Result</div>
-          <div class="s7-result-bar-eq">{result_html}</div>
+        <div class="s8-result-bar">
+          <div class="s8-result-bar-label">Result</div>
+          <div class="s8-result-bar-eq">{result_html}</div>
         </div>
       </div>
     </div>
-    <div class="s7-nav-row">
-      <button class="s7-btn s7-btn-back"
-        onclick="if(typeof window.qanim_showScene6===\'function\') window.qanim_showScene6()">
+    <div class="s8-nav-row">
+      <button class="s8-btn s8-btn-back"
+        onclick="if(typeof window.qanim_showScene7===\'function\') window.qanim_showScene7()">
         &#9664; Step 7: Formula
       </button>
-      <button class="s7-btn s7-btn-next"
+      <button class="s8-btn s8-btn-next"
         onclick="if(typeof window.qanim_showScene9===\'function\') window.qanim_showScene9()">
         Step 9: Final Answer &#9654;
       </button>
@@ -2285,7 +2285,7 @@ def _build_scene7_html(substitution_data: dict) -> str:
 
 
 _SCENE7_JS = """\
-<script id="qanim-js-scene7">
+<script id="qanim-js-scene8">
 (function initScene7(){
   'use strict';
   if(window.__qanimScene7Init)return;window.__qanimScene7Init=true;
@@ -2297,19 +2297,19 @@ _SCENE7_JS = """\
     var bar=_el('step-bar');if(bar)bar.style.width=Math.round(8/9*100)+'%';
   }
   window.qanim_showScene8=function(){
-    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
+    var ov6=_el('qanim-scene7-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
     var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
-    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.add('qanim-scene-visible');
+    var ov7=_el('qanim-scene8-overlay');if(ov7)ov7.classList.add('qanim-scene-visible');
     var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
     _syncDots8();
   };
-  window.qanim_showScene7=window.qanim_showScene8;
+  window.qanim_showScene8=window.qanim_showScene8;
 })();
 </script>"""
 
 
-def inject_scene7_how_we_solve_it(html: str, gemini_sol: dict, scene_script: dict) -> str:
-    if 'qanim-scene7-styles' in html:
+def inject_scene8_how_we_solve_it(html: str, gemini_sol: dict, scene_script: dict) -> str:
+    if 'qanim-scene8-styles' in html:
         return html
     substitution_data = scene_script.get("substitution_data", {})
     sol = gemini_sol or {}
@@ -2331,14 +2331,14 @@ def inject_scene7_how_we_solve_it(html: str, gemini_sol: dict, scene_script: dic
             "approach_steps":     sol_steps[:3] if sol_steps else ["Identify formula", "Substitute values", "Compute result"],
             "result_bar":         sol.get("final_answer", "See calculation above"),
         }
-    scene7_html = _build_scene7_html(substitution_data)
+    scene8_html = _build_scene8_html(substitution_data)
     if '</head>' in html:
         html = html.replace('</head>', _SCENE7_STYLES + '\n</head>', 1)
     if '<body' in html:
         idx = html.find('>', html.find('<body')) + 1
-        html = html[:idx] + scene7_html + html[idx:]
+        html = html[:idx] + scene8_html + html[idx:]
     else:
-        html = html + scene7_html
+        html = html + scene8_html
     if '</body>' in html:
         html = html.replace('</body>', _SCENE7_JS + '\n</body>', 1)
     else:
@@ -2690,8 +2690,8 @@ _SCENE9_JS = """\
   }
 
   window.qanim_showScene9=function(){
-    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
-    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
+    var ov7=_el('qanim-scene8-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
+    var ov6=_el('qanim-scene7-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
     var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.add('qanim-scene-visible');
     var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
     _syncDots9();_resetEntrance();setTimeout(_animateEntrance,120);
@@ -3112,7 +3112,7 @@ _STEP_CONTROLLER_JS = """\
 #   • It REPLACES window.nextStep with its own reliable version.
 #   • It physically removes onclick="nextStep()" from btn-next at runtime.
 #   • It syncs window.currentStep on every applyStep call.
-#   • It triggers Scene6 (Step 7) when the user reaches the last SVG step.
+#   • It triggers Scene7 (Step 7) when the user reaches the last SVG step.
 #
 # No regex post-processing needed — this script handles everything at runtime.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3127,11 +3127,11 @@ _MASTER_STEP_CONTROLLER_JS = """\
 
   KNOWN GEMINI BUGS THIS FIXES:
   1. btn-next keeps onclick="nextStep()" → our clone+removeAttribute strips it
-  2. Gemini's nextStep() calls non-existent qanim_showScene7/8/9 → aliased here
+  2. Gemini's nextStep() calls non-existent qanim_showScene8/8/9 → aliased here
   3. Gemini's nextStep() uses currentStep < totalSteps-1 (off-by-one) → we own nextStep
   4. Gemini forgets to update currentStep inside nextStep() → we own currentStep
   5. totalSteps block-scoped var → we resolve from stepsData or DOM
-  6. qanim_showScene8/qanim_showScene9 called instead of qanim_showScene6 → aliased
+  6. qanim_showScene8/qanim_showScene9 called instead of qanim_showScene7 → aliased
 */
 (function(){
   'use strict';
@@ -3146,18 +3146,18 @@ _MASTER_STEP_CONTROLLER_JS = """\
   }
 
   /* ── alias ALL Gemini hallucinated show-function names ─────────
-     Gemini sometimes calls qanim_showScene7, qanim_showScene8,
-     qanim_showScene9 instead of the correct qanim_showScene6.
+     Gemini sometimes calls qanim_showScene8, qanim_showScene8,
+     qanim_showScene9 instead of the correct qanim_showScene7.
      We alias them all so any of those calls opens the formula panel. */
   function _aliasShowFunctions(){
-    // Wait until qanim_showScene6 is defined (injected by inject_scene6)
+    // Wait until qanim_showScene7 is defined (injected by inject_scene7)
     function _doAlias(){
-      var fn=window.qanim_showScene6;
+      var fn=window.qanim_showScene7;  // Step 7: Main Formula trigger
       if(typeof fn!=='function') return;
-      // Only alias if not already pointing to a real function
-      if(typeof window.qanim_showScene7!=='function') window.qanim_showScene7=fn;
-      if(typeof window.qanim_showScene8!=='function') window.qanim_showScene8=fn;
-      if(typeof window.qanim_showScene9!=='function') window.qanim_showScene9=fn;
+      // Alias old/wrong Gemini function names so they all open the formula panel
+      if(typeof window.qanim_showScene6!=='function') window.qanim_showScene6=fn;  // Gemini old name
+      if(typeof window.qanim_showScene8!=='function') window.qanim_showScene8=fn;  // Gemini wrong name
+      if(typeof window.qanim_showScene9!=='function') window.qanim_showScene9=fn;  // Gemini wrong name
     }
     _doAlias();
     // Also alias after a short delay in case inject order varies
@@ -3188,22 +3188,22 @@ _MASTER_STEP_CONTROLLER_JS = """\
   /* ── trigger the formula panel (Step 7 overlay) ────────────────
      Called when user clicks Next on the last SVG step. */
   function _openFormulaPanel(){
-    var ov6=_el('qanim-scene6-overlay');
-    var ov7=_el('qanim-scene7-overlay');
+    var ov6=_el('qanim-scene7-overlay');
+    var ov7=_el('qanim-scene8-overlay');
     var ov9=_el('qanim-scene9-overlay');
     // Already open — don't re-trigger
     if((ov6&&ov6.classList.contains('qanim-scene-visible'))||
        (ov7&&ov7.classList.contains('qanim-scene-visible'))||
        (ov9&&ov9.classList.contains('qanim-scene-visible'))) return;
-    if(typeof window.qanim_showScene6!=='function'){
-      // qanim_showScene6 not yet defined — retry after short delay
+    if(typeof window.qanim_showScene7!=='function'){
+      // qanim_showScene7 (formula panel) not yet defined — retry after short delay
       setTimeout(_openFormulaPanel, 150);
       return;
     }
     var svgC=document.querySelector('.svg-container');
     if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='0';}
     setTimeout(function(){
-      if(typeof window.qanim_showScene6==='function') window.qanim_showScene6();
+      if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
     }, svgC?460:60);
   }
 
@@ -3275,7 +3275,7 @@ _MASTER_STEP_CONTROLLER_JS = """\
 })();
 </script>"""
 
-_SCENE6_AUTOTRIGGER_JS = ""  # Replaced entirely by _MASTER_STEP_CONTROLLER_JS (v4)
+_SCENE7_AUTOTRIGGER_JS = ""  # Replaced entirely by _MASTER_STEP_CONTROLLER_JS (v4)
 
 
 def inject_nav_patch_and_scene_desc(html: str) -> str:
@@ -3295,7 +3295,7 @@ def inject_step_controller(html: str) -> str:
 
     # Remove old autotrigger — replaced by master controller
     html = re.sub(
-        r'<script id="qanim-js-scene6-autotrigger">.*?</script>',
+        r'<script id="qanim-js-scene7-autotrigger">.*?</script>',
         '', html, flags=re.DOTALL
     )
 
@@ -3484,9 +3484,9 @@ reference animation (Convective_Heat_Loss_Updated.html). The core structure is:
      - Info box (step description + badges)
      - Navigation buttons (Prev / Next)
 3. When "Next" is clicked on the last SVG step (Step 6), the SVG fades out
-   and Scene 6 overlay opens (Step 7: Main Formula).
-4. From Scene 6, user advances to Scene 7 (Step 8: Substitution).
-5. From Scene 7, user advances to Scene 9 (Step 9: Final Answer).
+   and Scene7 overlay opens (Step 7: Main Formula).
+4. From Scene7, user advances to Scene8 (Step 8: Substitution).
+5. From Scene8, user advances to Scene9 (Step 9: Final Answer).
 
 ════════════════════════════════════════
 COMPLETE HTML STRUCTURE REQUIRED:
@@ -3544,7 +3544,7 @@ COMPLETE HTML STRUCTURE REQUIRED:
       <!-- Navigation buttons -->
       <!-- IMPORTANT: btn-next must NOT have an inline onclick attribute.       -->
       <!-- The injected __nexttrigger_patch__ script wires it via addEventListener -->
-      <!-- so window.nextStep (which handles the scene6 transition) is used.    -->
+      <!-- so window.nextStep (which handles the scene7 transition) is used.    -->
       <div class="action-row" style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="btn-secondary" id="btn-prev" disabled onclick="prevStep()">&#x25C0; Prev</button>
         <button class="btn-primary" id="btn-next">Next &#x25B6;</button>
@@ -3613,7 +3613,7 @@ function nextStep() {
     applyStep(currentStep);
   } else {
     // At last SVG step — trigger Scene 6
-    triggerScene6();
+    triggerScene7();
   }
 }
 
@@ -3631,14 +3631,14 @@ function goToStep(idx) {
   }
 }
 
-function triggerScene6() {
+function triggerScene7() {
   var svgCont = document.querySelector('.svg-container');
   if (svgCont) {
     svgCont.style.transition = 'opacity .45s ease';
     svgCont.style.opacity = '0';
   }
   setTimeout(function() {
-    if (typeof window.qanim_showScene6 === 'function') window.qanim_showScene6();
+    if (typeof window.qanim_showScene7 === 'function') window.qanim_showScene7();
   }, 460);
 }
 
@@ -3681,7 +3681,7 @@ IMPORTANT CONSTRAINTS:
 4. var totalSteps MUST equal stepsData.length - 1  (i.e. the last index, NOT the count).
    If stepsData has 6 entries, totalSteps = 5. If 7 entries, totalSteps = 6. NEVER set totalSteps = stepsData.length.
 5. The step indicator must show exactly 9 dots (Steps 1-9), where dots 7-9 represent the formula/substitution/answer scenes.
-6. Do NOT pre-build Scene 6/7/9 overlays in this HTML — they will be injected by the Python pipeline.
+6. Do NOT pre-build Scene7/8/9 overlays in this HTML — they will be injected by the Python pipeline.
 7. btn-next MUST NOT have an inline onclick attribute. Write it as:
       <button class="btn-primary" id="btn-next">Next ▶</button>
    The Python pipeline wires it via addEventListener. Adding onclick="nextStep()" will BREAK Steps 7/8/9.
@@ -3693,11 +3693,11 @@ IMPORTANT CONSTRAINTS:
           window.currentStep = currentStep;
           applyStep(currentStep);
         } else {
-          if (typeof window.qanim_showScene6 === 'function') window.qanim_showScene6();
+          if (typeof window.qanim_showScene7 === 'function') window.qanim_showScene7();
         }
       }
    CRITICAL: use  currentStep < totalSteps  (NOT < totalSteps-1).
-   CRITICAL: ALWAYS call window.qanim_showScene6() — NEVER qanim_showScene7/8/9.
+   CRITICAL: ALWAYS call window.qanim_showScene7() — NEVER qanim_showScene6/8/9 — only qanim_showScene7 is correct.
    CRITICAL: ALWAYS set window.currentStep = currentStep inside applyStep AND nextStep.
 10. In applyStep(idx), ALWAYS sync window.currentStep:
       function applyStep(idx) {
@@ -4111,8 +4111,8 @@ async def generate_animation_html(question: str) -> str:
         }]
 
     html = DocumentSkeletonNormalizer.normalize(html)
-    html = inject_scene6_big_idea(html, sol, scene_script)
-    html = inject_scene7_how_we_solve_it(html, sol, scene_script)
+    html = inject_scene7_formula(html, sol, scene_script)
+    html = inject_scene8_how_we_solve_it(html, sol, scene_script)
     html = inject_scene9_final_answer(html, sol, scene_script, to_find_targets)
     html = inject_to_find_system(html, to_find_targets)
     html = inject_answer_box(html, answer_targets)
