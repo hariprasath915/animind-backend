@@ -3122,125 +3122,116 @@ _STEP_CONTROLLER_JS = """\
 _MASTER_STEP_CONTROLLER_JS = """\
 <script id="qanim-master-step-controller">
 /*
-  QAnim Master Step Controller v4
+  QAnim Master Step Controller v5
   ================================
-  This is the SOLE authority over step navigation for Steps 1-9.
-  It runs as the LAST script before </body>, after all Gemini-generated
-  code, and fixes every known Gemini hallucination:
+  Sole authority over step navigation. Injected as the LAST script
+  before </body>. Fixes every known Gemini hallucination.
 
-  KNOWN GEMINI BUGS THIS FIXES:
-  1. btn-next keeps onclick="nextStep()" → our clone+removeAttribute strips it
-  2. Gemini's nextStep() calls non-existent qanim_showScene8/8/9 → aliased here
-  3. Gemini's nextStep() uses currentStep < totalSteps-1 (off-by-one) → we own nextStep
-  4. Gemini forgets to update currentStep inside nextStep() → we own currentStep
-  5. totalSteps block-scoped var → we resolve from stepsData or DOM
-  6. qanim_showScene8/qanim_showScene9 called instead of qanim_showScene7 → aliased
+  KEY DESIGN: does NOT depend on any specific function name.
+  It discovers the real formula-panel trigger at runtime by trying
+  ALL known names (qanim_showScene6/7/8/9) and uses whichever exists.
 */
 (function(){
   'use strict';
   if(window.__qanimMasterCtrl)return;
   window.__qanimMasterCtrl=true;
 
-  /* ── helpers ──────────────────────────────────────────────────── */
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn);
     else fn();
   }
 
-  /* ── alias ALL Gemini hallucinated show-function names ─────────
-     Gemini sometimes calls qanim_showScene8, qanim_showScene8,
-     qanim_showScene9 instead of the correct qanim_showScene7.
-     We alias them all so any of those calls opens the formula panel. */
-  function _aliasShowFunctions(){
-    // Wait until qanim_showScene7 is defined (injected by inject_scene7)
-    function _doAlias(){
-      var fn=window.qanim_showScene7;  // Step 7: Main Formula trigger
-      if(typeof fn!=='function') return;
-      // Alias old/wrong Gemini function names so they all open the formula panel
-      if(typeof window.qanim_showScene6!=='function') window.qanim_showScene6=fn;  // Gemini old name
-      if(typeof window.qanim_showScene8!=='function') window.qanim_showScene8=fn;  // Gemini wrong name
-      if(typeof window.qanim_showScene9!=='function') window.qanim_showScene9=fn;  // Gemini wrong name
+  /* ── Find the real formula-panel trigger ───────────────────────
+     Tries every name Gemini or the pipeline might have used.
+     Returns the first real function found, or null. */
+  var _SHOW_FN_NAMES=['qanim_showScene7','qanim_showScene6',
+                      'qanim_showScene8','qanim_showScene9'];
+  function _findShowFn(){
+    for(var i=0;i<_SHOW_FN_NAMES.length;i++){
+      var f=window[_SHOW_FN_NAMES[i]];
+      if(typeof f==='function'&&!f.__isStub) return f;
     }
-    _doAlias();
-    // Also alias after a short delay in case inject order varies
-    setTimeout(_doAlias, 200);
+    // Fallback: try stubs too
+    for(var j=0;j<_SHOW_FN_NAMES.length;j++){
+      if(typeof window[_SHOW_FN_NAMES[j]]==='function') return window[_SHOW_FN_NAMES[j]];
+    }
+    return null;
   }
 
-  /* ── resolve totalSteps from whatever Gemini generated ─────────
-     Tries multiple sources in order of reliability. */
-  function _resolveTotalSteps(){
-    // 1. stepsData array (most reliable — actual data Gemini generated)
-    if(typeof window.stepsData!=='undefined'&&Array.isArray(window.stepsData)&&window.stepsData.length>0)
-      return window.stepsData.length-1;
-    // 2. window.totalSteps set by _fix_total_steps regex pass
-    if(typeof window.totalSteps==='number'&&window.totalSteps>0) return window.totalSteps;
-    // 3. Count step-dot elements in the DOM
-    var dots=document.querySelectorAll('.step-dot[id^="dot-step"]');
-    // Only count SVG step dots (not the formula/sub/answer dots which have ids dot-step7/8/9)
-    var svgDots=0;
-    dots.forEach(function(d){
-      var n=parseInt((d.id||'').replace('dot-step',''),10);
-      if(!isNaN(n)&&n>=1&&n<=6) svgDots++;
-    });
-    if(svgDots>0) return svgDots-1;
-    // 4. Safe fallback
-    return 5;
+  /* ── Find which overlay panel DOM element exists ───────────────
+     Returns the formula-panel overlay element regardless of ID. */
+  var _OVERLAY_IDS=['qanim-scene7-overlay','qanim-scene6-overlay',
+                    'qanim-scene8-overlay','qanim-scene9-overlay'];
+  function _formulaPanelIsOpen(){
+    for(var i=0;i<_OVERLAY_IDS.length;i++){
+      var el=_el(_OVERLAY_IDS[i]);
+      if(el&&el.classList.contains('qanim-scene-visible')) return true;
+    }
+    return false;
   }
 
-  /* ── trigger the formula panel (Step 7 overlay) ────────────────
-     Called when user clicks Next on the last SVG step. */
-  function _openFormulaPanel(){
-    var ov6=_el('qanim-scene7-overlay');
-    var ov7=_el('qanim-scene8-overlay');
-    var ov9=_el('qanim-scene9-overlay');
-    // Already open — don't re-trigger
-    if((ov6&&ov6.classList.contains('qanim-scene-visible'))||
-       (ov7&&ov7.classList.contains('qanim-scene-visible'))||
-       (ov9&&ov9.classList.contains('qanim-scene-visible'))) return;
-    if(typeof window.qanim_showScene7!=='function'){
-      // qanim_showScene7 (formula panel) not yet defined — retry after short delay
-      setTimeout(_openFormulaPanel, 150);
+  /* ── Trigger the formula panel ─────────────────────────────────
+     Tries up to 8 times with 150ms delay if show fn not yet ready */
+  function _openPanel(attempt){
+    attempt=attempt||0;
+    if(_formulaPanelIsOpen()) return;
+    var fn=_findShowFn();
+    if(!fn){
+      if(attempt<8) setTimeout(function(){_openPanel(attempt+1);},150);
       return;
     }
+    // Fade SVG out then open panel
     var svgC=document.querySelector('.svg-container');
     if(svgC){svgC.style.transition='opacity .45s ease';svgC.style.opacity='0';}
     setTimeout(function(){
-      if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
+      var fn2=_findShowFn();
+      if(fn2) fn2();
     }, svgC?460:60);
   }
 
-  /* ── our authoritative nextStep function ───────────────────────
-     Completely replaces Gemini's nextStep(). Tracks currentStep
-     correctly and triggers the formula panel at the right moment. */
+  /* ── Resolve totalSteps reliably ───────────────────────────────
+     Priority: stepsData.length > window.totalSteps > DOM dots */
+  function _resolveTotalSteps(){
+    if(typeof window.stepsData!=='undefined'&&Array.isArray(window.stepsData)&&window.stepsData.length>0)
+      return window.stepsData.length-1;
+    if(typeof window.totalSteps==='number'&&window.totalSteps>0) return window.totalSteps;
+    var dots=document.querySelectorAll('.step-dot');
+    var max=-1;
+    dots.forEach(function(d){
+      var n=parseInt((d.id||'').replace(/[^0-9]/g,''),10));
+      if(!isNaN(n)&&n<=9) max=Math.max(max,n);
+    });
+    if(max>0) return max-1;
+    return 5;
+  }
+
+  /* ── Authoritative nextStep ────────────────────────────────────
+     Completely replaces Gemini's nextStep(). */
   function _nextStep(){
     var ts=_resolveTotalSteps();
     var cs=typeof window.currentStep==='number'?window.currentStep:0;
     if(cs>=ts){
-      _openFormulaPanel();
+      _openPanel();
     } else {
-      var next=cs+1;
-      window.currentStep=next;
-      if(typeof window.applyStep==='function') window.applyStep(next);
+      var nxt=cs+1;
+      window.currentStep=nxt;
+      if(typeof window.applyStep==='function') window.applyStep(nxt);
     }
   }
 
-  /* ── wrap applyStep so it always syncs window.currentStep ──────
-     Gemini's applyStep(idx) doesn't update window.currentStep.
-     Our wrapper ensures every applyStep call keeps it in sync. */
+  /* ── Wrap applyStep to keep window.currentStep in sync ─────── */
   function _patchApplyStep(){
-    var _orig=window.applyStep;
-    if(typeof _orig!=='function'||_orig.__masterPatched) return;
+    var orig=window.applyStep;
+    if(typeof orig!=='function'||orig.__masterPatched) return;
     window.applyStep=function(idx){
-      window.currentStep=idx;   // sync BEFORE calling original
-      _orig(idx);
+      window.currentStep=idx;
+      orig(idx);
     };
     window.applyStep.__masterPatched=true;
   }
 
-  /* ── wire btn-next: clone to strip all listeners, then add ours ─
-     Cloning is the only reliable way to remove both inline onclick
-     AND any previously addEventListener'd handlers. */
+  /* ── Wire btn-next: clone to strip ALL handlers, add ours ───── */
   function _wireNextBtn(){
     var btn=_el('btn-next');
     if(!btn) return;
@@ -3253,27 +3244,35 @@ _MASTER_STEP_CONTROLLER_JS = """\
     });
   }
 
-  /* ── expose block-scoped Gemini vars as window globals ─────────
-     Gemini uses 'var stepsData' inside a <script> block which is
-     NOT automatically on window. We hoist it here. */
+  /* ── Expose block-scoped Gemini vars as window globals ──────── */
   function _exposeGlobals(){
-    try{if(typeof window.stepsData==='undefined'&&typeof stepsData!=='undefined') window.stepsData=stepsData;}catch(e){}
-    try{if(typeof window.totalSteps==='undefined'&&typeof totalSteps!=='undefined') window.totalSteps=totalSteps;}catch(e){}
-    try{if(typeof window.currentStep==='undefined'&&typeof currentStep!=='undefined') window.currentStep=currentStep;}catch(e){}
+    try{if(typeof window.stepsData==='undefined'&&typeof stepsData!=='undefined')window.stepsData=stepsData;}catch(e){}
+    try{if(typeof window.totalSteps==='undefined'&&typeof totalSteps!=='undefined')window.totalSteps=totalSteps;}catch(e){}
+    try{if(typeof window.currentStep==='undefined'&&typeof currentStep!=='undefined')window.currentStep=currentStep;}catch(e){}
   }
 
-  /* ── main init (runs at DOMContentLoaded) ───────────────────── */
+  /* ── Alias ALL show function names to the real trigger ─────────
+     Runs after panel scripts have executed so real fn is defined. */
+  function _aliasAllShowFns(){
+    var fn=_findShowFn();
+    if(!fn){ setTimeout(_aliasAllShowFns,100); return; }
+    // Make every name point to the real function
+    for(var i=0;i<_SHOW_FN_NAMES.length;i++){
+      if(typeof window[_SHOW_FN_NAMES[i]]!=='function'||window[_SHOW_FN_NAMES[i]].__isStub)
+        window[_SHOW_FN_NAMES[i]]=fn;
+    }
+  }
+
+  /* ── Init ───────────────────────────────────────────────────── */
   _onReady(function(){
     _exposeGlobals();
-    // Re-resolve now that stepsData is exposed
     window.totalSteps=_resolveTotalSteps();
     if(typeof window.currentStep!=='number') window.currentStep=0;
     _patchApplyStep();
     _wireNextBtn();
-    // Take full ownership of window.nextStep
     window.nextStep=_nextStep;
-    // Alias hallucinated function names to the real trigger
-    _aliasShowFunctions();
+    // Alias after short delay so panel scripts have had time to run
+    setTimeout(_aliasAllShowFns,50);
   });
 })();
 </script>"""
