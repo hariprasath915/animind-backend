@@ -164,16 +164,19 @@ if _GEMINI_AVAILABLE:
 else:
     _GEMINI_DISABLED_REASON = "No Gemini SDK installed"
 
-MAX_TOK = 18000
+MAX_TOK = 24000          # Increased: Gemini needs more tokens for ~20-25k char HTML
 MAX_TOK_CONCEPT = 16000
 
 # ---------------------------------------------------------------------------
 # Timeout budgets
+# FIX: AnimBuilder was timing out at 150s but Gemini responded at ~185s.
+# Log evidence: "Build stage exceeded 150.0s" then 35s later Gemini replied.
+# New values give enough runway for slow Gemini responses.
 # ---------------------------------------------------------------------------
 STAGE_TIMEOUT_SMALL  = 180.0
-STAGE_TIMEOUT_SCENE  = 150.0
-STAGE_TIMEOUT_BUILD  = 150.0
-PIPELINE_TIMEOUT = max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD + 20.0
+STAGE_TIMEOUT_SCENE  = 180.0
+STAGE_TIMEOUT_BUILD  = 270.0   # was 150s → increased to 270s
+PIPELINE_TIMEOUT = max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD + 30.0
 
 
 def _err_msg(e: BaseException) -> str:
@@ -761,24 +764,133 @@ def inject_step_color_css(html: str) -> str:
 class RecoveryEngine:
     @classmethod
     def fallback_html(cls, question: str, reason: str) -> str:
+        """
+        FIX (v3): Previously returned a plain error card which the pipeline
+        then injected panels into — resulting in panels on an empty page with
+        no SVG, no stepsData, no nextStep(), no applyStep().
+
+        Now returns a minimal but WORKING skeleton:
+        - Has btn-next / btn-prev (so master controller can wire them)
+        - Has stepsData with 6 placeholder steps (so _resolveTotalSteps works)
+        - Has applyStep / nextStep stubs (replaced by master controller)
+        - Has proper window.currentStep / window.totalSteps
+        - Shows the question and a soft "loading" notice to the user
+        - All 9 step dots present (dots 7-9 are inactive placeholders)
+        """
+        import html as html_module
         q_esc = html_module.escape(question[:300])
         r_esc = html_module.escape(reason[:200])
         return f"""<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Animation Error</title>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Animation — {q_esc[:60]}</title>
 <style>
-body{{font-family:'Segoe UI',system-ui,sans-serif;background:#eef2f9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;}}
-.card{{background:#fff;border-radius:16px;padding:32px;max-width:700px;width:100%;box-shadow:0 4px 24px rgba(15,23,42,.10);border:1px solid #e2e8f0;}}
-.err{{font-size:13px;color:#dc2626;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-top:16px;}}
-h2{{color:#0e7490;margin-bottom:8px;font-size:20px;}}
-p{{color:#475569;line-height:1.6;font-size:14px;}}
-</style></head>
-<body><div class="card">
-<h2>&#9888; Animation Generation Failed</h2>
-<p><strong>Question:</strong> {q_esc}</p>
-<p class="err"><strong>Reason:</strong> {r_esc}</p>
-<p>Please wait a moment and try again. If the problem persists, check your GEMINI_API_KEY.</p>
-</div></body></html>"""
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;background:#eef2f9;min-height:100vh;padding:0;}}
+.question-banner{{background:#fff;padding:20px 28px;border-bottom:1px solid #e2e8f0;}}
+.q-label{{font-size:11px;font-weight:700;color:#0891b2;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;}}
+.q-text{{font-size:15px;color:#1e293b;line-height:1.55;font-weight:500;}}
+.dashboard{{background:#fff;border-radius:16px;max-width:900px;margin:24px auto;box-shadow:0 4px 24px rgba(15,23,42,.10);border:1px solid #e2e8f0;overflow:hidden;}}
+.step-indicator{{display:flex;flex-wrap:wrap;gap:6px;padding:20px 24px 12px;justify-content:center;}}
+.step-dot{{padding:5px 13px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;background:#f1f5f9;color:#64748b;border:1.5px solid #e2e8f0;transition:all .25s;}}
+.step-dot.active{{background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;border-color:transparent;}}
+.step-dot.done{{background:#e0f2fe;color:#0369a1;border-color:#bae6fd;}}
+.step-progress-wrap{{height:6px;background:#e2e8f0;margin:0 24px 8px;border-radius:3px;overflow:hidden;}}
+.step-progress-bar{{height:100%;background:linear-gradient(90deg,#0e7490,#06b6d4);border-radius:3px;transition:width .4s ease;width:11.1%;}}
+#step-label{{font-size:12px;font-weight:700;color:#64748b;text-align:center;margin-bottom:14px;}}
+.svg-container{{margin:0 24px 0;border-radius:12px;overflow:hidden;background:#f0f5ff;aspect-ratio:850/478;display:flex;align-items:center;justify-content:center;}}
+.svg-placeholder{{text-align:center;color:#64748b;}}
+.svg-placeholder .icon{{font-size:48px;margin-bottom:12px;opacity:.4;}}
+.svg-placeholder p{{font-size:14px;opacity:.6;}}
+.control-panel{{padding:20px 24px;background:#f8faff;border-top:1px solid #e8eef8;}}
+.info-box{{background:#fff;border:1px solid #dde6f8;border-left:4px solid #0891b2;border-radius:10px;padding:16px 18px;margin-bottom:16px;}}
+#info-title{{font-size:16px;font-weight:900;color:#0f172a;margin-bottom:6px;}}
+#info-desc{{font-size:14px;color:#334155;line-height:1.65;}}
+.badge-row{{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}}
+.badge{{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;}}
+.badge-cyan{{background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;}}
+.action-row{{display:flex;gap:10px;justify-content:flex-end;}}
+.btn-primary{{background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;padding:10px 22px;border-radius:8px;border:none;font-weight:700;cursor:pointer;font-size:14px;}}
+.btn-secondary{{background:transparent;color:#64748b;padding:10px 18px;border-radius:8px;border:1.5px solid #cbd5e1;font-weight:700;cursor:pointer;font-size:14px;}}
+</style>
+</head>
+<body>
+<div class="question-banner">
+  <div class="q-label">Problem Statement</div>
+  <div class="q-text">{q_esc}</div>
+</div>
+<div class="dashboard">
+  <div class="step-indicator" id="step-indicator">
+    <div class="step-dot active" id="dot-step1" onclick="goToStep(0)">Step 1</div>
+    <div class="step-dot" id="dot-step2" onclick="goToStep(1)">Step 2</div>
+    <div class="step-dot" id="dot-step3" onclick="goToStep(2)">Step 3</div>
+    <div class="step-dot" id="dot-step4" onclick="goToStep(3)">Step 4</div>
+    <div class="step-dot" id="dot-step5" onclick="goToStep(4)">Step 5</div>
+    <div class="step-dot" id="dot-step6" onclick="goToStep(5)">Step 6</div>
+    <div class="step-dot" id="dot-step7">Step 7</div>
+    <div class="step-dot" id="dot-step8">Step 8</div>
+    <div class="step-dot" id="dot-step9">Step 9</div>
+  </div>
+  <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar"></div></div>
+  <div id="step-label">Step 1 of 9</div>
+  <div class="svg-container">
+    <div class="svg-placeholder">
+      <div class="icon">⚙️</div>
+      <p>Animation loading…</p>
+    </div>
+  </div>
+  <div class="control-panel">
+    <div class="info-box">
+      <div id="info-title">Setting the Scene</div>
+      <div id="info-desc">Analysing the problem and preparing the animation…</div>
+      <div class="badge-row" id="badge-row"></div>
+    </div>
+    <div class="action-row">
+      <button class="btn-secondary" id="btn-prev" disabled onclick="prevStep()">&#x25C0; Prev</button>
+      <button class="btn-primary"   id="btn-next">Next &#x25B6;</button>
+    </div>
+  </div>
+</div>
+<script>
+var stepsData=[
+  {{title:'Step 1',desc:'Setting the scene.',badges:[]}},
+  {{title:'Step 2',desc:'Identifying given values.',badges:[]}},
+  {{title:'Step 3',desc:'Introducing key concepts.',badges:[]}},
+  {{title:'Step 4',desc:'Applying the method.',badges:[]}},
+  {{title:'Step 5',desc:'Working through the solution.',badges:[]}},
+  {{title:'Step 6',desc:'Final setup — ready for the formula.',badges:[]}}
+];
+window.stepsData=stepsData;
+window.currentStep=0; var currentStep=0;
+window.totalSteps=stepsData.length-1; var totalSteps=window.totalSteps;
+function _el(id){{return document.getElementById(id);}}
+function applyStep(idx){{
+  currentStep=idx; window.currentStep=idx;
+  var bar=_el('step-bar'); if(bar) bar.style.width=((idx+1)/9*100)+'%';
+  var lbl=_el('step-label'); if(lbl) lbl.textContent='Step '+(idx+1)+' of 9';
+  var prev=_el('btn-prev'); if(prev) prev.disabled=(idx===0);
+  var next=_el('btn-next'); if(next) next.textContent=idx===totalSteps?'Step 7: Formula \u25b6':'Next \u25b6';
+  var dots=document.querySelectorAll('.step-dot');
+  dots.forEach(function(d,i){{
+    d.classList.remove('active','done');
+    if(i===idx) d.classList.add('active');
+    else if(i<idx) d.classList.add('done');
+  }});
+  var sd=stepsData[idx]||{{}};
+  var t=_el('info-title'); if(t) t.textContent=sd.title||'Step '+(idx+1);
+  var de=_el('info-desc'); if(de) de.textContent=sd.desc||'';
+}}
+function goToStep(idx){{if(idx>=0&&idx<=totalSteps){{currentStep=idx;applyStep(idx);}}}};
+function prevStep(){{if(currentStep>0){{currentStep--;applyStep(currentStep);}}}};
+window.applyStep=applyStep;
+window.goToStep=goToStep;
+window.prevStep=prevStep;
+applyStep(0);
+</script>
+</body>
+</html>"""
 
 
 # ===========================================================================
@@ -1982,7 +2094,7 @@ def inject_scene6(html: str, gemini_sol: dict, scene_script: dict) -> str:
             html = html + inject_body
     else:
         html = _SCENE7_STYLES + "\n" + scene6_html + "\n" + _SCENE7_JS + html
-    QAnimLogger.ok("Scene7", "Main Formula panel injected (v2 design)")
+    QAnimLogger.ok("Scene6", "Main Formula panel injected (v2 design)")
     return html
 
 
@@ -3536,25 +3648,25 @@ def _detect_scene_count(question: str) -> int:
 
 _ANIMATION_BUILDER_SYSTEM = """You are QAnim HTML Generator v2.0.
 
-Given a JSON scene script and a question, produce a COMPLETE, self-contained HTML file 
+Given a JSON scene script and a question, produce a COMPLETE, self-contained HTML file
 that implements the exact 9-step workflow described below.
 
 ════════════════════════════════════════
-CRITICAL: The HTML must implement the exact same layout as the Convective Heat Loss 
-reference animation (Convective_Heat_Loss_Updated.html). The core structure is:
+STEP STRUCTURE (9 steps total):
+Steps 1-6  → SVG animation steps (you generate these)
+Step 7     → Main Formula panel   (injected by Python — DO NOT build it)
+Step 8     → Substitution panel   (injected by Python — DO NOT build it)
+Step 9     → Final Answer panel   (injected by Python — DO NOT build it)
 
-1. A fixed question banner at the top.
-2. A dashboard card with:
-   - Step indicator row (9 dots numbered 1-9)
-   - Progress bar
-   - SVG animation panel (Steps 1-6 — the scene_script.steps data)
-   - Control panel at bottom:
-     - Info box (step description + badges)
-     - Navigation buttons (Prev / Next)
-3. When "Next" is clicked on the last SVG step (Step 6), the SVG fades out
-   and Scene7 overlay opens (Step 7: Main Formula).
-4. From Scene7, user advances to Scene8 (Step 8: Substitution).
-5. From Scene8, user advances to Scene9 (Step 9: Final Answer).
+SCENE TRIGGER NAMES (EXACT — do not deviate):
+- qanim_showScene6 = opens Step 7 (Main Formula overlay)
+- qanim_showScene7 = opens Step 8 (Substitution overlay)
+- qanim_showScene9 = opens Step 9 (Final Answer overlay)
+
+When the user clicks Next on Step 6 (the last SVG step), call:
+    window.qanim_showScene6()
+This is the ONLY correct function name for the formula trigger.
+════════════════════════════════════════
 
 ════════════════════════════════════════
 COMPLETE HTML STRUCTURE REQUIRED:
@@ -3577,43 +3689,40 @@ COMPLETE HTML STRUCTURE REQUIRED:
 
   <!-- 2. Dashboard Card -->
   <div class="dashboard">
-    <!-- Step Indicator (9 dots) -->
+    <!-- Step Indicator: EXACTLY 9 dots -->
     <div class="step-indicator">
-      <div class="step-dot active" onclick="goToStep(0)">Step 1</div>
-      <div class="step-dot" onclick="goToStep(1)">Step 2</div>
-      ... through Step 9
+      <div class="step-dot active" id="dot-step1" onclick="goToStep(0)">Step 1</div>
+      <div class="step-dot" id="dot-step2" onclick="goToStep(1)">Step 2</div>
+      <div class="step-dot" id="dot-step3" onclick="goToStep(2)">Step 3</div>
+      <div class="step-dot" id="dot-step4" onclick="goToStep(3)">Step 4</div>
+      <div class="step-dot" id="dot-step5" onclick="goToStep(4)">Step 5</div>
+      <div class="step-dot" id="dot-step6" onclick="goToStep(5)">Step 6</div>
+      <div class="step-dot" id="dot-step7">Step 7</div>
+      <div class="step-dot" id="dot-step8">Step 8</div>
+      <div class="step-dot" id="dot-step9">Step 9</div>
     </div>
     <!-- Progress bar -->
     <div class="step-progress-wrap">
       <div class="step-progress-bar" id="step-bar" style="width:11.1%;"></div>
     </div>
-    <!-- Step label -->
     <div id="step-label" style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:14px;text-align:center;">Step 1 of 9</div>
-    
+
     <!-- SVG Animation Area -->
     <div class="svg-container">
       <svg id="main-svg" viewBox="0 0 850 478" xmlns="http://www.w3.org/2000/svg">
-        <!-- ALL SVG layers defined here based on scene_script.svg_components -->
-        <!-- Each layer group has id matching the layer key -->
-        <!-- Initially only layer-frame is visible (opacity 1), others opacity 0 -->
+        <!-- ALL SVG layers go here — one <g id="layer-X"> per svg_component key -->
       </svg>
     </div>
-    
-    <!-- Control Panel (bottom) -->
+
+    <!-- Control Panel -->
     <div class="control-panel">
-      <!-- Info Box -->
       <div class="info-box" id="info-box">
         <h3 id="info-title">Step 1: [title from step 1]</h3>
         <div class="info-desc" id="info-desc">[description from step 1]</div>
-        <div class="badge-row" id="badge-row">
-          <!-- Badges from step 1 -->
-        </div>
+        <div class="badge-row" id="badge-row"></div>
       </div>
-      <!-- Navigation buttons -->
-      <!-- IMPORTANT: btn-next must NOT have an inline onclick attribute.       -->
-      <!-- The injected __nexttrigger_patch__ script wires it via addEventListener -->
-      <!-- so window.nextStep (which handles the scene7 transition) is used.    -->
-      <div class="action-row" style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+      <!-- btn-next: NO onclick attribute — master controller wires it -->
+      <div class="action-row">
         <button class="btn-secondary" id="btn-prev" disabled onclick="prevStep()">&#x25C0; Prev</button>
         <button class="btn-primary" id="btn-next">Next &#x25B6;</button>
       </div>
@@ -3626,153 +3735,144 @@ COMPLETE HTML STRUCTURE REQUIRED:
 CSS REQUIREMENTS (embed in <style>):
 ════════════════════════════════════════
 - body: font -apple-system/'Segoe UI', background: #eef2f9, min-height:100vh
-- .question-banner: white bg, padding 24px 30px, border-bottom 1px solid #e2e8f0
-- .dashboard: background white, border-radius 16px, max-width 900px, margin 0 auto 20px, box-shadow
+- .question-banner: white bg, padding 20px 28px, border-bottom 1px solid #e2e8f0
+- .q-label: font-size 11px, font-weight 700, color #0891b2, uppercase, letter-spacing .08em
+- .dashboard: background white, border-radius 16px, max-width 900px, margin 24px auto, box-shadow
 - .svg-container: border-radius 12px, overflow hidden, aspect-ratio 850/478, background #f0f5ff
 - svg: width 100%, height 100%
-- .step-dot: pill buttons, 9 total, .active has teal gradient background
+- .step-dot: pill buttons, .active has teal gradient background, .done has light-blue tint
 - .step-progress-wrap: height 6px, background #e2e8f0, border-radius 3px
 - .step-progress-bar: height 100%, transition width .4s, background linear-gradient(teal→cyan)
 - .control-panel: padding 20px 24px, background #f8faff, border-top 1px solid #e8eef8
-- .info-box: white bg, border 1px solid #dde6f8, border-left 4px solid #0891b2, border-radius 10px, padding 18px 20px
-- .info-box h3: font-size 18px, font-weight 900, color #0f172a
-- .info-desc: font-size 14px, color #334155, line-height 1.7
-- .badge-row: display flex, flex-wrap wrap, gap 8px, margin-top 12px
+- .info-box: white bg, border-left 4px solid #0891b2, border-radius 10px, padding 18px 20px
 - .badge: padding 5px 12px, border-radius 20px, font-size 12px, font-weight 700
-- .badge.cyan: background #e0f2fe, color #0369a1, border 1px solid #bae6fd
-- .badge.orange: background #fff7ed, color #c2410c, border 1px solid #fed7aa
-- .badge.green: background #f0fdf4, color #15803d, border 1px solid #bbf7d0
-- .btn-primary: background linear-gradient(135deg,#0e7490,#0891b2), color white, padding 11px 24px, border-radius 8px, border none, font-weight 700, cursor pointer
-- .btn-secondary: same but transparent bg, color #64748b, border 1px solid #cbd5e1
-- SVG layer transitions: use CSS: #layer-X { transition: opacity 0.5s ease; }
+- .badge-cyan: background #e0f2fe, color #0369a1
+- .badge-orange: background #fff7ed, color #c2410c
+- .badge-green: background #f0fdf4, color #15803d
+- .btn-primary: background linear-gradient(135deg,#0e7490,#0891b2), color white, padding 11px 24px
+- .btn-secondary: transparent bg, color #64748b, border 1px solid #cbd5e1
 
 ════════════════════════════════════════
-JAVASCRIPT REQUIREMENTS:
+JAVASCRIPT — COPY THIS EXACTLY:
 ════════════════════════════════════════
 
-var stepsData = [/* Array of ALL step objects from scene_script.steps */];
-window.currentStep = 0;   // MUST be on window — other scripts read window.currentStep
-var currentStep = window.currentStep;
-window.totalSteps = stepsData.length - 1; // MUST be on window — other scripts read window.totalSteps
-var totalSteps = window.totalSteps;
+<script>
+// ── Step data (fill in from scene_script.steps) ──────────────────────────
+var stepsData = [
+  // One object per step. MUST match scene_script.steps exactly.
+  { title: "Step 1: ...", desc: "...", badges: ["..."], layerOpacities: { "layer-frame": 1 }, blurOp: 0 },
+  // ... repeat for each step
+];
 
+// ── Globals MUST be on window ────────────────────────────────────────────
+window.stepsData    = stepsData;
+window.currentStep  = 0;  var currentStep  = 0;
+window.totalSteps   = stepsData.length - 1;  var totalSteps = window.totalSteps;
+
+// ── applyStep: call this on every navigation ─────────────────────────────
 function applyStep(idx) {
-  // CRITICAL: sync window.currentStep on EVERY call
   currentStep = idx;
-  window.currentStep = idx;
-  // 1. Update step dots (active class on current, done class on past)
-  // 2. Update progress bar width: (idx+1)/9 * 100 + '%'  (9 = total steps including scenes 7,8,9)
-  // 3. Update step label text: 'Step N of 9'
-  // 4. Show/hide SVG layers based on stepsData[idx].components_visible
-  //    - Layer in components_visible: opacity = 1
-  //    - Layer NOT in components_visible: opacity = (blur_background ? 0.38 : 0)
-  //    - Layer in components_new: add a subtle scale/glow animation
-  // 5. Update info-box: title, description, badges
-  // 6. Update body data-step attribute for CSS theming
-  // 7. Update Prev button disabled state
-  // 8. If idx === totalSteps (last SVG step), change Next button text to 'Step 7: Formula →'
-  //    Otherwise Next button text = 'Next ▶'
+  window.currentStep = idx;  // CRITICAL: keep window in sync
+
+  // Progress bar: tracks all 9 steps
+  document.getElementById('step-bar').style.width = ((idx+1)/9*100) + '%';
+  document.getElementById('step-label').textContent = 'Step ' + (idx+1) + ' of 9';
+
+  // Step dots
+  document.querySelectorAll('.step-dot').forEach(function(d, i) {
+    d.classList.remove('active', 'done');
+    if (i === idx) d.classList.add('active');
+    else if (i < idx) d.classList.add('done');
+  });
+
+  // Info box
+  var sd = stepsData[idx] || {};
+  document.getElementById('info-title').textContent = sd.title || '';
+  document.getElementById('info-desc').textContent  = sd.desc  || '';
+
+  // SVG layer visibility
+  var lo = sd.layerOpacities || {};
+  Object.keys(lo).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.opacity = lo[id];
+  });
+
+  // Prev button
+  document.getElementById('btn-prev').disabled = (idx === 0);
+
+  // Next button label
+  var nb = document.getElementById('btn-next');
+  if (nb) nb.textContent = (idx === totalSteps) ? 'Step 7: Formula \u25b6' : 'Next \u25b6';
+
   document.body.setAttribute('data-step', idx);
 }
 
+// ── nextStep: DO NOT add onclick to btn-next — master controller wires it ─
 function nextStep() {
   if (currentStep < totalSteps) {
     currentStep++;
+    window.currentStep = currentStep;
     applyStep(currentStep);
   } else {
-    // At last SVG step — trigger Scene 6
-    triggerScene7();
+    // Trigger Step 7: Main Formula — ALWAYS use qanim_showScene6
+    if (typeof window.qanim_showScene6 === 'function') {
+      window.qanim_showScene6();
+    }
   }
 }
 
 function prevStep() {
-  if (currentStep > 0) {
-    currentStep--;
-    applyStep(currentStep);
-  }
+  if (currentStep > 0) { currentStep--; window.currentStep = currentStep; applyStep(currentStep); }
 }
 
 function goToStep(idx) {
-  if (idx <= totalSteps) {
-    currentStep = idx;
-    applyStep(idx);
-  }
+  if (idx >= 0 && idx <= totalSteps) { currentStep = idx; window.currentStep = idx; applyStep(idx); }
 }
 
-function triggerScene7() {
-  var svgCont = document.querySelector('.svg-container');
-  if (svgCont) {
-    svgCont.style.transition = 'opacity .45s ease';
-    svgCont.style.opacity = '0';
-  }
-  setTimeout(function() {
-    if (typeof window.qanim_showScene6 === 'function') window.qanim_showScene6();
-  }, 460);
-}
+window.nextStep  = nextStep;
+window.prevStep  = prevStep;
+window.applyStep = applyStep;
+window.goToStep  = goToStep;
 
-// Initialize on load
-window.addEventListener('DOMContentLoaded', function() {
-  applyStep(0);
-});
+window.addEventListener('DOMContentLoaded', function() { applyStep(0); });
+</script>
 
 ════════════════════════════════════════
 SVG SCENE DESIGN RULES:
 ════════════════════════════════════════
 
-For each scene_script.svg_components entry, create a <g id="[key]"> group in the SVG.
+SVG viewBox: 0 0 850 478. One <g id="[key]"> per svg_component key.
 
-SVG viewBox is 0 0 850 478. Design a realistic, detailed physical scene specific to the problem domain:
+Layer visibility rules:
+- layer-frame: opacity="1" (always visible)
+- all other layers: opacity="0" (revealed by JS via applyStep)
+- Add CSS: #layer-X { transition: opacity 0.5s ease; } for each layer
 
-- HEAT TRANSFER problems: Show a plate/wall, temperature arrows, fluid flow, gradient colors
-- CIRCUIT problems: Show circuit elements, wires, voltage/current labels
-- FLUID MECHANICS: Show pipes, flow arrows, pressure gauges
-- MECHANICS: Show gears, forces, motion arrows
-- CHEMISTRY: Show beakers, molecules, reaction arrows
+Make each layer visually RICH and domain-specific:
+- MECHANICS/GEARS: Show detailed gear teeth, rotation arrows, speed labels
+- HEAT TRANSFER: Show plate, temperature arrows, fluid flow, colour gradients
+- CIRCUITS: Show circuit elements, wires, V/I labels
+- FLUID: Show pipes, flow arrows, pressure gauges
+- PROJECTILE/MOTION: Show trajectory, velocity vectors, height labels
 
-EVERY layer group must have initial opacity set correctly in the SVG element:
-- layer-frame: opacity="1" (always visible from start)
-- all other layers: opacity="0" (revealed by JS as steps advance)
-
-Each layer must contain RICH SVG content:
-- Gradients, patterns, realistic shapes
-- Text labels with symbols and values
-- Callout boxes for given data (rounded rects + text)
-- Arrows and flow indicators
-- Color-coded to match the accent_color from scene_script.svg_components
+Step 6 (last SVG step) must show ALL layers + two callout boxes:
+  LEFT callout: all given parameters with values
+  RIGHT callout: the unknown quantity (marked with ?)
 
 ═══════════════════════════
-IMPORTANT CONSTRAINTS:
+CONSTRAINTS (MUST FOLLOW):
 ═══════════════════════════
-1. The HTML must be COMPLETELY SELF-CONTAINED (no external dependencies except MathJax CDN if needed).
-2. The stepsData array MUST contain EXACTLY the steps from scene_script.steps — no more, no fewer.
-3. ALL SVG layer IDs must match the keys in scene_script.svg_components.
-4. var totalSteps MUST equal stepsData.length - 1  (i.e. the last index, NOT the count).
-   If stepsData has 6 entries, totalSteps = 5. If 7 entries, totalSteps = 6. NEVER set totalSteps = stepsData.length.
-5. The step indicator must show exactly 9 dots (Steps 1-9), where dots 7-9 represent the formula/substitution/answer scenes.
-6. Do NOT pre-build Scene7/8/9 overlays in this HTML — they will be injected by the Python pipeline.
-7. btn-next MUST NOT have an inline onclick attribute. Write it as:
-      <button class="btn-primary" id="btn-next">Next ▶</button>
-   The Python pipeline wires it via addEventListener. Adding onclick="nextStep()" will BREAK Steps 7/8/9.
-8. The step-bar progress tracks all 9 steps: width = (currentStep+1)/9 * 100 + '%'
-9. In nextStep(), ALWAYS update currentStep BEFORE calling applyStep:
-      function nextStep() {
-        if (currentStep < totalSteps) {
-          currentStep++;
-          window.currentStep = currentStep;
-          applyStep(currentStep);
-        } else {
-          if (typeof window.qanim_showScene6 === 'function') window.qanim_showScene6();
-        }
-      }
-   CRITICAL: use  currentStep < totalSteps  (NOT < totalSteps-1).
-   CRITICAL: ALWAYS call window.qanim_showScene6() — NEVER qanim_showScene7/8/9 — only qanim_showScene6 is the correct formula trigger.
-   CRITICAL: ALWAYS set window.currentStep = currentStep inside applyStep AND nextStep.
-10. In applyStep(idx), ALWAYS sync window.currentStep:
-      function applyStep(idx) {
-        currentStep = idx;
-        window.currentStep = idx;
-        /* ... rest of your applyStep logic ... */
-      }
+1. Completely self-contained HTML — no external CSS/JS except MathJax CDN if needed.
+2. stepsData MUST have EXACTLY scene_script.steps entries — no more, no fewer.
+3. ALL SVG layer IDs MUST match scene_script.svg_components keys exactly.
+4. window.totalSteps = stepsData.length - 1  (last index, not count).
+5. Step indicator has EXACTLY 9 dots. Dots 7-9 are inactive placeholders.
+6. Do NOT build Scene6/7/9 overlays — Python injects them.
+7. btn-next MUST have NO onclick attribute:
+      <button class="btn-primary" id="btn-next">Next &#x25B6;</button>
+8. Progress bar width = (currentStep+1)/9 * 100 + '%'
+9. ALWAYS call window.qanim_showScene6() at last SVG step — NEVER scene7/8/9.
+10. ALWAYS set window.currentStep = idx inside applyStep and nextStep.
 
 Return ONLY the complete HTML — no preamble, no explanation, no markdown fences."""
 
@@ -3785,23 +3885,24 @@ class GeminiAnimationBuilder:
             return RecoveryEngine.fallback_html(question, "Gemini client not available")
         MAX_ATTEMPTS = 3
         last_err = ""
-        last_raw = ""
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 QAnimLogger.info("AnimBuilder", f"Build attempt {attempt}/{MAX_ATTEMPTS}...")
                 prompt = cls._build_prompt(question, scene_script, sol, topic)
-                raw = GeminiSolutionGenerator._call_gemini(prompt, _ANIMATION_BUILDER_SYSTEM, max_tokens=MAX_TOK)
-                last_raw = raw
+                raw = GeminiSolutionGenerator._call_gemini(
+                    prompt, _ANIMATION_BUILDER_SYSTEM, max_tokens=MAX_TOK
+                )
                 raw = raw.strip()
                 raw = re.sub(r'^```(?:html)?\s*\n?', '', raw, flags=re.IGNORECASE)
                 raw = re.sub(r'\n?```\s*$', '', raw)
                 raw = DocumentSkeletonNormalizer.normalize(raw)
+                # Validation
                 if 'stepsData' not in raw:
                     raise ValueError("Missing stepsData in generated HTML")
                 if '<svg' not in raw.lower():
-                    raise ValueError("Missing <svg> tag in generated HTML")
-                if len(raw) < 3000:
-                    raise ValueError(f"HTML too short ({len(raw)} chars)")
+                    raise ValueError("Missing <svg> in generated HTML")
+                if len(raw) < 5000:
+                    raise ValueError(f"HTML too short: {len(raw)} chars")
                 QAnimLogger.ok("AnimBuilder", f"HTML generated: {len(raw)} chars (attempt {attempt})")
                 return raw
             except Exception as e:
@@ -3809,9 +3910,11 @@ class GeminiAnimationBuilder:
                 QAnimLogger.warn("AnimBuilder", f"Attempt {attempt} failed: {last_err}")
                 if attempt < MAX_ATTEMPTS:
                     import time as _t
-                    _t.sleep(20 * attempt)
+                    _t.sleep(15 * attempt)
                     continue
-        QAnimLogger.error("AnimBuilder", f"All attempts failed: {last_err}")
+        # All attempts failed — return working fallback skeleton (not an error page)
+        # Stage C will still inject formula/substitution/answer panels into it
+        QAnimLogger.error("AnimBuilder", f"All {MAX_ATTEMPTS} attempts failed — using fallback skeleton")
         return RecoveryEngine.fallback_html(question, f"HTML generation failed: {last_err}")
 
     @classmethod
