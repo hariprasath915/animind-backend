@@ -215,7 +215,49 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
     )
     vault = vault_res.data or []
 
-    print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(vault)} vault — user={current_user['email']!r}")
+    # ── 4. Subject Units (File Mode — Unit/Lesson containers) ────
+    units_res = (
+        supabase.table("subject_units")
+        .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
+        .eq("user_id", user_id)
+        .order("sort_order")
+        .execute()
+    )
+    subject_units = units_res.data or []
+    unit_ids = [u["id"] for u in subject_units]
+
+    # ── 5. Unit Lessons (library lesson IDs per unit) ─────────────
+    unit_lesson_rows = []
+    if unit_ids:
+        ul_res = (
+            supabase.table("unit_lessons")
+            .select("unit_id, lesson_id, sort_order")
+            .eq("user_id", user_id)
+            .in_("unit_id", unit_ids)
+            .order("sort_order")
+            .execute()
+        )
+        unit_lesson_rows = ul_res.data or []
+
+    # Build lessons_by_unit map  { unit_id → [lesson_id, …] }
+    lessons_by_unit: dict = {}
+    for row in unit_lesson_rows:
+        lessons_by_unit.setdefault(row["unit_id"], []).append(row["lesson_id"])
+
+    # Attach lessons list to each unit row
+    for u in subject_units:
+        u["lesson_ids"] = lessons_by_unit.get(u["id"], [])
+
+    # Build units_by_subject map  { subject_id → [unit, …] }
+    units_by_subject: dict = {}
+    for u in subject_units:
+        units_by_subject.setdefault(u["subject_id"], []).append(u)
+
+    # Attach units to the subjects tree (new field: s["units"])
+    for s in subjects_tree:
+        s["units"] = units_by_subject.get(s["id"], [])
+
+    print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(subject_units)} units, {len(vault)} vault — user={current_user['email']!r}")
     return {
         "items":    items,
         "subjects": subjects_tree,
@@ -606,6 +648,177 @@ def delete_co(
     supabase.table("course_outcomes").delete().eq("id", co_id).eq("user_id", current_user["id"]).execute()
     print(f"[SYNC] 🗑 CO deleted: {co_id} user={current_user['email']!r}")
     return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════
+# SUBJECT UNITS  —  Unit/Lesson containers inside a Subject Folder
+# ════════════════════════════════════════════════════════════════
+
+class UnitCreate(BaseModel):
+    subject_id:  str
+    unit_type:   str = Field(default="unit", pattern="^(unit|lesson)$")
+    unit_number: int = Field(default=1, ge=1)
+    name:        str = Field(..., min_length=1, max_length=100)
+    sort_order:  int = Field(default=0)
+
+
+class UnitUpdate(BaseModel):
+    name:        Optional[str] = None
+    unit_type:   Optional[str] = None
+    unit_number: Optional[int] = None
+    sort_order:  Optional[int] = None
+
+
+@router.get("/units", status_code=200)
+def get_units(
+    subject_id:   str,
+    current_user: dict = Depends(get_current_user),
+):
+    """List all units for a given subject_id, ordered by sort_order."""
+    supabase = _sb(current_user)
+    res = (
+        supabase.table("subject_units")
+        .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
+        .eq("subject_id", subject_id)
+        .eq("user_id", current_user["id"])
+        .order("sort_order")
+        .execute()
+    )
+    units = res.data or []
+    return {"units": units}
+
+
+@router.post("/units", status_code=201)
+def create_unit(
+    body:         UnitCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a Unit or Lesson container inside a Subject Folder."""
+    _ensure_user_row(current_user)
+    supabase = _sb(current_user)
+    row = {
+        "subject_id":  body.subject_id,
+        "user_id":     current_user["id"],
+        "unit_type":   body.unit_type,
+        "unit_number": body.unit_number,
+        "name":        body.name.strip(),
+        "sort_order":  body.sort_order,
+    }
+    res  = supabase.table("subject_units").insert(row).execute()
+    unit = res.data[0] if res.data else {}
+    print(f"[SYNC] ✅ Unit created: {body.name!r} subject={body.subject_id!r} user={current_user['email']!r}")
+    return {"success": True, "unit": unit}
+
+
+@router.put("/units/{unit_id}", status_code=200)
+def update_unit(
+    unit_id:      str,
+    body:         UnitUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = _sb(current_user)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        return {"success": True}
+    res = (
+        supabase.table("subject_units")
+        .update(patch)
+        .eq("id", unit_id)
+        .eq("user_id", current_user["id"])
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Unit not found.")
+    return {"success": True, "unit": res.data[0]}
+
+
+@router.delete("/units/{unit_id}", status_code=200)
+def delete_unit(
+    unit_id:      str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete unit. unit_lessons rows cascade-delete automatically."""
+    supabase = _sb(current_user)
+    supabase.table("subject_units").delete().eq("id", unit_id).eq("user_id", current_user["id"]).execute()
+    print(f"[SYNC] 🗑 Unit deleted: {unit_id} user={current_user['email']!r}")
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════
+# UNIT LESSONS  —  library lesson IDs linked to a Unit
+# ════════════════════════════════════════════════════════════════
+
+class UnitLessonsSave(BaseModel):
+    unit_id:    str
+    lesson_ids: List[str]   # full replacement: old links not in list are removed
+
+
+@router.get("/unit-lessons/{unit_id}", status_code=200)
+def get_unit_lessons(
+    unit_id:      str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Return all lesson IDs saved to a given unit."""
+    supabase = _sb(current_user)
+    res = (
+        supabase.table("unit_lessons")
+        .select("id, lesson_id, sort_order")
+        .eq("unit_id", unit_id)
+        .eq("user_id", current_user["id"])
+        .order("sort_order")
+        .execute()
+    )
+    rows = res.data or []
+    return {"unit_id": unit_id, "lesson_ids": [r["lesson_id"] for r in rows], "rows": rows}
+
+
+@router.post("/unit-lessons", status_code=200)
+def save_unit_lessons(
+    body:         UnitLessonsSave,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Replace all lesson links for a unit with the supplied lesson_ids list.
+    Deletes rows not in the list, inserts missing ones (upsert-by-replace).
+    """
+    _ensure_user_row(current_user)
+    supabase  = _sb(current_user)
+    user_id   = current_user["id"]
+    unit_id   = body.unit_id
+    lesson_ids = body.lesson_ids
+
+    # 1. Fetch current links
+    current_res = (
+        supabase.table("unit_lessons")
+        .select("id, lesson_id")
+        .eq("unit_id", unit_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    current_rows = current_res.data or []
+    current_ids  = {r["lesson_id"] for r in current_rows}
+    new_ids      = set(lesson_ids)
+
+    # 2. Delete removed lessons
+    to_delete = current_ids - new_ids
+    if to_delete:
+        supabase.table("unit_lessons").delete()\
+            .eq("unit_id", unit_id)\
+            .eq("user_id", user_id)\
+            .in_("lesson_id", list(to_delete))\
+            .execute()
+
+    # 3. Insert new lessons
+    to_insert = new_ids - current_ids
+    if to_insert:
+        rows = [
+            {"unit_id": unit_id, "lesson_id": lid, "user_id": user_id, "sort_order": lesson_ids.index(lid)}
+            for lid in to_insert
+        ]
+        supabase.table("unit_lessons").insert(rows).execute()
+
+    print(f"[SYNC] ✅ Unit lessons saved: unit={unit_id} count={len(new_ids)} user={current_user['email']!r}")
+    return {"success": True, "unit_id": unit_id, "count": len(new_ids)}
 
 
 # ════════════════════════════════════════════════════════════════
