@@ -10,20 +10,19 @@
 ║    • tissues.html            (tabs, comparison table, glossary)      ║
 ║                                                                      ║
 ║  SECTION PIPELINE (ordered):                                         ║
-║   §1  hook          — hero gradient card + GLOSSARY_JSON embed       ║
-║   §2  definition    — def cards + learning objectives                ║
-║   §3  fundamentals  — CTA card + glossary modal trigger              ║
-║   §4  subtopics     — auto-fill card grid with keywords              ║
-║   §5  types         — flowchart + type comparison cards              ║
-║   §6  deep_sections — per-type deep dive (SVG / process visual)      ║
-║   §7  visual        — toggle-based interactive animated diagram      ║
-║   §8  working       — stepper / timeline process walkthrough         ║
-║   §9  comparison    — side-by-side feature table                     ║
-║  §10  activities    — 3-tab game area (scenario, matcher, MCQ)       ║
-║  §11  funfacts      — click-to-reveal fact cards                     ║
-║  §12  revision      — quick revision blocks + key equations          ║
-║  §13  quiz          — 10-Q quiz: progress bar, explanation, result   ║
-║  [+§14 formulas, §15 derivation for mathematical topics]            ║
+║   §1  hook             — hero gradient card + GLOSSARY_JSON embed    ║
+║   §2  definition       — def cards + learning objectives             ║
+║   §3  fundamentals     — CTA card + glossary modal trigger           ║
+║   §4  subtopics        — auto-fill card grid with keywords           ║
+║   §5  types            — flowchart + type comparison cards           ║
+║   §6  formula_derivation — formulas + derivation (conditional)      ║
+║   §7  visual           — toggle-based interactive animated diagram   ║
+║   §8  working          — stepper / timeline process walkthrough      ║
+║   §9  comparison       — side-by-side feature table                  ║
+║  §10  activities       — 3-tab game area (scenario, matcher, MCQ)    ║
+║  §11  funfacts         — click-to-reveal fact cards                  ║
+║  §12  revision         — quick revision blocks + key equations       ║
+║  §13  quiz             — 10-Q quiz: progress bar, explanation, result║
 ║                                                                      ║
 ║  CSS TOKENS (exact reference set):                                   ║
 ║   --primary, --secondary/--accent, --bg, --bg-card, --text,         ║
@@ -80,41 +79,38 @@ BASE_SECTIONS: List[str] = [
     "fundamentals",   # §3  CTA card + glossary modal trigger
     "subtopics",      # §4  Subtopic card grid with keyword chips
     "types",          # §5  Flowchart + type comparison cards
-    "deep_sections",  # §6  Per-type deep-dive (process visual, SVG)
-    "visual",         # §7  Toggle-based interactive animated diagram
-    "working",        # §8  Stepper / timeline working process
-    "comparison",     # §9  Side-by-side comparison table
-    "activities",     # §10 3-tab game area (scenario MCQ, matcher, challenge)
-    "funfacts",       # §11 Click-to-reveal fun-fact cards
-    "revision",       # §12 Quick revision blocks + equations
-    "quiz",           # §13 10-Q quiz with progress bar, explanation, result card
+    "visual",         # §6  Toggle-based interactive animated diagram
+    "working",        # §7  Stepper / timeline working process
+    "comparison",     # §8  Side-by-side comparison table
+    "activities",     # §9  3-tab game area (scenario MCQ, matcher, challenge)
+    "funfacts",       # §10 Click-to-reveal fun-fact cards
+    "revision",       # §11 Quick revision blocks + equations
+    "quiz",           # §12 10-Q quiz with progress bar, explanation, result card
 ]
 
-CONDITIONAL_SECTIONS: List[str] = ["formulas", "derivation"]
+CONDITIONAL_SECTIONS: List[str] = ["formula_derivation"]
 
 ORDERED_SECTIONS: List[str] = [
     "hook", "definition", "fundamentals", "subtopics", "types",
-    "deep_sections", "formulas", "derivation", "visual", "working",
+    "formula_derivation", "visual", "working",
     "comparison", "activities", "funfacts", "revision", "quiz",
 ]
 
 # Model assignment: heavy creative sections → Sonnet, lightweight → Haiku
 SECTION_MODEL_MAP: Dict[str, str] = {
-    "hook":          MODEL_SONNET,
-    "definition":    MODEL_SONNET,
-    "fundamentals":  MODEL_HAIKU,
-    "subtopics":     MODEL_SONNET,
-    "types":         MODEL_SONNET,
-    "deep_sections": MODEL_SONNET,
-    "formulas":      MODEL_SONNET,
-    "derivation":    MODEL_SONNET,
-    "visual":        MODEL_SONNET,
-    "working":       MODEL_SONNET,
-    "comparison":    MODEL_HAIKU,
-    "activities":    MODEL_SONNET,
-    "funfacts":      MODEL_HAIKU,
-    "revision":      MODEL_HAIKU,
-    "quiz":          MODEL_HAIKU,
+    "hook":               MODEL_SONNET,
+    "definition":         MODEL_SONNET,
+    "fundamentals":       MODEL_HAIKU,
+    "subtopics":          MODEL_SONNET,
+    "types":              MODEL_SONNET,
+    "formula_derivation": MODEL_SONNET,
+    "visual":             MODEL_SONNET,
+    "working":            MODEL_SONNET,
+    "comparison":         MODEL_HAIKU,
+    "activities":         MODEL_SONNET,
+    "funfacts":           MODEL_HAIKU,
+    "revision":           MODEL_HAIKU,
+    "quiz":               MODEL_HAIKU,
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -366,69 +362,47 @@ Return ONLY:
 Replace ALL placeholders with REAL content. OUTPUT NOTHING after </section>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §6  DEEP SECTIONS
+# §6  INTERACTIVE PHYSICS SIMULATION
 # ─────────────────────────────────────────────────────────────────
-"deep_sections": f"""Write DEEP DETAIL sections for the 2 main types of: "{T}"
-{focus}
-Rules: max 3 short sentences per type. Use simple words. Show a mini process flow (3-4 steps).
+"visual": f"""Build a RICH INTERACTIVE ANIMATED SIMULATION for: "{T}"
 
-Return ONLY (2 sections, no outer wrapper):
+Topic subject: {(classification or {{}}).get('subject', 'Science')}
+Topic category: {(classification or {{}}).get('category', 'conceptual')}
+Primary aspect: {(classification or {{}}).get('label_a', 'Type A')}
+Secondary aspect: {(classification or {{}}).get('label_b', 'Type B')}
 
-<section id="type-a">
-  <h2 class="section-title" style="color:var(--color-a);"><span class="icon">[emoji]</span> [Type A name]</h2>
-  <div class="card" style="border-top:4px solid var(--color-a);">
-    <p>[What Type A is. One real-world example. Why it matters. Max 3 sentences total.]</p>
-    <div style="background:var(--color-a-light);border-radius:var(--radius-sm);padding:14px;margin:12px 0;display:flex;flex-direction:column;align-items:center;gap:5px;">
-      <div style="background:var(--color-a);color:#fff;border-radius:var(--radius-sm);padding:7px 20px;font-weight:700;">[Step 1 — short label]</div>
-      <div style="color:var(--color-a);font-size:1.4rem;">↓</div>
-      <div style="background:var(--color-a);color:#fff;border-radius:var(--radius-sm);padding:7px 20px;font-weight:700;">[Step 2]</div>
-      <div style="color:var(--color-a);font-size:1.4rem;">↓</div>
-      <div style="background:#16a34a;color:#fff;border-radius:var(--radius-sm);padding:7px 20px;font-weight:700;">⚡ [Output/product]</div>
-    </div>
-    <div style="background:#fffbeb;border:2px solid #fcd34d;border-radius:var(--radius-sm);padding:12px 16px;display:flex;align-items:center;gap:12px;">
-      <span style="font-size:2rem;">[emoji]</span>
-      <div><strong>[Key component name]</strong> — [One sentence: what it does here.]</div>
-    </div>
-  </div>
-</section>
+This is the star feature of the page. Build a simulation that is 100% specific to "{T}" — not a generic physics sandbox.
 
-<section id="type-b">
-  [Same structure for Type B using var(--color-b) colors]
-</section>
-
-Replace ALL placeholders. OUTPUT NOTHING after final </section>.""",
-
-# ─────────────────────────────────────────────────────────────────
-# §7  INTERACTIVE PHYSICS SIMULATION
-# ─────────────────────────────────────────────────────────────────
-"visual": f"""Build a RICH INTERACTIVE PHYSICS SIMULATION for: "{T}"
-
-This is the star feature of the page. Think: a real physics sandbox the student can play with.
-
-WHAT TO BUILD — a canvas-based simulation with:
+WHAT TO BUILD — a canvas-based interactive animation with:
 
 1. SCENARIO SWITCHER (tabs across top):
-   Pick 2-3 real scenarios relevant to "{T}". Examples for gravitation: "Drop from Building", "Earth vs Moon", "Orbit Simulator". For respiration: "Cell Animation", "ATP Factory". For waves: "Wave Tank", "Sound vs Light". Choose scenarios that FIT "{T}" best.
+   Design 2-3 scenarios that are DIRECTLY about "{T}" and its specific concepts.
+   The scenarios MUST visually demonstrate processes or properties unique to "{T}".
+   DO NOT pick generic scenarios — every scenario must be unmistakably about "{T}".
+   Example: For "Newton's Second Law" → "Force & Acceleration", "Mass Comparison", "Real-World Push".
+   Example: For "Aerobic Respiration" → "Glucose Breakdown", "ATP Factory", "Cell Breathing".
+   Example: For "Gravitation" → "Free Fall", "Orbital Motion", "Weight on Planets".
+   Example: For "Resistance" → "Wire Resistance Visualizer", "Series vs Parallel", "Ohm's Law Live".
 
 2. EACH SCENARIO must have:
-   • An HTML5 <canvas> (600×340px) with real physics animation using requestAnimationFrame
-   • Moving objects (falling balls, orbiting planets, bouncing particles, waves, etc.)
-   • SLIDERS the student can drag to change physics values in real time:
-     — at least 2 sliders (e.g. mass, gravity, speed, angle, frequency)
-     — slider change instantly affects the animation
-   • A live readout panel showing calculated values (e.g. "Time to fall: 2.3s", "Force: 49N")
+   • An HTML5 <canvas> (600×340px) with real animated visuals using requestAnimationFrame
+   • Moving or animated objects that represent concepts from "{T}"
+   • SLIDERS the student can drag to change values in real time:
+     — at least 2 sliders with labels relevant to "{T}" (e.g. mass, gravity, speed, resistance, frequency)
+     — slider changes must instantly affect the animation
+   • A live readout panel showing calculated values relevant to "{T}" (e.g. "Force: 49N", "Current: 2A")
    • A RESET button and a PLAY/PAUSE button
 
-3. PHYSICS must be REAL and ACCURATE:
-   — Use actual formulas (F=ma, v=u+at, s=½gt², etc.)
+3. SCIENCE must be REAL and ACCURATE for "{T}":
+   — Use actual formulas relevant to "{T}" (e.g. F=ma, V=IR, s=½gt², etc.)
    — Show formula used in a small box below canvas
    — Numbers must update live as sliders move
 
 4. VISUAL QUALITY:
    — Draw objects with gradients (ctx.createRadialGradient or linearGradient)
-   — Add trails, glow effects, or particle sparks where appropriate
+   — Add trails, glow effects, or particle animations where appropriate
    — Grid lines or reference lines on canvas (subtle, gray)
-   — Color-coded labels directly on canvas (ctx.fillText)
+   — Color-coded labels directly on canvas (ctx.fillText) using --color-a and --color-b values
    — Smooth 60fps animation
 
 5. JAVASCRIPT RULES:
@@ -442,9 +416,9 @@ Return ONLY the complete section HTML + <style> + <script>:
 <section id="visual">
   <h2 class="section-title"><span class="icon">🎮</span> Interactive Simulation — {T}</h2>
   <div class="card" style="padding:16px;">
-    [scenario tab buttons]
-    [canvas + controls for scenario 1]
-    [canvas + controls for scenario 2]
+    [scenario tab buttons — names MUST be specific to "{T}"]
+    [canvas + controls for scenario 1 — fully specific to "{T}"]
+    [canvas + controls for scenario 2 — fully specific to "{T}"]
     [canvas + controls for scenario 3 if applicable]
   </div>
 </section>
@@ -452,11 +426,12 @@ Return ONLY the complete section HTML + <style> + <script>:
   [All simulation-specific CSS here — canvas border, slider styles, readout panel, tab buttons]
 </style>
 <script>
-  [Complete working simulation JS — real physics, real animation, real sliders]
+  [Complete working simulation JS — real animation, real sliders, all specific to "{T}"]
 </script>
 
-CRITICAL: The simulation must actually WORK. Write complete, runnable JavaScript.
-No placeholder comments like "// add physics here". Write the full physics loop.
+CRITICAL: The simulation must actually WORK and must be about "{T}" specifically.
+Write complete, runnable JavaScript. No placeholder comments like "// add physics here".
+Write the full animation loop with real logic.
 OUTPUT NOTHING after </script>.""",
 
 # ─────────────────────────────────────────────────────────────────
@@ -734,67 +709,86 @@ Set ans (0–3) to the correct answer index. Questions max 15 words each.
 OUTPUT NOTHING after </script>.""",
 
 # ─────────────────────────────────────────────────────────────────
-# §14  FORMULAS  (conditional: mathematical topics)
+# §6  FORMULA / DERIVATION  (conditional: topics that need formula
+#     and/or derivation as per CBSE textbooks)
 # ─────────────────────────────────────────────────────────────────
-"formulas": f"""Write the FORMULAS section for: "{T}"
+"formula_derivation": f"""Write the FORMULA / DERIVATION section for: "{T}"
 {focus}
-Rules: 3-4 formulas max. Each formula = equation box + short symbol table (no sentences).
+
+Topic classification:
+  needs_formula    = {(classification or {{}}).get('needs_formula', False)}
+  needs_derivation = {(classification or {{}}).get('needs_derivation', False)}
+
+CBSE RULES — follow exactly:
+  • If needs_formula=true AND needs_derivation=true:
+      Generate BOTH a Key Formulas block AND a Step-by-Step Derivation block inside ONE section.
+      Example topic: "Newton's Second Law" → show F=ma formula block, then derive it step by step.
+  • If needs_formula=true AND needs_derivation=false:
+      Generate ONLY the Key Formulas block. No derivation.
+      Example topic: "Resistance" → show R=V/I and related formulae only.
+  • If needs_formula=false AND needs_derivation=false:
+      This prompt will not be called for such topics. (Do not generate anything.)
+
+Use ONLY formulas and derivations from CBSE textbooks. Keep steps simple (max 6 steps).
+Each formula block: equation box (LaTeX) + symbol table (1 row per variable, no full sentences).
+Each derivation step: 1 equation + 1 plain-English sentence (max 15 words).
 
 Return ONLY:
 
-<section id="formulas">
-  <h2 class="section-title"><span class="icon">📐</span> Key Formulas</h2>
-  <div class="card" style="margin-bottom:14px;">
-    <h3 style="color:var(--color-a);margin-bottom:8px;">[Formula name]</h3>
-    <div style="background:var(--bg);border-left:4px solid var(--color-a);border-radius:var(--radius-sm);padding:12px;font-size:1.2em;text-align:center;margin-bottom:10px;">$$[LaTeX]$$</div>
-    <table style="width:100%;border-collapse:collapse;font-size:14px;">
-      <tr style="border-bottom:1px solid var(--border);"><td style="padding:5px 10px;font-family:monospace;color:var(--color-a);font-weight:700;">$$[symbol]$$</td><td style="padding:5px 10px;color:var(--text-soft);">[meaning — unit]</td></tr>
-      [1 row per variable — short]
-    </table>
+<section id="formula_derivation">
+  <h2 class="section-title"><span class="icon">📐</span> Formula / Derivation — {T}</h2>
+
+  <!-- KEY FORMULAS BLOCK (always present when needs_formula=true) -->
+  <div class="card" style="margin-bottom:20px;">
+    <h3 style="color:var(--color-a);margin-bottom:10px;">📐 Key Formulas</h3>
+    <!-- Formula card 1 -->
+    <div style="margin-bottom:18px;">
+      <h4 style="color:var(--color-a);margin-bottom:6px;">[Formula 1 name — e.g. Newton's Second Law]</h4>
+      <div style="background:var(--bg);border-left:4px solid var(--color-a);border-radius:var(--radius-sm);padding:12px;font-size:1.2em;text-align:center;margin-bottom:8px;">$$[LaTeX equation]$$</div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:5px 10px;font-family:monospace;color:var(--color-a);font-weight:700;">$$[symbol]$$</td>
+          <td style="padding:5px 10px;color:var(--text-soft);">[what it means — SI unit]</td>
+        </tr>
+        [1 row per variable in the formula]
+      </table>
+    </div>
+    [Repeat formula card for 1-2 more key formulas if relevant to "{T}"]
   </div>
-  [Repeat for 2-3 more formulas]
-</section>
 
-Replace ALL placeholders. OUTPUT NOTHING after </section>.""",
-
-# ─────────────────────────────────────────────────────────────────
-# §15  DERIVATION  (conditional: mathematical topics)
-# ─────────────────────────────────────────────────────────────────
-"derivation": f"""Write the DERIVATION section for: "{T}"
-{focus}
-Rules: 5-6 steps max. Each step = 1 equation + 1 sentence explanation. Keep it simple.
-
-Return ONLY:
-
-<section id="derivation">
-  <h2 class="section-title"><span class="icon">📊</span> Deriving the Formula</h2>
+  <!-- DERIVATION BLOCK (only when needs_derivation=true) -->
+  <!-- OMIT THIS ENTIRE BLOCK if needs_derivation=false -->
   <div class="card">
-    <p style="color:var(--text-soft);font-size:14px;margin-bottom:18px;">[1 sentence: what we are deriving and why it's useful.]</p>
+    <h3 style="color:var(--color-b);margin-bottom:6px;">📊 Step-by-Step Derivation</h3>
+    <p style="color:var(--text-soft);font-size:14px;margin-bottom:18px;">[1 sentence: what we are deriving and why it matters.]</p>
     <div class="timeline">
       <div class="tl-item">
-        <div class="tl-dot">1</div>
-        <div class="tl-card">
+        <div class="tl-dot" style="background:var(--color-b);">1</div>
+        <div class="tl-card" style="border-color:var(--color-b);">
           <div class="tl-icon">[emoji]</div>
-          <h3>[Step title — 3 words]</h3>
-          <div style="background:var(--bg);border-radius:var(--radius-sm);padding:10px;margin:6px 0;text-align:center;font-size:1.05em;">$$[equation]$$</div>
-          <p>[1 sentence what this step means]</p>
+          <h3>[Step title — 3 words max]</h3>
+          <div style="background:var(--bg);border-radius:var(--radius-sm);padding:10px;margin:6px 0;text-align:center;font-size:1.05em;">$$[equation for this step]$$</div>
+          <p>[1 plain sentence explaining this step. Max 15 words.]</p>
         </div>
       </div>
-      [4-5 more steps]
+      [4-5 more tl-items following the same structure]
       <div class="tl-item">
         <div class="tl-dot" style="background:var(--success,#22c55e);">✓</div>
         <div class="tl-card" style="border-color:var(--success,#22c55e);">
           <div class="tl-icon">🎯</div>
           <h3>Final Formula</h3>
-          <div style="background:#dcfce7;border-radius:var(--radius-sm);padding:10px;margin:6px 0;text-align:center;font-size:1.1em;">$$[final equation]$$</div>
-          <p>[1 sentence: what this means in real life]</p>
+          <div style="background:#dcfce7;border-radius:var(--radius-sm);padding:10px;margin:6px 0;text-align:center;font-size:1.1em;">$$[final derived equation]$$</div>
+          <p>[1 sentence: what this formula means in real life.]</p>
         </div>
       </div>
     </div>
   </div>
+
 </section>
 
-Replace ALL placeholders. OUTPUT NOTHING after </section>.""",
+Replace ALL placeholders with REAL content from CBSE textbooks for "{T}".
+Omit the derivation block entirely if needs_derivation=false.
+OUTPUT NOTHING after </section>.""",
     }
 
     return PROMPTS.get(section, f"Generate content for section '{section}' about '{T}' in the reference HTML style.")
@@ -824,13 +818,14 @@ def _strip_tail(html: str) -> str:
 #  TOPIC CLASSIFIER
 # ══════════════════════════════════════════════════════════════════════════════
 async def _classify(topic: str) -> Dict:
-    prompt = f"""Classify this educational topic.
+    prompt = f"""Classify this educational topic for a CBSE school curriculum.
 Topic: "{topic}"
 Return ONLY valid JSON (no markdown fences):
 {{
   "category": "mathematical" | "semi_mathematical" | "conceptual",
   "needs_formula": true | false,
   "needs_derivation": true | false,
+  "needs_formula_derivation": true | false,
   "subject": "Biology" | "Physics" | "Chemistry" | "Mathematics" | "Other",
   "level": "Class 9-10" | "Class 11-12" | "University",
   "color_a": "#hex",
@@ -843,9 +838,13 @@ Return ONLY valid JSON (no markdown fences):
   "emoji_b": "emoji"
 }}
 Choose color_a / color_b to reflect the topic's two main types/aspects naturally.
-mathematical = needs_formula=true AND needs_derivation=true
-semi_mathematical = needs_formula=true, needs_derivation=false
-conceptual = needs_formula=false, needs_derivation=false"""
+mathematical = needs_formula=true AND needs_derivation=true → needs_formula_derivation=true
+semi_mathematical = needs_formula=true, needs_derivation=false → needs_formula_derivation=true
+conceptual = needs_formula=false, needs_derivation=false → needs_formula_derivation=false
+Set needs_formula_derivation=true whenever the topic requires either a formula or a derivation (or both) as per CBSE textbooks.
+Examples: "Newton's Second Law" → needs_formula=true, needs_derivation=true, needs_formula_derivation=true
+"Resistance" → needs_formula=true, needs_derivation=false, needs_formula_derivation=true
+"Aerobic Respiration" → needs_formula=false, needs_derivation=false, needs_formula_derivation=false"""
     try:
         msg = await client.messages.create(
             model=MODEL_HAIKU, max_tokens=400,
@@ -860,7 +859,8 @@ conceptual = needs_formula=false, needs_derivation=false"""
         log.warning(f"[classify] failed ({e}), using defaults")
         return {
             "category": "conceptual", "needs_formula": False,
-            "needs_derivation": False, "subject": "Biology",
+            "needs_derivation": False, "needs_formula_derivation": False,
+            "subject": "Biology",
             "level": "Class 9-10",
             "color_a": "#2563eb", "color_b": "#d97706",
             "color_a_light": "#dbeafe", "color_b_light": "#fef3c7",
@@ -872,9 +872,7 @@ conceptual = needs_formula=false, needs_derivation=false"""
 def _section_list(cls: Dict) -> List[str]:
     out: List[str] = []
     for s in ORDERED_SECTIONS:
-        if s == "formulas" and not cls.get("needs_formula"):
-            continue
-        if s == "derivation" and not cls.get("needs_derivation"):
+        if s == "formula_derivation" and not cls.get("needs_formula_derivation"):
             continue
         out.append(s)
     return out
@@ -1267,21 +1265,19 @@ def _extract_glossary(hook_html: str) -> List[Dict]:
 
 def _build_nav_items(sections: List[str]) -> str:
     labels = {
-        "hook":          "🌱 Hook",
-        "definition":    "📖 Definition",
-        "fundamentals":  "🔑 Fundamentals",
-        "subtopics":     "🧬 Subtopics",
-        "types":         "🌿 Types",
-        "deep_sections": "🔬 Deep Dive",
-        "formulas":      "📐 Formulas",
-        "derivation":    "📊 Derivation",
-        "visual":        "🎥 Visual",
-        "working":       "⚙️ Working",
-        "comparison":    "⚖️ Comparison",
-        "activities":    "🎮 Activities",
-        "funfacts":      "💡 Fun Facts",
-        "revision":      "📝 Revision",
-        "quiz":          "❓ Quiz",
+        "hook":               "🌱 Hook",
+        "definition":         "📖 Definition",
+        "fundamentals":       "🔑 Fundamentals",
+        "subtopics":          "🧬 Subtopics",
+        "types":              "🌿 Types",
+        "formula_derivation": "📐 Formula / Derivation",
+        "visual":             "🎥 Visual",
+        "working":            "⚙️ Working",
+        "comparison":         "⚖️ Comparison",
+        "activities":         "🎮 Activities",
+        "funfacts":           "💡 Fun Facts",
+        "revision":           "📝 Revision",
+        "quiz":               "❓ Quiz",
     }
     out = ""
     for s in sections:
@@ -1298,7 +1294,7 @@ def _assemble_html(topic: str, sections: Dict[str, str],
     css  = _build_css(cls, topic)
     subj = cls.get("subject", "Biology")
     level = cls.get("level", "Class 10")
-    needs_mathjax = any(s in section_list for s in ("formulas", "derivation"))
+    needs_mathjax = any(s in section_list for s in ("formula_derivation",))
 
     # Glossary from hook
     glossary_terms = _extract_glossary(sections.get("hook", ""))
@@ -1398,9 +1394,8 @@ function revealFact(card) {{ card.classList.toggle('revealed'); }}
 var _sids = [{section_ids_js}];
 var _snames = {{
   hook:"Hook",definition:"Definition",fundamentals:"Fundamentals",
-  subtopics:"Subtopics",types:"Types",deep_sections:"Deep Dive",
-  formulas:"Formulas",derivation:"Derivation",visual:"Visual",
-  working:"Working Process",comparison:"Comparison",
+  subtopics:"Subtopics",types:"Types",formula_derivation:"Formula / Derivation",
+  visual:"Visual",working:"Working Process",comparison:"Comparison",
   activities:"Activities",funfacts:"Fun Facts",revision:"Revision",quiz:"Quiz"
 }};
 window.addEventListener('scroll', function() {{
@@ -1732,6 +1727,7 @@ if __name__ == "__main__":
     c = meta.get('classification', {})
     print(f"Category   : {c.get('category','?')} | "
           f"formula={c.get('needs_formula','?')} | "
-          f"deriv={c.get('needs_derivation','?')}")
+          f"deriv={c.get('needs_derivation','?')} | "
+          f"formula_derivation={c.get('needs_formula_derivation','?')}")
     print(f"Colors     : A={c.get('color_a','?')}  B={c.get('color_b','?')}")
     print(f"{'='*60}\n")
