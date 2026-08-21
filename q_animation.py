@@ -501,6 +501,128 @@ RULES:
 - Return PURE JSON only (no markdown, no fences)."""
 
 
+def _sanitize_svg_data(data: dict) -> dict:
+    """
+    Post-process Gemini's svg_data output to fix 4 known hallucination bugs:
+
+    Bug 1 — setAttribute vs style.opacity:
+      Gemini often writes el.setAttribute('opacity', x) for SVG groups that
+      use style="opacity:..." CSS transitions. setAttribute sets the SVG
+      presentation attribute which is overridden by the CSS, so layers never
+      appear. Fix: rewrite every setAttribute('opacity') call to el.style.opacity.
+
+    Bug 2 — "of 6" instead of "of 9":
+      Gemini writes 'Step N of 6' and divides by 6 in the progress bar.
+      Fix: replace / 6 * 100 → / 9 * 100  and  'of 6' → 'of 9'.
+
+    Bug 3 — Unescaped double quotes in stepsData badges string:
+      Gemini emits:  "badges": "<span class="badge badge-cyan">..."
+      The inner double-quotes break the JSON. By the time we receive the
+      steps_data_js as a raw JS string these are already inside JS string
+      literals delimited by double quotes, which breaks the JS parser.
+      Fix: replace any `class="badge` inside a JS string context with
+      single-quoted equivalents, and ensure the whole JS literal is safe.
+
+    Bug 4 — raf_js assigns requestAnimationFrame return to window.qanimStartRAF:
+      Gemini writes: window.qanimStartRAF = requestAnimationFrame(drawFrame)
+      requestAnimationFrame returns a numeric ID, not a function. Then
+      assemble_html calls window.qanimStartRAF() which throws TypeError.
+      Fix: replace the pattern with the correct function wrapper.
+    """
+    import re as _re
+
+    # ── Fix apply_step_js (bugs 1 & 2) ────────────────────────────────────
+    apply_js = data.get("apply_step_js", "")
+
+    # Bug 1: setAttribute('opacity', …) → style.opacity = …
+    apply_js = _re.sub(
+        r"\.setAttribute\s*\(\s*['\"]opacity['\"]\s*,\s*([^)]+)\)",
+        r".style.opacity = \1",
+        apply_js
+    )
+
+    # Bug 2a: progress bar / 6 → / 9
+    apply_js = _re.sub(r'\)\s*/\s*6\s*\*\s*100', ') / 9 * 100', apply_js)
+    # Bug 2b: 'Step N of 6' label string
+    apply_js = _re.sub(r"'of 6'", "'of 9'", apply_js)
+    apply_js = _re.sub(r'"of 6"', '"of 9"', apply_js)
+    apply_js = _re.sub(r'of\s+6\b', 'of 9', apply_js)
+
+    data["apply_step_js"] = apply_js
+
+    # ── Fix steps_data_js (bug 3) ─────────────────────────────────────────
+    steps_js = data.get("steps_data_js", "")
+
+    # Replace inner double-quotes inside badge HTML strings with single quotes.
+    # Pattern: any occurrence of  class="badge  inside a JS string context.
+    # We convert:  class="badge badge-cyan"  →  class='badge badge-cyan'
+    steps_js = _re.sub(
+        r'class="(badge[^"]*)"',
+        lambda m: "class='" + m.group(1) + "'",
+        steps_js
+    )
+
+    # Also fix  "of 6"  in stepsData label strings
+    steps_js = _re.sub(r"'of 6'", "'of 9'", steps_js)
+    steps_js = _re.sub(r'"of 6"', '"of 9"', steps_js)
+    steps_js = _re.sub(r'of\s+6\b', 'of 9', steps_js)
+
+    data["steps_data_js"] = steps_js
+
+    # ── Fix raf_js (bug 4) ────────────────────────────────────────────────
+    raf_js = data.get("raf_js", "")
+
+    # Bug 4: window.qanimStartRAF = requestAnimationFrame(fn)
+    #   → wrap in a proper starter function
+    raf_js = _re.sub(
+        r'window\.qanimStartRAF\s*=\s*requestAnimationFrame\s*\(([^)]+)\)\s*;?',
+        r'window.qanimStartRAF = function(){ window.qanimRafId = requestAnimationFrame(\1); };',
+        raf_js
+    )
+    # Also fix bare:  requestAnimationFrame(drawFrame)  at top level
+    # (Gemini sometimes calls it immediately without assigning)
+    raf_js = _re.sub(
+        r'(?<!window\.qanimRafId\s=\s)(?<!cancelAnimationFrame\()(?<!\w)'
+        r'requestAnimationFrame\s*\(([^)]+)\)\s*;',
+        lambda m: (
+            f'if(!window.qanimStartRAF){{\n'
+            f'  window.qanimStartRAF=function(){{window.qanimRafId=requestAnimationFrame({m.group(1)});}};'
+            f'\n  window.qanimStartRAF();\n}}'
+        ),
+        raf_js,
+        count=1
+    )
+
+    data["raf_js"] = raf_js
+
+    # ── Fix svg_layers (bug 1 in SVG opacity attributes) ──────────────────
+    svg_layers = data.get("svg_layers", "")
+    # Gemini sometimes writes opacity="1" on non-frame layers; ensure non-frame
+    # layers start hidden via style="opacity:0" (CSS transition works on style).
+    # We do NOT touch layer-frame (it must stay visible).
+    def _fix_layer_opacity(m):
+        tag = m.group(0)
+        gid = _re.search(r'id=["\']([^"\']+)["\']', tag)
+        if gid and gid.group(1) == "layer-frame":
+            return tag   # leave layer-frame alone
+        # Replace opacity="1" attribute with style="opacity:0" for hidden layers
+        tag = _re.sub(r'\bopacity=["\']1["\']', 'style="opacity:0"', tag)
+        # If it has no opacity attribute at all and no style, add style
+        if 'opacity' not in tag and 'style' not in tag:
+            tag = tag.rstrip('>') + ' style="opacity:0">'
+        return tag
+
+    svg_layers = _re.sub(
+        r'<g\b[^>]*id=["\'][^"\']+["\'][^>]*>',
+        _fix_layer_opacity,
+        svg_layers
+    )
+    data["svg_layers"] = svg_layers
+
+    Log.ok("SVGSanitizer", "svg_data post-processed (4 bug fixes applied)")
+    return data
+
+
 def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
     """Call Gemini to generate SVG layers + stepsData JS."""
     FALLBACK_SVG = """<g class="svg-layer" id="layer-frame" style="opacity:1">
@@ -618,7 +740,7 @@ The stepsData must reflect the exact scene script steps."""
             data = json.loads(_sanitize_json(raw))
             if data.get("svg_layers") and data.get("steps_data_js"):
                 Log.ok("SVGBuilder", f"Got SVG ({len(data.get('svg_layers',''))} chars)")
-                return data
+                return _sanitize_svg_data(data)
         except Exception as e:
             Log.warn("SVGBuilder", f"Attempt {attempt} failed: {e}")
             if attempt < 3:
