@@ -1,6 +1,11 @@
 """
-q_animation.py  —  QAnim Question Animation Generator  v3.0
+q_animation.py  —  QAnim Question Animation Generator  v3.1
 ============================================================
+
+v3.1 — MODEL FIX: gemini-2.5-pro → gemini-2.5-pro-preview-06-05
+  - gemini-2.5-pro returns HTTP 404 NOT_FOUND for new API keys.
+  - Model is now read from GEMINI_MODEL env var (default: gemini-2.5-pro-preview-06-05).
+  - 404 errors are now non-retryable (fail fast instead of wasting 3×15s retries).
 
 v3.0 — CLEAN REWRITE matching the reference HTML output exactly.
 
@@ -44,7 +49,7 @@ except ImportError:
     except ImportError:
         print("[QAnim] No Gemini SDK found")
 
-GEMINI_MODEL = "gemini-2.5-pro"
+GEMINI_MODEL = _os.environ.get("GEMINI_MODEL", "gemini-3.1-pro-preview")
 
 _gemini_client = None
 _GEMINI_DISABLED_REASON = None
@@ -135,6 +140,9 @@ def _call_gemini(user_prompt: str, system_prompt: str, max_tokens: int = 4000) -
                 return response.text.strip()
         except Exception as e:
             err = str(e)
+            # 404 = model not found / not available — never retryable, fail immediately
+            if "404" in err or "NOT_FOUND" in err:
+                raise
             retryable = ("429" in err or "503" in err or "overloaded" in err.lower()
                          or "Resource has been exhausted" in err)
             if retryable and attempt < MAX_RETRIES:
