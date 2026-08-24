@@ -157,11 +157,11 @@ def _scene_script_is_fallback(scene_script: dict) -> bool:
     return False
 
 
-def _merge_sol_into_scene_script(scene_script: dict, sol: dict) -> dict:
+def _merge_sol_into_scene_script(scene_script: dict, sol: dict, to_find_targets: list) -> dict:
     import copy
     sc = copy.deepcopy(scene_script)
     sol = sol or {}
-    label = "Final Answer"
+    label = to_find_targets[0] if to_find_targets else "Final Answer"
 
     # formula_data (Scene 6)
     sc["formula_data"] = {
@@ -335,6 +335,72 @@ class GenerationValidator:
         if 'stepsData' not in html:
             raise ValidationError("Missing stepsData JS array")
         return True
+
+
+# ===========================================================================
+#  MODULE 2.5 — ToFindExtractor
+# ===========================================================================
+class ToFindExtractor:
+    _TRIGGER_PATTERNS = [
+        re.compile(r'\b(?:find|calculate|determine|evaluate|compute|obtain|derive|solve for|what is|what are)\b\s+(.{5,90}?)(?:[.?!]|$)', re.IGNORECASE),
+        re.compile(r'\b(?:find|calculate|determine)\b[^.?!]{0,120}', re.IGNORECASE),
+    ]
+    _NOISE_PREFIXES = ["the", "a", "an", "its", "their", "this", "that", "these", "those"]
+    _TRAILING_RE = re.compile(r'\s*(?:if|when|given|where|assuming|for|with|of)\b.*$', re.IGNORECASE)
+    _TRIGGER_VERB_RE = re.compile(r'^(?:find|calculate|determine|evaluate|compute|obtain|derive|solve for|what is|what are)\b\s*', re.IGNORECASE)
+    _ARTICLE_RE = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
+
+    @classmethod
+    def extract(cls, question: str) -> list:
+        targets = []
+        for pat in cls._TRIGGER_PATTERNS:
+            for m in pat.finditer(question):
+                raw = m.group(0) if m.lastindex is None else m.group(1)
+                t = cls._clean(raw)
+                if t and 3 <= len(t) <= 80:
+                    targets.append(t)
+        targets = cls._deduplicate(targets)
+        if not targets:
+            targets = cls._fallback(question)
+        result = [cls._cap(t) for t in targets[:3]]
+        return result
+
+    @classmethod
+    def _clean(cls, t):
+        t = t.strip()
+        for noise in cls._NOISE_PREFIXES:
+            if t.lower().startswith(noise + " "):
+                t = t[len(noise):].strip()
+                break
+        t = cls._TRAILING_RE.sub("", t).strip()
+        t = cls._TRIGGER_VERB_RE.sub("", t).strip()
+        t = cls._ARTICLE_RE.sub("", t).strip()
+        return t.rstrip(".,;:?!")
+
+    @classmethod
+    def _deduplicate(cls, targets):
+        seen, result = set(), []
+        for t in targets:
+            key = t.lower().strip()
+            if key and key not in seen:
+                seen.add(key)
+                result.append(t)
+        return result
+
+    @classmethod
+    def _cap(cls, s): return s[0].upper() + s[1:] if s else s
+
+    @classmethod
+    def _fallback(cls, question):
+        try:
+            sentences = re.split(r'[.!?]', question.strip())
+            for s in reversed(sentences):
+                s = s.strip()
+                if 4 <= len(s) <= 80:
+                    return [cls._cap(s)]
+            return []
+        except Exception:
+            return []
 
 
 # ===========================================================================
@@ -1119,14 +1185,14 @@ class GeminiSceneAnalyzer:
 # ===========================================================================
 #  MODULE 10 — Panel Injection Helpers
 # ===========================================================================
-def _build_answer_targets(gemini_sol, final_answer, key_insight):
+def _build_answer_targets(to_find_targets, gemini_sol, final_answer, key_insight):
     targets = []
     sol = gemini_sol or {}
     final = final_answer or sol.get("final_answer", "")
     insight = key_insight or sol.get("key_insight", "")
     nums = re.findall(r'[-+]?\d+(?:\.\d+)?', final)
     main_val = nums[-1] if nums else ""
-    label = "Final Answer"
+    label = to_find_targets[0] if to_find_targets else "Final Answer"
     targets.append({
         "label": label,
         "value": main_val or final[:60],
@@ -1466,7 +1532,7 @@ _SCENE9_STYLES = """\
 .s9-btn-restart{ background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff; box-shadow:0 4px 14px rgba(14,116,144,.28); }
 </style>"""
 
-def _build_scene9_html(final_answer_data: dict) -> str:
+def _build_scene9_html(final_answer_data: dict, to_find_label: str = "Final Answer") -> str:
     fad = final_answer_data or {}
     chain = fad.get("substitution_chain", [])
     answer_value = html_module.escape(fad.get("answer_value", "?"))
@@ -1529,7 +1595,7 @@ _SCENE9_JS = """\
 })();
 </script>"""
 
-def inject_scene9(html: str, gemini_sol: dict, scene_script: dict) -> str:
+def inject_scene9(html: str, gemini_sol: dict, scene_script: dict, to_find_targets: list) -> str:
     if 'qanim-scene9-styles' in html: return html
     final_answer_data = scene_script.get("final_answer_data", {})
     sol = gemini_sol or {}
@@ -1550,9 +1616,10 @@ def inject_scene9(html: str, gemini_sol: dict, scene_script: dict) -> str:
             "answer_unit":        _extract_unit(fa),
             "answer_highlight":   val,
             "insight_text":       sol.get("key_insight", "Apply the governing formula with the given data."),
-            "to_find_label":      "Final Answer",
+            "to_find_label":      to_find_targets[0] if to_find_targets else "Final Answer",
         }
-    scene9_html = _build_scene9_html(final_answer_data)
+    to_find_label = to_find_targets[0] if to_find_targets else "Final Answer"
+    scene9_html = _build_scene9_html(final_answer_data, to_find_label)
     if '</head>' in html: html = html.replace('</head>', _SCENE9_STYLES + '\n</head>', 1)
     if '<body' in html:
         idx = html.find('>', html.find('<body')) + 1
@@ -1842,6 +1909,7 @@ class PanelReliabilityEngine:
 async def generate_animation_html(question: str) -> str:
     if not question.strip(): return RecoveryEngine.fallback_html("(empty)", "Question was empty")
     question = LargeInputPreprocessor.compress(question) if LargeInputPreprocessor.needs_compression(question) else question
+    to_find_targets = ToFindExtractor.extract(question)
     
     scene_task = GeminiSceneAnalyzer.analyze_async(question)
     sol_task   = GeminiSolutionGenerator.generate_async(question)
@@ -1852,13 +1920,13 @@ async def generate_animation_html(question: str) -> str:
     
     html = await GeminiAnimationBuilder.build_async(question, scene_script, sol, "ENGINEERING")
     if _scene_script_is_fallback(scene_script) and not sol.get("_used_fallback"):
-        scene_script = _merge_sol_into_scene_script(scene_script, sol)
+        scene_script = _merge_sol_into_scene_script(scene_script, sol, to_find_targets)
 
     html = DocumentSkeletonNormalizer.normalize(html)
     html = inject_early_binding(html)
     html = inject_scene6(html, sol, scene_script)
     html = inject_scene7(html, sol, scene_script)
-    html = inject_scene9(html, sol, scene_script)
+    html = inject_scene9(html, sol, scene_script, to_find_targets)
     html = PanelReliabilityEngine.run_all_passes(html, scene_script)
     html = HtmlSanitizer.sanitize(html)
     html = inject_centering_css(html)
