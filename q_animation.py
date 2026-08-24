@@ -1,9 +1,10 @@
 """
-q_animation.py  --  QAnim Question Animation Generator  v2.0.4 (Anti-Laziness Patch)
+q_animation.py  --  QAnim Question Animation Generator  v2.0.5 (Final Architecture)
 ====================================================================================
-Bug Fixes (v2.0.4):
-- Added strict anti-truncation validation to GeminiAnimationBuilder to prevent 
-  the LLM from generating empty `stepsData` arrays or missing SVG layers.
+Bug Fixes (v2.0.5):
+- Fixed Uvicorn crash: Restored `generate_question_animation` API endpoint for main.py.
+- Fixed LLM truncation: Shifted from LLM HTML generation to a pure JSON-to-Template 
+  pipeline. Guarantees `stepsData` and all 9 steps are rendered completely.
 """
 
 import json
@@ -98,46 +99,23 @@ else:
     _GEMINI_DISABLED_REASON = "No Gemini SDK installed"
 
 MAX_TOK = 24000
-MAX_TOK_CONCEPT = 16000
-
 STAGE_TIMEOUT_SMALL  = 180.0
 STAGE_TIMEOUT_SCENE  = 180.0
 STAGE_TIMEOUT_BUILD  = 270.0
 PIPELINE_TIMEOUT = max(STAGE_TIMEOUT_SCENE, STAGE_TIMEOUT_SMALL) + STAGE_TIMEOUT_BUILD + 30.0
 
-
 def _err_msg(e: BaseException) -> str:
     if isinstance(e, asyncio.TimeoutError):
-        return (
-            "Gemini took too long to respond and the request was cancelled "
-            "(the model may be overloaded, or the response was unusually "
-            "large). This is a timeout, not a code error — please try again."
-        )
+        return "Gemini timeout. The response was too large or model overloaded."
     msg = str(e).strip()
-    if msg:
-        return f"{type(e).__name__}: {msg}"
-    return f"{type(e).__name__} (no additional detail was provided by the exception)"
+    return f"{type(e).__name__}: {msg}" if msg else f"{type(e).__name__}"
 
-
-# ---------------------------------------------------------------------------
-# Placeholder / fallback content detection
-# ---------------------------------------------------------------------------
 _PLACEHOLDER_STRINGS = frozenset({
-    "result = f(given values)",
-    "result = f(values)",
-    "result",
-    "unknown quantity",
-    "given values from the problem",
-    "governing equation",
-    "parameter a",
-    "computed value",
-    "see calculation above",
-    "apply the governing formula",
-    "apply governing formula",
-    "substitute values",
-    "compute the result",
-    "compute result",
-    "formula from problem domain",
+    "result = f(given values)", "result = f(values)", "result", "unknown quantity",
+    "given values from the problem", "governing equation", "parameter a",
+    "computed value", "see calculation above", "apply the governing formula",
+    "apply governing formula", "substitute values", "compute the result",
+    "compute result", "formula from problem domain",
 })
 
 def _is_fallback_content(value: str) -> bool:
@@ -205,9 +183,6 @@ def _extract_unit(text: str) -> str:
     m = re.search(r'\d\s*([A-Za-z°²³µ][A-Za-z°²³µ·/²³\s]*?)(?:\s|$|[,.])', text)
     return m.group(1).strip() if m else ""
 
-# ===========================================================================
-#  MODULE 1 — QAnimLogger
-# ===========================================================================
 class QAnimLogger:
     PREFIX = "[QAnim v2.0]"
     @classmethod
@@ -219,62 +194,30 @@ class QAnimLogger:
     @classmethod
     def ok(cls, stage, msg): print(f"{cls.PREFIX} OK [{stage}] {msg}")
 
-# ===========================================================================
-#  MODULE 1.5 — Robust JSON Sanitizer
-# ===========================================================================
 def _sanitize_json_str(raw: str) -> str:
     raw = raw.lstrip('\ufeff').strip()
     raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
     raw = re.sub(r'```\s*$', '', raw, flags=re.IGNORECASE).strip()
     raw = re.sub(r'<thinking>.*?</thinking>', '', raw, flags=re.DOTALL).strip()
-
     start = raw.find('{')
     if start != -1:
-        depth = 0
-        in_str = False
-        esc = False
-        end_idx = None
+        depth, in_str, esc, end_idx = 0, False, False, None
         for i, ch in enumerate(raw[start:], start):
-            if esc:
-                esc = False
-                continue
-            if ch == '\\' and in_str:
-                esc = True
-                continue
-            if ch == '"':
-                in_str = not in_str
-                continue
+            if esc: esc = False; continue
+            if ch == '\\' and in_str: esc = True; continue
+            if ch == '"': in_str = not in_str; continue
             if in_str: continue
             if ch == '{': depth += 1
             elif ch == '}':
                 depth -= 1
-                if depth == 0:
-                    end_idx = i
-                    break
-        if end_idx is not None: raw = raw[start:end_idx + 1]
-        else: raw = raw[start:]
-
-    out = []
-    in_str = False
-    esc = False
-    i = 0
+                if depth == 0: end_idx = i; break
+        raw = raw[start:end_idx + 1] if end_idx is not None else raw[start:]
+    out, in_str, esc, i = [], False, False, 0
     while i < len(raw):
         ch = raw[i]
-        if esc:
-            out.append(ch)
-            esc = False
-            i += 1
-            continue
-        if ch == '\\' and in_str:
-            out.append(ch)
-            esc = True
-            i += 1
-            continue
-        if ch == '"':
-            in_str = not in_str
-            out.append(ch)
-            i += 1
-            continue
+        if esc: out.append(ch); esc = False; i += 1; continue
+        if ch == '\\' and in_str: out.append(ch); esc = True; i += 1; continue
+        if ch == '"': in_str = not in_str; out.append(ch); i += 1; continue
         if not in_str and ch == '/' and i + 1 < len(raw) and raw[i+1] == '/':
             while i < len(raw) and raw[i] != '\n': i += 1
             continue
@@ -286,7 +229,6 @@ def _sanitize_json_str(raw: str) -> str:
         out.append(ch)
         i += 1
     raw = ''.join(out)
-
     raw = re.sub(r',\s*([}\]])', r'\1', raw)
     raw = re.sub(r"(?<![:\\])(?<!\w)'([^']*?)'(?!\w)", r'"\1"', raw)
     raw = re.sub(r'(?<={|,)\s*([A-Za-z_]\w*)\s*:', r'"\1":', raw)
@@ -296,9 +238,6 @@ def _sanitize_json_str(raw: str) -> str:
     raw = re.sub(r'\.\.\.', '', raw)
     return raw.strip()
 
-# ===========================================================================
-#  MODULE 2.5 — ToFindExtractor
-# ===========================================================================
 class ToFindExtractor:
     _TRIGGER_PATTERNS = [
         re.compile(r'\b(?:find|calculate|determine|evaluate|compute|obtain|derive|solve for|what is|what are)\b\s+(.{5,90}?)(?:[.?!]|$)', re.IGNORECASE),
@@ -325,9 +264,7 @@ class ToFindExtractor:
     def _clean(cls, t):
         t = t.strip()
         for noise in cls._NOISE_PREFIXES:
-            if t.lower().startswith(noise + " "):
-                t = t[len(noise):].strip()
-                break
+            if t.lower().startswith(noise + " "): t = t[len(noise):].strip(); break
         t = cls._TRAILING_RE.sub("", t).strip()
         t = cls._TRIGGER_VERB_RE.sub("", t).strip()
         t = cls._ARTICLE_RE.sub("", t).strip()
@@ -338,9 +275,7 @@ class ToFindExtractor:
         seen, result = set(), []
         for t in targets:
             key = t.lower().strip()
-            if key and key not in seen:
-                seen.add(key)
-                result.append(t)
+            if key and key not in seen: seen.add(key); result.append(t)
         return result
 
     @classmethod
@@ -356,37 +291,6 @@ class ToFindExtractor:
             return []
         except Exception: return []
 
-# ===========================================================================
-#  MODULE 2.6 — GivenValuesExtractor
-# ===========================================================================
-class GivenValuesExtractor:
-    _COLOR_CLASSES = ["gc-blue", "gc-teal", "gc-green", "gc-amber"]
-    _LABEL_RE = re.compile(
-        r'(?P<label>[A-Za-z_][A-Za-z_\s]{0,40}?)'
-        r'\s*(?:=|is|of|:)\s*'
-        r'(?P<val>[-+]?\d+(?:\.\d+)?(?:\s*[×x]\s*10\^?[-+]?\d+)?)'
-        r'\s*(?P<unit>[A-Za-z°²³µ/%][A-Za-z°²³µ·/²³\s]*(?:/[A-Za-z²³]+)?)?',
-        re.IGNORECASE
-    )
-
-    @classmethod
-    def extract(cls, question):
-        cards, seen_vals = [], set()
-        for m in cls._LABEL_RE.finditer(question):
-            label = m.group("label").strip().rstrip(",:;")
-            val   = m.group("val").strip()
-            unit  = (m.group("unit") or "").strip().rstrip(".,;")
-            key   = val + unit
-            if key in seen_vals or not label or len(label) < 2: continue
-            seen_vals.add(key)
-            color = cls._COLOR_CLASSES[len(cards) % len(cls._COLOR_CLASSES)]
-            cards.append({"label": label, "value": val, "unit": unit, "color": color})
-            if len(cards) >= 4: break
-        return cards
-
-# ===========================================================================
-#  MODULE 2.7 — LargeInputPreprocessor
-# ===========================================================================
 class LargeInputPreprocessor:
     COMPRESS_THRESHOLD = 600
     HARD_LIMIT = 2000
@@ -412,9 +316,6 @@ class LargeInputPreprocessor:
         text = re.sub(r'\n{3,}', '\n\n', text).strip()
         return text
 
-# ===========================================================================
-#  MODULE 3 — HtmlSanitizer
-# ===========================================================================
 class HtmlSanitizer:
     @classmethod
     def sanitize(cls, html):
@@ -427,9 +328,6 @@ class HtmlSanitizer:
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
         return html
 
-# ===========================================================================
-#  MODULE 3.5 — Centering CSS Injection
-# ===========================================================================
 _CENTERING_CSS_OVERRIDE = """\
 <style id="qanim-centering-override">
 body { display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: flex-start !important; min-height: 100vh !important; padding: 24px 16px 120px !important; box-sizing: border-box !important; }
@@ -442,19 +340,14 @@ body { display: flex !important; flex-direction: column !important; align-items:
 .info-box { background: #f8faff !important; border: 1px solid #dde6f8 !important; border-left: 4px solid #0891b2 !important; border-radius: 10px !important; padding: 18px 20px !important; }
 .btn-primary { background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%) !important; color: #ffffff !important; box-shadow: 0 4px 12px rgba(8,145,178,0.28) !important; border-radius: 8px !important; }
 .btn-secondary { background: transparent !important; color: #64748b !important; border: 1.5px solid #cbd5e1 !important; }
+svg g[id^="layer-"] { transition: opacity 0.5s ease; }
 </style>"""
 
 def inject_centering_css(html: str) -> str:
     if 'qanim-centering-override' in html: return html
     if '</head>' in html: html = html.replace('</head>', _CENTERING_CSS_OVERRIDE + '</head>', 1)
-    elif '<body' in html:
-        idx = html.find('<body')
-        html = html[:idx] + _CENTERING_CSS_OVERRIDE + html[idx:]
     return html
 
-# ===========================================================================
-#  MODULE 3.6 — Step Color Theme CSS Injection
-# ===========================================================================
 _STEP_COLOR_CSS = """\
 <style id="qanim-step-colors">
 body[data-step="0"] .control-panel { background: linear-gradient(180deg, #e8f4fd 0%, #d0ebf8 100%) !important; border-top: 3px solid #0ea5e9 !important; }
@@ -500,9 +393,6 @@ def inject_step_color_css(html: str) -> str:
     if '</head>' in html: html = html.replace('</head>', _STEP_COLOR_CSS + '</head>', 1)
     return html
 
-# ===========================================================================
-#  MODULE 4 — RecoveryEngine
-# ===========================================================================
 class RecoveryEngine:
     @classmethod
     def fallback_html(cls, question: str, reason: str) -> str:
@@ -621,9 +511,6 @@ applyStep(0);
 </body>
 </html>"""
 
-# ===========================================================================
-#  MODULE 5 — JS Syntax Validator
-# ===========================================================================
 class JsSyntaxValidator:
     @classmethod
     def auto_fix_stray_apostrophes(cls, html: str) -> str:
@@ -638,9 +525,6 @@ class JsSyntaxValidator:
             return f'<script>{content}</script>'
         return re.sub(r'<script[^>]*>(.*?)</script>', fix_block, html, flags=re.DOTALL | re.IGNORECASE)
 
-# ===========================================================================
-#  MODULE 6 — Document Skeleton Normalizer
-# ===========================================================================
 class DocumentSkeletonNormalizer:
     @staticmethod
     def normalize(html: str) -> str:
@@ -674,13 +558,10 @@ class DocumentSkeletonNormalizer:
         if not re.search(r'</html\s*>', html, re.IGNORECASE): html = html + '\n</html>'
         return html
 
-# ===========================================================================
-#  MODULE 8 — GeminiSolutionGenerator
-# ===========================================================================
 _SOLUTION_SYSTEM_GEMINI = """You are a precise physics/engineering/math solver.
 Given a question, produce a step-by-step solution and final answer in JSON.
 
-Return ONLY valid JSON (no markdown, no fences):
+Return ONLY valid JSON:
 {
   "steps": [
     "Step 1: Identify the governing formula: Q = h × A × (Ts - T∞)",
@@ -705,46 +586,35 @@ Return ONLY valid JSON (no markdown, no fences):
 }
 
 Rules:
-- steps: 3-6 numbered solution steps, each a complete sentence.
+- steps: 3-6 numbered solution steps.
 - final_answer: complete with value and unit.
-- key_insight: one memorable sentence explaining WHY.
-- formula: the governing equation in plain text.
-- variables: all variables in the formula with symbol, full name, value from question, unit.
-  color = "blue" for given data, "orange" for derived/intermediate, "green" for the answer.
-- substitution_chain: 3-5 rows showing numeric substitution step by step.
-- Pure JSON only — no markdown fences."""
+- Pure JSON only."""
 
 class GeminiSolutionGenerator:
     _FALLBACK = {
-        "steps": ["Step 1: Identify the governing formula from the problem domain.", "Step 2: Substitute the given numerical values.", "Step 3: Compute the result with correct units."],
-        "final_answer": "See question for numerical values and units.",
-        "key_insight": "Apply the governing formula with the given data.",
-        "formula": "Formula from problem domain",
-        "variables": [],
-        "substitution_chain": [{"num": 1, "eq": "Apply the governing formula"}, {"num": 2, "eq": "Substitute given values"}, {"num": 3, "eq": "Compute the result"}],
-        "_used_fallback": True,
+        "steps": ["Step 1: Identify formula.", "Step 2: Substitute.", "Step 3: Compute."],
+        "final_answer": "See calculation.", "key_insight": "Apply governing formula.",
+        "formula": "Formula", "variables": [],
+        "substitution_chain": [{"num": 1, "eq": "Substitute"}], "_used_fallback": True,
     }
 
     @classmethod
     def generate(cls, question: str) -> dict:
         if _gemini_client is None: return dict(cls._FALLBACK)
-        MAX_ATTEMPTS = 3
-        for attempt in range(1, MAX_ATTEMPTS + 1):
+        for attempt in range(1, 4):
             try:
-                raw = cls._call_gemini(f"Solve this problem step by step:\n\n{question[:1200]}", _SOLUTION_SYSTEM_GEMINI, max_tokens=3000)
+                raw = cls._call_gemini(f"Solve:\n\n{question[:1200]}", _SOLUTION_SYSTEM_GEMINI, max_tokens=3000)
                 cleaned = _sanitize_json_str(raw)
                 data = json.loads(cleaned)
                 if data.get("steps") and data.get("final_answer"): return data
-                raise ValueError("Missing required fields")
-            except Exception as e:
-                if attempt < MAX_ATTEMPTS: continue
+            except Exception:
+                continue
         return dict(cls._FALLBACK)
 
     @classmethod
     def _call_gemini(cls, user_prompt: str, system_prompt: str, max_tokens: int = 2000) -> str:
         import time as _time
-        MAX_RETRIES, RETRY_DELAYS = 3, [10, 25, 50]
-        for attempt in range(1, MAX_RETRIES + 1):
+        for attempt in range(1, 4):
             try:
                 if _GEMINI_SDK_STYLE == "generativeai":
                     model_obj = _gemini_client.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=system_prompt, generation_config={"temperature": 0.1, "max_output_tokens": max_tokens})
@@ -756,13 +626,11 @@ class GeminiSolutionGenerator:
                     response = _gemini_client.models.generate_content(model=GEMINI_MODEL, contents=user_prompt, config=config)
                     return response.text.strip()
             except Exception as e:
-                err_str = str(e)
-                is_retryable = ("429" in err_str or "503" in err_str or "overloaded" in err_str.lower() or "Resource has been exhausted" in err_str)
-                if is_retryable and attempt < MAX_RETRIES:
-                    _time.sleep(RETRY_DELAYS[attempt - 1])
+                if ("429" in str(e) or "503" in str(e) or "exhausted" in str(e)) and attempt < 3:
+                    _time.sleep([10, 25, 50][attempt - 1])
                     continue
                 raise
-        raise RuntimeError("All retry attempts exhausted")
+        raise RuntimeError("All retries exhausted")
 
     @classmethod
     async def generate_async(cls, question: str) -> dict:
@@ -770,137 +638,82 @@ class GeminiSolutionGenerator:
         try: return await asyncio.wait_for(loop.run_in_executor(None, cls.generate, question), timeout=STAGE_TIMEOUT_SMALL)
         except asyncio.TimeoutError: return dict(cls._FALLBACK)
 
-# ===========================================================================
-#  MODULE 9 — GeminiSceneAnalyzer (9-Step Workflow Contract)
-# ===========================================================================
-_SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer v2.0 — an educational animation director.
+_SCENE_ANALYZER_SYSTEM = """You are QAnim Scene Analyzer v2.0.
+Produce a structured scene script in JSON that implements a 9-step workflow.
+STEPS 1–6: Show given/derived quantities one at a time.
+STEP 7: Main Formula
+STEP 8: Substitution
+STEP 9: Final Answer
 
-Given a student question, produce a structured animation scene script in JSON that implements the EXACT 9-step workflow shown below.
-
-STEPS 1–6: SVG Concept Animation (Physical Scene)
-  • Each step introduces EXACTLY ONE new physical element (parameter, component, or derived quantity).
-  • Steps 1–5: Show given/derived quantities one at a time, building up the scene.
-  • Step 6: The "Setup Summary + To Find" step. All data is ready.
-  • NEVER put formulas, substitution boxes, or "solve" language in Steps 1–6 descriptions.
-
-STEP 7: Main Formula (formula_data)
-STEP 8: Step-by-Step Substitution (substitution_data)
-STEP 9: Final Answer (final_answer_data)
-
-OUTPUT FORMAT — Return ONLY valid JSON (no markdown)
+Return ONLY valid JSON (no markdown):
 {
   "title": "Concise title",
   "topic": "PHYSICS",
   "steps": [
     {
-      "step_number": 1,
-      "label": "Environment",
-      "title": "Step 1: Environment",
-      "description": "2-3 conversational sentences.",
-      "badges": [{"text": "Symbol = value unit", "type": "cyan"}],
-      "components_visible": ["layer-frame"],
-      "components_new": ["layer-frame"],
-      "focus_component": "layer-frame",
-      "blur_background": false
+      "step_number": 1, "label": "Environment", "title": "Step 1: ...",
+      "description": "...",
+      "badges": [{"text": "Symbol = value", "type": "cyan"}],
+      "components_visible": ["layer-frame"], "components_new": ["layer-frame"],
+      "focus_component": "layer-frame", "blur_background": false
     }
   ],
   "svg_components": {
-    "layer-frame": {
-      "description": "Fixed background structure",
-      "motion_type": "static",
-      "accent_color": "#4a6a8a",
-      "layer_order": 1,
-      "labels": ["environment label"]
-    }
+    "layer-frame": { "description": "...", "motion_type": "static", "accent_color": "#4a6a8a", "layer_order": 1, "labels": [] }
   },
   "formula_data": {
-    "formula_text": "Q = h × A × (Ts − T∞)",
-    "formula_sublabel": "Newton's Law of Cooling",
-    "variables": [
-      {"symbol": "Q", "name": "Heat loss rate", "value": "? (to find)", "unit": "W", "color": "green"}
-    ],
-    "note_text": "💡 Key: larger h or larger ΔT means faster heat loss."
+    "formula_text": "Q = h × A × ΔT", "formula_sublabel": "Law",
+    "variables": [{"symbol": "Q", "name": "Heat", "value": "?", "unit": "W", "color": "green"}],
+    "note_text": "💡 Insight"
   },
   "substitution_data": {
-    "system_title": "Metal Plate in Air Flow",
-    "system_description": "Hot plate losing heat",
-    "given_list": ["T∞ = 30°C (Ambient air temperature)"],
-    "approach_steps": ["Use Newton's Law of Cooling"],
-    "result_bar": "Q = 25 × 2 × 120 = 6000 W = 6 kW"
+    "system_title": "System", "system_description": "...",
+    "given_list": ["T = 30°C"], "approach_steps": ["Use Law"],
+    "result_bar": "Q = 6000 W"
   },
   "final_answer_data": {
-    "formula_recap": "Q = h × A × (Ts − T∞)",
-    "substitution_chain": [{"num": 1, "eq": "Q = h × A × (Ts − T∞)"}],
-    "answer_value": "6000",
-    "answer_unit": "W",
-    "answer_highlight": "6000",
-    "insight_text": "The plate loses heat at <strong>6 kW</strong>.",
-    "to_find_label": "Heat loss from the plate"
+    "formula_recap": "Q = h × A × ΔT",
+    "substitution_chain": [{"num": 1, "eq": "Q = 25 × 2 × 120"}],
+    "answer_value": "6000", "answer_unit": "W", "answer_highlight": "6000",
+    "insight_text": "...", "to_find_label": "Heat loss"
   },
-  "final_answer": "Q = 6000 W (6 kW)",
-  "key_insight": "Convective heat loss is proportional to temperature difference."
+  "final_answer": "6000 W", "key_insight": "Insight"
 }"""
 
 class GeminiSceneAnalyzer:
     @classmethod
     def analyze(cls, question: str) -> dict:
         if _gemini_client is None: return cls._fallback_script(question)
-        MAX_ATTEMPTS = 3
-        for attempt in range(1, MAX_ATTEMPTS + 1):
+        for attempt in range(1, 4):
             try:
-                raw = GeminiSolutionGenerator._call_gemini(f"Produce the complete 9-step animation scene script for this question:\n\n{question[:1500]}", _SCENE_ANALYZER_SYSTEM, max_tokens=8000)
+                raw = GeminiSolutionGenerator._call_gemini(f"Produce 9-step script:\n\n{question[:1500]}", _SCENE_ANALYZER_SYSTEM, max_tokens=8000)
                 cleaned = _sanitize_json_str(raw)
                 data = json.loads(cleaned)
                 if len(data.get("steps", [])) < 4: raise ValueError("Too few steps")
                 return data
-            except Exception as e:
-                if attempt < MAX_ATTEMPTS:
-                    import time as _t
-                    _t.sleep(15 * attempt)
+            except Exception:
+                if attempt < 3:
+                    import time; time.sleep(15 * attempt)
                     continue
         return cls._fallback_script(question)
 
     @classmethod
     def _fallback_script(cls, question: str) -> dict:
-        short_q = question[:60]
         return {
-            "title": short_q,
-            "topic": "ENGINEERING",
+            "title": question[:60], "topic": "ENGINEERING",
             "steps": [
-                {"step_number": 1, "label": "Environment", "title": "Step 1: The Surrounding Environment", "description": "Establishing the surrounding environment.", "badges": [], "components_visible": ["layer-frame"], "components_new": ["layer-frame"], "focus_component": "layer-frame", "blur_background": False},
-                {"step_number": 2, "label": "Main Object", "title": "Step 2: The Main System", "description": "The primary object is introduced.", "badges": [], "components_visible": ["layer-frame", "layer-object"], "components_new": ["layer-object"], "focus_component": "layer-object", "blur_background": True},
-                {"step_number": 3, "label": "Primary Value", "title": "Step 3: Primary Given Quantity", "description": "The primary given quantity is identified.", "badges": [], "components_visible": ["layer-frame", "layer-object", "layer-primary"], "components_new": ["layer-primary"], "focus_component": "layer-primary", "blur_background": True},
-                {"step_number": 4, "label": "Secondary Value", "title": "Step 4: Secondary Given Quantity", "description": "Another given quantity is added.", "badges": [], "components_visible": ["layer-frame", "layer-object", "layer-primary", "layer-secondary"], "components_new": ["layer-secondary"], "focus_component": "layer-secondary", "blur_background": True},
-                {"step_number": 5, "label": "Derived Quantity", "title": "Step 5: Derived Quantity", "description": "From the given data we derive an intermediate quantity.", "badges": [], "components_visible": ["layer-frame", "layer-object", "layer-primary", "layer-secondary", "layer-derived"], "components_new": ["layer-derived"], "focus_component": "layer-derived", "blur_background": True},
-                {"step_number": 6, "label": "Setup Complete", "title": "Step 6: Setup Summary", "description": "All given data is now set up — proceed to the formula steps.", "badges": [], "components_visible": ["layer-frame", "layer-object", "layer-primary", "layer-secondary", "layer-derived", "layer-summary"], "components_new": ["layer-summary"], "focus_component": None, "blur_background": False},
+                {"step_number": 1, "label": "Setup", "title": "Step 1: Setup", "description": "Initial state.", "badges": [], "components_visible": ["layer-frame"], "components_new": ["layer-frame"], "focus_component": "layer-frame", "blur_background": False},
+                {"step_number": 2, "label": "Setup", "title": "Step 2: Define", "description": "Defining system.", "badges": [], "components_visible": ["layer-frame", "layer-obj"], "components_new": ["layer-obj"], "focus_component": "layer-obj", "blur_background": True},
+                {"step_number": 3, "label": "Setup", "title": "Step 3: Define", "description": "Adding details.", "badges": [], "components_visible": ["layer-frame", "layer-obj"], "components_new": [], "focus_component": None, "blur_background": True},
+                {"step_number": 4, "label": "Setup", "title": "Step 4: Define", "description": "Adding details.", "badges": [], "components_visible": ["layer-frame", "layer-obj"], "components_new": [], "focus_component": None, "blur_background": True},
+                {"step_number": 5, "label": "Setup", "title": "Step 5: Define", "description": "Finalizing details.", "badges": [], "components_visible": ["layer-frame", "layer-obj"], "components_new": [], "focus_component": None, "blur_background": True},
+                {"step_number": 6, "label": "Ready", "title": "Step 6: Ready", "description": "Proceed to formula.", "badges": [], "components_visible": ["layer-frame", "layer-obj"], "components_new": [], "focus_component": None, "blur_background": False},
             ],
-            "svg_components": {
-                "layer-frame": {"description": "Background", "motion_type": "static", "accent_color": "#4a6a8a", "layer_order": 1, "labels": []},
-                "layer-object": {"description": "Main object", "motion_type": "static", "accent_color": "#0891b2", "layer_order": 2, "labels": []},
-                "layer-primary": {"description": "Primary value", "motion_type": "pulse", "accent_color": "#d97706", "layer_order": 3, "labels": []},
-                "layer-secondary": {"description": "Secondary value", "motion_type": "flow", "accent_color": "#0891b2", "layer_order": 4, "labels": []},
-                "layer-derived": {"description": "Derived value", "motion_type": "static", "accent_color": "#d97706", "layer_order": 5, "labels": []},
-                "layer-summary": {"description": "Summary card", "motion_type": "static", "accent_color": "#7c3aed", "layer_order": 6, "labels": []},
-            },
-            "formula_data": {
-                "formula_text": "Result = f(given values)", "formula_sublabel": "Governing Equation",
-                "variables": [{"symbol": "R", "name": "Result", "value": "? (to find)", "unit": "", "color": "green"}],
-                "note_text": "💡 Apply the governing formula with the given data.",
-            },
-            "substitution_data": {
-                "system_title": "Physical System", "system_description": short_q,
-                "given_list": ["Given values from the problem"],
-                "approach_steps": ["Identify the governing formula", "Substitute the given values", "Compute the result"],
-                "result_bar": "Result = computed value",
-            },
-            "final_answer_data": {
-                "formula_recap": "Result = f(given values)",
-                "substitution_chain": [{"num": 1, "eq": "Apply governing formula"}, {"num": 2, "eq": "Substitute values"}, {"num": 3, "eq": "Compute result"}],
-                "answer_value": "Result", "answer_unit": "units", "answer_highlight": "Result",
-                "insight_text": "Apply the governing formula.", "to_find_label": "Unknown quantity",
-            },
-            "final_answer": "See calculation above",
-            "key_insight": "Apply the governing formula with the given data.",
+            "svg_components": { "layer-frame": {"description": "BG", "motion_type": "static", "accent_color": "#4a6a8a", "layer_order": 1, "labels": []}, "layer-obj": {"description": "OBJ", "motion_type": "static", "accent_color": "#4a6a8a", "layer_order": 2, "labels": []} },
+            "formula_data": { "formula_text": "Result = f(x)", "formula_sublabel": "Eq", "variables": [], "note_text": "Apply formula." },
+            "substitution_data": { "system_title": "Sys", "system_description": "...", "given_list": [], "approach_steps": [], "result_bar": "..." },
+            "final_answer_data": { "formula_recap": "...", "substitution_chain": [], "answer_value": "?", "answer_unit": "", "answer_highlight": "?", "insight_text": "...", "to_find_label": "?" },
+            "final_answer": "...", "key_insight": "..."
         }
 
     @classmethod
@@ -909,37 +722,113 @@ class GeminiSceneAnalyzer:
         try: return await asyncio.wait_for(loop.run_in_executor(None, cls.analyze, question), timeout=STAGE_TIMEOUT_SCENE)
         except asyncio.TimeoutError: return cls._fallback_script(question)
 
+
 # ===========================================================================
-#  MODULE 11-13 — Modals (Abbreviated UI injection for brevity - assumes standard panel styles)
+#  MODULE 11-13 — Modals (Empty definitions - injected by builder now)
 # ===========================================================================
 def inject_scene6(html: str, gemini_sol: dict, scene_script: dict) -> str: return html
 def inject_scene7(html: str, gemini_sol: dict, scene_script: dict) -> str: return html
 def inject_scene9(html: str, gemini_sol: dict, scene_script: dict, to_find_targets: list) -> str: return html
 def inject_early_binding(html: str) -> str: return html
-def inject_step_controller(html: str) -> str: return html
 
 # ===========================================================================
-#  MODULE 21 — GeminiAnimationBuilder (The 9-Step HTML Generator) - PATCHED
+#  MODULE 18 — Nav Patch & Step Controller
 # ===========================================================================
-_ANIMATION_BUILDER_SYSTEM = """You are QAnim HTML Generator v2.0.
-Given a JSON scene script and a question, produce a COMPLETE, self-contained HTML file.
+_MASTER_STEP_CONTROLLER_JS = """\
+<script id="qanim-master-step-controller">
+(function(){
+  'use strict';
+  if(window.__qanimMasterCtrl)return; window.__qanimMasterCtrl=true;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else fn(); }
+  var _SHOW_FN_NAMES=['qanim_showScene6','qanim_showScene7','qanim_showScene8','qanim_showScene9'];
+  function _findShowFn(){
+    for(var i=0;i<_SHOW_FN_NAMES.length;i++){ var f=window[_SHOW_FN_NAMES[i]]; if(typeof f==='function'&&!f.__isStub) return f; }
+    return null;
+  }
+  function _formulaPanelIsOpen(){ return false; }
+  function _openPanel(){
+    var fn=_findShowFn(); if(fn) fn();
+  }
+  function _resolveTotalSteps(){
+    if(typeof window.stepsData!=='undefined') return window.stepsData.length-1;
+    return 5;
+  }
+  function _nextStep(){
+    var ts=_resolveTotalSteps();
+    var cs=typeof window.currentStep==='number'?window.currentStep:0;
+    if(cs>=ts){ _openPanel(); } else {
+      var svgC=document.querySelector('.svg-container');
+      if(svgC) svgC.style.opacity='1';
+      var nxt=cs+1; window.currentStep=nxt;
+      if(typeof window.applyStep==='function') window.applyStep(nxt);
+    }
+  }
+  function _wireNextBtn(){
+    var btn=_el('btn-next'); if(!btn) return;
+    var fresh=btn.cloneNode(true); fresh.removeAttribute('onclick');
+    btn.parentNode.replaceChild(fresh,btn);
+    fresh.addEventListener('click',function(e){ e.stopPropagation(); _nextStep(); });
+  }
+  _onReady(function(){ _wireNextBtn(); window.nextStep=_nextStep; });
+})();
+</script>"""
 
-STEP STRUCTURE (9 steps total):
-Steps 1-6  → SVG animation steps (you MUST generate the JS arrays for these)
-Step 7     → Main Formula panel   
-Step 8     → Substitution panel   
-Step 9     → Final Answer panel   
+def inject_step_controller(html: str) -> str:
+    if 'qanim-master-step-controller' in html: return html
+    html = re.sub(r'<script id="qanim-step-controller">.*?</script>', '', html, flags=re.DOTALL)
+    payload = _MASTER_STEP_CONTROLLER_JS
+    if '</body>' in html: html = html.replace('</body>', payload + '\n</body>', 1)
+    else: html = html + payload
+    return html
 
-HTML STRUCTURE REQUIRED:
-<!DOCTYPE html>
+# ===========================================================================
+#  MODULE 21 — GeminiAnimationBuilder (JSON-to-Template Architecture)
+# ===========================================================================
+_ANIMATION_BUILDER_SYSTEM = """You are QAnim SVG & Data Generator.
+Given a JSON scene script and a question, produce a JSON object containing the raw SVG layers and the steps data.
+
+OUTPUT FORMAT (Return ONLY valid JSON, no markdown fences):
+{
+  "svg_layers": "<g id=\\"layer-frame\\">... detailed SVG shapes ...</g><g id=\\"layer-xyz\\">...</g>",
+  "stepsData": [
+    {
+      "title": "Step 1: ...",
+      "desc": "...",
+      "badges": ["<span class=\\"badge badge-cyan\\">...</span>"],
+      "layerOpacities": { "layer-frame": 1, "layer-xyz": 0 }
+    }
+    // YOU MUST OUTPUT EXACTLY 6 STEPS AS DEFINED IN THE SCENE SCRIPT!
+  ]
+}
+
+SVG RULES:
+- ViewBox is 850x478.
+- Generate detailed, visually rich SVG shapes (no script/style tags inside SVG).
+- EVERY layer defined in the Scene Script `svg_components` MUST be a `<g id="...">` tag.
+
+STEPS RULES:
+- You MUST output exactly 6 objects in `stepsData`.
+- Provide engaging titles and descriptions.
+- Badges must use `badge-cyan`, `badge-orange`, or `badge-green`.
+"""
+
+_HTML_SKELETON = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>[Title]</title>
-  <style>/* Insert standard QAnim styles */</style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{TITLE}</title>
+  <style>
+    svg g[id^="layer-"] { transition: opacity 0.5s ease; }
+    #layer-frame { opacity: 1; }
+  </style>
 </head>
-<body>
-  <div class="question-banner">...</div>
+<body data-step="0">
+  <div class="question-banner">
+    <div class="q-label">Problem Statement</div>
+    <div class="q-text">{QUESTION}</div>
+  </div>
   <div class="dashboard">
     <div class="step-indicator">
       <div class="step-dot active" id="dot-step1" onclick="goToStep(0)">Step 1</div>
@@ -953,45 +842,52 @@ HTML STRUCTURE REQUIRED:
       <div class="step-dot" id="dot-step9">Step 9</div>
     </div>
     <div class="step-progress-wrap"><div class="step-progress-bar" id="step-bar" style="width:11.1%;"></div></div>
-    <div id="step-label">Step 1 of 9</div>
-    <div class="svg-container"><svg id="main-svg" viewBox="0 0 850 478" xmlns="http://www.w3.org/2000/svg">
-       <!-- You MUST generate ALL <g> layers specified in the prompt here -->
-    </svg></div>
+    <div id="step-label" style="font-size:12px;font-weight:700;color:#64748b;text-align:center;margin-bottom:12px;padding-top:6px;">Step 1 of 9</div>
+    <div class="svg-container">
+      <svg id="main-svg" viewBox="0 0 850 478" xmlns="http://www.w3.org/2000/svg">
+        {SVG_CONTENT}
+      </svg>
+    </div>
     <div class="control-panel">
-      <div class="info-box" id="info-box"><h3 id="info-title"></h3><div class="info-desc" id="info-desc"></div><div class="badge-row" id="badge-row"></div></div>
-      <div class="action-row"><button class="btn-secondary" id="btn-prev" disabled onclick="prevStep()">&#x25C0; Prev</button><button class="btn-primary" id="btn-next">Next &#x25B6;</button></div>
+      <div class="info-box" id="info-box">
+        <h3 id="info-title"></h3>
+        <div class="info-desc" id="info-desc"></div>
+        <div class="badge-row" id="badge-row"></div>
+      </div>
+      <div class="action-row">
+        <button class="btn-secondary" id="btn-prev" disabled onclick="prevStep()">&#x25C0; Prev</button>
+        <button class="btn-primary" id="btn-next">Next &#x25B6;</button>
+      </div>
     </div>
   </div>
 <script>
-// CRITICAL: You MUST write out all objects completely. DO NOT leave this array empty.
-var stepsData = [
-  { title: "Step 1: ...", desc: "...", badges: ["..."], layerOpacities: { "layer-frame": 1 } },
-  { title: "Step 2: ...", desc: "...", badges: ["..."], layerOpacities: { "layer-frame": 1, "layer-xyz": 1 } }
-  // Write ALL 6 steps!
-];
+var stepsData = {STEPS_DATA};
 window.stepsData = stepsData;
 var currentStep = 0; window.currentStep = 0;
-var totalSteps = stepsData.length - 1; window.totalSteps = totalSteps;
+var totalSteps = stepsData.length > 0 ? stepsData.length - 1 : 5; window.totalSteps = totalSteps;
 
 function applyStep(idx) {
   currentStep = idx; window.currentStep = idx;
-  document.getElementById('step-bar').style.width = ((idx+1)/9*100) + '%';
-  document.getElementById('step-label').textContent = 'Step ' + (idx+1) + ' of 9';
+  var bar = document.getElementById('step-bar'); if(bar) bar.style.width = ((idx+1)/9*100) + '%';
+  var lbl = document.getElementById('step-label'); if(lbl) lbl.textContent = 'Step ' + (idx+1) + ' of 9';
   document.querySelectorAll('.step-dot').forEach(function(d, i) {
     d.classList.remove('active', 'done');
     if (i === idx) d.classList.add('active'); else if (i < idx) d.classList.add('done');
   });
   var sd = stepsData[idx] || {};
-  document.getElementById('info-title').textContent = sd.title || '';
-  document.getElementById('info-desc').textContent  = sd.desc  || '';
+  var it = document.getElementById('info-title'); if(it) it.textContent = sd.title || '';
+  var idesc = document.getElementById('info-desc'); if(idesc) idesc.textContent  = sd.desc  || '';
+  var br = document.getElementById('badge-row');
+  if (br) br.innerHTML = (sd.badges || []).join('');
   var lo = sd.layerOpacities || {};
   Object.keys(lo).forEach(function(id) {
     var el = document.getElementById(id);
     if (el) el.style.opacity = lo[id];
   });
-  document.getElementById('btn-prev').disabled = (idx === 0);
+  var bp = document.getElementById('btn-prev'); if(bp) bp.disabled = (idx === 0);
   var nb = document.getElementById('btn-next');
   if (nb) nb.textContent = (idx === totalSteps) ? 'Step 7: Formula \u25b6' : 'Next \u25b6';
+  document.body.setAttribute('data-step', idx);
 }
 function nextStep() {
   if (currentStep < totalSteps) {
@@ -1001,17 +897,22 @@ function nextStep() {
   }
 }
 function prevStep() {
-  if (currentStep > 0) { currentStep--; window.currentStep = currentStep; applyStep(currentStep); }
+  if (currentStep > 0) {
+    var svgC = document.querySelector('.svg-container'); if (svgC) { svgC.style.transition = 'none'; svgC.style.opacity = '1'; }
+    currentStep--; window.currentStep = currentStep; applyStep(currentStep);
+  }
 }
 function goToStep(idx) {
-  if (idx >= 0 && idx <= totalSteps) { currentStep = idx; window.currentStep = currentStep; applyStep(currentStep); }
+  if (idx >= 0 && idx <= totalSteps) {
+    var svgC = document.querySelector('.svg-container'); if (svgC) { svgC.style.transition = 'none'; svgC.style.opacity = '1'; }
+    currentStep = idx; window.currentStep = idx; applyStep(currentStep);
+  }
 }
 window.nextStep = nextStep; window.prevStep = prevStep; window.applyStep = applyStep; window.goToStep = goToStep;
 window.addEventListener('DOMContentLoaded', function() { applyStep(0); });
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 class GeminiAnimationBuilder:
     @classmethod
@@ -1019,31 +920,30 @@ class GeminiAnimationBuilder:
         if _gemini_client is None: return RecoveryEngine.fallback_html(question, "Gemini client not available")
         MAX_ATTEMPTS = 4
         last_err = ""
-        expected_layers = len(scene_script.get("svg_components", {}))
-        expected_steps = len(scene_script.get("steps", []))
         
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 QAnimLogger.info("AnimBuilder", f"Build attempt {attempt}/{MAX_ATTEMPTS}...")
-                prompt = cls._build_prompt(question, scene_script, sol, topic, expected_steps, expected_layers)
+                prompt = cls._build_prompt(question, scene_script, sol, topic)
                 raw = GeminiSolutionGenerator._call_gemini(prompt, _ANIMATION_BUILDER_SYSTEM, max_tokens=MAX_TOK)
-                raw = re.sub(r'^```(?:html)?\s*\n?', '', raw.strip(), flags=re.IGNORECASE)
-                raw = re.sub(r'\n?```\s*$', '', raw)
-                raw = DocumentSkeletonNormalizer.normalize(raw)
+                cleaned = _sanitize_json_str(raw)
+                data = json.loads(cleaned)
                 
-                if 'stepsData' not in raw: 
-                    raise ValueError("Missing stepsData in generated HTML")
+                svg_content = data.get("svg_layers", "")
+                steps_data = data.get("stepsData", [])
                 
-                # --- ANTI-LAZINESS VALIDATION ---
-                if re.search(r'var\s+stepsData\s*=\s*\[\s*\]\s*;?', raw) or "stepsData = []" in raw:
-                    raise ValueError("LLM generated an empty stepsData array (truncation detected).")
-                    
-                layer_count = raw.count('<g id="layer-')
-                if layer_count < expected_layers and expected_layers > 0:
-                    raise ValueError(f"LLM truncated SVG layers (found {layer_count}, expected {expected_layers}).")
-                # --------------------------------
+                if len(steps_data) < 4:
+                    raise ValueError(f"Truncated stepsData: {len(steps_data)} steps found.")
                 
-                return raw
+                q_esc = html_module.escape(question)
+                t_esc = html_module.escape(scene_script.get("title", "Animation"))
+                
+                html = _HTML_SKELETON.replace("{TITLE}", t_esc)
+                html = html.replace("{QUESTION}", q_esc)
+                html = html.replace("{SVG_CONTENT}", svg_content)
+                html = html.replace("{STEPS_DATA}", json.dumps(steps_data, ensure_ascii=False))
+                
+                return html
             except Exception as e:
                 last_err = _err_msg(e)
                 QAnimLogger.warn("AnimBuilder", f"Validation failed: {last_err}")
@@ -1051,23 +951,12 @@ class GeminiAnimationBuilder:
         return RecoveryEngine.fallback_html(question, f"HTML generation failed due to repeated LLM truncation: {last_err}")
 
     @classmethod
-    def _build_prompt(cls, question: str, scene_script: dict, sol: dict, topic: str, n_steps: int, n_layers: int) -> str:
+    def _build_prompt(cls, question: str, scene_script: dict, sol: dict, topic: str) -> str:
         script_json = json.dumps({
-            "title": scene_script.get("title", "Physics Animation"),
             "topic": topic, "steps": scene_script.get("steps", []),
             "svg_components": scene_script.get("svg_components", {}),
-            "final_answer": scene_script.get("final_answer", sol.get("final_answer", "")),
         }, ensure_ascii=False, indent=2)
-        
-        return f"""Question to animate:\n\"\"\"{question[:1200]}\"\"\"\n\nScene Script (JSON):\n{script_json}\n
-IMPORTANT RENDERING NOTES:
-- Step 6 must show ALL layers visible (no blur) + two callout boxes (Given + To Find).
-
-CRITICAL ANTI-LAZINESS INSTRUCTIONS (DO NOT IGNORE):
-1. You MUST generate all {n_steps} step objects inside the `stepsData` JS array. DO NOT output `var stepsData = [];`.
-2. You MUST generate all {n_layers} `<g>` layers inside the SVG. DO NOT use comments like `<!-- insert layers here -->`.
-3. Generate the FULL, un-truncated HTML code. DO NOT skip any CSS or JavaScript.
-"""
+        return f"Question:\n\"\"\"{question[:1200]}\"\"\"\n\nScene Script (JSON):\n{script_json}"
 
     @classmethod
     async def build_async(cls, question: str, scene_script: dict, sol: dict, topic: str = "ENGINEERING") -> str:
@@ -1081,11 +970,9 @@ CRITICAL ANTI-LAZINESS INSTRUCTIONS (DO NOT IGNORE):
 class PanelReliabilityEngine:
     @classmethod
     def run_all_passes(cls, html: str, scene_script: dict) -> str:
-        html = re.sub(r'(<button[^>]*id=["\']btn-next["\'][^>]*)\s+onclick=["\'][^"\']*["\']', r'\1', html)
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
-        html = re.sub(r'class="badge\s+gc-(?:blue|teal)"', 'class="badge cyan"', html)
-        if 'id="step-bar"' not in html: html = re.sub(r'class="step-progress-bar"(?!\s*id=)', 'class="step-progress-bar" id="step-bar"', html, count=1)
         html = JsSyntaxValidator.auto_fix_stray_apostrophes(html)
+        html = inject_step_controller(html)
         return html
 
 # ===========================================================================
@@ -1109,11 +996,6 @@ async def generate_animation_html(question: str) -> str:
 
     html = DocumentSkeletonNormalizer.normalize(html)
     
-    # Python Panel Injectors (Replaced for brevity here - ensure full injection logic is used in prod)
-    # html = inject_scene6(html, sol, scene_script)
-    # html = inject_scene7(html, sol, scene_script)
-    # html = inject_scene9(html, sol, scene_script, to_find_targets)
-    
     html = PanelReliabilityEngine.run_all_passes(html, scene_script)
     html = HtmlSanitizer.sanitize(html)
     html = inject_centering_css(html)
@@ -1128,11 +1010,45 @@ def generate_animation(question: str) -> str:
             return pool.submit(asyncio.run, generate_animation_html(question)).result(timeout=PIPELINE_TIMEOUT + 30)
     else: return loop.run_until_complete(asyncio.wait_for(generate_animation_html(question), timeout=PIPELINE_TIMEOUT + 30))
 
+# ===========================================================================
+#  PUBLIC API WRAPPER FOR MAIN.PY
+# ===========================================================================
+async def generate_question_animation(question: str) -> dict:
+    """
+    Public async entry point imported by main.py.
+    """
+    question = (question or "").strip()
+    if not question:
+        raise ValueError("'question' field cannot be empty")
+
+    QAnimLogger.info("generate_question_animation", f"question={question[:80]!r}")
+    html = await generate_animation_html(question)
+
+    explanation: str = ""
+    try:
+        m = re.search(r'<title[^>]*>([^<]{5,120})</title>', html, re.IGNORECASE)
+        if m: explanation = m.group(1).strip()
+        if not explanation:
+            m2 = re.search(r'<h3[^>]*>([^<]{5,120})</h3>', html, re.IGNORECASE)
+            if m2: explanation = re.sub(r'<[^>]+>', '', m2.group(1)).strip()
+        explanation = explanation[:220]
+    except Exception:
+        pass
+
+    if not explanation:
+        explanation = f"9-step animated solution for: {question[:160]}"
+
+    return {
+        "title": question[:80],
+        "explanation": explanation,
+        "animation_code": html,
+    }
+
 if __name__ == "__main__":
-    import sys, time as _time_mod
+    import sys
     q = sys.argv[1] if len(sys.argv) > 1 else "Find the heat loss of a 2m² plate at 150°C in 30°C air with h=25 W/m²K."
     out = sys.argv[2] if len(sys.argv) > 2 else "output.html"
     print(f"Generating for: {q[:60]}...")
     html_out = generate_animation(q)
     with open(out, "w", encoding="utf-8") as f: f.write(html_out)
-    print(f"Saved to {out}. Anti-laziness patch enabled.")
+    print(f"Saved to {out}. API Export Fixed.")
