@@ -2,9 +2,9 @@
 q_animation.py  —  QAnim Question Animation Generator  v3.1
 ============================================================
 
-v3.1 — MODEL FIX: gemini-2.5-pro → gemini-2.5-pro-preview-06-05
+v3.1 — MODEL FIX: gemini-2.5-pro → gemini-3.1-pro-preview
   - gemini-2.5-pro returns HTTP 404 NOT_FOUND for new API keys.
-  - Model is now read from GEMINI_MODEL env var (default: gemini-2.5-pro-preview-06-05).
+  - Model is now read from GEMINI_MODEL env var (default: gemini-3.1-pro-preview).
   - 404 errors are now non-retryable (fail fast instead of wasting 3×15s retries).
 
 v3.0 — CLEAN REWRITE matching the reference HTML output exactly.
