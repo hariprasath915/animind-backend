@@ -429,6 +429,27 @@ def analyze_scene(question: str) -> dict:
     }
     if _gemini_client is None:
         return FALLBACK
+
+    def _validate_scene(data: dict) -> bool:
+        """Require exactly 6 steps numbered 1-6 with all required fields."""
+        steps = data.get("steps", [])
+        if len(steps) != 6:
+            Log.warn("SceneAnalyzer", f"Expected 6 steps, got {len(steps)}")
+            return False
+        required_nums = {1, 2, 3, 4, 5, 6}
+        got_nums = set()
+        required_fields = {"step_number", "label", "title", "description", "badges", "layers_visible", "layer_new", "blur"}
+        for s in steps:
+            missing = required_fields - set(s.keys())
+            if missing:
+                Log.warn("SceneAnalyzer", f"Step missing fields: {missing}")
+                return False
+            got_nums.add(s["step_number"])
+        if got_nums != required_nums:
+            Log.warn("SceneAnalyzer", f"Step numbers {got_nums} != {{1..6}}")
+            return False
+        return True
+
     for attempt in range(1, 4):
         try:
             raw = _call_gemini(
@@ -437,13 +458,16 @@ def analyze_scene(question: str) -> dict:
                 max_tokens=MAX_TOKENS_SCENE,
             )
             data = json.loads(_sanitize_json(raw))
-            if len(data.get("steps", [])) >= 4:
-                Log.ok("SceneAnalyzer", f"Got {len(data['steps'])} steps")
+            if _validate_scene(data):
+                Log.ok("SceneAnalyzer", f"Got {len(data['steps'])} steps (all validated)")
                 return data
+            else:
+                Log.warn("SceneAnalyzer", f"Attempt {attempt}: scene validation failed, retrying")
         except Exception as e:
             Log.warn("SceneAnalyzer", f"Attempt {attempt} failed: {e}")
-            if attempt < 3:
-                import time as _t; _t.sleep(15 * attempt)
+        if attempt < 3:
+            import time as _t; _t.sleep(15 * attempt)
+    Log.warn("SceneAnalyzer", "All attempts failed — using FALLBACK scene")
     return FALLBACK
 
 
@@ -469,39 +493,53 @@ svg_defs: SVG <defs> content (gradients, markers, filters). No wrapping tag need
 svg_layers: SVG <g> elements, ONE per layer. All start at opacity:0 except layer-frame (opacity:1).
   Each layer ID must match the scene script's svg_layers keys exactly.
   viewBox is 0 0 850 478. Make layers visually rich and domain-specific.
-  Include a blur-shield rect: <rect id="blur-shield" .../>
+  Include a blur-shield rect: <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
 
 steps_data_js: The var stepsData = [...] array — exactly 6 objects, one per step.
-  Each object must have:
-    label, blurOp, title, badgeList, desc, layerOpacities (object), overlays (array).
-  layerOpacities: map of layer-id → opacity number (0 or 1).
-  blurOp: 0.0 for steps 1 and 6; 0.38 for steps 2–5.
-  overlays: array of overlay IDs shown for this step (can be empty).
-  badgeList: array of plain objects. Example:
-    badgeList: [{text: "L = 1m", type: "cyan"}, {text: "F = 10N", type: "orange"}]
-    Allowed types: cyan, orange, green.
-    CRITICAL: NEVER write raw HTML in badge strings. ALWAYS use badgeList array.
-    NEVER write: badges: "<span ...>" or badges: '<span ...>'
-    ALWAYS write: badgeList: [{text: "value", type: "cyan"}]
+  Each object MUST have EXACTLY these keys:
+    title    — string, the step title
+    desc     — string, the step description
+    badges   — JS ARRAY of HTML strings. CRITICAL FORMAT RULE:
+                CORRECT:   badges: ['<span class="badge badge-cyan">L = 1m</span>']
+                CORRECT:   badges: ['<span class="badge badge-cyan">A</span>', '<span class="badge badge-orange">B</span>']
+                WRONG:     badges: "<span class=\\"badge badge-cyan\\">text</span>"
+                WRONG:     badges: '<span class=\'badge\'>text</span>'
+                Rule: outer delimiter MUST be single-quote [ ' ], inner class= MUST use double-quote " 
+                The whole badges value is a JS ARRAY [...], NOT a string.
+    blurOp   — number: 0.0 for step 1 and step 6; 0.38 for steps 2-5
+    layerOpacities — object mapping layer-id to 0 or 1
+    overlays — empty array []
 
-apply_step_js: The body of function applyStep(idx) — sets layer opacities, blur shield,
-  updates DOM elements (info-title, info-badges, info-desc, step-dots, step-bar, step-label).
-  Must also set window.currentStep = idx.
-  Must call updateWireGeometry or equivalent if the problem has animated geometry.
-  Must handle step-dot done/active/inactive CSS classes.
-  Must update step-label as "Step N of 9".
-  Must update step-bar width as ((idx+1)/9*100) + '%'.
+  Example stepsData:
+  var stepsData = [
+    { title: "Step 1: Environment", desc: "The background.", badges: ['<span class="badge badge-cyan">Scale</span>'], blurOp: 0.0, layerOpacities: {"layer-frame": 1, "layer-obj": 0}, overlays: [] },
+    { title: "Step 2: Object",      desc: "The object.",     badges: ['<span class="badge badge-cyan">D = 50mm</span>'], blurOp: 0.38, layerOpacities: {"layer-frame": 1, "layer-obj": 1}, overlays: [] }
+  ];
 
-raf_js: requestAnimationFrame loop code if the SVG has animated elements (stretching wire,
-  falling ball, rotating gear, etc.). Include window.qanimStartRAF, drawFrame, etc.
-  Leave empty string "" if no animation is needed.
+apply_step_js: The BODY of function applyStep(idx). Must:
+  1. Set window.currentStep = idx
+  2. Update step-bar width: ((idx+1)/9*100) + '%'
+  3. Update step-label text: 'Step ' + (idx+1) + ' of 9'
+  4. Update step-dot CSS classes (active/done)
+  5. Set info-title and info-desc text
+  6. Render badges into id="info-badges" using:
+       document.getElementById('info-badges').innerHTML = (stepsData[idx].badges || []).join('');
+  7. Set layer opacities via el.style.opacity (NOT setAttribute)
+  8. Set blur-shield opacity: document.getElementById('blur-shield').style.opacity = stepsData[idx].blurOp
+  9. Disable/enable btn-prev based on idx === 0
+
+  CRITICAL: use el.style.opacity = value  (NOT el.setAttribute('opacity', value))
+  CRITICAL: render badges with .join('')  (NOT forEach/createElement)
+  CRITICAL: step label says 'of 9' (NOT 'of 6')
+
+raf_js: requestAnimationFrame loop if SVG has animation. Empty string "" if no animation.
+  If used: define window.qanimStartRAF = function(){ window.qanimRafId = requestAnimationFrame(drawFrame); };
+  Do NOT assign: window.qanimStartRAF = requestAnimationFrame(drawFrame)  (that stores a number, not a function)
 
 RULES:
-- No <html>, no <head>, no <body>, no <style>, no <script> wrappers in any field.
-- svg_layers must include id="blur-shield" rect: <rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
-- Make SVG visually detailed and domain-appropriate.
-- Layer IDs must match the scene script exactly.
-- stepsData must have exactly 6 entries.
+- No <html>, no <head>, no <body>, no <style>, no <script> wrappers.
+- stepsData must have EXACTLY 6 entries.
+- Layer IDs must match scene script svg_layers keys exactly.
 - Return PURE JSON only (no markdown, no fences)."""
 
 
@@ -574,7 +612,7 @@ def _sanitize_svg_data(data: dict) -> dict:
         data["steps_data_js"] = steps_js
 
 
-    # ── Bug 1 + 2: fix apply_step_js ──────────────────────────────────────
+    # ── Bug 1 + 2 + 5: fix apply_step_js ─────────────────────────────────
     apply_js = data.get("apply_step_js", "")
     # Bug 1: setAttribute('opacity', …) → style.opacity = …
     apply_js = _re.sub(
@@ -587,6 +625,23 @@ def _sanitize_svg_data(data: dict) -> dict:
     # Bug 2b: 'of 6' / "of 6" → 'of 9' / "of 9"
     apply_js = _re.sub(r"(['\"])of 6\1", lambda m: m.group(1) + "of 9" + m.group(1), apply_js)
     apply_js = _re.sub(r'\bof 6\b', 'of 9', apply_js)
+    # Bug 5: applyStep uses step.badgeList.forEach(...createElement) but stepsData has
+    # step.badges (a JS array). Replace with the simpler, correct join('') pattern.
+    # Also catch step.description vs step.desc mismatch.
+    apply_js = _re.sub(r'step\.badgeList\b', 'step.badges', apply_js)
+    apply_js = _re.sub(r'sd\.badgeList\b',   'sd.badges',   apply_js)
+    apply_js = _re.sub(r'\bsd\.description\b', 'sd.desc', apply_js)
+    apply_js = _re.sub(r'\bstep\.description\b', 'step.desc', apply_js)
+    # Replace forEach/createElement badge rendering with the safe join pattern
+    apply_js = _re.sub(
+        r"(?:step|sd|stepsData\[idx\])\.badges?\s*\.forEach\s*\([^;]+?\}\s*\)\s*;",
+        "(stepsData[idx].badges || []).join('');",
+        apply_js,
+        flags=_re.DOTALL
+    )
+    # If applyStep still renders badges into a different element ID, normalise to info-badges
+    apply_js = _re.sub(r"getElementById\(['\"]badge-row['\"]\)", "getElementById('info-badges')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]badges['\"]\)", "getElementById('info-badges')", apply_js)
     data["apply_step_js"] = apply_js
 
     # ── Bugs 4a / 4b / 4c: fix raf_js ────────────────────────────────────
@@ -693,24 +748,33 @@ def _sanitize_svg_data(data: dict) -> dict:
 
 def _rebuild_steps_data_js(scene: dict) -> str:
     """
-    Generate a guaranteed-safe stepsData JS array entirely from the scene dict.
-    This completely bypasses Gemini's badge string generation, which is the
-    root cause of the recurring JS syntax errors that kill steps 1-6.
+    Generate guaranteed-safe stepsData JS from the scene dict.
+    Writes badges as a JS ARRAY of strings: outer-single / inner-double quotes.
+    This matches the reference HTML format exactly and is immune to any quote conflict.
 
-    Badge HTML is built in Python using html.escape() — no quote conflicts
-    are possible regardless of what Gemini would have written.
+    Format: badges: ['<span class="badge badge-cyan">text</span>', ...]
+    applyStep renders with: (stepsData[idx].badges || []).join('')
     """
     steps = scene.get("steps", [])
     all_layer_ids = list(scene.get("svg_layers", {}).keys())
     CLS = {"cyan": "badge-cyan", "orange": "badge-orange", "green": "badge-green"}
 
-    def _badge_html(badges):
+    def _badge_arr(badges):
         parts = []
         for b in badges:
             cls = CLS.get(b.get("type", "cyan"), "badge-cyan")
             text = html_module.escape(str(b.get("text", "")))
-            parts.append('<span class="badge ' + cls + '">' + text + '</span>')
-        return " ".join(parts)
+            # outer=single, inner=double: always safe in JS regardless of context
+            parts.append("'<span class=\"badge " + cls + "\">'" + " + " + repr(text) + " + '</span>'")
+        if not parts:
+            return "[]"
+        # Build the actual JS array of string literals
+        items = []
+        for b in badges:
+            cls = CLS.get(b.get("type", "cyan"), "badge-cyan")
+            text = html_module.escape(str(b.get("text", "")))
+            items.append("'<span class=\"badge " + cls + "\">" + text + "</span>'")
+        return "[" + ", ".join(items) + "]"
 
     rows = []
     for s in steps:
@@ -719,23 +783,18 @@ def _rebuild_steps_data_js(scene: dict) -> str:
             if vis in lo:
                 lo[vis] = 1
         blur = 0.38 if s.get("blur", False) else 0.0
-        badge_html = _badge_html(s.get("badges", []))
-        # Build layerOpacities as a JS object literal string
+        badge_arr = _badge_arr(s.get("badges", []))
         lo_pairs = ", ".join(f'"{k}": {v}' for k, v in lo.items())
-        # Escape badge HTML for embedding in a double-quoted JS string
-        badge_escaped = badge_html.replace("\\", "\\\\").replace('"', '\\"')
-        title_escaped = s.get("title", "").replace("\\", "\\\\").replace('"', '\\"')
-        desc_escaped  = s.get("description", "").replace("\\", "\\\\").replace('"', '\\"')
-        label_escaped = s.get("label", "").replace("\\", "\\\\").replace('"', '\\"')
+        title_esc = s.get("title", "").replace("\\", "\\\\").replace('"', '\\"')
+        desc_esc  = s.get("description", "").replace("\\", "\\\\").replace('"', '\\"')
         rows.append(
             '  {\n'
-            f'    label: "{label_escaped}",\n'
+            f'    title: "{title_esc}",\n'
+            f'    desc: "{desc_esc}",\n'
+            f'    badges: {badge_arr},\n'
             f'    blurOp: {blur},\n'
-            f'    overlays: [],\n'
-            f'    title: "{title_escaped}",\n'
-            f'    badges: "{badge_escaped}",\n'
-            f'    desc: "{desc_escaped}",\n'
-            f'    layerOpacities: {{{lo_pairs}}}\n'
+            f'    layerOpacities: {{{lo_pairs}}},\n'
+            '    overlays: []\n'
             '  }'
         )
 
@@ -779,52 +838,45 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
     steps = scene.get("steps", [])
     all_layer_ids = list(scene.get("svg_layers", {}).keys())
 
-    # Build fallback stepsData
-    def _badge_html(badges):
-        out = ""
-        for b in badges:
-            cls = {"cyan": "badge-cyan", "orange": "badge-orange", "green": "badge-green"}.get(b.get("type", "cyan"), "badge-cyan")
-            out += f'<span class="badge {cls}">{html_module.escape(b.get("text", ""))}</span> '
-        return out.strip()
+    # Build fallback stepsData — badges ALWAYS as JS array (never a string)
+    # so that (data.badges || []).join('') is always safe in applyStep.
+    fallback_steps_js = _rebuild_steps_data_js(scene)
 
-    fallback_steps = []
-    for s in steps:
-        lo = {lid: 0 for lid in all_layer_ids}
-        for vis in s.get("layers_visible", []):
-            if vis in lo:
-                lo[vis] = 1
-        blur = 0.38 if s.get("blur", False) else 0.0
-        fallback_steps.append({
-            "label": s.get("label", f"Step {s['step_number']}"),
-            "blurOp": blur,
-            "overlays": [],
-            "title": s.get("title", f"Step {s['step_number']}"),
-            "badges": _badge_html(s.get("badges", [])),
-            "desc": s.get("description", ""),
-            "layerOpacities": lo,
-        })
-
-    fallback_steps_js = "var stepsData = " + json.dumps(fallback_steps, indent=2, ensure_ascii=False) + ";"
-
+    # FIX D: FALLBACK_APPLY uses Array.isArray guard so badges work whether
+    # they arrive as an array or (legacy) as a plain string.
     FALLBACK_APPLY = """function applyStep(idx) {
   window.currentStep = idx;
-  var data = stepsData[idx];
+  var data = stepsData[idx] || {};
   var bs = document.getElementById('blur-shield');
-  if(bs) bs.style.opacity = data.blurOp;
-  for(var lid in data.layerOpacities){
+  if(bs) bs.style.opacity = (typeof data.blurOp === 'number') ? data.blurOp : 0;
+  var lo = data.layerOpacities || {};
+  for(var lid in lo){
     var el = document.getElementById(lid);
-    if(el) el.style.opacity = data.layerOpacities[lid];
+    if(el) el.style.opacity = lo[lid];
   }
-  document.getElementById('info-title').innerHTML = data.title;
-  document.getElementById('info-badges').innerHTML = data.badges;
-  document.getElementById('info-desc').innerHTML = data.desc;
+  var titleEl = document.getElementById('info-title');
+  if(titleEl) titleEl.innerHTML = data.title || '';
+  var badgeEl = document.getElementById('info-badges');
+  if(badgeEl){
+    var bdg = data.badges;
+    if(Array.isArray(bdg)) badgeEl.innerHTML = bdg.join('');
+    else if(typeof bdg === 'string') badgeEl.innerHTML = bdg;
+    else badgeEl.innerHTML = '';
+  }
+  var descEl = document.getElementById('info-desc');
+  if(descEl) descEl.innerHTML = data.desc || '';
   var dots = document.querySelectorAll('.step-dot');
   for(var i=0;i<dots.length;i++){
     dots[i].className='step-dot'+(i<idx?' done':i===idx?' active':'');
   }
-  document.getElementById('step-label').innerHTML = 'Step '+(idx+1)+' of 9';
-  document.getElementById('step-bar').style.width = ((idx+1)/9*100)+'%';
-  var pb=document.getElementById('btn-prev'); if(pb) pb.disabled=(idx===0);
+  var lbl = document.getElementById('step-label');
+  if(lbl) lbl.innerHTML = 'Step '+(idx+1)+' of 9';
+  var bar = document.getElementById('step-bar');
+  if(bar) bar.style.width = ((idx+1)/9*100)+'%';
+  var pb = document.getElementById('btn-prev');
+  if(pb) pb.disabled = (idx === 0);
+  var nb = document.getElementById('btn-next');
+  if(nb) nb.textContent = (idx >= (window.totalSteps || 5)) ? 'Step 7: Formula \u25b6' : 'Next Step \u25b6';
 }"""
 
     if _gemini_client is None:
@@ -1715,8 +1767,9 @@ def _build_step_dots(steps: list, scene: dict) -> str:
         for j in range(n, 6):
             dots += f'<div class="step-dot" id="dot-step{j+1}">Step {j+1}</div><div class="step-connector"></div>\n'
         # Dots for scenes 7, 8, 9
+        # FIX G: dot-step8 uses qanim_showScene7 (not qanim_showScene8) for consistency
         dots += f'<div class="step-dot" id="dot-step7" onclick="if(typeof window.qanim_showScene6===\'function\')window.qanim_showScene6()">7 · Formula</div>\n<div class="step-connector"></div>\n'
-        dots += f'<div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene8===\'function\')window.qanim_showScene8()">8 · Subst.</div>\n<div class="step-connector"></div>\n'
+        dots += f'<div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene7===\'function\')window.qanim_showScene7()">8 · Subst.</div>\n<div class="step-connector"></div>\n'
         dots += f'<div class="step-dot" id="dot-step9" onclick="if(typeof window.qanim_showScene9===\'function\')window.qanim_showScene9()">9 · Answer</div>\n'
 
     return dots
@@ -1753,6 +1806,45 @@ def _build_glossary_panel(glossary: list) -> str:
     {terms_html}
   </div>
 </div>"""
+
+
+def validate_final_html(html: str) -> None:
+    """
+    FIX B: Validate that the assembled HTML contains all required elements.
+    Raises ValueError listing every missing item if any are absent.
+    Does NOT return — either passes silently or raises.
+    """
+    required_ids = [
+        "qanim-scene6-overlay",
+        "qanim-scene7-overlay",
+        "qanim-scene9-overlay",
+        "info-title",
+        "info-desc",
+        "info-badges",
+        "step-label",
+        "step-bar",
+        "btn-prev",
+    ]
+    required_strings = [
+        "Step 7",
+        "Step 8",
+        "Step 9",
+        "var stepsData",
+        "function applyStep",
+        "qanim_showScene6",
+        "qanim_showScene7",
+        "qanim_showScene9",
+        "qanim_goToPrevScene",
+    ]
+    missing = []
+    for rid in required_ids:
+        if f'id="{rid}"' not in html:
+            missing.append(f'Missing element id="{rid}"')
+    for rs in required_strings:
+        if rs not in html:
+            missing.append(f'Missing string: {rs!r}')
+    if missing:
+        raise ValueError("Final HTML validation failed:\n  " + "\n  ".join(missing))
 
 
 def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
@@ -1804,13 +1896,20 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     # Answer box JS with targets
     answerbox_js = _ANSWERBOX_JS_TMPL.replace("{{TARGETS_JSON}}", targets_json)
 
-    # Main navigation JS
-    total_steps = len(steps)
+    # FIX E: totalSteps is always the number of SVG steps (should be 6).
+    # It is used as the 0-indexed last SVG step (index 5 = step 6).
+    # We enforce a minimum of 6 to ensure btn-next logic works correctly.
+    total_steps = max(len(steps), 6)
+    # totalSteps is used as: if(currentStep < totalSteps) → advance
+    # when currentStep === totalSteps (i.e. 6), show Scene 6 modal (Step 7)
+    # So totalSteps must equal len(stepsData) i.e. 6 when stepsData has 6 entries.
+    # applyStep uses idx 0..5, nextStep triggers modal at idx==6.
     nav_js = f"""
   <script>
-    var totalSteps = {total_steps};
+    var totalSteps = {total_steps - 1};  // 0-indexed last SVG step (step 6 = index 5)
     var totalDisplaySteps = 9;
     var currentStep = 0;
+    window.totalSteps = {total_steps - 1};
     window.qanimRafId = null;
     window.currentStep = 0;
 
@@ -1818,12 +1917,21 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 
     {apply_step_js}
 
+    // FIX F: Fixed Python-generated navigation JS for all scene transitions.
+    // These are never generated by Gemini — always injected by Python.
+    function _qanim_hideAllOverlays(){{
+      ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){{
+        var el=document.getElementById(id);
+        if(el)el.classList.remove('qanim-scene-visible');
+      }});
+    }}
+
     function nextStep(){{
-      if(currentStep < totalSteps - 1){{
+      if(currentStep < (window.totalSteps || {total_steps - 1})){{
         currentStep++;
         window.currentStep = currentStep;
         applyStep(currentStep);
-      }} else if(currentStep === totalSteps - 1){{
+      }} else {{
         if(typeof window.qanim_showScene6 === 'function'){{
           var svgCont = document.querySelector('.svg-container');
           if(svgCont){{ svgCont.style.transition='opacity .45s ease'; svgCont.style.opacity='0'; setTimeout(function(){{window.qanim_showScene6();}},460); }}
@@ -1833,7 +1941,12 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     }}
 
     function goToStep(idx){{
-      if(idx >= 0 && idx < totalSteps){{
+      if(idx >= 0 && idx <= (window.totalSteps || {total_steps - 1})){{
+        _qanim_hideAllOverlays();
+        var bd=document.getElementById('qanim-scene-modal-backdrop');
+        if(bd)bd.classList.remove('qanim-scene-visible');
+        var svgCont=document.querySelector('.svg-container');
+        if(svgCont)svgCont.style.opacity='1';
         currentStep = idx;
         window.currentStep = idx;
         applyStep(currentStep);
@@ -1841,6 +1954,9 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     }}
 
     function resetAnim(){{
+      _qanim_hideAllOverlays();
+      var bd=document.getElementById('qanim-scene-modal-backdrop');
+      if(bd)bd.classList.remove('qanim-scene-visible');
       currentStep = 0;
       window.currentStep = 0;
       var svgCont = document.querySelector('.svg-container');
@@ -1989,6 +2105,14 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 
 </body>
 </html>"""
+
+    # FIX B: Validate final HTML before returning; log a warning on failure
+    # but still return the HTML rather than crashing the pipeline.
+    try:
+        validate_final_html(html)
+        Log.ok("HTMLAssembler", "Final HTML validation passed (all 9 scenes present)")
+    except ValueError as _ve:
+        Log.warn("HTMLAssembler", str(_ve))
 
     return html
 
