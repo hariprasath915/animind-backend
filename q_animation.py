@@ -605,8 +605,31 @@ def _sanitize_svg_data(data: dict) -> dict:
     else:
         # Fallback: try regex fixes on whatever Gemini wrote
         steps_js = data.get("steps_data_js", "")
-        steps_js = steps_js.replace("class='badge ", 'class="badge ')
-        steps_js = steps_js.replace('class="badge ', "class='badge ")
+        # FIX: Normalise badge quotes — catch ALL mixed-quote patterns:
+        # Pattern 1: outer single, inner attr also single → class='badge...'  → swap inner to double
+        # Pattern 2: outer double, inner attr also double → class="badge..."  → swap outer to single
+        # Approach: rewrite every badge span using a safe regex
+        def _fix_badge_spans(js):
+            """
+            Find all badge <span> string literals in the JS and rewrite them with
+            outer-single / inner-double quotes, which is the only safe format.
+            Handles: class='badge...' (inner single clashes with outer single delimiter)
+                     class=\"badge...\" (escaped double in outer-double string)
+            """
+            # Match JS string literals (single or double quoted) containing 'badge'
+            def _rewrite(m):
+                outer = m.group(1)   # the outer quote char
+                content = m.group(2) # what's inside
+                if 'badge' not in content:
+                    return m.group(0)
+                # Normalise: replace ALL inner quote chars with double-quotes
+                content = content.replace("\\'", "'").replace("\\\"", '"')
+                content = content.replace("'", '"')
+                # Re-wrap with single quotes (outer=single, inner=double is safe)
+                return "'" + content + "'"
+            js = _re.sub(r"(['\"])(<span[^>]*badge[^>]*>[^<]*</span>)\1", _rewrite, js)
+            return js
+        steps_js = _fix_badge_spans(steps_js)
         steps_js = steps_js.replace("'of 6'", "'of 9'")
         steps_js = steps_js.replace('"of 6"', '"of 9"')
         data["steps_data_js"] = steps_js
@@ -642,6 +665,26 @@ def _sanitize_svg_data(data: dict) -> dict:
     # If applyStep still renders badges into a different element ID, normalise to info-badges
     apply_js = _re.sub(r"getElementById\(['\"]badge-row['\"]\)", "getElementById('info-badges')", apply_js)
     apply_js = _re.sub(r"getElementById\(['\"]badges['\"]\)", "getElementById('info-badges')", apply_js)
+    # FIX: Normalize other wrong element IDs Gemini commonly hallucinates
+    apply_js = _re.sub(r"getElementById\(['\"]step-bar-inner['\"]\)", "getElementById('step-bar')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]progress-bar['\"]\)", "getElementById('step-bar')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]step-progress['\"]\)", "getElementById('step-bar')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]badge-container['\"]\)", "getElementById('info-badges')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]badge-list['\"]\)", "getElementById('info-badges')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]step-count['\"]\)", "getElementById('step-label')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]step-number['\"]\)", "getElementById('step-label')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]current-step['\"]\)", "getElementById('step-label')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]description['\"]\)", "getElementById('info-desc')", apply_js)
+    apply_js = _re.sub(r"getElementById\(['\"]title['\"]\)", "getElementById('info-title')", apply_js)
+    # FIX: Fix .textContent for info-title/info-desc — allow innerHTML too, no change needed
+    # FIX: Ensure apply_step_js is always wrapped in function applyStep(idx){...}
+    # Gemini sometimes returns just the function body without the def line/closing brace.
+    apply_js_stripped = apply_js.strip()
+    _has_fn_def = bool(_re.search(r'function\s+applyStep\s*\(', apply_js_stripped))
+    if not _has_fn_def:
+        # Wrap the raw body in the function definition
+        apply_js = "function applyStep(idx) {\n" + apply_js_stripped + "\n}"
+        Log.warn("SVGSanitizer", "apply_step_js was missing function wrapper — wrapped automatically")
     data["apply_step_js"] = apply_js
 
     # ── Bugs 4a / 4b / 4c: fix raf_js ────────────────────────────────────
