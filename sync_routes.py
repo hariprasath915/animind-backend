@@ -1758,6 +1758,8 @@ async def upload_lesson_file(
 
 class LessonCreate(BaseModel):
     title:             str           = Field(..., min_length=1, max_length=200)
+    subject:           Optional[str] = 'science'   # 'science' | 'social' | 'maths'
+    class_name:        Optional[str] = None         # 'Class 9' | 'Class 10' | ...
     content_type:      Optional[str] = 'mixed'
     thumbnail_url:     Optional[str] = None
     theory_url:        Optional[str] = None
@@ -1772,6 +1774,8 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
     service_sb = _get_service_client()
     row = {
         "title":            payload.title.strip(),
+        "subject":          (payload.subject      or 'science').strip().lower(),
+        "class_name":       (payload.class_name   or '').strip() or None,
         "content_type":     (payload.content_type or 'mixed').strip(),
         "thumbnail_url":    payload.thumbnail_url    or None,
         "theory_url":       payload.theory_url       or None,
@@ -1783,7 +1787,7 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
     try:
         res     = service_sb.table("lessons").insert(row).execute()
         created = (res.data or [{}])[0]
-        print(f"[LESSONS] Created lesson '{payload.title}' -> id={created.get('id')}")
+        print(f"[LESSONS] Created lesson '{payload.title}' (subject={row['subject']}) -> id={created.get('id')}")
         return {"success": True, "lesson": created}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create lesson: {e}")
@@ -1791,20 +1795,27 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
 
 @router.get("/lessons", status_code=200)
 def list_lessons(current_user: dict = Depends(get_current_user)):
-    """All authenticated users: list all lessons ordered by created_at asc."""
-    # Use the user-scoped client (_sb) so Supabase sees auth.role()='authenticated'.
-    # The RLS SELECT policy is: USING (auth.role() = 'authenticated')
-    # Using get_supabase() (service singleton with anon key) makes auth.role()='anon'
-    # → RLS rejects → 500 error.  The user's JWT satisfies the policy correctly.
-    supabase = _sb(current_user)
+    """All authenticated users: list all lessons ordered by created_at asc.
+
+    Uses the service-role client to bypass RLS.
+    The route is still protected — get_current_user() rejects unauthenticated
+    requests before this function is ever called.
+
+    NOTE: Previously used _sb(current_user) (user JWT passed to service-key client),
+    but that makes auth.role() = 'service_role' from Supabase's perspective,
+    which does NOT satisfy the RLS SELECT policy USING (auth.role() = 'authenticated').
+    The service-role client bypasses RLS entirely and returns all rows correctly.
+    """
+    service_sb = _get_service_client()
     try:
         res = (
-            supabase.table("lessons")
+            service_sb.table("lessons")
             .select("*")
             .order("created_at", desc=False)
             .execute()
         )
         lessons = res.data or []
+        print(f"[LESSONS] Listed {len(lessons)} lesson(s).")
         return {"lessons": lessons, "count": len(lessons)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list lessons: {e}")
