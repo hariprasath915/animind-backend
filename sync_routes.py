@@ -1848,3 +1848,325 @@ def delete_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)
         return {"success": True, "message": f"Lesson {lesson_id} deleted."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete lesson: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# MATHS TOPICS — Library Mode: Mathematics subject
+# ════════════════════════════════════════════════════════════════
+
+MATHS_TOPIC_BUCKETS = {
+    "thumbnail":  "maths-thumbnails",
+    "animation":  "maths-videos",
+    "realworld":  "maths-realworld",
+}
+
+SOCIAL_TOPIC_BUCKETS = {
+    "thumbnail":  "social-thumbnails",
+    "animation":  "social-videos",
+    "realworld":  "social-realworld",
+}
+
+
+@router.post("/maths-topics/upload-file", status_code=200)
+async def upload_maths_topic_file(
+    file: UploadFile = File(...),
+    file_type: str = Form(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Admin-only: upload thumbnail/video/realworld to Supabase Storage for maths topics."""
+    _require_admin(current_user)
+    if file_type not in MATHS_TOPIC_BUCKETS:
+        raise HTTPException(status_code=400, detail=f"file_type must be one of: {list(MATHS_TOPIC_BUCKETS.keys())}")
+    bucket = MATHS_TOPIC_BUCKETS[file_type]
+    import uuid as _uuid
+    safe_name   = (file.filename or "file").replace(" ", "_")
+    unique_name = f"{_uuid.uuid4().hex}_{safe_name}"
+    data = await file.read()
+    service_sb = _get_service_client()
+    try:
+        service_sb.storage.from_(bucket).upload(
+            unique_name, data,
+            file_options={"content-type": file.content_type or "application/octet-stream"},
+        )
+        supa_url   = os.getenv("SUPABASE_URL", "")
+        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
+        return {"public_url": public_url, "storage_path": unique_name, "bucket": bucket}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+
+class MathsTopicCreate(BaseModel):
+    title:                      str           = Field(..., min_length=1, max_length=200)
+    thumbnail_url:              Optional[str] = None
+    animation_url:              Optional[str] = None
+    real_world_application_url: Optional[str] = None
+
+
+@router.post("/maths-topics", status_code=201)
+def create_maths_topic(payload: MathsTopicCreate, current_user: dict = Depends(get_current_user)):
+    """Admin-only: insert a new maths topic row."""
+    _require_admin(current_user)
+    service_sb = _get_service_client()
+    row = {
+        "title":                      payload.title.strip(),
+        "thumbnail_url":              payload.thumbnail_url or None,
+        "animation_url":              payload.animation_url or None,
+        "real_world_application_url": payload.real_world_application_url or None,
+        "created_at":                 _now(),
+        "updated_at":                 _now(),
+    }
+    try:
+        res     = service_sb.table("maths_topics").insert(row).execute()
+        created = (res.data or [{}])[0]
+        return {"success": True, "topic": created}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create maths topic: {e}")
+
+
+@router.get("/maths-topics", status_code=200)
+def list_maths_topics(current_user: dict = Depends(get_current_user)):
+    """All authenticated users: list all maths topics."""
+    supabase = _sb(current_user)
+    try:
+        res = (
+            supabase.table("maths_topics")
+            .select("*")
+            .order("created_at", desc=False)
+            .execute()
+        )
+        topics = res.data or []
+        return {"topics": topics, "count": len(topics)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list maths topics: {e}")
+
+
+@router.delete("/maths-topics/{topic_id}", status_code=200)
+def delete_maths_topic(topic_id: str, current_user: dict = Depends(get_current_user)):
+    """Admin-only: delete a maths topic and its storage files."""
+    _require_admin(current_user)
+    service_sb = _get_service_client()
+    try:
+        row_res = service_sb.table("maths_topics").select("*").eq("id", topic_id).execute()
+        rows = row_res.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Maths topic {topic_id} not found.")
+        topic = rows[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch maths topic: {e}")
+
+    def _del_storage_maths(bucket: str, url):
+        if not url:
+            return
+        try:
+            filename = url.split(f"/{bucket}/")[-1]
+            service_sb.storage.from_(bucket).remove([filename])
+        except Exception as se:
+            print(f"[MATHS_TOPICS] Could not delete {bucket}/{filename}: {se}")
+
+    _del_storage_maths("maths-thumbnails", topic.get("thumbnail_url"))
+    _del_storage_maths("maths-videos",     topic.get("animation_url"))
+    _del_storage_maths("maths-realworld",  topic.get("real_world_application_url"))
+
+    try:
+        service_sb.table("maths_topics").delete().eq("id", topic_id).execute()
+        return {"success": True, "message": f"Maths topic {topic_id} deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete maths topic: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# SOCIAL TOPICS — Library Mode: Social Science subject
+# ════════════════════════════════════════════════════════════════
+
+@router.post("/social-topics/upload-file", status_code=200)
+async def upload_social_topic_file(
+    file: UploadFile = File(...),
+    file_type: str = Form(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Admin-only: upload thumbnail/video/realworld to Supabase Storage for social topics."""
+    _require_admin(current_user)
+    if file_type not in SOCIAL_TOPIC_BUCKETS:
+        raise HTTPException(status_code=400, detail=f"file_type must be one of: {list(SOCIAL_TOPIC_BUCKETS.keys())}")
+    bucket = SOCIAL_TOPIC_BUCKETS[file_type]
+    import uuid as _uuid
+    safe_name   = (file.filename or "file").replace(" ", "_")
+    unique_name = f"{_uuid.uuid4().hex}_{safe_name}"
+    data = await file.read()
+    service_sb = _get_service_client()
+    try:
+        service_sb.storage.from_(bucket).upload(
+            unique_name, data,
+            file_options={"content-type": file.content_type or "application/octet-stream"},
+        )
+        supa_url   = os.getenv("SUPABASE_URL", "")
+        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
+        return {"public_url": public_url, "storage_path": unique_name, "bucket": bucket}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+
+class SocialTopicCreate(BaseModel):
+    title:                      str           = Field(..., min_length=1, max_length=200)
+    thumbnail_url:              Optional[str] = None
+    animation_url:              Optional[str] = None
+    real_world_application_url: Optional[str] = None
+
+
+@router.post("/social-topics", status_code=201)
+def create_social_topic(payload: SocialTopicCreate, current_user: dict = Depends(get_current_user)):
+    """Admin-only: insert a new social science topic row."""
+    _require_admin(current_user)
+    service_sb = _get_service_client()
+    row = {
+        "title":                      payload.title.strip(),
+        "thumbnail_url":              payload.thumbnail_url or None,
+        "animation_url":              payload.animation_url or None,
+        "real_world_application_url": payload.real_world_application_url or None,
+        "created_at":                 _now(),
+        "updated_at":                 _now(),
+    }
+    try:
+        res     = service_sb.table("social_topics").insert(row).execute()
+        created = (res.data or [{}])[0]
+        return {"success": True, "topic": created}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create social topic: {e}")
+
+
+@router.get("/social-topics", status_code=200)
+def list_social_topics(current_user: dict = Depends(get_current_user)):
+    """All authenticated users: list all social science topics."""
+    supabase = _sb(current_user)
+    try:
+        res = (
+            supabase.table("social_topics")
+            .select("*")
+            .order("created_at", desc=False)
+            .execute()
+        )
+        topics = res.data or []
+        return {"topics": topics, "count": len(topics)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list social topics: {e}")
+
+
+@router.delete("/social-topics/{topic_id}", status_code=200)
+def delete_social_topic(topic_id: str, current_user: dict = Depends(get_current_user)):
+    """Admin-only: delete a social topic and its storage files."""
+    _require_admin(current_user)
+    service_sb = _get_service_client()
+    try:
+        row_res = service_sb.table("social_topics").select("*").eq("id", topic_id).execute()
+        rows = row_res.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Social topic {topic_id} not found.")
+        topic = rows[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch social topic: {e}")
+
+    def _del_storage_social(bucket: str, url):
+        if not url:
+            return
+        try:
+            filename = url.split(f"/{bucket}/")[-1]
+            service_sb.storage.from_(bucket).remove([filename])
+        except Exception as se:
+            print(f"[SOCIAL_TOPICS] Could not delete {bucket}/{filename}: {se}")
+
+    _del_storage_social("social-thumbnails", topic.get("thumbnail_url"))
+    _del_storage_social("social-videos",     topic.get("animation_url"))
+    _del_storage_social("social-realworld",  topic.get("real_world_application_url"))
+
+    try:
+        service_sb.table("social_topics").delete().eq("id", topic_id).execute()
+        return {"success": True, "message": f"Social topic {topic_id} deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete social topic: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# ASSESSMENT — Science, Maths, Social Science
+# Each table: topic_title (unique key) + assessment_1..10 (HTML)
+# ════════════════════════════════════════════════════════════════
+
+ASSESSMENT_TABLES = {
+    "science": "science_assessment",
+    "maths":   "maths_assessment",
+    "social":  "social_assessment",
+}
+
+
+class AssessmentSave(BaseModel):
+    topic_title:   str           = Field(..., min_length=1, max_length=300)
+    assessment_1:  Optional[str] = None
+    assessment_2:  Optional[str] = None
+    assessment_3:  Optional[str] = None
+    assessment_4:  Optional[str] = None
+    assessment_5:  Optional[str] = None
+    assessment_6:  Optional[str] = None
+    assessment_7:  Optional[str] = None
+    assessment_8:  Optional[str] = None
+    assessment_9:  Optional[str] = None
+    assessment_10: Optional[str] = None
+
+
+def _get_assessment_table(subject: str) -> str:
+    tbl = ASSESSMENT_TABLES.get(subject)
+    if not tbl:
+        raise HTTPException(status_code=400, detail=f"subject must be one of: {list(ASSESSMENT_TABLES.keys())}")
+    return tbl
+
+
+@router.get("/assessment/{subject}", status_code=200)
+def list_assessments(subject: str, current_user: dict = Depends(get_current_user)):
+    """All authenticated users: list all assessment rows for a subject."""
+    tbl = _get_assessment_table(subject)
+    supabase = _sb(current_user)
+    try:
+        res = (
+            supabase.table(tbl)
+            .select("*")
+            .order("topic_title", desc=False)
+            .execute()
+        )
+        rows = res.data or []
+        return {"assessments": rows, "count": len(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list {subject} assessments: {e}")
+
+
+@router.post("/assessment/{subject}", status_code=200)
+def save_assessment(subject: str, payload: AssessmentSave, current_user: dict = Depends(get_current_user)):
+    """Admin-only: upsert assessment row for a topic (insert or update on topic_title conflict)."""
+    _require_admin(current_user)
+    tbl = _get_assessment_table(subject)
+    service_sb = _get_service_client()
+    row = {
+        "topic_title":   payload.topic_title.strip(),
+        "assessment_1":  payload.assessment_1,
+        "assessment_2":  payload.assessment_2,
+        "assessment_3":  payload.assessment_3,
+        "assessment_4":  payload.assessment_4,
+        "assessment_5":  payload.assessment_5,
+        "assessment_6":  payload.assessment_6,
+        "assessment_7":  payload.assessment_7,
+        "assessment_8":  payload.assessment_8,
+        "assessment_9":  payload.assessment_9,
+        "assessment_10": payload.assessment_10,
+        "updated_at":    _now(),
+    }
+    try:
+        res = (
+            service_sb.table(tbl)
+            .upsert(row, on_conflict="topic_title")
+            .execute()
+        )
+        saved = (res.data or [{}])[0]
+        return {"success": True, "assessment": saved}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save {subject} assessment: {e}")
