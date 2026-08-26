@@ -1097,53 +1097,27 @@ def _sanitize_svg_data(data: dict) -> dict:
     """
     import re as _re
 
-    # ── Bug 3: stepsData fully rebuilt in Python — no badge string bugs ─
-    # Root cause of steps 1-6 not rendering:
-    #   Gemini writes badge HTML inside JS string literals. Whatever quote
-    #   style it picks (outer single, inner single  OR  outer double, inner
-    #   double) causes a JS syntax error that silently kills the ENTIRE
-    #   <script> block. applyStep(), nextStep(), stepsData all become
-    #   undefined. Steps 1-6 never render.
+    # ── Bug 3 / Fix D: stepsData ALWAYS rebuilt from Python scene dict ────────
+    # Root cause of Steps 1-6 not rendering:
+    #   Gemini writes badge HTML inside JS string literals, causing SyntaxErrors
+    #   that silently kill the entire <script> block. applyStep(), stepsData, and
+    #   all navigation become undefined. Steps 1-6 never render.
     #
-    # Fix: discard Gemini's stepsData entirely. Rebuild it in Python from
-    #   the scene dict using html.escape() — no quote conflicts possible.
-    #   _rebuild_steps_data_js() is defined just above build_svg_and_steps().
-    #   It uses the scene passed via data["_scene"] if present.
+    # Fix C/D: Discard Gemini's stepsData. Rebuild from _scene dict using
+    #   json.dumps() — immune to any quote, backslash, or emoji conflicts.
+    #   _fix_badge_spans() regex rewriter is PERMANENTLY REMOVED — it was the
+    #   alternative fix that itself corrupted valid JS strings.
     scene_for_rebuild = data.pop("_scene", None)
     if scene_for_rebuild and scene_for_rebuild.get("steps"):
         data["steps_data_js"] = _rebuild_steps_data_js(scene_for_rebuild)
-        Log.ok("SVGSanitizer", "stepsData rebuilt from scene dict (badge bug eliminated)")
+        Log.ok("SVGSanitizer", "stepsData rebuilt from scene dict (Fix C/D: json.dumps, no regex rewrite)")
     else:
-        # Fallback: try regex fixes on whatever Gemini wrote
-        steps_js = data.get("steps_data_js", "")
-        # FIX: Normalise badge quotes — catch ALL mixed-quote patterns:
-        # Pattern 1: outer single, inner attr also single → class='badge...'  → swap inner to double
-        # Pattern 2: outer double, inner attr also double → class="badge..."  → swap outer to single
-        # Approach: rewrite every badge span using a safe regex
-        def _fix_badge_spans(js):
-            """
-            Find all badge <span> string literals in the JS and rewrite them with
-            outer-single / inner-double quotes, which is the only safe format.
-            Handles: class='badge...' (inner single clashes with outer single delimiter)
-                     class=\"badge...\" (escaped double in outer-double string)
-            """
-            # Match JS string literals (single or double quoted) containing 'badge'
-            def _rewrite(m):
-                outer = m.group(1)   # the outer quote char
-                content = m.group(2) # what's inside
-                if 'badge' not in content:
-                    return m.group(0)
-                # Normalise: replace ALL inner quote chars with double-quotes
-                content = content.replace("\\'", "'").replace("\\\"", '"')
-                content = content.replace("'", '"')
-                # Re-wrap with single quotes (outer=single, inner=double is safe)
-                return "'" + content + "'"
-            js = _re.sub(r"(['\"])(<span[^>]*badge[^>]*>[^<]*</span>)\1", _rewrite, js)
-            return js
-        steps_js = _fix_badge_spans(steps_js)
-        steps_js = steps_js.replace("'of 6'", "'of 9'")
-        steps_js = steps_js.replace('"of 6"', '"of 9"')
-        data["steps_data_js"] = steps_js
+        # This branch is never reached in practice because build_svg_and_steps()
+        # always injects data["_scene"] before calling _sanitize_svg_data().
+        # If somehow reached, keep Gemini's stepsData verbatim — do NOT rewrite
+        # it with regex, which risks corrupting valid JS strings (Fix D).
+        Log.warn("SVGSanitizer", "_scene missing — keeping Gemini stepsData verbatim (Fix D: no regex rewrite)")
+
 
 
     # ── Bug 1 + 2 + 5: fix apply_step_js ─────────────────────────────────
@@ -1339,12 +1313,15 @@ def _rebuild_steps_data_js(scene: dict) -> str:
         blur = 0.38 if s.get("blur", False) else 0.0
         badge_arr = _badge_arr(s.get("badges", []))
         lo_pairs = ", ".join(f'"{k}": {v}' for k, v in lo.items())
-        title_esc = s.get("title", "").replace("\\", "\\\\").replace('"', '\\"')
-        desc_esc  = s.get("description", "").replace("\\", "\\\\").replace('"', '\\"')
+        # Fix C: use json.dumps() for safe serialization — immune to backslash,
+        # emoji, curly-quotes, and any other character that breaks manual escaping.
+        # json.dumps() produces a double-quoted JS string literal: "Step 1: ..."
+        title_js = json.dumps(str(s.get("title", "")), ensure_ascii=False)
+        desc_js  = json.dumps(str(s.get("description", "")), ensure_ascii=False)
         rows.append(
             '  {\n'
-            f'    title: "{title_esc}",\n'
-            f'    desc: "{desc_esc}",\n'
+            f'    title: {title_js},\n'
+            f'    desc: {desc_js},\n'
             f'    badges: {badge_arr},\n'
             f'    blurOp: {blur},\n'
             f'    layerOpacities: {{{lo_pairs}}},\n'
@@ -1396,41 +1373,41 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
     # so that (data.badges || []).join('') is always safe in applyStep.
     fallback_steps_js = _rebuild_steps_data_js(scene)
 
-    # FIX D: FALLBACK_APPLY uses Array.isArray guard so badges work whether
-    # they arrive as an array or (legacy) as a plain string.
+    # Fix E/H: Canonical fallback applyStep — uses CONCEPT_STEP_COUNT/TOTAL_STEP_COUNT
+    # constants so clamping is always correct. The 'window.totalSteps || 5' bug that
+    # caused Next at Step 6 to access stepsData[6]=undefined has been eliminated.
+    # NOTE: assemble_html() injects its own authoritative applyStep in nav_js and does NOT
+    # inject this FALLBACK_APPLY. This string is only used by build_svg_and_steps()'s
+    # emergency fallback return path (when all Gemini calls fail).
     FALLBACK_APPLY = """function applyStep(idx) {
-  window.currentStep = idx;
-  var data = stepsData[idx] || {};
+  var CONCEPT_STEP_COUNT = 6;
+  var TOTAL_STEP_COUNT   = 9;
+  var clamped = Math.max(0, Math.min(Number(idx) || 0, CONCEPT_STEP_COUNT - 1));
+  window.currentStep = clamped;
+  var data = (window.stepsData && window.stepsData[clamped]) || {};
   var bs = document.getElementById('blur-shield');
-  if(bs) bs.style.opacity = (typeof data.blurOp === 'number') ? data.blurOp : 0;
+  if (bs) bs.style.opacity = (typeof data.blurOp === 'number') ? data.blurOp : 0;
   var lo = data.layerOpacities || {};
-  for(var lid in lo){
-    var el = document.getElementById(lid);
-    if(el) el.style.opacity = lo[lid];
-  }
+  for (var lid in lo) { var el = document.getElementById(lid); if (el) el.style.opacity = lo[lid]; }
   var titleEl = document.getElementById('info-title');
-  if(titleEl) titleEl.innerHTML = data.title || '';
+  if (titleEl) titleEl.textContent = data.title || '';
   var badgeEl = document.getElementById('info-badges');
-  if(badgeEl){
-    var bdg = data.badges;
-    if(Array.isArray(bdg)) badgeEl.innerHTML = bdg.join('');
-    else if(typeof bdg === 'string') badgeEl.innerHTML = bdg;
-    else badgeEl.innerHTML = '';
-  }
+  if (badgeEl) { var bdg = data.badges; badgeEl.innerHTML = Array.isArray(bdg) ? bdg.join('') : ''; }
   var descEl = document.getElementById('info-desc');
-  if(descEl) descEl.innerHTML = data.desc || '';
+  if (descEl) descEl.textContent = data.desc || '';
   var dots = document.querySelectorAll('.step-dot');
-  for(var i=0;i<dots.length;i++){
-    dots[i].className='step-dot'+(i<idx?' done':i===idx?' active':'');
+  for (var i = 0; i < dots.length; i++) {
+    dots[i].classList.toggle('active', i === clamped);
+    dots[i].classList.toggle('done',   i < clamped);
   }
   var lbl = document.getElementById('step-label');
-  if(lbl) lbl.innerHTML = 'Step '+(idx+1)+' of 9';
+  if (lbl) lbl.textContent = 'Step ' + (clamped + 1) + ' of ' + TOTAL_STEP_COUNT;
   var bar = document.getElementById('step-bar');
-  if(bar) bar.style.width = ((idx+1)/9*100)+'%';
+  if (bar) bar.style.width = (((clamped + 1) / TOTAL_STEP_COUNT) * 100) + '%';
   var pb = document.getElementById('btn-prev');
-  if(pb) pb.disabled = (idx === 0);
+  if (pb) pb.disabled = (clamped === 0);
   var nb = document.getElementById('btn-next');
-  if(nb) nb.textContent = (idx >= (window.totalSteps || 5)) ? 'Step 7: Formula \u25b6' : 'Next Step \u25b6';
+  if (nb) nb.textContent = (clamped === CONCEPT_STEP_COUNT - 1) ? 'Step 7: Formula \u25b6' : 'Next Step \u25b6';
 }"""
 
     if _gemini_client is None:
@@ -2450,79 +2427,179 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     # Answer box JS with targets
     answerbox_js = _ANSWERBOX_JS_TMPL.replace("{{TARGETS_JSON}}", targets_json)
 
-    # FIX E: totalSteps is always the number of SVG steps (should be 6).
-    # It is used as the 0-indexed last SVG step (index 5 = step 6).
-    # We enforce a minimum of 6 to ensure btn-next logic works correctly.
-    total_steps = max(len(steps), 6)
-    # totalSteps is used as: if(currentStep < totalSteps) → advance
-    # when currentStep === totalSteps (i.e. 6), show Scene 6 modal (Step 7)
-    # So totalSteps must equal len(stepsData) i.e. 6 when stepsData has 6 entries.
-    # applyStep uses idx 0..5, nextStep triggers modal at idx==6.
+    # Fix A/E/F/H/I/J: nav_js is the authoritative JavaScript injection.
+    # - applyStep is ALWAYS Python-controlled (never Gemini's apply_step_js).
+    # - CONCEPT_STEP_COUNT=6 / TOTAL_STEP_COUNT=9 replace all magic numbers.
+    # - qanim_nextStep() / qanim_previousStep() replace nextStep() / prevStep().
+    # - DOMContentLoaded validates stepsData.length === 6 before starting.
     nav_js = f"""
   <script>
-    var totalSteps = {total_steps - 1};  // 0-indexed last SVG step (step 6 = index 5)
-    var totalDisplaySteps = 9;
+    // ── Step-count constants (authoritative — Fix A) ───────────────────────────
+    const CONCEPT_STEP_COUNT = 6;   // Steps 1-6: SVG concept animation (stepsData indexes 0-5)
+    const TOTAL_STEP_COUNT   = 9;   // Steps 1-9 total (includes modal scenes 7, 8, 9)
+
+    // ── Runtime state ──────────────────────────────────────────────────────────
     var currentStep = 0;
-    window.totalSteps = {total_steps - 1};
-    window.qanimRafId = null;
-    window.currentStep = 0;
+    window.currentStep  = 0;
+    window.qanimRafId   = null;
 
+    // ── stepsData (always rebuilt by Python — Fix B/C) ────────────────────────
     {steps_data_js}
+    // Ensure window scope
+    if (typeof stepsData !== 'undefined') window.stepsData = stepsData;
 
-    {apply_step_js}
-
-    // FIX F: Fixed Python-generated navigation JS for all scene transitions.
-    // These are never generated by Gemini — always injected by Python.
-    function _qanim_hideAllOverlays(){{
-      ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){{
-        var el=document.getElementById(id);
-        if(el)el.classList.remove('qanim-scene-visible');
-      }});
-    }}
-
-    function nextStep(){{
-      if(currentStep < (window.totalSteps || {total_steps - 1})){{
-        currentStep++;
-        window.currentStep = currentStep;
-        applyStep(currentStep);
-      }} else {{
-        if(typeof window.qanim_showScene6 === 'function'){{
-          var svgCont = document.querySelector('.svg-container');
-          if(svgCont){{ svgCont.style.transition='opacity .45s ease'; svgCont.style.opacity='0'; setTimeout(function(){{window.qanim_showScene6();}},460); }}
-          else {{ window.qanim_showScene6(); }}
-        }}
-      }}
-    }}
-
-    function goToStep(idx){{
-      if(idx >= 0 && idx <= (window.totalSteps || {total_steps - 1})){{
-        _qanim_hideAllOverlays();
-        var bd=document.getElementById('qanim-scene-modal-backdrop');
-        if(bd)bd.classList.remove('qanim-scene-visible');
-        var svgCont=document.querySelector('.svg-container');
-        if(svgCont)svgCont.style.opacity='1';
-        currentStep = idx;
-        window.currentStep = idx;
-        applyStep(currentStep);
-      }}
-    }}
-
-    function resetAnim(){{
-      _qanim_hideAllOverlays();
-      var bd=document.getElementById('qanim-scene-modal-backdrop');
-      if(bd)bd.classList.remove('qanim-scene-visible');
-      currentStep = 0;
-      window.currentStep = 0;
-      var svgCont = document.querySelector('.svg-container');
-      if(svgCont) svgCont.style.opacity = '1';
-      applyStep(0);
-    }}
-
+    // ── RAF loop (Gemini-provided, if any continuous animation needed) ─────────
     {raf_js}
 
-    window.addEventListener('DOMContentLoaded', function(){{
+    // ── applyStep: AUTHORITATIVE Python-controlled implementation (Fix E) ──────
+    // - Clamps index strictly to 0 .. CONCEPT_STEP_COUNT-1 (never accesses stepsData[6+])
+    // - Uses TOTAL_STEP_COUNT=9 for progress bar percentage
+    // - Gemini's apply_step_js is NOT injected — this function is the only applyStep
+    function applyStep(index) {{
+      const idx = Math.max(
+        0,
+        Math.min(Number(index) || 0, CONCEPT_STEP_COUNT - 1)
+      );
+
+      window.currentStep = idx;
+
+      const data = window.stepsData && window.stepsData[idx];
+      if (!data) {{
+        console.error('[QAnim] Missing concept step:', idx);
+        return;
+      }}
+
+      const titleEl  = document.getElementById('info-title');
+      const descEl   = document.getElementById('info-desc');
+      const badgesEl = document.getElementById('info-badges');
+      const blurEl   = document.getElementById('blur-shield');
+
+      if (titleEl)  titleEl.textContent  = data.title || '';
+      if (descEl)   descEl.textContent   = data.desc  || '';
+
+      if (badgesEl) {{
+        badgesEl.innerHTML = Array.isArray(data.badges)
+          ? data.badges.join('')
+          : '';
+      }}
+
+      Object.entries(data.layerOpacities || {{}}).forEach(([id, value]) => {{
+        const layer = document.getElementById(id);
+        if (layer) layer.style.opacity = String(value);
+      }});
+
+      if (blurEl) {{
+        blurEl.style.opacity = String(
+          typeof data.blurOp === 'number' ? data.blurOp : 0
+        );
+      }}
+
+      document.querySelectorAll('.step-dot').forEach((dot, dotIndex) => {{
+        dot.classList.toggle('active', dotIndex === idx);
+        dot.classList.toggle('done',   dotIndex < idx);
+      }});
+
+      const labelEl = document.getElementById('step-label');
+      if (labelEl) {{
+        labelEl.textContent = 'Step ' + (idx + 1) + ' of ' + TOTAL_STEP_COUNT;
+      }}
+
+      const progressEl = document.getElementById('step-bar');
+      if (progressEl) {{
+        progressEl.style.width = (((idx + 1) / TOTAL_STEP_COUNT) * 100) + '%';
+      }}
+
+      const prevBtn = document.getElementById('btn-prev');
+      if (prevBtn) prevBtn.disabled = (idx === 0);
+
+      const nextBtn = document.getElementById('btn-next');
+      if (nextBtn) {{
+        nextBtn.textContent = (idx === CONCEPT_STEP_COUNT - 1)
+          ? 'Step 7: Formula \u25b6'
+          : 'Next Step \u25b6';
+      }}
+    }}
+    window.applyStep = applyStep;
+
+    // ── Deterministic navigation (Fix F) ──────────────────────────────────────
+    // qanim_nextStep: concept steps 0-4 → next concept step;
+    //                 concept step 5 (Step 6) → open Step 7 modal
+    function qanim_nextStep() {{
+      const current = Number(window.currentStep) || 0;
+      if (current < CONCEPT_STEP_COUNT - 1) {{
+        applyStep(current + 1);
+        return;
+      }}
+      // At concept step 5 (= Step 6) — open Step 7 (Scene 6 modal)
+      if (typeof window.qanim_showScene6 === 'function') {{
+        window.qanim_showScene6();
+      }}
+    }}
+    window.qanim_nextStep = qanim_nextStep;
+
+    // qanim_previousStep: concept steps 1-5 → previous concept step;
+    //                     concept step 0 → button is disabled (no action)
+    function qanim_previousStep() {{
+      const current = Number(window.currentStep) || 0;
+      if (current > 0) {{
+        applyStep(current - 1);
+      }}
+    }}
+    window.qanim_previousStep = qanim_previousStep;
+
+    // ── Utility: hide all modal overlays ──────────────────────────────────────
+    function _qanim_hideAllOverlays() {{
+      ['qanim-scene6-overlay', 'qanim-scene7-overlay', 'qanim-scene9-overlay']
+        .forEach(function(id) {{
+          var el = document.getElementById(id);
+          if (el) el.classList.remove('qanim-scene-visible');
+        }});
+    }}
+
+    // ── goToStep: for step-dot click navigation (concept steps only) ──────────
+    function goToStep(idx) {{
+      if (idx >= 0 && idx < CONCEPT_STEP_COUNT) {{
+        _qanim_hideAllOverlays();
+        var bd = document.getElementById('qanim-scene-modal-backdrop');
+        if (bd) bd.classList.remove('qanim-scene-visible');
+        var svgCont = document.querySelector('.svg-container');
+        if (svgCont) svgCont.style.opacity = '1';
+        applyStep(idx);
+      }}
+    }}
+
+    // ── resetAnim: Restart button + Step 9 Restart button ─────────────────────
+    function resetAnim() {{
+      _qanim_hideAllOverlays();
+      var bd = document.getElementById('qanim-scene-modal-backdrop');
+      if (bd) bd.classList.remove('qanim-scene-visible');
+      var svgCont = document.querySelector('.svg-container');
+      if (svgCont) svgCont.style.opacity = '1';
       applyStep(0);
-      if(typeof window.qanimStartRAF === 'function') window.qanimStartRAF();
+    }}
+    window.resetAnim = resetAnim;
+
+    // ── Safe DOMContentLoaded initialization (Fix J) ─────────────────────────
+    document.addEventListener('DOMContentLoaded', function () {{
+      if (!Array.isArray(window.stepsData) || window.stepsData.length !== CONCEPT_STEP_COUNT) {{
+        console.error(
+          '[QAnim] Invalid stepsData. Expected exactly ' + CONCEPT_STEP_COUNT +
+          ' concept steps. Got: ' + (Array.isArray(window.stepsData) ? window.stepsData.length : 'undefined')
+        );
+        return;
+      }}
+
+      console.log('[QAnim] Ready:', {{
+        conceptSteps: window.stepsData.length,
+        totalSteps: TOTAL_STEP_COUNT,
+        titles: window.stepsData.map(function(step) {{ return step.title; }})
+      }});
+
+      applyStep(0);
+
+      if (typeof window.qanimStartRAF === 'function') {{
+        window.qanimStartRAF();
+      }}
     }});
   </script>"""
 
@@ -2635,8 +2712,8 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     </div>
     <div class="actions">
       <button class="btn-secondary" onclick="resetAnim()">&#x21BA; Restart</button>
-      <button class="btn-secondary qanim-prev-btn" id="btn-prev" onclick="prevStep()" disabled>&#x25C0; Previous Step</button>
-      <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step &#x25B6;</button>
+      <button class="btn-secondary qanim-prev-btn" id="btn-prev" onclick="qanim_previousStep()" disabled>&#x25C0; Previous Step</button>
+      <button class="btn-primary" id="btn-next" onclick="qanim_nextStep()">Next Step &#x25B6;</button>
     </div>
   </div>
 </div>
@@ -2646,8 +2723,6 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 {_SCENE6_JS}
 {_SCENE7_JS}
 {_SCENE9_JS}
-{_AUTOTRIGGER_JS}
-{_PREVSTEP_JS}
 {answerbox_js}
 {_GLOSSARY_JS}
 
