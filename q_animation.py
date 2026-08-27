@@ -480,7 +480,7 @@ motion designer, physics animator, UI designer, and JavaScript reliability
 engineer.
 
 Your task is to generate the visual layer for a polished, interactive,
-self-contained educational animation .
+self-contained educational animation.
 
 The animation must look like a premium scientific visualization product:
 clean, rich, accurate, readable, responsive, smooth, pedagogical, and visually
@@ -633,12 +633,12 @@ Use:
 - visual depth without clutter.
 
 Recommended stroke hierarchy:
-- main object: 3-6;
-- important arrows: 2-4;
-- dimension lines: 1.5-2.5;
-- construction lines: 1-1.5;
-- grid: 0.5-1;
-- annotation borders: 1-2.
+- main object: 3–6;
+- important arrows: 2–4;
+- dimension lines: 1.5–2.5;
+- construction lines: 1–1.5;
+- grid: 0.5–1;
+- annotation borders: 1–2.
 
 Do not use heavy black outlines.
 Do not use excessive blur.
@@ -694,8 +694,8 @@ Use these principles:
 - each step reveals one meaningful visual idea;
 - new objects enter with opacity and transform transitions;
 - existing objects remain stable unless the concept requires movement;
-- use 400-900 ms transitions for normal reveals;
-- use 900-1800 ms for important physical transformations;
+- use 400–900 ms transitions for normal reveals;
+- use 900–1800 ms for important physical transformations;
 - use ease-out for entrances;
 - use ease-in-out for transformations;
 - avoid abrupt flashing;
@@ -754,7 +754,7 @@ Example:
 - force arrows appear;
 - wire stretches;
 - cross-sectional area changes;
-- labels update to L2 and A2;
+- labels update to L₂ and A₂;
 - "volume constant" appears as a constraint.
 
 ============================================================
@@ -764,22 +764,22 @@ LABEL AND NOTATION RULES
 Mathematical and scientific notation must be precise.
 
 Use:
-- Unicode symbols where they improve readability: Delta, theta, mu, rho, lambda, Omega, inf;
+- Unicode symbols where they improve readability: Δ, θ, μ, ρ, λ, Ω, ∞;
 - HTML entities only when required by the surrounding HTML;
 - superscripts with <tspan baseline-shift="super">;
 - subscripts with <tspan baseline-shift="sub">;
-- proper minus signs: -;
-- multiplication symbols: x or *;
-- degree sign: deg;
-- ohm symbol: Ohm;
-- squared units: m2, cm2, W/m2*K;
+- proper minus signs: −;
+- multiplication symbols: × or ·;
+- degree sign: °;
+- ohm symbol: Ω;
+- squared units: m², cm², W/m²·K;
 - Greek symbols exactly as used in the verified solution.
 
 Do not replace:
-- Delta with d when the solution uses Delta;
-- Ohm with "ohm" in a mathematical label;
+- Δ with d when the solution uses Δ;
+- Ω with "ohm" in a mathematical label;
 - superscripts with plain text such as m2;
-- subscripts with ambiguous text such as R1 when R1 (subscript) is required;
+- subscripts with ambiguous text such as R1 when R₁ is required;
 - minus signs with hyphens when mathematical typography matters.
 
 Use a consistent notation system:
@@ -912,7 +912,7 @@ Rules:
 - badges must render correctly using .join('');
 - overlays must be an array;
 - blurOp must be 0.0 for step 1 and step 6;
-- blurOp must be 0.38 for steps 2-5;
+- blurOp must be 0.38 for steps 2–5;
 - layerOpacities must include every required SVG layer;
 - step titles and descriptions must match the validated scene script;
 - do not include solution formulas in concept scenes unless explicitly allowed;
@@ -1046,7 +1046,7 @@ JavaScript:
 
 Semantics:
 - step 1 introduces the environment;
-- steps 2-5 progressively reveal the physical system;
+- steps 2–5 progressively reveal the physical system;
 - step 6 presents the complete setup;
 - the visual sequence follows the supplied scene script;
 - the visual explanation does not contradict the verified solution;
