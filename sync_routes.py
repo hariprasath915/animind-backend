@@ -1869,12 +1869,14 @@ MATHS_TOPIC_BUCKETS = {
     "thumbnail":  "maths-thumbnails",
     "animation":  "maths-videos",
     "realworld":  "maths-realworld",
+    "html":       "maths-html",      # theory HTML files
 }
 
 SOCIAL_TOPIC_BUCKETS = {
     "thumbnail":  "social-thumbnails",
     "animation":  "social-videos",
     "realworld":  "social-realworld",
+    "html":       "social-html",      # theory HTML files
 }
 
 
@@ -1984,6 +1986,7 @@ def delete_maths_topic(topic_id: str, current_user: dict = Depends(get_current_u
     _del_storage_maths("maths-thumbnails", topic.get("thumbnail_url"))
     _del_storage_maths("maths-videos",     topic.get("animation_url"))
     _del_storage_maths("maths-realworld",  topic.get("real_world_application_url"))
+    _del_storage_maths("maths-html",       topic.get("theory_url"))  # theory HTML file
 
     try:
         service_sb.table("maths_topics").delete().eq("id", topic_id).execute()
@@ -2102,6 +2105,7 @@ def delete_social_topic(topic_id: str, current_user: dict = Depends(get_current_
     _del_storage_social("social-thumbnails", topic.get("thumbnail_url"))
     _del_storage_social("social-videos",     topic.get("animation_url"))
     _del_storage_social("social-realworld",  topic.get("real_world_application_url"))
+    _del_storage_social("social-html",       topic.get("theory_url"))  # theory HTML file
 
     try:
         service_sb.table("social_topics").delete().eq("id", topic_id).execute()
