@@ -2125,19 +2125,38 @@ ASSESSMENT_TABLES = {
     "social":  "social_assessment",
 }
 
+# Supabase Storage buckets for assessment HTML files
+ASSESSMENT_BUCKETS = {
+    "science": "science-assessment",
+    "maths":   "maths-assessment",
+    "social":  "social-assessment",
+}
+
 
 class AssessmentSave(BaseModel):
-    topic_title:   str           = Field(..., min_length=1, max_length=300)
-    assessment_1:  Optional[str] = None
-    assessment_2:  Optional[str] = None
-    assessment_3:  Optional[str] = None
-    assessment_4:  Optional[str] = None
-    assessment_5:  Optional[str] = None
-    assessment_6:  Optional[str] = None
-    assessment_7:  Optional[str] = None
-    assessment_8:  Optional[str] = None
-    assessment_9:  Optional[str] = None
-    assessment_10: Optional[str] = None
+    topic_title:      str           = Field(..., min_length=1, max_length=300)
+    # assessment_N stores the public URL of the uploaded HTML file
+    assessment_1:     Optional[str] = None
+    assessment_2:     Optional[str] = None
+    assessment_3:     Optional[str] = None
+    assessment_4:     Optional[str] = None
+    assessment_5:     Optional[str] = None
+    assessment_6:     Optional[str] = None
+    assessment_7:     Optional[str] = None
+    assessment_8:     Optional[str] = None
+    assessment_9:     Optional[str] = None
+    assessment_10:    Optional[str] = None
+    # thumbnail_url_N stores the public URL of the thumbnail image
+    thumbnail_url_1:  Optional[str] = None
+    thumbnail_url_2:  Optional[str] = None
+    thumbnail_url_3:  Optional[str] = None
+    thumbnail_url_4:  Optional[str] = None
+    thumbnail_url_5:  Optional[str] = None
+    thumbnail_url_6:  Optional[str] = None
+    thumbnail_url_7:  Optional[str] = None
+    thumbnail_url_8:  Optional[str] = None
+    thumbnail_url_9:  Optional[str] = None
+    thumbnail_url_10: Optional[str] = None
 
 
 def _get_assessment_table(subject: str) -> str:
@@ -2145,6 +2164,40 @@ def _get_assessment_table(subject: str) -> str:
     if not tbl:
         raise HTTPException(status_code=400, detail=f"subject must be one of: {list(ASSESSMENT_TABLES.keys())}")
     return tbl
+
+
+@router.post("/assessment/{subject}/upload-file", status_code=200)
+async def upload_assessment_file(
+    subject: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Admin-only: upload an assessment HTML file to the subject-specific bucket.
+    Returns { public_url, storage_path, bucket }.
+    """
+    _require_admin(current_user)
+    bucket = ASSESSMENT_BUCKETS.get(subject)
+    if not bucket:
+        raise HTTPException(
+            status_code=400,
+            detail=f"subject must be one of: {list(ASSESSMENT_BUCKETS.keys())}",
+        )
+    import uuid as _uuid
+    safe_name   = (file.filename or "assessment.html").replace(" ", "_")
+    unique_name = f"{_uuid.uuid4().hex}_{safe_name}"
+    data        = await file.read()
+    service_sb  = _get_service_client()
+    try:
+        service_sb.storage.from_(bucket).upload(
+            unique_name, data,
+            file_options={"content-type": file.content_type or "text/html"},
+        )
+        supa_url   = os.getenv("SUPABASE_URL", "")
+        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
+        print(f"[ASSESSMENT_UPLOAD] Uploaded {safe_name} → {bucket}/{unique_name}")
+        return {"public_url": public_url, "storage_path": unique_name, "bucket": bucket}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Assessment file upload failed: {e}")
 
 
 @router.get("/assessment/{subject}", status_code=200)
@@ -2172,18 +2225,30 @@ def save_assessment(subject: str, payload: AssessmentSave, current_user: dict = 
     tbl = _get_assessment_table(subject)
     service_sb = _get_service_client()
     row = {
-        "topic_title":   payload.topic_title.strip(),
-        "assessment_1":  payload.assessment_1,
-        "assessment_2":  payload.assessment_2,
-        "assessment_3":  payload.assessment_3,
-        "assessment_4":  payload.assessment_4,
-        "assessment_5":  payload.assessment_5,
-        "assessment_6":  payload.assessment_6,
-        "assessment_7":  payload.assessment_7,
-        "assessment_8":  payload.assessment_8,
-        "assessment_9":  payload.assessment_9,
-        "assessment_10": payload.assessment_10,
-        "updated_at":    _now(),
+        "topic_title":      payload.topic_title.strip(),
+        # assessment_N: public URL of the uploaded HTML file
+        "assessment_1":     payload.assessment_1,
+        "assessment_2":     payload.assessment_2,
+        "assessment_3":     payload.assessment_3,
+        "assessment_4":     payload.assessment_4,
+        "assessment_5":     payload.assessment_5,
+        "assessment_6":     payload.assessment_6,
+        "assessment_7":     payload.assessment_7,
+        "assessment_8":     payload.assessment_8,
+        "assessment_9":     payload.assessment_9,
+        "assessment_10":    payload.assessment_10,
+        # thumbnail_url_N: public URL of the thumbnail image
+        "thumbnail_url_1":  payload.thumbnail_url_1,
+        "thumbnail_url_2":  payload.thumbnail_url_2,
+        "thumbnail_url_3":  payload.thumbnail_url_3,
+        "thumbnail_url_4":  payload.thumbnail_url_4,
+        "thumbnail_url_5":  payload.thumbnail_url_5,
+        "thumbnail_url_6":  payload.thumbnail_url_6,
+        "thumbnail_url_7":  payload.thumbnail_url_7,
+        "thumbnail_url_8":  payload.thumbnail_url_8,
+        "thumbnail_url_9":  payload.thumbnail_url_9,
+        "thumbnail_url_10": payload.thumbnail_url_10,
+        "updated_at":       _now(),
     }
     try:
         res = (
