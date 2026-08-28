@@ -1909,11 +1909,11 @@ async def upload_maths_topic_file(
 
 
 class MathsTopicCreate(BaseModel):
-    title:                      str           = Field(..., min_length=1, max_length=200)
-    thumbnail_url:              Optional[str] = None
-    theory_url:                 Optional[str] = None   # pasteable HTML/URL for theory content
-    animation_url:              Optional[str] = None
-    real_world_application_url: Optional[str] = None
+    title:             str           = Field(..., min_length=1, max_length=200)
+    thumbnail_url:     Optional[str] = None
+    theory_url:        Optional[str] = None   # URL of uploaded theory HTML file
+    animation_url:     Optional[str] = None
+    realworld_images:  list          = Field(default_factory=list)  # array of image URLs (jsonb)
 
 
 @router.post("/maths-topics", status_code=201)
@@ -1922,13 +1922,13 @@ def create_maths_topic(payload: MathsTopicCreate, current_user: dict = Depends(g
     _require_admin(current_user)
     service_sb = _get_service_client()
     row = {
-        "title":                      payload.title.strip(),
-        "thumbnail_url":              payload.thumbnail_url or None,
-        "theory_url":                 payload.theory_url or None,
-        "animation_url":              payload.animation_url or None,
-        "real_world_application_url": payload.real_world_application_url or None,
-        "created_at":                 _now(),
-        "updated_at":                 _now(),
+        "title":            payload.title.strip(),
+        "thumbnail_url":    payload.thumbnail_url  or None,
+        "theory_url":       payload.theory_url     or None,
+        "animation_url":    payload.animation_url  or None,
+        "realworld_images": payload.realworld_images,   # jsonb array — mirrors lessons table
+        "created_at":       _now(),
+        "updated_at":       _now(),
     }
     try:
         res     = service_sb.table("maths_topics").insert(row).execute()
@@ -1985,8 +1985,10 @@ def delete_maths_topic(topic_id: str, current_user: dict = Depends(get_current_u
 
     _del_storage_maths("maths-thumbnails", topic.get("thumbnail_url"))
     _del_storage_maths("maths-videos",     topic.get("animation_url"))
-    _del_storage_maths("maths-realworld",  topic.get("real_world_application_url"))
     _del_storage_maths("maths-html",       topic.get("theory_url"))  # theory HTML file
+    # Delete all real-world application images (jsonb array — mirrors lessons delete logic)
+    for img_url in (topic.get("realworld_images") or []):
+        _del_storage_maths("maths-realworld", img_url)
 
     try:
         service_sb.table("maths_topics").delete().eq("id", topic_id).execute()
@@ -2028,11 +2030,11 @@ async def upload_social_topic_file(
 
 
 class SocialTopicCreate(BaseModel):
-    title:                      str           = Field(..., min_length=1, max_length=200)
-    thumbnail_url:              Optional[str] = None
-    theory_url:                 Optional[str] = None   # pasteable HTML/URL for theory content
-    animation_url:              Optional[str] = None
-    real_world_application_url: Optional[str] = None
+    title:             str           = Field(..., min_length=1, max_length=200)
+    thumbnail_url:     Optional[str] = None
+    theory_url:        Optional[str] = None   # URL of uploaded theory HTML file
+    animation_url:     Optional[str] = None
+    realworld_images:  list          = Field(default_factory=list)  # array of image URLs (jsonb)
 
 
 @router.post("/social-topics", status_code=201)
@@ -2041,13 +2043,13 @@ def create_social_topic(payload: SocialTopicCreate, current_user: dict = Depends
     _require_admin(current_user)
     service_sb = _get_service_client()
     row = {
-        "title":                      payload.title.strip(),
-        "thumbnail_url":              payload.thumbnail_url or None,
-        "theory_url":                 payload.theory_url or None,
-        "animation_url":              payload.animation_url or None,
-        "real_world_application_url": payload.real_world_application_url or None,
-        "created_at":                 _now(),
-        "updated_at":                 _now(),
+        "title":            payload.title.strip(),
+        "thumbnail_url":    payload.thumbnail_url  or None,
+        "theory_url":       payload.theory_url     or None,
+        "animation_url":    payload.animation_url  or None,
+        "realworld_images": payload.realworld_images,   # jsonb array — mirrors lessons table
+        "created_at":       _now(),
+        "updated_at":       _now(),
     }
     try:
         res     = service_sb.table("social_topics").insert(row).execute()
@@ -2104,8 +2106,10 @@ def delete_social_topic(topic_id: str, current_user: dict = Depends(get_current_
 
     _del_storage_social("social-thumbnails", topic.get("thumbnail_url"))
     _del_storage_social("social-videos",     topic.get("animation_url"))
-    _del_storage_social("social-realworld",  topic.get("real_world_application_url"))
     _del_storage_social("social-html",       topic.get("theory_url"))  # theory HTML file
+    # Delete all real-world application images (jsonb array — mirrors lessons delete logic)
+    for img_url in (topic.get("realworld_images") or []):
+        _del_storage_social("social-realworld", img_url)
 
     try:
         service_sb.table("social_topics").delete().eq("id", topic_id).execute()
