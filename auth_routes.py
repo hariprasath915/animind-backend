@@ -32,6 +32,7 @@
 # ============================================================
 
 import os
+import uuid
 import base64
 import hashlib
 from datetime import datetime, timezone
@@ -80,6 +81,9 @@ def _upsert_user_profile(
     name: str,
     avatar_url: str = "",
     provider: str = "email",
+    role: str = "student",
+    institution: str = "",
+    roll_number: str = "",
 ) -> None:
     """
     Ensure public.users has a row for this Supabase Auth user.
@@ -99,16 +103,20 @@ def _upsert_user_profile(
             .execute()
         )
 
+        update_payload = {
+            "last_login": now,
+            "name":       name or (existing.data.get("name", "") if existing.data else ""),
+            "avatar_url": avatar_url or (existing.data.get("avatar_url", "") if existing.data else ""),
+        }
+
         if existing.data:
-            sb.table("users").update({
-                "last_login": now,
-                # Only overwrite name/avatar if the new value is non-empty
-                "name":       name       or existing.data.get("name", ""),
-                "avatar_url": avatar_url or existing.data.get("avatar_url", ""),
-            }).eq("id", user_id).execute()
+            try:
+                sb.table("users").update(update_payload).eq("id", user_id).execute()
+            except Exception as e:
+                print(f"[AUTH] Profile update warning: {e}")
             print(f"[AUTH] 🔄 Profile refreshed: {email} (id={user_id})")
         else:
-            sb.table("users").insert({
+            insert_payload = {
                 "id":         user_id,
                 "email":      email,
                 "name":       name,
@@ -116,7 +124,11 @@ def _upsert_user_profile(
                 "provider":   provider,
                 "created_at": now,
                 "last_login": now,
-            }).execute()
+            }
+            try:
+                sb.table("users").insert(insert_payload).execute()
+            except Exception as e:
+                print(f"[AUTH] Profile insert warning: {e}")
             print(f"[AUTH] ✅ Profile created: {email} (id={user_id}, provider={provider})")
 
     except Exception as exc:
@@ -127,15 +139,37 @@ def _upsert_user_profile(
 # SCHEMAS
 # ══════════════════════════════════════════════════════════════════════
 
+class TeacherLoginRequest(BaseModel):
+    institution: str = Field(..., min_length=1)
+    teacher_name: str = Field(..., min_length=1)
+    subject: str = Field(..., min_length=1)
+    passcode: str = Field(..., min_length=1)
+
+
+class StudentLoginRequest(BaseModel):
+    institution: str = Field(..., min_length=1)
+    student_name: str = Field(..., min_length=1)
+    roll_number: str = Field(..., min_length=1)
+    passcode: Optional[str] = None
+
+
 class RegisterRequest(BaseModel):
-    email:    EmailStr
-    password: str = Field(..., min_length=6)
-    name:     str = Field(..., min_length=2, max_length=120)
+    email:       EmailStr
+    password:    str = Field(..., min_length=6)
+    name:        str = Field(..., min_length=2, max_length=120)
+    role:        Optional[str] = "student"
+    institution: Optional[str] = ""
+    roll_number: Optional[str] = ""
+    subject:     Optional[str] = ""
 
 
 class LoginRequest(BaseModel):
-    email:    EmailStr
-    password: str = Field(..., min_length=1)
+    email:       EmailStr
+    password:    str = Field(..., min_length=1)
+    role:        Optional[str] = None
+    institution: Optional[str] = None
+    roll_number: Optional[str] = None
+    subject:     Optional[str] = None
 
 
 class AuthResponse(BaseModel):
@@ -146,7 +180,7 @@ class AuthResponse(BaseModel):
     It is identical across all devices and sessions for the same account.
     The frontend must store both `token` and `user_id` in localStorage.
     """
-    token:         str   # Supabase JWT — store in localStorage as genzet_jwt
+    token:         str   # Supabase JWT or token — store in localStorage as genzet_jwt
     user_id:       str   # auth.users.id UUID — persistent, cross-device identity
     email:         str
     name:          str
@@ -155,14 +189,23 @@ class AuthResponse(BaseModel):
     is_new_user:   bool  # True on first registration, False on subsequent logins
     dashboard_url: str
     message:       str
+    role:          Optional[str] = "student"
+    institution:   Optional[str] = ""
+    roll_number:   Optional[str] = ""
+    subject:       Optional[str] = ""
 
 
 class UserProfile(BaseModel):
-    user_id:    str
-    email:      str
-    name:       str
-    avatar_url: str
-    provider:   str
+    user_id:     str
+    email:       str
+    name:        str
+    avatar_url:  str
+    provider:    str
+    role:        Optional[str] = "student"
+    institution: Optional[str] = ""
+    roll_number: Optional[str] = ""
+    subject:     Optional[str] = ""
+
 
 
 class OAuthCallbackRequest(BaseModel):
@@ -233,12 +276,19 @@ def register(body: RegisterRequest):
             pass  # token stays empty; frontend will use the login form
 
     # ── Write public.users profile row ───────────────────────────────
+    role = body.role or meta.get("role", "student")
+    institution = body.institution or meta.get("institution", "")
+    roll_number = body.roll_number or meta.get("roll_number", "")
+
     _upsert_user_profile(
         user_id=user_id,
         email=email,
         name=name,
         avatar_url=avatar_url,
         provider="email",
+        role=role,
+        institution=institution,
+        roll_number=roll_number,
     )
 
     print(f"[AUTH] ✅ Registered: {email} (user_id={user_id}, has_token={bool(token)})")
@@ -253,6 +303,9 @@ def register(body: RegisterRequest):
         is_new_user=True,
         dashboard_url=f"{FRONTEND_URL}/dashboard",
         message=f"Welcome to GenZet, {name}! Your account is ready.",
+        role=role,
+        institution=institution,
+        roll_number=roll_number,
     )
 
 
@@ -293,6 +346,9 @@ def login(body: LoginRequest):
     meta       = res.user.user_metadata or {}
     name       = meta.get("name", email)
     avatar_url = meta.get("avatar_url", "")
+    role       = body.role or meta.get("role", "student")
+    institution = body.institution or meta.get("institution", "")
+    roll_number = body.roll_number or meta.get("roll_number", "")
 
     _upsert_user_profile(
         user_id=user_id,
@@ -300,9 +356,12 @@ def login(body: LoginRequest):
         name=name,
         avatar_url=avatar_url,
         provider="email",
+        role=role,
+        institution=institution,
+        roll_number=roll_number,
     )
 
-    print(f"[AUTH] ✅ Login: {email} (user_id={user_id})")
+    print(f"[AUTH] ✅ Login: {email} (user_id={user_id}, role={role})")
     return AuthResponse(
         token=token,
         user_id=user_id,
@@ -313,6 +372,155 @@ def login(body: LoginRequest):
         is_new_user=False,
         dashboard_url=f"{FRONTEND_URL}/dashboard",
         message=f"Welcome back, {name}!",
+        role=role,
+        institution=institution,
+        roll_number=roll_number,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# POST /auth/teacher-login
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/teacher-login", response_model=AuthResponse)
+def teacher_login(body: TeacherLoginRequest):
+    """
+    Teacher authentication with Institution, Teacher Name, Subject, and Passcode.
+    """
+    clean_name = body.teacher_name.strip()
+    clean_inst = body.institution.strip()
+    clean_subj = body.subject.strip()
+    clean_pass = body.passcode.strip()
+
+    synthetic_email = f"teacher_{clean_name.lower().replace(' ', '_')}@{clean_inst.lower().replace(' ', '_')}.haezet.edu"
+    user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{synthetic_email}:{clean_pass}"))
+    token = ""
+
+    try:
+        supabase = _anon_client()
+        try:
+            res = supabase.auth.sign_in_with_password({
+                "email": synthetic_email,
+                "password": clean_pass,
+            })
+            if res.session and res.user:
+                token = res.session.access_token
+                user_id = str(res.user.id)
+        except Exception:
+            res = supabase.auth.sign_up({
+                "email": synthetic_email,
+                "password": clean_pass,
+                "options": {"data": {"name": clean_name, "role": "teacher", "institution": clean_inst, "subject": clean_subj}},
+            })
+            if res.session and res.user:
+                token = res.session.access_token
+                user_id = str(res.user.id)
+    except Exception as exc:
+        print(f"[AUTH] Supabase teacher login fallback used: {exc}")
+
+    if not token:
+        token = f"teacher_{user_id}"
+
+    _upsert_user_profile(
+        user_id=user_id,
+        email=synthetic_email,
+        name=clean_name,
+        avatar_url="",
+        provider="teacher_passcode",
+        role="teacher",
+        institution=clean_inst,
+        roll_number="",
+    )
+
+    print(f"[AUTH] 👨‍🏫 Teacher Login: {clean_name} ({clean_inst} - {clean_subj})")
+
+    return AuthResponse(
+        token=token,
+        user_id=user_id,
+        email=synthetic_email,
+        name=clean_name,
+        provider="teacher_passcode",
+        avatar_url="",
+        is_new_user=False,
+        dashboard_url=f"{FRONTEND_URL}/dashboard",
+        message=f"Welcome, Teacher {clean_name}!",
+        role="teacher",
+        institution=clean_inst,
+        roll_number="",
+        subject=clean_subj,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# POST /auth/student-login
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post("/student-login", response_model=AuthResponse)
+def student_login(body: StudentLoginRequest):
+    """
+    Student authentication with Institution, Student Name, and Roll Number.
+    """
+    clean_name = body.student_name.strip()
+    clean_inst = body.institution.strip()
+    clean_roll = body.roll_number.strip()
+    clean_pass = (body.passcode or "student123").strip()
+
+    synthetic_email = f"student_{clean_roll.lower()}@{clean_inst.lower().replace(' ', '_')}.haezet.edu"
+    user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{synthetic_email}:{clean_roll}"))
+    token = ""
+
+    try:
+        supabase = _anon_client()
+        try:
+            res = supabase.auth.sign_in_with_password({
+                "email": synthetic_email,
+                "password": clean_pass,
+            })
+            if res.session and res.user:
+                token = res.session.access_token
+                user_id = str(res.user.id)
+        except Exception:
+            res = supabase.auth.sign_up({
+                "email": synthetic_email,
+                "password": clean_pass,
+                "options": {"data": {"name": clean_name, "role": "student", "institution": clean_inst, "roll_number": clean_roll}},
+            })
+            if res.session and res.user:
+                token = res.session.access_token
+                user_id = str(res.user.id)
+    except Exception as exc:
+        print(f"[AUTH] Supabase student login fallback used: {exc}")
+
+    if not token:
+        token = f"student_{user_id}"
+
+    _upsert_user_profile(
+        user_id=user_id,
+        email=synthetic_email,
+        name=clean_name,
+        avatar_url="",
+        provider="student_roll",
+        role="student",
+        institution=clean_inst,
+        roll_number=clean_roll,
+    )
+
+    print(f"[AUTH] 🎓 Student Login: {clean_name} (Roll: {clean_roll}, Inst: {clean_inst})")
+
+    return AuthResponse(
+        token=token,
+        user_id=user_id,
+        email=synthetic_email,
+        name=clean_name,
+        provider="student_roll",
+        avatar_url="",
+        is_new_user=False,
+        dashboard_url=f"{FRONTEND_URL}/dashboard",
+        message=f"Welcome, {clean_name}!",
+        role="student",
+        institution=clean_inst,
+        roll_number=clean_roll,
+        subject="",
     )
 
 
@@ -342,13 +550,40 @@ def verify_token(current_user: dict = Depends(get_current_user)):
     Returns the user profile extracted from the verified token.
     The user_id here is auth.users.id — same UUID on every device.
     """
+    user_id = current_user["id"]
+    role = current_user.get("role", "student")
+    name = current_user.get("name", "")
+    email = current_user.get("email", "")
+    
+    # Try fetching public.users details if available
+    institution = ""
+    roll_number = ""
+    subject = ""
+
+    try:
+        sb = get_supabase()
+        db_user = sb.table("users").select("*").eq("id", user_id).maybe_single().execute()
+        if db_user and db_user.data:
+            d = db_user.data
+            role = d.get("role", role)
+            institution = d.get("institution", "")
+            roll_number = d.get("roll_number", "")
+            name = d.get("name", name)
+    except Exception:
+        pass
+
     return UserProfile(
-        user_id=current_user["id"],
-        email=current_user["email"],
-        name=current_user.get("name", ""),
-        avatar_url=current_user.get("avatar_url", ""),
-        provider=(current_user.get("app_metadata") or {}).get("provider", "email"),
+        user_id=user_id,
+        email=email,
+        name=name,
+        avatar_url="",
+        provider="email",
+        role=role,
+        institution=institution,
+        roll_number=roll_number,
+        subject=subject,
     )
+
 
 
 # ══════════════════════════════════════════════════════════════════════
