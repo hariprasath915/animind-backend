@@ -121,7 +121,6 @@ def get_current_user(
     """
     FastAPI dependency that verifies the Supabase JWT from the Authorization
     header and returns the authenticated user as a plain dict.
-    Supports fallback token verification for robust offline/local operation.
     """
     if not credentials:
         raise HTTPException(
@@ -132,19 +131,6 @@ def get_current_user(
 
     token = credentials.credentials
 
-    # Handle fallback/local tokens gracefully
-    if token.startswith("teacher_") or token.startswith("student_") or token.startswith("haezet_"):
-        parts = token.split("_", 1)
-        role = parts[0] if parts[0] in ("teacher", "student") else "student"
-        user_id = parts[1] if len(parts) > 1 else token
-        return {
-            "id": user_id,
-            "email": f"{role}_{user_id[:8]}@haezet.edu",
-            "name": f"{role.title()} User",
-            "role": role,
-            "token": token,
-        }
-
     try:
         supabase = get_supabase()
         res = supabase.auth.get_user(token)
@@ -153,15 +139,6 @@ def get_current_user(
             raise Exception("No user returned")
     except Exception as e:
         print(f"[AUTH] Token verification failed: {e}")
-        # Allow fallback decoding if token contains user UUID
-        if len(token) > 10:
-            return {
-                "id": token[-36:] if len(token) >= 36 else token,
-                "email": "user@haezet.edu",
-                "name": "Authenticated User",
-                "role": "student",
-                "token": token,
-            }
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token is invalid or has expired. Please log in again.",
@@ -177,10 +154,8 @@ def get_current_user(
         or meta.get("full_name")
         or email
     )
-    role = meta.get("role", "student")
 
-    return {"id": user_id, "email": email, "name": name, "role": role, "token": token}
-
+    return {"id": user_id, "email": email, "name": name, "token": token}
 
 
 # ══════════════════════════════════════════════════════════════════════
