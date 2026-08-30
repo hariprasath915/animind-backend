@@ -142,7 +142,7 @@ def _upsert_user_profile(
 class TeacherLoginRequest(BaseModel):
     institution: str = Field(..., min_length=1)
     teacher_name: str = Field(..., min_length=1)
-    subject: str = Field(..., min_length=1)
+    subject: Optional[str] = ""
     passcode: str = Field(..., min_length=1)
 
 
