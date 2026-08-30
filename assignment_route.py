@@ -378,31 +378,6 @@ def get_teacher_performance(
             )
         )
 
-    # If memory has no submissions yet, include sample structured entries so dashboard table renders cleanly
-    if not rows:
-        rows = [
-            PerformanceRow(
-                student_name="Alex Johnson",
-                roll_number="101",
-                assignment_title="Physics Motion Quiz",
-                subject="Physics",
-                score=92.0,
-                percentage=92.0,
-                status="Completed",
-                submitted_at=datetime.now(timezone.utc).isoformat(),
-            ),
-            PerformanceRow(
-                student_name="Sophia Chen",
-                roll_number="102",
-                assignment_title="Physics Motion Quiz",
-                subject="Physics",
-                score=88.0,
-                percentage=88.0,
-                status="Completed",
-                submitted_at=datetime.now(timezone.utc).isoformat(),
-            ),
-        ]
-
     return rows
 
 
@@ -426,7 +401,7 @@ def get_student_performance(current_user: dict = Depends(get_current_user)):
             "total_completed": 0,
             "average_percentage": 0.0,
             "submissions": [],
-            "subject_progress": {"Physics": 85, "Mathematics": 90, "Chemistry": 78},
+            "subject_progress": {},
         }
 
     avg_pct = round(sum(s["percentage"] for s in my_subs) / len(my_subs), 1)
@@ -437,5 +412,101 @@ def get_student_performance(current_user: dict = Depends(get_current_user)):
         "total_completed": len(my_subs),
         "average_percentage": avg_pct,
         "submissions": my_subs,
-        "subject_progress": {"Physics": avg_pct, "Mathematics": 90, "Chemistry": 82},
+        "subject_progress": {},
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# TEACHER NOTES SYSTEM
+# ══════════════════════════════════════════════════════════════════════
+
+_INMEMORY_NOTES: Dict[str, Dict[str, Any]] = {}
+
+class CreateNoteRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    subject: Optional[str] = "General"
+    content: str = Field(..., min_length=1)
+    class_name: Optional[str] = ""
+
+@router.post("/notes", status_code=201)
+def create_teacher_note(
+    body: CreateNoteRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    teacher_id = current_user["id"]
+    teacher_name = current_user.get("name", "Teacher")
+    institution = current_user.get("institution", "")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    note_id = f"note_{int(datetime.now().timestamp())}_{random.randint(1000, 9999)}"
+
+    note = {
+        "note_id": note_id,
+        "teacher_id": teacher_id,
+        "teacher_name": teacher_name,
+        "institution": institution,
+        "title": body.title,
+        "subject": body.subject or "General",
+        "content": body.content,
+        "class_name": body.class_name or "",
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    _INMEMORY_NOTES[note_id] = note
+
+    try:
+        sb = get_supabase()
+        sb.table("teacher_notes").insert(note).execute()
+    except Exception as exc:
+        print(f"[NOTES] Supabase note insert info: {exc}")
+
+    print(f"[NOTES] 📝 Created note '{body.title}' by {teacher_name}")
+    return {"success": True, "message": "Note created successfully.", "note": note}
+
+
+@router.get("/notes/teacher")
+def get_teacher_notes(current_user: dict = Depends(get_current_user)):
+    teacher_id = current_user["id"]
+    notes = [n for n in _INMEMORY_NOTES.values() if n.get("teacher_id") == teacher_id or current_user.get("role") == "teacher"]
+    return {"notes": notes, "count": len(notes)}
+
+
+@router.get("/notes/student")
+def get_student_notes(current_user: dict = Depends(get_current_user)):
+    user_inst = (current_user.get("institution") or "").strip().lower()
+    notes = [
+        n for n in _INMEMORY_NOTES.values()
+        if not user_inst or n.get("institution", "").strip().lower() == user_inst or not n.get("institution")
+    ]
+    return {"notes": notes, "count": len(notes)}
+
+
+@router.put("/notes/{note_id}")
+def update_teacher_note(
+    note_id: str,
+    body: CreateNoteRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    note = _INMEMORY_NOTES.get(note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found.")
+
+    note["title"] = body.title
+    note["subject"] = body.subject or note.get("subject", "General")
+    note["content"] = body.content
+    note["class_name"] = body.class_name or note.get("class_name", "")
+    note["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    return {"success": True, "message": "Note updated successfully.", "note": note}
+
+
+@router.delete("/notes/{note_id}")
+def delete_teacher_note(
+    note_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    if note_id in _INMEMORY_NOTES:
+        del _INMEMORY_NOTES[note_id]
+        return {"success": True, "message": "Note deleted successfully."}
+    raise HTTPException(status_code=404, detail="Note not found.")
+
