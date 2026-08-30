@@ -1,538 +1,1499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slider-Crank Mechanism Kinematics — Interactive Animation</title>
+  <style>
+    :root {
+      --bg-color: #0b0c10;
+      --panel-bg: #1f2833;
+      --text-main: #c5c6c7;
+      --accent-cyan: #66fcf1;
+      --accent-cyan-dim: #45a29e;
+      --accent-orange: #fca311;
+      --accent-green: #97c459;
+      --accent-red: #e63946;
+      --border-radius: 12px;
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .dashboard {
+      background-color: var(--panel-bg);
+      border-radius: var(--border-radius);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      width: 100%;
+      max-width: 900px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .question-banner {
+      background-color: rgba(0,0,0,0.3);
+      padding: 15px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      display: flex;
+      gap: 15px;
+      align-items: flex-start;
+    }
+    
+    .q-label {
+      background-color: var(--accent-cyan-dim);
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-weight: bold;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    
+    .q-text {
+      font-size: 0.95rem;
+      line-height: 1.4;
+      color: #fff;
+    }
+    
+    .svg-container {
+      width: 100%;
+      background: radial-gradient(circle at center, #1a1a24 0%, #050508 100%);
+      position: relative;
+    }
+    
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    
+    .svg-layer {
+      transition: opacity 0.5s ease;
+    }
+    
+    #blur-shield {
+      transition: opacity 0.5s ease;
+    }
+    
+    .control-panel {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    
+    .step-indicator {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 10px;
+    }
+    
+    .step-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background-color: rgba(255,255,255,0.2);
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    
+    .step-dot.active {
+      background-color: var(--accent-cyan);
+      box-shadow: 0 0 8px var(--accent-cyan);
+      transform: scale(1.2);
+    }
+    
+    .info-box {
+      background-color: rgba(0,0,0,0.2);
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid var(--accent-cyan);
+      min-height: 100px;
+    }
+    
+    .info-box h3 {
+      color: #fff;
+      margin-bottom: 8px;
+      font-size: 1.1rem;
+    }
+    
+    .badges {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    
+    .badge {
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      color: #000;
+    }
+    
+    .badge-cyan { background-color: var(--accent-cyan); }
+    .badge-orange { background-color: var(--accent-orange); }
+    .badge-green { background-color: var(--accent-green); }
+    
+    .info-desc {
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+    
+    .actions {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+    
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 0.9rem;
+    }
+    
+    .btn-primary {
+      background-color: var(--accent-cyan);
+      color: #000;
+    }
+    
+    .btn-primary:hover {
+      background-color: #fff;
+      box-shadow: 0 0 10px var(--accent-cyan);
+    }
+    
+    .btn-secondary {
+      background-color: transparent;
+      color: var(--text-main);
+      border: 1px solid var(--text-main);
+    }
+    
+    .btn-secondary:hover {
+      background-color: rgba(255,255,255,0.1);
+      color: #fff;
+    }
+    
+    .math-box {
+      font-family: 'Courier New', Courier, monospace;
+      background-color: rgba(0,0,0,0.8);
+      border: 1px solid var(--accent-orange);
+      border-radius: 6px;
+      padding: 15px;
+      fill: var(--accent-cyan);
+      font-size: 14px;
+    }
+  </style>
+<script type="application/json" id="__final_answer_data__">
+{
+  "items": [
+    {
+      "roman": "i",
+      "label": "Piston displacement",
+      "value": "26.69 mm",
+      "unit": "mm"
+    },
+    {
+      "roman": "ii",
+      "label": "Velocity",
+      "value": "1.96 m/s",
+      "unit": "m/s"
+    }
+  ],
+  "raw_answer": "Displacement = 26.69 mm, Velocity = 1.96 m/s",
+  "key_insight": "The piston velocity peaks just before 90 degrees due to the connecting rod's angular effect, captured by the sin(2θ)/2n term."
+}
+</script>
 
-<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0 4px;">
-  <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;">
-    <button id="b0" onclick="setStage(0)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #1a3a5c;background:#1a3a5c;color:#fff;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">① intake</button>
-    <button id="b1" onclick="setStage(1)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">② compression</button>
-    <button id="b2" onclick="setStage(2)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">③ power</button>
-    <button id="b3" onclick="setStage(3)" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;">④ exhaust</button>
-    <button id="ba" onclick="toggleAuto()" style="padding:5px 14px;border-radius:20px;border:1.5px solid #ccc;background:#f5f5f3;color:#555;font-size:12px;font-family:sans-serif;font-weight:500;cursor:pointer;min-width:72px;">▶ auto</button>
+<style id="qanim-fa-styles">
+#fa-backdrop { display:none; position:fixed; inset:0; z-index:8500;
+  background:rgba(15,23,42,.42); backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
+#fa-backdrop.open { display:block; opacity:1; }
+#fa-panel { display:flex; flex-direction:column; position:fixed; top:50%; left:50%;
+  transform:translate(-50%,-48%) scale(.96); z-index:8600; width:min(520px,94vw);
+  max-height:86vh; border-radius:18px; background:#fff; border:1px solid #e2e8f0;
+  box-shadow:0 20px 60px rgba(80,60,140,.18),0 2px 8px rgba(0,0,0,.06);
+  opacity:0; pointer-events:none;
+  transition:opacity .28s ease,transform .28s cubic-bezier(.34,1.56,.64,1); overflow:hidden; }
+#fa-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+.fa-header { display:flex; align-items:center; justify-content:space-between;
+  padding:18px 22px 14px; border-bottom:1px solid #f0f0f8; flex-shrink:0; background:#fff; }
+.fa-header-left { display:flex; align-items:center; gap:13px; }
+.fa-icon-wrap { width:40px; height:40px; border-radius:10px; background:#f0fdf4;
+  display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
+.fa-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:17px; font-weight:800; color:#1a1a2e; }
+.fa-subtitle { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; color:#64748b; margin-top:2px; }
+.fa-close-btn { width:34px; height:34px; border-radius:50%; border:1.5px solid #e8e8f0;
+  background:#fafafa; color:#888; font-size:13px; display:flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:background .15s,color .15s,border-color .15s; flex-shrink:0; }
+.fa-close-btn:hover { background:#fee2e2; color:#dc2626; border-color:#fca5a5; }
+.fa-body { overflow-y:auto; flex:1; padding:18px 22px 24px; display:flex; flex-direction:column; gap:12px; }
+.fa-items-container { display:flex; flex-direction:column; gap:10px; }
+.fa-item { display:flex; align-items:flex-start; gap:14px; padding:14px 18px;
+  border-radius:12px; background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #16a34a;
+  opacity:0; transform:translateY(10px); transition:opacity .30s ease,transform .30s ease; }
+.fa-item.visible { opacity:1; transform:translateY(0); }
+.fa-item-roman { min-width:32px; height:32px; border-radius:50%; background:#16a34a; color:#fff;
+  font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center;
+  flex-shrink:0; font-style:italic; box-shadow:0 2px 8px rgba(22,163,74,.30); }
+.fa-item-body { flex:1; }
+.fa-item-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700;
+  color:#166534; text-transform:uppercase; letter-spacing:.6px; margin-bottom:5px; }
+.fa-item-value { font-family:'Courier New',Courier,monospace; font-size:15px; font-weight:800; color:#1e293b;
+  background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:6px 12px;
+  display:inline-block; word-break:break-word; }
+.fa-insight-card { border-radius:13px; padding:14px 18px; background:#fffbf0;
+  border:1.5px solid #fde8a0; opacity:0; transition:opacity .35s ease; }
+.fa-insight-card.visible { opacity:1; }
+.fa-insight-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px; font-weight:800;
+  text-transform:uppercase; letter-spacing:1.5px; color:#b45309; margin-bottom:7px; }
+.fa-insight-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#78350f; line-height:1.72; }
+</style>
+
+<script type="application/json" id="__tofind_data__">
+{
+  "targets": [
+    "Piston displacement",
+    "Velocity"
+  ]
+}
+</script>
+
+<style id="qanim-tofind-styles">
+#tofind-backdrop { display:none; position:fixed; inset:0; z-index:8000;
+  background:rgba(15,23,42,.40); backdrop-filter:blur(4px); opacity:0; transition:opacity .22s ease; }
+#tofind-backdrop.open { display:block; opacity:1; }
+#tofind-panel { display:flex; flex-direction:column; position:fixed; top:50%; left:50%;
+  transform:translate(-50%,-48%) scale(.96); z-index:8100; width:min(460px,92vw);
+  max-height:80vh; border-radius:16px; padding:24px; box-sizing:border-box;
+  background:#fff; border:1px solid #e2e8f0; box-shadow:0 8px 40px rgba(0,0,0,.12);
+  opacity:0; pointer-events:none; transition:opacity .25s ease,transform .25s cubic-bezier(.34,1.56,.64,1); }
+#tofind-panel.open { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+.tf-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.tf-header-left { display:flex; align-items:center; gap:10px; }
+.tf-icon-wrap { width:32px; height:32px; border-radius:8px; background:#7c3aed;
+  display:flex; align-items:center; justify-content:center; color:#fff; flex-shrink:0; }
+.tf-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:16px; font-weight:700; color:#1e293b; }
+.tf-close-btn { width:30px; height:30px; border-radius:8px; border:1px solid #e2e8f0;
+  background:#f8fafc; color:#64748b; font-size:12px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s,color .15s; }
+.tf-close-btn:hover { background:#fee2e2; color:#dc2626; }
+.tf-subtitle { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; color:#64748b; margin:0 0 14px; }
+.tf-items-container { display:flex; flex-direction:column; gap:8px; overflow-y:auto; }
+.tofind-item { display:flex; align-items:flex-start; gap:12px; padding:12px 14px;
+  border-radius:10px; background:#f8fafc; border:1px solid #e2e8f0;
+  opacity:0; transform:translateX(-12px); transition:background .15s; }
+.tofind-item:hover { background:#ede9fe; border-color:#7c3aed; }
+.tofind-check { width:20px; height:20px; border-radius:50%; background:#7c3aed; color:#fff;
+  font-size:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.tofind-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:13px; font-weight:600; color:#1e293b; line-height:1.5; }
+.tofind-empty { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:13px; color:#94a3b8; text-align:center; padding:20px 0; font-style:italic; }
+</style>
+
+
+<style id="qanim-notes-styles">
+#qanim-notes-btn { position:fixed; top:14px; right:16px; z-index:6900;
+  display:flex; align-items:center; gap:7px; padding:10px 18px 10px 13px; border-radius:11px;
+  border:1.5px solid #d1d5db; background:#fff; color:#475569;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:700;
+  cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,.11); transition:background .15s,border-color .15s,color .15s; }
+#qanim-notes-btn:hover { background:#fefce8; border-color:#ca8a04; color:#92400e; }
+#qanim-notes-panel { position:fixed; top:50px; right:16px; z-index:7200; width:340px; max-height:80vh;
+  border-radius:14px; background:#fff; border:1px solid #e2e8f0; box-shadow:0 8px 32px rgba(0,0,0,.10);
+  display:flex; flex-direction:column; overflow:hidden; opacity:0; transform:translateY(-8px) scale(.97);
+  pointer-events:none; transition:opacity .22s ease,transform .22s ease; }
+#qanim-notes-panel.open { opacity:1; transform:translateY(0) scale(1); pointer-events:auto; }
+#qanim-notes-header { display:flex; align-items:center; justify-content:space-between;
+  padding:10px 14px; background:#fffbeb; border-bottom:1px solid #fef3c7; cursor:grab; flex-shrink:0; }
+.notes-header-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; font-weight:700; color:#92400e; }
+.notes-hdr-btn { width:24px; height:24px; border-radius:6px; border:1px solid #fde68a;
+  background:rgba(255,255,255,.6); color:#92400e; font-size:12px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.notes-hdr-btn:hover { background:#fef3c7; }
+#qanim-notes-tabs { display:flex; border-bottom:1px solid #f1f5f9; flex-shrink:0; }
+.notes-tab { flex:1; padding:7px 0; text-align:center; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:11px; font-weight:600; color:#94a3b8; cursor:pointer; border-bottom:2px solid transparent;
+  transition:color .15s,border-color .15s; text-transform:uppercase; letter-spacing:.5px; }
+.notes-tab.active { color:#f59e0b; border-bottom-color:#f59e0b; }
+#qanim-canvas-toolbar { display:flex; align-items:center; gap:5px; padding:6px 10px;
+  background:#f8fafc; border-bottom:1px solid #f1f5f9; flex-shrink:0; flex-wrap:wrap; }
+.canvas-tool-btn { padding:3px 9px; border-radius:5px; border:1px solid #e2e8f0; background:#fff;
+  color:#64748b; font-size:11px; font-weight:600; cursor:pointer; }
+.canvas-tool-btn.active { background:#fef3c7; border-color:#f59e0b; color:#92400e; }
+.color-dot { width:16px; height:16px; border-radius:50%; cursor:pointer; border:2px solid transparent; transition:transform .12s; }
+.color-dot:hover { transform:scale(1.2); }
+.color-dot.selected { border-color:#1e293b; transform:scale(1.1); }
+.size-btn { width:20px; height:20px; border-radius:50%; border:1px solid #e2e8f0; background:#fff;
+  color:#64748b; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.size-btn.active { background:#fef3c7; border-color:#f59e0b; color:#92400e; }
+.tool-sep { width:1px; height:18px; background:#e2e8f0; flex-shrink:0; }
+#qanim-canvas-wrap { flex:1 1 auto; position:relative; overflow:hidden; min-height:180px; }
+#qanim-draw-canvas { display:block; width:100%; height:100%; cursor:crosshair; background:#fefce8; touch-action:none; }
+#qanim-text-pane { display:none; flex-direction:column; flex:1 1 auto; overflow:hidden; }
+#qanim-notes-textarea { flex:1 1 auto; width:100%; min-height:180px; resize:none; box-sizing:border-box;
+  background:#f8fafc; border:none; outline:none; color:#1e293b;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; line-height:1.7; padding:12px 14px; }
+#qanim-notes-textarea::placeholder { color:#cbd5e1; }
+#qanim-notes-footer { display:flex; align-items:center; justify-content:space-between;
+  padding:6px 12px; border-top:1px solid #f1f5f9; flex-shrink:0; background:#f8fafc; }
+.notes-status { font-size:10px; color:#94a3b8; font-family:-apple-system,'Segoe UI',Arial,sans-serif; }
+.notes-action-btn { padding:3px 10px; border-radius:5px; border:1px solid #e2e8f0; background:#fff;
+  color:#64748b; font-size:10px; font-weight:600; cursor:pointer; }
+.notes-action-btn:hover { background:#ede9fe; border-color:#7c3aed; color:#7c3aed; }
+</style>
+
+<script type="application/json" id="__answer_targets__">
+{
+  "answer_targets": [
+    {
+      "label": "Piston displacement",
+      "value": "26.69 mm",
+      "unit": "mm",
+      "insight": "The piston velocity peaks just before 90 degrees due to the connecting rod's angular effect, captured by the sin(2θ)/2n term."
+    },
+    {
+      "label": "Velocity",
+      "value": "1.96 m/s",
+      "unit": "m/s",
+      "insight": "The piston velocity peaks just before 90 degrees due to the connecting rod's angular effect, captured by the sin(2θ)/2n term."
+    }
+  ]
+}
+</script>
+
+<style id="qanim-answerbox-styles">
+#answerbox-backdrop { display:none; position:fixed; inset:0; z-index:8600;
+  background:rgba(15,23,42,.40); backdrop-filter:blur(4px); opacity:0; transition:opacity .22s ease; }
+#answerbox-backdrop.open { display:flex; align-items:center; justify-content:center; padding:16px; opacity:1; }
+#answerbox-panel { width:min(540px,94vw); max-height:90vh; border-radius:16px; background:#fff;
+  border:1px solid #e2e8f0; box-shadow:0 12px 48px rgba(0,0,0,.14); opacity:0; pointer-events:none;
+  transform:translateY(16px) scale(.97); transition:opacity .25s ease,transform .26s cubic-bezier(.34,1.56,.64,1);
+  overflow:hidden; display:flex; flex-direction:column; }
+#answerbox-panel.open { opacity:1; pointer-events:auto; transform:translateY(0) scale(1); }
+.ab-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px;
+  background:#fff; border-bottom:1px solid #e2e8f0; flex-shrink:0; }
+.ab-header-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:16px; font-weight:800; color:#1e293b;
+  display:flex; align-items:center; gap:8px; }
+.ab-close-btn { width:30px; height:30px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc;
+  color:#64748b; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s; }
+.ab-close-btn:hover { background:#fee2e2; color:#dc2626; }
+.ab-progress-row { display:flex; align-items:center; justify-content:space-between; padding:10px 20px 0; flex-shrink:0; }
+.ab-progress-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; font-weight:700;
+  color:#7c3aed; text-transform:uppercase; letter-spacing:.8px; }
+.ab-progress-dots { display:flex; gap:5px; }
+.ab-dot { width:7px; height:7px; border-radius:50%; background:#e2e8f0; transition:background .2s; }
+.ab-dot.done { background:#16a34a; } .ab-dot.current { background:#7c3aed; }
+.ab-body { padding:14px 20px 20px; overflow-y:auto; flex:1; }
+.ab-find-chip { display:flex; align-items:flex-start; gap:8px; padding:10px 14px; border-radius:10px;
+  background:#f5f3ff; border:1px solid #ddd6fe; margin-bottom:14px; }
+.ab-find-icon { font-size:16px; flex-shrink:0; margin-top:1px; }
+.ab-find-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12.5px; font-weight:600; color:#5b21b6; line-height:1.5; }
+.ab-find-label { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1px; color:#7c3aed; display:block; margin-bottom:2px; }
+.ab-instruction { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#64748b; margin-bottom:10px; line-height:1.6; }
+#ab-user-input { width:100%; min-height:80px; padding:12px 14px; border-radius:10px; border:1.5px solid #e2e8f0;
+  background:#f8fafc; font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#1e293b;
+  line-height:1.6; resize:vertical; transition:border-color .15s; outline:none; box-sizing:border-box; }
+#ab-user-input:focus { border-color:#7c3aed; background:#fff; }
+#ab-submit-btn { width:100%; padding:12px; margin-top:10px; border-radius:10px; border:none;
+  background:#7c3aed; color:#fff; font-size:14px; font-weight:700; font-family:inherit; cursor:pointer;
+  transition:background .15s,transform .1s; }
+#ab-submit-btn:hover { background:#6d28d9; transform:translateY(-1px); }
+#ab-feedback { display:none; margin-top:14px; border-radius:12px; overflow:hidden; border:1px solid transparent; }
+#ab-feedback.show { display:block; }
+#ab-feedback.correct { border-color:#bbf7d0; }
+#ab-feedback.almost  { border-color:#fed7aa; }
+#ab-feedback.wrong   { border-color:#fecaca; }
+.ab-feedback-top { display:flex; align-items:center; gap:10px; padding:12px 16px; }
+#ab-feedback.correct .ab-feedback-top { background:#f0fdf4; }
+#ab-feedback.almost  .ab-feedback-top { background:#fff7ed; }
+#ab-feedback.wrong   .ab-feedback-top { background:#fef2f2; }
+.ab-feedback-icon { font-size:22px; flex-shrink:0; }
+.ab-feedback-verdict { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:15px; font-weight:800; }
+#ab-feedback.correct .ab-feedback-verdict { color:#15803d; }
+#ab-feedback.almost  .ab-feedback-verdict { color:#c2410c; }
+#ab-feedback.wrong   .ab-feedback-verdict { color:#b91c1c; }
+.ab-feedback-insight { padding:10px 16px 13px; border-top:1px solid; }
+#ab-feedback.correct .ab-feedback-insight { background:#fafffe; border-color:#bbf7d0; }
+#ab-feedback.almost  .ab-feedback-insight { background:#fffbf5; border-color:#fed7aa; }
+#ab-feedback.wrong   .ab-feedback-insight { background:#fff8f8; border-color:#fecaca; }
+.ab-insight-label { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10px; font-weight:800;
+  text-transform:uppercase; letter-spacing:1.2px; color:#64748b; margin-bottom:4px; }
+.ab-insight-text { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12.5px; color:#1e293b; line-height:1.68; }
+.ab-action-row { display:none; gap:8px; margin-top:12px; }
+.ab-action-row.show { display:flex; }
+#ab-retry-btn { flex:1; padding:9px 14px; border-radius:9px; border:1px solid #e2e8f0; background:#f8fafc;
+  color:#64748b; font-size:12px; font-weight:600; font-family:inherit; cursor:pointer; transition:background .15s; }
+#ab-retry-btn:hover { background:#ede9fe; border-color:#7c3aed; color:#7c3aed; }
+#ab-next-target-btn { flex:2; padding:9px 14px; border-radius:9px; border:none; background:#7c3aed; color:#fff;
+  font-size:12px; font-weight:700; font-family:inherit; cursor:pointer; display:none; transition:background .15s; }
+#ab-next-target-btn:hover { background:#6d28d9; }
+#ab-next-target-btn.show { display:block; }
+#ab-alldone-card { display:none; text-align:center; padding:28px 20px; border-radius:14px;
+  background:linear-gradient(135deg,#f0fdf4,#fefce8); border:1.5px solid #bbf7d0; margin-top:10px; }
+#ab-alldone-card.show { display:block; }
+.ab-alldone-emoji { font-size:40px; display:block; margin-bottom:10px; }
+.ab-alldone-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:18px; font-weight:800; color:#15803d; margin-bottom:6px; }
+.ab-alldone-sub { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; color:#166534; line-height:1.6; }
+</style>
+
+
+<style id="qanim-controls-bar-styles">
+#qanim-controls-bar { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:7000;
+  display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.98);
+  backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  border:1.5px solid transparent; border-radius:16px; padding:10px 14px;
+  box-shadow:0 6px 36px rgba(124,58,237,.18),0 2px 8px rgba(0,0,0,.08); white-space:nowrap; }
+#qanim-controls-bar::before { content:''; position:absolute; inset:-2px; border-radius:18px;
+  background:linear-gradient(90deg,#7c3aed,#db2777,#f59e0b,#7c3aed); background-size:200% 100%;
+  animation:qanim-bar-glow 4s linear infinite; z-index:-1; }
+@keyframes qanim-bar-glow { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
+.qanim-ctrl-btn { display:flex; align-items:center; gap:5px; padding:8px 15px; border-radius:10px;
+  border:1.5px solid #e2e8f0; background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%); color:#334155;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700; cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s;
+  user-select:none; letter-spacing:.2px; }
+.qanim-ctrl-btn:hover { background:linear-gradient(135deg,#ede9fe 0%,#fdf4ff 100%); border-color:#7c3aed;
+  color:#6d28d9; transform:translateY(-2px); box-shadow:0 4px 14px rgba(124,58,237,.22); }
+.qanim-ctrl-btn:active { transform:translateY(0); box-shadow:none; }
+.qanim-ctrl-sep { width:1px; height:22px; background:linear-gradient(to bottom,transparent,#c4b5fd,transparent); flex-shrink:0; }
+</style>
+
+
+<style id="qanim-glossary-styles">
+#glossary-ctrl-btn { position:relative; }
+.glossary-ctrl-badge { position:absolute; top:-6px; right:-6px; min-width:16px; height:16px;
+  padding:0 4px; border-radius:9px; background:#0d9488; color:#fff; font-size:10px; font-weight:800;
+  line-height:16px; text-align:center; box-shadow:0 0 0 2px #fff; }
+#qanim-glossary-backdrop { position:fixed; inset:0; z-index:7150; background:rgba(15,23,42,.28);
+  opacity:0; pointer-events:none; transition:opacity .22s ease; }
+#qanim-glossary-backdrop.open { opacity:1; pointer-events:auto; }
+#qanim-glossary-panel { position:fixed; top:0; right:0; z-index:7300; width:340px; max-width:88vw;
+  height:100vh; background:#fff; border-left:1px solid #e2e8f0;
+  box-shadow:-8px 0 32px rgba(0,0,0,.14); display:flex; flex-direction:column; overflow:hidden;
+  transform:translateX(100%); transition:transform .26s cubic-bezier(.16,1,.3,1); }
+#qanim-glossary-panel.open { transform:translateX(0); }
+#qanim-glossary-header { display:flex; align-items:center; justify-content:space-between;
+  padding:14px 16px; background:#f0fdfa; border-bottom:1px solid #ccfbf1; flex-shrink:0; }
+.glossary-header-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:700; color:#0f766e; }
+.glossary-hdr-btn { width:26px; height:26px; border-radius:7px; border:1px solid #99f6e4;
+  background:rgba(255,255,255,.7); color:#0f766e; font-size:12px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.glossary-hdr-btn:hover { background:#ccfbf1; }
+#qanim-glossary-body { flex:1 1 auto; overflow-y:auto; padding:12px 14px 20px; }
+.glossary-term-card { background:#f8fafc; border:1px solid #e2e8f0; border-left:3px solid #0d9488;
+  border-radius:10px; padding:10px 12px; margin-bottom:10px; }
+.glossary-term-word { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:13px; font-weight:800;
+  color:#134e4a; margin-bottom:4px; text-transform:capitalize; }
+.glossary-term-meaning { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12.5px; line-height:1.55; color:#475569; }
+</style>
+
+
+<style id="qanim-teacher-voice-styles">
+#qanim-teacher-voice-btn { display:flex; align-items:center; gap:5px; padding:8px 15px; border-radius:10px;
+  border:1.5px solid #e2e8f0; background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%); color:#334155;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:12px; font-weight:700; cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s;
+  user-select:none; letter-spacing:.2px; position:relative; }
+#qanim-teacher-voice-btn:hover { background:linear-gradient(135deg,#ede9fe 0%,#fdf4ff 100%);
+  border-color:#7c3aed; color:#6d28d9; transform:translateY(-2px); box-shadow:0 4px 14px rgba(124,58,237,.22); }
+#qanim-teacher-voice-btn.has-recording { border-color:#16a34a; color:#15803d; }
+#tv-backdrop { display:none; position:fixed; inset:0; z-index:8700; background:rgba(15,23,42,.45);
+  backdrop-filter:blur(6px); opacity:0; transition:opacity .24s ease; }
+#tv-backdrop.open { display:flex; align-items:flex-end; justify-content:center; padding:0 0 80px; opacity:1; }
+#tv-panel { width:min(560px,96vw); border-radius:18px 18px 14px 14px; background:#fff;
+  border:1px solid #e2e8f0; box-shadow:0 -4px 40px rgba(0,0,0,.14); opacity:0; transform:translateY(20px);
+  transition:opacity .28s ease,transform .28s cubic-bezier(.34,1.56,.64,1); overflow:hidden; }
+#tv-panel.open { opacity:1; transform:translateY(0); }
+.tv-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px 12px;
+  border-bottom:1px solid #f1f5f9; background:#fff; }
+.tv-header-left { display:flex; align-items:center; gap:11px; }
+.tv-icon-wrap { width:38px; height:38px; border-radius:10px; background:linear-gradient(135deg,#ede9fe,#fdf4ff);
+  display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; border:1px solid #ddd6fe; }
+.tv-header-title { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:16px; font-weight:800; color:#1e293b; }
+.tv-header-sub { font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; color:#64748b; margin-top:2px; }
+.tv-close-btn { width:32px; height:32px; border-radius:50%; border:1.5px solid #e2e8f0; background:#f8fafc;
+  color:#64748b; font-size:13px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s,color .15s; }
+.tv-close-btn:hover { background:#fee2e2; color:#dc2626; }
+.tv-body { padding:18px 20px 22px; display:flex; flex-direction:column; gap:14px; }
+.tv-btn { flex:1; min-width:100px; padding:11px 14px; border-radius:10px; border:1.5px solid #e2e8f0;
+  background:#f8fafc; color:#334155; font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:13px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
+  transition:background .15s,border-color .15s,color .15s,transform .12s; }
+.tv-btn.primary { background:#7c3aed; border-color:#7c3aed; color:#fff; }
+.tv-btn.primary:hover { background:#6d28d9; }
+.tv-btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
+.tv-btn.stop { background:#fef2f2; border-color:#fca5a5; color:#b91c1c; }
+.tv-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.tv-util-row { display:flex; gap:8px; align-items:center; padding-top:4px; border-top:1px solid #f1f5f9; }
+.tv-util-btn { padding:7px 13px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; color:#64748b;
+  font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:11px; font-weight:600; cursor:pointer;
+  display:flex; align-items:center; gap:5px; transition:background .12s,color .12s; }
+.tv-util-btn:hover { background:#ede9fe; border-color:#7c3aed; color:#6d28d9; }
+.tv-hint { flex:1; font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:10.5px; color:#94a3b8; line-height:1.5; text-align:right; }
+#tv-timer { font-family:'Courier New',monospace; font-size:14px; font-weight:800; color:#64748b; }
+#tv-audio-player { width:100%; border-radius:8px; display:none; outline:none; }
+#tv-audio-player.show { display:block; }
+#tv-waveform-bar { height:48px; border-radius:10px; border:1.5px dashed #e2e8f0; background:#f8fafc;
+  display:flex; align-items:center; justify-content:center; gap:8px; color:#94a3b8; font-size:12px; overflow:hidden; }
+#tv-waveform-bar.active { border-color:#dc2626; background:#fef2f2; }
+#tv-waveform-bar.has-audio { border-color:#16a34a; background:#f0fdf4; }
+</style>
+
+</head>
+<body>
+
+<div id="tv-backdrop" aria-hidden="true"></div>
+<div id="tv-panel" role="dialog" aria-label="Teacher Voice" aria-hidden="true">
+  <div class="tv-header">
+    <div class="tv-header-left">
+      <div class="tv-icon-wrap">&#x1F3A4;</div>
+      <div>
+        <div class="tv-header-title">Teacher Voice</div>
+        <div class="tv-header-sub" id="tv-header-sub">Record your explanation for students</div>
+      </div>
+    </div>
+    <button class="tv-close-btn" id="tv-close-btn" aria-label="Close">&#x2715;</button>
   </div>
-  <div id="infoBar" style="font-family:sans-serif;font-size:12px;color:#666;text-align:center;min-height:16px;padding:0 8px;"></div>
-  <canvas id="eng" width="560" height="560" style="width:100%;max-width:560px;"></canvas>
+  <div class="tv-body">
+    <div id="tv-waveform-bar">
+      <canvas id="tv-wave-canvas" style="width:100%;height:36px;display:block;"></canvas>
+      <span id="tv-timer">0:00</span>
+    </div>
+    <audio id="tv-audio-player" controls></audio>
+    <div class="tv-actions" id="tv-actions">
+      <button class="tv-btn primary" id="tv-record-btn">&#x1F3A4; Start Recording</button>
+      <button class="tv-btn stop" id="tv-stop-btn" disabled>&#x23F9; Stop</button>
+      <button class="tv-btn" id="tv-play-btn" disabled>&#x25B6;&#xFE0F; Play</button>
+      <button class="tv-btn danger" id="tv-delete-btn" disabled>&#x1F5D1; Delete</button>
+    </div>
+    <div class="tv-util-row">
+      <button class="tv-util-btn" id="tv-export-btn" disabled>&#x2B07;&#xFE0F; Export Audio</button>
+      <label class="tv-util-btn" style="cursor:pointer;">&#x2B06;&#xFE0F; Import Audio
+        <input type="file" id="tv-import-input" accept="audio/*" style="display:none;">
+      </label>
+      <span class="tv-hint">Share exported audio with students via email or your LMS.</span>
+    </div>
+  </div>
+</div>
+
+<div id="qanim-glossary-backdrop"></div>
+<div id="qanim-glossary-panel" role="dialog" aria-label="Difficult words glossary" aria-hidden="true">
+  <div id="qanim-glossary-header">
+    <div class="glossary-header-title">&#x1F4D6; Difficult Words, Explained</div>
+    <button class="glossary-hdr-btn" id="glossary-close-btn" title="Close">&#x2715;</button>
+  </div>
+  <div id="qanim-glossary-body">
+    <div class="glossary-term-card">
+      <div class="glossary-term-word">slider-crank mechanism</div>
+      <div class="glossary-term-meaning">A machine part that turns spinning motion into back-and-forth sliding motion.</div>
+    </div>
+    <div class="glossary-term-card">
+      <div class="glossary-term-word">crank</div>
+      <div class="glossary-term-meaning">A rotating arm or lever attached to a spinning shaft.</div>
+    </div>
+    <div class="glossary-term-card">
+      <div class="glossary-term-word">connecting rod</div>
+      <div class="glossary-term-meaning">A metal piece linking the rotating crank to the sliding piston.</div>
+    </div>
+    <div class="glossary-term-card">
+      <div class="glossary-term-word">line of stroke</div>
+      <div class="glossary-term-meaning">The straight path that the sliding part moves along.</div>
+    </div>
+    <div class="glossary-term-card">
+      <div class="glossary-term-word">piston</div>
+      <div class="glossary-term-meaning">A solid cylinder that slides back and forth inside a tube.</div>
+    </div>
+    <div class="glossary-term-card">
+      <div class="glossary-term-word">displacement</div>
+      <div class="glossary-term-meaning">The distance an object has moved from its starting point.</div>
+    </div>
+  </div>
+</div>
+
+
+<div id="answerbox-backdrop" aria-hidden="true">
+<div id="answerbox-panel" role="dialog" aria-label="Answer Box" aria-hidden="true">
+  <div class="ab-header">
+    <div class="ab-header-title">&#x270F;&#xFE0F; Answer Box</div>
+    <button class="ab-close-btn" id="ab-close-btn">&#x2715;</button>
+  </div>
+  <div class="ab-progress-row">
+    <span class="ab-progress-label" id="ab-progress-label">Question 1 of 1</span>
+    <div class="ab-progress-dots" id="ab-progress-dots"></div>
+  </div>
+  <div class="ab-body">
+    <div class="ab-find-chip" id="ab-find-chip">
+      <span class="ab-find-icon">&#x1F50D;</span>
+      <div><span class="ab-find-label">Find</span><div class="ab-find-text" id="ab-find-text">Loading...</div></div>
+    </div>
+    <p class="ab-instruction">Type your answer below (include units if applicable) and click <strong>Submit</strong>.</p>
+    <textarea id="ab-user-input" placeholder="e.g. 350 W/m or 88 %" spellcheck="false"></textarea>
+    <button id="ab-submit-btn">Submit Answer</button>
+    <div id="ab-feedback" role="alert">
+      <div class="ab-feedback-top">
+        <span class="ab-feedback-icon" id="ab-feedback-icon"></span>
+        <span class="ab-feedback-verdict" id="ab-feedback-verdict"></span>
+      </div>
+      <div class="ab-feedback-insight">
+        <div class="ab-insight-label">&#x1F4A1; Key Insight</div>
+        <div class="ab-insight-text" id="ab-insight-text"></div>
+      </div>
+    </div>
+    <div class="ab-action-row" id="ab-action-row">
+      <button id="ab-retry-btn">Try Again</button>
+      <button id="ab-next-target-btn">Next &rarr;</button>
+    </div>
+    <div id="ab-alldone-card">
+      <span class="ab-alldone-emoji">&#x1F389;</span>
+      <div class="ab-alldone-title">All answers submitted!</div>
+      <div class="ab-alldone-sub">Great work. Open <strong>Final Answer</strong> to review the complete result.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+
+<button id="qanim-notes-btn" aria-label="Open notes">&#x1F4DD; Notes</button>
+<div id="qanim-notes-panel" role="dialog" aria-label="Notes" aria-hidden="true">
+  <div id="qanim-notes-header">
+    <div class="notes-header-title">&#x270F;&#xFE0F; My Notes</div>
+    <div style="display:flex;gap:4px">
+      <button class="notes-hdr-btn" id="notes-minimize-btn" title="Minimize">&mdash;</button>
+      <button class="notes-hdr-btn" id="notes-close-btn" title="Close">&#x2715;</button>
+    </div>
+  </div>
+  <div id="qanim-notes-tabs">
+    <div class="notes-tab active" data-tab="canvas">Draw</div>
+    <div class="notes-tab" data-tab="text">Text</div>
+  </div>
+  <div id="qanim-canvas-toolbar">
+    <button class="canvas-tool-btn active" data-tool="pen">Pen</button>
+    <button class="canvas-tool-btn" data-tool="eraser">Eraser</button>
+    <div class="tool-sep"></div>
+    <div class="color-dot selected" style="background:#1e293b;" data-color="#1e293b"></div>
+    <div class="color-dot" style="background:#7c3aed;" data-color="#7c3aed"></div>
+    <div class="color-dot" style="background:#dc2626;" data-color="#dc2626"></div>
+    <div class="color-dot" style="background:#16a34a;" data-color="#16a34a"></div>
+    <div class="color-dot" style="background:#0284c7;" data-color="#0284c7"></div>
+    <div class="tool-sep"></div>
+    <button class="size-btn" data-size="2">S</button>
+    <button class="size-btn active" data-size="4">M</button>
+    <button class="size-btn" data-size="7">L</button>
+    <div class="tool-sep"></div>
+    <button class="canvas-tool-btn" id="notes-undo-btn">&#x21A9;</button>
+    <button class="canvas-tool-btn" id="notes-clear-btn">&#x1F5D1;</button>
+  </div>
+  <div id="qanim-canvas-wrap"><canvas id="qanim-draw-canvas"></canvas></div>
+  <div id="qanim-text-pane">
+    <textarea id="qanim-notes-textarea" placeholder="Type your notes here..." spellcheck="false"></textarea>
+  </div>
+  <div id="qanim-notes-footer">
+    <span class="notes-status" id="notes-char-count">0 chars</span>
+    <button class="notes-action-btn" id="notes-export-text-btn">Export</button>
+  </div>
+</div>
+
+
+<div id="tofind-backdrop" aria-hidden="true"></div>
+<aside id="tofind-panel" role="dialog" aria-labelledby="tofind-heading" aria-hidden="true">
+  <div class="tf-header">
+    <div class="tf-header-left">
+      <div class="tf-icon-wrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span id="tofind-heading" class="tf-title">To Find</span>
+    </div>
+    <button id="tofind-close" class="tf-close-btn" aria-label="Close">&#x2715;</button>
+  </div>
+  <p class="tf-subtitle">What this question is asking you to determine:</p>
+  <div id="tofind-items-container" class="tf-items-container"></div>
+</aside>
+
+
+<div id="fa-backdrop" aria-hidden="true"></div>
+<aside id="fa-panel" role="dialog" aria-labelledby="fa-heading" aria-hidden="true">
+  <div class="fa-header">
+    <div class="fa-header-left">
+      <div class="fa-icon-wrap">&#x2705;</div>
+      <div>
+        <div id="fa-heading" class="fa-title">Final Answer</div>
+        <div class="fa-subtitle">Computed results for this question</div>
+      </div>
+    </div>
+    <button id="fa-close" class="fa-close-btn" aria-label="Close">&#x2715;</button>
+  </div>
+  <div class="fa-body">
+    <div id="fa-items-container" class="fa-items-container"></div>
+    <div id="fa-insight-card" class="fa-insight-card">
+      <div class="fa-insight-label">&#x1F4A1; Key Insight</div>
+      <div id="fa-insight-text" class="fa-insight-text"></div>
+    </div>
+  </div>
+</aside>
+
+  <div class="dashboard">
+    <div class="question-banner">
+      <div class="q-label">Question</div>
+      <div class="q-text">A single slider-crank mechanism has a crank length of 75 mm and a connecting rod length of 300 mm. The crank rotates at 300 rpm clockwise. When the crank makes an angle of 45° with the line of stroke, determine the piston displacement and velocity.</div>
+    </div>
+    
+    <div class="svg-container">
+      <svg xmlns="http://www.w3.org/2000/svg" id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.05" />
+          </pattern>
+          
+          <linearGradient id="metal-crank" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#66fcf1" />
+            <stop offset="50%" stop-color="#45a29e" />
+            <stop offset="100%" stop-color="#1f2833" />
+          </linearGradient>
+          
+          <linearGradient id="metal-rod" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#fca311" />
+            <stop offset="50%" stop-color="#e5e5e5" />
+            <stop offset="100%" stop-color="#fca311" />
+          </linearGradient>
+          
+          <linearGradient id="metal-piston" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#e63946" />
+            <stop offset="50%" stop-color="#a82a33" />
+            <stop offset="100%" stop-color="#e63946" />
+          </linearGradient>
+          
+          <filter id="glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+          
+          <filter id="glow-orange" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+          
+          <marker id="arrowCyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#66fcf1" />
+          </marker>
+          
+          <marker id="arrowOrange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#fca311" />
+          </marker>
+        </defs>
+        
+        <rect width="100%" height="100%" fill="url(#grid)" />
+        
+        <g class="svg-layer" id="layer-frame">
+          <line x1="100" y1="239" x2="750" y2="239" stroke="#ffffff" stroke-width="1" stroke-dasharray="10,5" opacity="0.5" />
+          <circle cx="250" cy="239" r="6" fill="#ffffff" />
+          <circle cx="250" cy="239" r="3" fill="#000" />
+          <path d="M 230 250 L 270 250 L 260 270 L 240 270 Z" fill="#444" />
+        </g>
+        
+        <rect id="blur-shield" width="100%" height="100%" fill="#050508" opacity="0" pointer-events="none" />
+        
+        <g class="svg-layer" id="layer-crank" style="opacity:0">
+          <circle cx="250" cy="239" r="75" fill="none" stroke="#66fcf1" stroke-width="1" stroke-dasharray="4,4" opacity="0.3" />
+          <g id="crank-arm">
+            <line x1="250" y1="239" x2="325" y2="239" stroke="url(#metal-crank)" stroke-width="8" stroke-linecap="round" filter="url(#glow-cyan)" />
+            <circle cx="325" cy="239" r="5" fill="#fff" />
+          </g>
+        </g>
+        
+        <g class="svg-layer" id="layer-connecting_rod" style="opacity:0">
+          <g id="rod-arm">
+            <line x1="325" y1="239" x2="625" y2="239" stroke="url(#metal-rod)" stroke-width="6" stroke-linecap="round" />
+            <circle cx="625" cy="239" r="5" fill="#fff" />
+          </g>
+        </g>
+        
+        <g class="svg-layer" id="layer-piston" style="opacity:0">
+          <g id="piston-block">
+            <rect x="595" y="219" width="60" height="40" fill="url(#metal-piston)" rx="4" />
+            <line x1="595" y1="259" x2="655" y2="259" stroke="#fff" stroke-width="2" />
+            <line x1="595" y1="265" x2="655" y2="265" stroke="#fff" stroke-width="1" opacity="0.5" />
+          </g>
+        </g>
+        
+        <g class="svg-layer" id="overlay-step0" style="opacity:0">
+          <text x="230" y="290" fill="#fff" font-size="14" font-weight="bold">Fixed Pivot</text>
+          <text x="650" y="225" fill="#fff" font-size="14" opacity="0.7">Line of Stroke</text>
+        </g>
+        
+        <g class="svg-layer" id="overlay-step1" style="opacity:0">
+          <path d="M 280 180 A 40 40 0 0 1 310 210" fill="none" stroke="#fca311" stroke-width="2" marker-end="url(#arrowOrange)" />
+          <text x="280" y="170" fill="#fca311" font-size="14">N = 300 rpm</text>
+          <text x="260" y="225" fill="#66fcf1" font-size="14">r = 75 mm</text>
+        </g>
+        
+        <g class="svg-layer" id="overlay-step2" style="opacity:0">
+          <text x="450" y="220" fill="#fca311" font-size="14">l = 300 mm</text>
+        </g>
+        
+        <g class="svg-layer" id="overlay-step3" style="opacity:0">
+          <text x="600" y="200" fill="#e63946" font-size="14" font-weight="bold">Piston (Slider)</text>
+          <path d="M 580 280 L 670 280" fill="none" stroke="#fff" stroke-width="1" marker-start="url(#arrowCyan)" marker-end="url(#arrowCyan)" />
+          <text x="610" y="295" fill="#fff" font-size="12">Translates</text>
+        </g>
+        
+        <g class="svg-layer" id="overlay-step4" style="opacity:0">
+          <path d="M 290 239 A 40 40 0 0 0 278 210" fill="none" stroke="#fca311" stroke-width="2" />
+          <text x="300" y="225" fill="#fca311" font-size="14" font-weight="bold">θ = 45°</text>
+          
+          <g transform="translate(400, 50)">
+            <rect width="420" height="150" fill="rgba(0,0,0,0.8)" stroke="#fca311" stroke-width="1" rx="6" />
+            <text x="15" y="25" fill="#66fcf1" font-family="monospace" font-size="13">ω = 2π(300)/60 = 31.416 rad/s</text>
+            <text x="15" y="45" fill="#66fcf1" font-family="monospace" font-size="13">n = l/r = 300/75 = 4</text>
+            <text x="15" y="70" fill="#fff" font-family="monospace" font-size="13">x = r(1 - cos 45°) + l - √(l² - r²sin²45°)</text>
+            <text x="15" y="90" fill="#fff" font-family="monospace" font-size="13">x = 75(0.2929) + 300 - 295.275 = 26.69 mm</text>
+            <text x="15" y="115" fill="#fca311" font-family="monospace" font-size="13">v = ωr(sin 45° + sin(90°)/(2*4))</text>
+            <text x="15" y="135" fill="#fca311" font-family="monospace" font-size="13">v = 31.416 * 0.075 * (0.7071 + 0.125) = 1.96 m/s</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    
+    <div class="control-panel">
+      <div class="step-indicator" id="dots"></div>
+      <div class="info-box">
+        <h3 id="info-title">Title</h3>
+        <div class="badges" id="info-badges"></div>
+        <div class="info-desc" id="info-desc">Description</div>
+      </div>
+      <div class="actions">
+        <button class="btn-secondary" onclick="resetAnim()">↺ Restart</button>
+        <button class="btn-primary" id="btn-next" onclick="nextStep()">Next Step ▶</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var stepsData = [
+      {
+        label: "Line of Stroke",
+        title: "Step 1: Establish the Fixed Frame",
+        desc: "We begin by defining the fixed pivot point for the crank and the horizontal line of stroke along which the piston will slide.",
+        badges: '<span class="badge badge-cyan">Fixed Pivot</span>',
+        blurOp: 0,
+        overlays: ['overlay-step0'],
+        freezing: false,
+        startAnim: false,
+        layerOpacities: { 'layer-frame': 1, 'layer-crank': 0, 'layer-connecting_rod': 0, 'layer-piston': 0 }
+      },
+      {
+        label: "The Crank",
+        title: "Step 2: Add the Rotating Crank",
+        desc: "The crank has a length of 75 mm and rotates clockwise at a constant speed of 300 rpm. This provides the input motion to the system.",
+        badges: '<span class="badge badge-cyan">r = 75 mm</span><span class="badge badge-orange">N = 300 rpm</span>',
+        blurOp: 0.5,
+        overlays: ['overlay-step1'],
+        freezing: false,
+        startAnim: true,
+        layerOpacities: { 'layer-frame': 1, 'layer-crank': 1, 'layer-connecting_rod': 0, 'layer-piston': 0 }
+      },
+      {
+        label: "Connecting Rod",
+        title: "Step 3: Attach the Connecting Rod",
+        desc: "A 300 mm connecting rod links the rotating crank to the sliding piston. It undergoes complex planar motion, both translating and rotating.",
+        badges: '<span class="badge badge-cyan">l = 300 mm</span>',
+        blurOp: 0.5,
+        overlays: ['overlay-step2'],
+        freezing: false,
+        startAnim: true,
+        layerOpacities: { 'layer-frame': 1, 'layer-crank': 1, 'layer-connecting_rod': 1, 'layer-piston': 0 }
+      },
+      {
+        label: "The Piston",
+        title: "Step 4: Place the Piston",
+        desc: "The piston is constrained to move only horizontally along the line of stroke. Its motion is purely translational.",
+        badges: '<span class="badge badge-green">Slider</span>',
+        blurOp: 0.5,
+        overlays: ['overlay-step3'],
+        freezing: false,
+        startAnim: true,
+        layerOpacities: { 'layer-frame': 1, 'layer-crank': 1, 'layer-connecting_rod': 1, 'layer-piston': 1 }
+      },
+      {
+        label: "Calculate State",
+        title: "Step 5: Compute Displacement and Velocity at 45°",
+        desc: "We freeze the mechanism when the crank is exactly at 45° from the inner dead center to calculate the instantaneous displacement and velocity of the piston.",
+        badges: '<span class="badge badge-orange">θ = 45°</span>',
+        blurOp: 0,
+        overlays: ['overlay-step4'],
+        freezing: true,
+        startAnim: true,
+        layerOpacities: { 'layer-frame': 1, 'layer-crank': 1, 'layer-connecting_rod': 1, 'layer-piston': 1 }
+      }
+    ];
+
+    var currentStep = 0;
+    var animFrameId = null;
+    var angle = 0;
+    var isAnimating = false;
+    
+    var R = 75;
+    var L = 300;
+    var CX = 250;
+    var CY = 239;
+    var targetAngle = -45 * Math.PI / 180; 
+
+    function init() {
+      var dotsContainer = document.getElementById('dots');
+      for (var i = 0; i < stepsData.length; i++) {
+        var dot = document.createElement('div');
+        dot.className = 'step-dot';
+        dot.title = stepsData[i].label;
+        dot.onclick = (function(idx) { return function() { applyStep(idx); }; })(i);
+        dotsContainer.appendChild(dot);
+      }
+      applyStep(0);
+    }
+
+    function applyStep(idx) {
+      currentStep = idx;
+      var step = stepsData[idx];
+      
+      document.getElementById('info-title').innerHTML = step.title;
+      document.getElementById('info-badges').innerHTML = step.badges;
+      document.getElementById('info-desc').innerHTML = step.desc;
+      
+      var dots = document.getElementsByClassName('step-dot');
+      for (var i = 0; i < dots.length; i++) {
+        dots[i].className = i === idx ? 'step-dot active' : 'step-dot';
+      }
+      
+      document.getElementById('blur-shield').setAttribute('opacity', step.blurOp);
+      
+      for (var key in step.layerOpacities) {
+        if (document.getElementById(key)) {
+          document.getElementById(key).style.opacity = step.layerOpacities[key];
+        }
+      }
+      
+      for (var i = 0; i < stepsData.length; i++) {
+        var overlayId = 'overlay-step' + i;
+        if (document.getElementById(overlayId)) {
+          document.getElementById(overlayId).style.opacity = 0;
+        }
+      }
+      
+      for (var i = 0; i < step.overlays.length; i++) {
+        if (document.getElementById(step.overlays[i])) {
+          document.getElementById(step.overlays[i]).style.opacity = 1;
+        }
+      }
+      
+      var btnNext = document.getElementById('btn-next');
+      if (idx === stepsData.length - 1) {
+        btnNext.innerHTML = "Finish";
+        btnNext.disabled = true;
+        btnNext.style.opacity = 0.5;
+      } else {
+        btnNext.innerHTML = "Next Step ▶";
+        btnNext.disabled = false;
+        btnNext.style.opacity = 1;
+      }
+
+      if (step.startAnim && !isAnimating) {
+        isAnimating = true;
+        updateAnimation();
+      }
+    }
+
+    function updateAnimation() {
+      if (!isAnimating) return;
+      
+      var step = stepsData[currentStep];
+      
+      if (step.freezing) {
+        var diff = targetAngle - (angle % (2 * Math.PI));
+        if (diff > Math.PI) diff -= 2 * Math.PI;
+        if (diff < -Math.PI) diff += 2 * Math.PI;
+        
+        angle += diff * 0.05;
+        if (Math.abs(diff) < 0.01) {
+          angle = targetAngle;
+          isAnimating = false;
+        }
+      } else {
+        angle -= 0.05; 
+      }
+      
+      var crankX = CX + R * Math.cos(angle);
+      var crankY = CY + R * Math.sin(angle);
+      
+      var crankArm = document.getElementById('crank-arm');
+      if (crankArm) {
+        var line = crankArm.querySelector('line');
+        var circle = crankArm.querySelector('circle');
+        line.setAttribute('x2', crankX);
+        line.setAttribute('y2', crankY);
+        circle.setAttribute('cx', crankX);
+        circle.setAttribute('cy', crankY);
+      }
+      
+      var dy = crankY - CY;
+      var dx = Math.sqrt(L * L - dy * dy);
+      var pistonX = crankX + dx;
+      
+      var rodArm = document.getElementById('rod-arm');
+      if (rodArm) {
+        var line = rodArm.querySelector('line');
+        var circle = rodArm.querySelector('circle');
+        line.setAttribute('x1', crankX);
+        line.setAttribute('y1', crankY);
+        line.setAttribute('x2', pistonX);
+        line.setAttribute('y2', CY);
+        circle.setAttribute('cx', pistonX);
+        circle.setAttribute('cy', CY);
+      }
+      
+      var pistonBlock = document.getElementById('piston-block');
+      if (pistonBlock) {
+        var rect = pistonBlock.querySelector('rect');
+        var lines = pistonBlock.querySelectorAll('line');
+        rect.setAttribute('x', pistonX - 30);
+        lines[0].setAttribute('x1', pistonX - 30);
+        lines[0].setAttribute('x2', pistonX + 30);
+        lines[1].setAttribute('x1', pistonX - 30);
+        lines[1].setAttribute('x2', pistonX + 30);
+      }
+      
+      if (isAnimating) {
+        animFrameId = requestAnimationFrame(updateAnimation);
+      }
+    }
+
+    function nextStep() {
+      if (currentStep < stepsData.length - 1) {
+        applyStep(currentStep + 1);
+      }
+    }
+
+    function resetAnim() {
+      cancelAnimationFrame(animFrameId);
+      isAnimating = false;
+      angle = 0;
+      applyStep(0);
+    }
+
+    window.onload = init;
+  </script>
+<script>
+
+(function initFinalAnswerSystem(){
+  'use strict';
+  var faOpen=false,_built=false;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function _loadData(){
+    try{var tag=_el('__final_answer_data__');if(!tag)return{};return JSON.parse(tag.textContent)||{};}catch(e){return{};}
+  }
+  function _buildPanel(){
+    if(_built)return;_built=true;
+    var data=_loadData();var items=Array.isArray(data.items)?data.items:[];
+    var container=_el('fa-items-container');if(!container)return;
+    if(items.length===0&&data.raw_answer){
+      container.innerHTML='<div class="fa-item visible"><div class="fa-item-roman">i</div><div class="fa-item-body"><div class="fa-item-label">Answer</div><div class="fa-item-value">'+_esc(data.raw_answer)+'</div></div></div>';
+    }else{
+      var html='';
+      for(var i=0;i<items.length;i++){
+        var it=items[i];var valueStr=_esc(it.value||'');
+        if(it.unit&&it.value&&it.value.indexOf(it.unit)===-1){valueStr+=' '+_esc(it.unit);}
+        html+='<div class="fa-item" id="fa-item-'+i+'"><div class="fa-item-roman">'+_esc(it.roman)+'</div><div class="fa-item-body"><div class="fa-item-label">'+_esc(it.label)+'</div><div class="fa-item-value">'+valueStr+'</div></div></div>';
+      }
+      container.innerHTML=html;
+    }
+    var insEl=_el('fa-insight-text'),insCard=_el('fa-insight-card');
+    if(data.key_insight){if(insEl)insEl.textContent=data.key_insight;if(insCard)insCard.style.display='';}
+    else{if(insCard)insCard.style.display='none';}
+  }
+  function _animateReveal(){
+    var items=document.querySelectorAll('.fa-item');
+    for(var i=0;i<items.length;i++){(function(el,idx){el.classList.remove('visible');el.style.transition='none';setTimeout(function(){el.style.transition='opacity .30s ease,transform .30s ease';el.classList.add('visible');},80+idx*110);})(items[i],i);}
+    var insCard=_el('fa-insight-card');
+    if(insCard){insCard.classList.remove('visible');setTimeout(function(){insCard.classList.add('visible');},80+items.length*110+120);}
+  }
+  function openFinalAnswer(){
+    _buildPanel();
+    var backdrop=_el('fa-backdrop'),panel=_el('fa-panel');if(!backdrop||!panel)return;
+    backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');faOpen=true;setTimeout(_animateReveal,80);
+  }
+  function closeFinalAnswer(){
+    var backdrop=_el('fa-backdrop'),panel=_el('fa-panel');
+    if(backdrop)backdrop.classList.remove('open');
+    if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
+    faOpen=false;_built=false;
+  }
+  window.openFinalAnswer=openFinalAnswer;window.closeFinalAnswer=closeFinalAnswer;
+  window.toggleFinalAnswer=function(){faOpen?closeFinalAnswer():openFinalAnswer();};
+  _onReady(function(){
+    function wireBtn(){var btn=document.getElementById('fa-ctrl-btn');
+      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();faOpen?closeFinalAnswer():openFinalAnswer();});}
+      else{setTimeout(wireBtn,80);}
+    }
+    wireBtn();
+    var closeBtn=_el('fa-close');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeFinalAnswer();});
+    var backdrop=_el('fa-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeFinalAnswer();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&faOpen)closeFinalAnswer();});
+  });
+})();
+
+</script>
+<script>
+
+(function initToFindSystem(){
+  'use strict';
+  var toFindOpen=false,_panelBuilt=false;
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _el(id){return document.getElementById(id);}
+  function _loadTargets(){
+    try{var tag=_el('__tofind_data__');if(!tag)return[];var data=JSON.parse(tag.textContent)||{};return Array.isArray(data.targets)?data.targets:[];}catch(e){return[];}
+  }
+  function _escape(text){if(!text)return'';return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function _buildPanel(targets){
+    if(_panelBuilt)return;_panelBuilt=true;
+    var container=_el('tofind-items-container');if(!container)return;
+    if(!targets||targets.length===0){container.innerHTML='<div class="tofind-empty">No specific targets detected.</div>';return;}
+    var html='';
+    for(var i=0;i<targets.length;i++){html+='<div class="tofind-item" id="tofind-item-'+i+'"><div class="tofind-check">&#10003;</div><div class="tofind-text">'+_escape(targets[i])+'</div></div>';}
+    container.innerHTML=html;
+  }
+  function _animateReveal(){
+    var items=document.querySelectorAll('.tofind-item');
+    for(var i=0;i<items.length;i++){(function(el,idx){el.style.opacity='0';el.style.transform='translateX(-12px)';el.style.transition='none';setTimeout(function(){el.style.transition='opacity .28s ease,transform .28s ease';el.style.opacity='1';el.style.transform='translateX(0)';},60+idx*80);})(items[i],i);}
+  }
+  function openToFind(){
+    var backdrop=_el('tofind-backdrop'),panel=_el('tofind-panel');if(!backdrop||!panel)return;
+    _buildPanel(_loadTargets());backdrop.classList.add('open');panel.classList.add('open');panel.setAttribute('aria-hidden','false');toFindOpen=true;setTimeout(_animateReveal,100);
+  }
+  function closeToFind(){
+    var backdrop=_el('tofind-backdrop'),panel=_el('tofind-panel');
+    if(backdrop)backdrop.classList.remove('open');if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}toFindOpen=false;
+  }
+  window.openToFind=openToFind;window.closeToFind=closeToFind;window.toggleToFind=function(){toFindOpen?closeToFind():openToFind();};
+  _onReady(function(){
+    var tfBtn=_el('tofind-btn')||document.querySelector('[data-tofind-btn]');
+    if(tfBtn){tfBtn.removeAttribute('onclick');tfBtn.addEventListener('click',function(e){e.stopPropagation();openToFind();});}
+    var closeBtn=_el('tofind-close');if(closeBtn)closeBtn.addEventListener('click',closeToFind);
+    var backdrop=_el('tofind-backdrop');if(backdrop)backdrop.addEventListener('click',closeToFind);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&toFindOpen)closeToFind();});
+  });
+})();
+
+</script>
+<script>
+
+(function initNotesSystem(){
+  'use strict';
+  var isOpen=false,isMin=false,isDrawing=false;
+  var currentTool='pen',currentColor='#1e293b',currentSize=4,currentTab='canvas';
+  var undoStack=[],MAX_UNDO=30;
+  var autoSaveTimer=null;
+  var ctx=null,canvas=null;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _saveNotes(){try{var canvasData=canvas?canvas.toDataURL():'';var textData=_el('qanim-notes-textarea')?_el('qanim-notes-textarea').value:'';var stat=_el('notes-char-count');if(stat)stat.textContent='Saved';}catch(e){}}
+  function _scheduleAutoSave(){if(autoSaveTimer)clearTimeout(autoSaveTimer);autoSaveTimer=setTimeout(_saveNotes,1500);}
+  function _initCanvas(){canvas=_el('qanim-draw-canvas');if(!canvas)return;ctx=canvas.getContext('2d');_resizeCanvas();ctx.lineCap='round';ctx.lineJoin='round';}
+  function _resizeCanvas(){if(!canvas)return;var wrap=_el('qanim-canvas-wrap');var w=wrap?wrap.clientWidth:320,h=wrap?wrap.clientHeight:200;canvas.width=w;canvas.height=h;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=currentColor;ctx.lineWidth=currentSize;}
+  function _saveUndo(){if(!canvas)return;if(undoStack.length>=MAX_UNDO)undoStack.shift();undoStack.push(canvas.toDataURL());}
+  function _undo(){if(!canvas||undoStack.length===0)return;var prev=undoStack.pop();if(prev){var img=new Image();img.onload=function(){ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);};img.src=prev;}else ctx.clearRect(0,0,canvas.width,canvas.height);}
+  function _getPos(e,cvs){var rect=cvs.getBoundingClientRect();var sx=cvs.width/rect.width,sy=cvs.height/rect.height;var cx=e.touches?e.touches[0].clientX:e.clientX;var cy=e.touches?e.touches[0].clientY:e.clientY;return{x:(cx-rect.left)*sx,y:(cy-rect.top)*sy};}
+  function _startDraw(e){if(!canvas||currentTab!=='canvas')return;e.preventDefault();_saveUndo();isDrawing=true;var pos=_getPos(e,canvas);ctx.beginPath();ctx.moveTo(pos.x,pos.y);if(currentTool==='eraser'){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=currentSize*4;}else{ctx.globalCompositeOperation='source-over';ctx.strokeStyle=currentColor;ctx.lineWidth=currentSize;}}
+  function _draw(e){if(!isDrawing||!canvas)return;e.preventDefault();var pos=_getPos(e,canvas);ctx.lineTo(pos.x,pos.y);ctx.stroke();}
+  function _endDraw(){if(!isDrawing)return;isDrawing=false;if(ctx)ctx.globalCompositeOperation='source-over';_scheduleAutoSave();}
+  function openNotes(){var panel=_el('qanim-notes-panel');if(!panel)return;panel.classList.add('open');panel.setAttribute('aria-hidden','false');isOpen=true;setTimeout(function(){_resizeCanvas();},50);}
+  function closeNotes(){var panel=_el('qanim-notes-panel');if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}isOpen=false;}
+  function _switchTab(t){currentTab=t;document.querySelectorAll('.notes-tab').forEach(function(tb){tb.classList.toggle('active',tb.dataset.tab===t);});var ct=_el('qanim-canvas-toolbar'),cw=_el('qanim-canvas-wrap'),tp=_el('qanim-text-pane');if(ct)ct.style.display=t==='canvas'?'flex':'none';if(cw)cw.style.display=t==='canvas'?'block':'none';if(tp)tp.style.display=t==='text'?'flex':'none';if(t==='canvas')setTimeout(_resizeCanvas,30);}
+  _onReady(function(){
+    var nb=_el('qanim-notes-btn');if(nb)nb.addEventListener('click',function(){isOpen?closeNotes():openNotes();});
+    var cb=_el('notes-close-btn');if(cb)cb.addEventListener('click',closeNotes);
+    var mb=_el('notes-minimize-btn');if(mb)mb.addEventListener('click',function(e){e.stopPropagation();isMin=!isMin;var p=_el('qanim-notes-panel');if(p)p.style.maxHeight=isMin?'44px':'80vh';mb.textContent=isMin?'[]':'--';});
+    document.querySelectorAll('.notes-tab').forEach(function(t){t.addEventListener('click',function(){_switchTab(this.dataset.tab);});});
+    document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(b){b.addEventListener('click',function(){currentTool=this.dataset.tool;document.querySelectorAll('.canvas-tool-btn[data-tool]').forEach(function(x){x.classList.remove('active');});this.classList.add('active');});});
+    document.querySelectorAll('.color-dot').forEach(function(d){d.addEventListener('click',function(){currentColor=this.dataset.color;document.querySelectorAll('.color-dot').forEach(function(x){x.classList.remove('selected');});this.classList.add('selected');if(ctx)ctx.strokeStyle=currentColor;});});
+    document.querySelectorAll('.size-btn').forEach(function(b){b.addEventListener('click',function(){currentSize=parseInt(this.dataset.size,10);document.querySelectorAll('.size-btn').forEach(function(x){x.classList.remove('active');});this.classList.add('active');if(ctx)ctx.lineWidth=currentSize;});});
+    var ub=_el('notes-undo-btn');if(ub)ub.addEventListener('click',_undo);
+    var clrb=_el('notes-clear-btn');if(clrb)clrb.addEventListener('click',function(){if(!canvas)return;_saveUndo();ctx.clearRect(0,0,canvas.width,canvas.height);});
+    var etb=_el('notes-export-text-btn');if(etb)etb.addEventListener('click',function(){var ta=_el('qanim-notes-textarea');if(!ta||!ta.value)return;var blob=new Blob([ta.value],{type:'text/plain'});var a=document.createElement('a');a.download='qanim_notes.txt';a.href=URL.createObjectURL(blob);a.click();});
+    var ta=_el('qanim-notes-textarea');if(ta)ta.addEventListener('input',function(){var c=_el('notes-char-count');if(c)c.textContent=ta.value.length+' chars';_scheduleAutoSave();});
+    var cvs=_el('qanim-draw-canvas');
+    if(cvs){cvs.addEventListener('mousedown',_startDraw);cvs.addEventListener('mousemove',_draw);cvs.addEventListener('mouseup',_endDraw);cvs.addEventListener('mouseleave',_endDraw);cvs.addEventListener('touchstart',_startDraw,{passive:false});cvs.addEventListener('touchmove',_draw,{passive:false});cvs.addEventListener('touchend',_endDraw);}
+    _initCanvas();
+  });
+})();
+
+</script>
+<script>
+
+(function initAnswerBox(){
+  'use strict';
+  var abOpen=false,_targets=[],_currentIdx=0,_loaded=false;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _loadTargets(){
+    if(_loaded)return;_loaded=true;
+    try{var tag=_el('__answer_targets__');if(!tag){_useFallback();return;}
+      var data=JSON.parse(tag.textContent)||{};_targets=Array.isArray(data.answer_targets)?data.answer_targets:[];}
+    catch(e){_targets=[];}
+    if(_targets.length===0)_useFallback();
+  }
+  function _useFallback(){
+    try{var tag=_el('__final_answer_data__');if(!tag)return;
+      var data=JSON.parse(tag.textContent)||{};
+      _targets=[{label:'Final Answer',value:String(data.raw_answer||''),unit:'',insight:String(data.key_insight||'')}];}
+    catch(e){_targets=[];}
+  }
+  function _renderTarget(idx){
+    var t=_targets[idx];if(!t)return;
+    var findEl=_el('ab-find-text');if(findEl)findEl.textContent=t.label||'Answer';
+    var total=_targets.length;
+    var progLabel=_el('ab-progress-label');if(progLabel)progLabel.textContent='Question '+(idx+1)+' of '+total;
+    var dotsEl=_el('ab-progress-dots');
+    if(dotsEl){var html='';for(var i=0;i<total;i++){var cls=i<idx?'ab-dot done':i===idx?'ab-dot current':'ab-dot';html+='<div class="'+cls+'"></div>';}dotsEl.innerHTML=html;}
+    var inp=_el('ab-user-input');if(inp){inp.value='';inp.removeAttribute('disabled');}
+    var fb=_el('ab-feedback');if(fb)fb.className='';
+    var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';
+    var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';
+    var sb=_el('ab-submit-btn');if(sb){sb.style.display='';sb.disabled=false;}
+    var adc=_el('ab-alldone-card');if(adc)adc.className='';
+    var unit=t.unit?' ('+t.unit+')':'';if(inp)inp.placeholder='Type your answer'+unit+'...';
+  }
+  function _extractNums(s){var m=s.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g);return m?m.map(parseFloat).filter(function(n){return isFinite(n);}):[];}
+  function _validate(userAns,correctAns){
+    if(!userAns||!userAns.trim())return'empty';
+    var userNums=_extractNums(userAns),correctNums=_extractNums(correctAns);
+    if(userNums.length>0&&correctNums.length>0){
+      var relErr=Math.abs(userNums[0]-correctNums[0])/(Math.abs(correctNums[0])+1e-12);
+      if(relErr<0.01)return'correct';if(relErr<0.15)return'almost';return'wrong';
+    }
+    var uC=userAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
+    var cC=correctAns.toLowerCase().trim().replace(/[^a-z0-9\s]/g,' ');
+    if(uC===cC)return'correct';
+    return'wrong';
+  }
+  var _FB={correct:{icon:'✅',verdict:'Correct!',cls:'correct'},almost:{icon:'〰️',verdict:'Almost Correct',cls:'almost'},wrong:{icon:'❌',verdict:'Wrong Answer',cls:'wrong'},empty:{icon:'❓',verdict:'No Answer',cls:'wrong'}};
+  function _showFeedback(verdict,insight){
+    var info=_FB[verdict]||_FB['wrong'];
+    var fb=_el('ab-feedback'),icon=_el('ab-feedback-icon'),verd=_el('ab-feedback-verdict'),ins=_el('ab-insight-text');
+    if(!fb)return;
+    fb.className='show '+info.cls;if(icon)icon.textContent=info.icon;if(verd)verd.textContent=info.verdict;
+    if(ins)ins.textContent=insight||'Review the solution for more detail.';
+    var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row show';
+    var ntb=_el('ab-next-target-btn'),isLast=(_currentIdx>=_targets.length-1);
+    if(ntb){if((verdict==='correct'||verdict==='almost')&&!isLast){ntb.style.display='';ntb.textContent='Next \u2192';}else{ntb.style.display='none';}}
+    if(verdict==='correct'&&isLast){setTimeout(function(){var adc=_el('ab-alldone-card');if(adc)adc.className='show';var sb=_el('ab-submit-btn');if(sb)sb.style.display='none';},900);}
+  }
+  function openAnswerBox(){
+    _loadTargets();_currentIdx=0;
+    var backdrop=_el('answerbox-backdrop'),panel=_el('answerbox-panel');if(!backdrop||!panel)return;
+    backdrop.classList.add('open');backdrop.setAttribute('aria-hidden','false');
+    panel.classList.add('open');panel.setAttribute('aria-hidden','false');
+    abOpen=true;_renderTarget(_currentIdx);
+    setTimeout(function(){var inp=_el('ab-user-input');if(inp)inp.focus();},220);
+  }
+  function closeAnswerBox(){
+    var backdrop=_el('answerbox-backdrop'),panel=_el('answerbox-panel');
+    if(backdrop){backdrop.classList.remove('open');backdrop.setAttribute('aria-hidden','true');}
+    if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
+    abOpen=false;
+  }
+  window.openAnswerBox=openAnswerBox;window.closeAnswerBox=closeAnswerBox;window.resetAnswerBox=function(){_loaded=false;_targets=[];_currentIdx=0;};
+  _onReady(function(){
+    function wireCtrlBtn(){var btn=document.getElementById('answerbox-ctrl-btn');
+      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();abOpen?closeAnswerBox():openAnswerBox();});}
+      else{setTimeout(wireCtrlBtn,100);}
+    }
+    wireCtrlBtn();
+    var closeBtn=_el('ab-close-btn');if(closeBtn)closeBtn.addEventListener('click',function(e){e.stopPropagation();closeAnswerBox();});
+    var backdrop=_el('answerbox-backdrop');if(backdrop)backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeAnswerBox();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&abOpen)closeAnswerBox();});
+    var submitBtn=_el('ab-submit-btn');
+    if(submitBtn)submitBtn.addEventListener('click',function(){
+      var inp=_el('ab-user-input'),userAns=inp?inp.value.trim():'';
+      var target=_targets[_currentIdx]||{};var verdict=_validate(userAns,target.value||'');
+      _showFeedback(verdict,target.insight||'');if(inp)inp.disabled=true;
+    });
+    var inp2=_el('ab-user-input');
+    if(inp2)inp2.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();var sb=_el('ab-submit-btn');if(sb)sb.click();}});
+    var retryBtn=_el('ab-retry-btn');
+    if(retryBtn)retryBtn.addEventListener('click',function(){
+      var inp=_el('ab-user-input');if(inp){inp.value='';inp.disabled=false;inp.focus();}
+      var fb=_el('ab-feedback');if(fb)fb.className='';
+      var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';
+      var sb=_el('ab-submit-btn');if(sb)sb.style.display='';
+      var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';
+    });
+    var ntb2=_el('ab-next-target-btn');
+    if(ntb2)ntb2.addEventListener('click',function(){if(_currentIdx<_targets.length-1){_currentIdx++;_renderTarget(_currentIdx);}});
+  });
+})();
+
+</script>
+
+<div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
+  <button class="qanim-ctrl-btn" id="tofind-btn" data-tofind-btn title="What to find">
+    <span>&#x1F50D;</span><span class="ctrl-label">Find</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
+  <button class="qanim-ctrl-btn" id="fa-ctrl-btn" title="View final answer">
+    <span>&#x2705;</span><span class="ctrl-label">Final Answer</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
+  <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
+    <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
+  </button>
+  <div class="qanim-ctrl-sep"></div>
+  <button class="qanim-ctrl-btn" id="glossary-ctrl-btn" title="Difficult words explained simply">
+    <span>&#x1F4D6;</span><span class="ctrl-label">Glossary</span><span class="glossary-ctrl-badge">6</span>
+  </button>
 </div>
 
 <script>
-const canvas = document.getElementById('eng');
-const ctx = canvas.getContext('2d');
-const W = 560, H = 560;
 
-const CX = 280;
-const BORE_X = 180, BORE_W = 200;
-const BORE_TOP = 120, BORE_BOT = 380;
-const HEAD_TOP = 50, HEAD_H = 72;
-const CRANK_CY = 460;
-const CRANK_THROW = 70;
-const CON_ROD_LEN = 140;
-const PISTON_H = 50;
-
-const STAGE_INFO = [
-  "Intake valve open · piston descends · air-fuel mixture drawn in",
-  "Both valves closed · piston rises · mixture compressed",
-  "Spark fires · combustion · piston forced down at high pressure",
-  "Exhaust valve open · piston rises · burnt gases expelled"
-];
-
-const STAGE_ANGLES = [Math.PI*0.5, Math.PI*1.5, Math.PI*0.5, Math.PI*1.5];
-
-let crankAngle = Math.PI*0.5;
-let targetAngle = Math.PI*0.5;
-let stage = 0;
-let autoMode = false;
-let autoTimer = null;
-let animId = null;
-let sparkPhase = 0;
-let t = 0;
-
-function pistonY(angle) {
-  const y = CRANK_CY - CRANK_THROW * Math.sin(angle)
-    - Math.sqrt(CON_ROD_LEN*CON_ROD_LEN - (CRANK_THROW * Math.cos(angle))*(CRANK_THROW * Math.cos(angle)));
-  return y - PISTON_H;
-}
-
-function crankPin(angle) {
-  return {
-    x: CX + CRANK_THROW * Math.cos(angle),
-    y: CRANK_CY - CRANK_THROW * Math.sin(angle)
-  };
-}
-
-function lerp(a, b, t) { return a + (b - a) * t; }
-function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
-
-function drawEngine(angle) {
-  ctx.clearRect(0, 0, W, H);
-
-  const pY = pistonY(angle);
-  const cp = crankPin(angle);
-  const wristX = CX, wristY = pY + PISTON_H;
-  const gasTop = BORE_TOP + HEAD_H;
-  const gasH = pY - gasTop;
-
-  const isIntake = stage === 0;
-  const isCompress = stage === 1;
-  const isPower = stage === 2;
-  const isExhaust = stage === 3;
-
-  // ── BACKGROUND BODY ──
-  ctx.fillStyle = '#e8e6e0';
-  ctx.beginPath();
-  ctx.roundRect(BORE_X - 30, HEAD_TOP - 10, BORE_W + 60, BORE_BOT - HEAD_TOP + 130, 8);
-  ctx.fill();
-
-  // ── GAS FILL ──
-  if (gasH > 2) {
-    if (isPower) {
-      const grad = ctx.createLinearGradient(0, gasTop, 0, gasTop + gasH);
-      grad.addColorStop(0, 'rgba(255,220,60,0.65)');
-      grad.addColorStop(0.4, 'rgba(240,100,0,0.55)');
-      grad.addColorStop(1, 'rgba(180,30,0,0.35)');
-      ctx.fillStyle = grad;
-    } else if (isExhaust) {
-      ctx.fillStyle = 'rgba(100,96,80,0.30)';
-    } else {
-      const grad = ctx.createLinearGradient(0, gasTop, 0, gasTop + gasH);
-      grad.addColorStop(0, 'rgba(40,160,200,0.18)');
-      grad.addColorStop(1, 'rgba(20,180,100,0.25)');
-      ctx.fillStyle = grad;
-    }
-    ctx.fillRect(BORE_X, gasTop, BORE_W, gasH);
-  }
-
-  // ── CYLINDER BORE WALLS ──
-  const leftGrad = ctx.createLinearGradient(BORE_X, 0, BORE_X + 28, 0);
-  leftGrad.addColorStop(0, '#7a7870');
-  leftGrad.addColorStop(0.5, '#d0cec5');
-  leftGrad.addColorStop(1, '#f0ede6');
-  ctx.fillStyle = leftGrad;
-  ctx.fillRect(BORE_X - 28, HEAD_TOP + HEAD_H - 4, 28, BORE_BOT - HEAD_TOP - HEAD_H + 4 + 30);
-
-  const rightGrad = ctx.createLinearGradient(BORE_X + BORE_W, 0, BORE_X + BORE_W + 28, 0);
-  rightGrad.addColorStop(0, '#f0ede6');
-  rightGrad.addColorStop(0.5, '#d0cec5');
-  rightGrad.addColorStop(1, '#7a7870');
-  ctx.fillStyle = rightGrad;
-  ctx.fillRect(BORE_X + BORE_W, HEAD_TOP + HEAD_H - 4, 28, BORE_BOT - HEAD_TOP - HEAD_H + 4 + 30);
-
-  // Bore surface sheen
-  ctx.strokeStyle = 'rgba(200,198,192,0.5)';
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i < 6; i++) {
-    const lx = BORE_X + 10 + i * 36;
-    ctx.beginPath(); ctx.moveTo(lx, gasTop); ctx.lineTo(lx, BORE_BOT + 30); ctx.stroke();
-  }
-
-  // ── COOLING FINS ──
-  ctx.fillStyle = '#c0bdb4';
-  for (let i = 0; i < 12; i++) {
-    const fy = BORE_TOP + HEAD_H + 8 + i * 18;
-    ctx.fillRect(BORE_X - 52, fy, 24, 5);
-    ctx.fillRect(BORE_X + BORE_W + 28, fy, 24, 5);
-  }
-  ctx.strokeStyle = '#a8a59c';
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i < 12; i++) {
-    const fy = BORE_TOP + HEAD_H + 8 + i * 18;
-    ctx.strokeRect(BORE_X - 52, fy, 24, 5);
-    ctx.strokeRect(BORE_X + BORE_W + 28, fy, 24, 5);
-  }
-
-  // ── CYLINDER HEAD ──
-  const headGrad = ctx.createLinearGradient(BORE_X - 30, 0, BORE_X + BORE_W + 30, 0);
-  headGrad.addColorStop(0, '#6a6860');
-  headGrad.addColorStop(0.15, '#b8b5ab');
-  headGrad.addColorStop(0.5, '#d8d5cc');
-  headGrad.addColorStop(0.85, '#b8b5ab');
-  headGrad.addColorStop(1, '#6a6860');
-  ctx.fillStyle = headGrad;
-  ctx.beginPath();
-  ctx.roundRect(BORE_X - 30, HEAD_TOP, BORE_W + 60, HEAD_H, 6);
-  ctx.fill();
-  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 1.5; ctx.stroke();
-
-  // Head ribs
-  ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 0.6;
-  [HEAD_TOP + 22, HEAD_TOP + 44].forEach(ry => {
-    ctx.beginPath(); ctx.moveTo(BORE_X - 28, ry); ctx.lineTo(BORE_X + BORE_W + 28, ry); ctx.stroke();
+(function initGlossaryPanel(){
+  'use strict';
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function openGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(!p)return;p.classList.add('open');p.setAttribute('aria-hidden','false');if(b)b.classList.add('open');}
+  function closeGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}if(b)b.classList.remove('open');}
+  _onReady(function(){
+    var btn=_el('glossary-ctrl-btn');
+    if(btn)btn.addEventListener('click',function(){var p=_el('qanim-glossary-panel');if(p&&p.classList.contains('open'))closeGlossary();else openGlossary();});
+    var cb=_el('glossary-close-btn');if(cb)cb.addEventListener('click',closeGlossary);
+    var bd=_el('qanim-glossary-backdrop');if(bd)bd.addEventListener('click',closeGlossary);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeGlossary();});
   });
-  // Bolt holes
-  [[BORE_X - 18, HEAD_TOP+16],[BORE_X - 18, HEAD_TOP+56],[BORE_X+BORE_W+18, HEAD_TOP+16],[BORE_X+BORE_W+18, HEAD_TOP+56]].forEach(([bx,by]) => {
-    ctx.beginPath(); ctx.arc(bx, by, 4, 0, Math.PI*2);
-    ctx.fillStyle = '#3a3830'; ctx.fill();
-    ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
-  });
+})();
 
-  // Combustion chamber dome
-  ctx.fillStyle = '#c8c5bc';
-  ctx.beginPath();
-  ctx.moveTo(BORE_X, HEAD_TOP + HEAD_H);
-  ctx.quadraticCurveTo(CX, HEAD_TOP + HEAD_H - 10, BORE_X + BORE_W, HEAD_TOP + HEAD_H);
-  ctx.fill();
-  ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 0.8; ctx.stroke();
-
-  // ── INTAKE PORT ──
-  ctx.strokeStyle = '#1a6090';
-  ctx.lineWidth = 12;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(BORE_X - 28, HEAD_TOP + 36);
-  ctx.quadraticCurveTo(BORE_X - 80, HEAD_TOP + 36, BORE_X - 110, HEAD_TOP + 20);
-  ctx.stroke();
-  // Throttle body
-  ctx.fillStyle = '#c0bdb4';
-  ctx.strokeStyle = '#7a7870'; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.roundRect(BORE_X - 148, HEAD_TOP + 10, 32, 24, 4); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#2a4a6a';
-  ctx.fillRect(BORE_X - 144, HEAD_TOP + 14, 18, 16);
-
-  // Intake flow arrows
-  if (isIntake) {
-    ctx.save();
-    const dashOffset = (Date.now() * 0.04) % 20;
-    ctx.strokeStyle = '#20b0e0';
-    ctx.lineWidth = 2; ctx.lineCap = 'round';
-    ctx.setLineDash([8, 6]); ctx.lineDashOffset = -dashOffset;
-    ctx.beginPath();
-    ctx.moveTo(BORE_X - 140, HEAD_TOP + 22);
-    ctx.quadraticCurveTo(BORE_X - 70, HEAD_TOP + 30, BORE_X - 28, HEAD_TOP + 36);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }
-
-  // ── EXHAUST PORT ──
-  ctx.strokeStyle = '#6a6860';
-  ctx.lineWidth = 12; ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(BORE_X + BORE_W + 28, HEAD_TOP + 36);
-  ctx.quadraticCurveTo(BORE_X + BORE_W + 80, HEAD_TOP + 36, BORE_X + BORE_W + 100, HEAD_TOP + 20);
-  ctx.stroke();
-  // Exhaust pipe going down
-  ctx.lineWidth = 10;
-  ctx.beginPath();
-  ctx.moveTo(BORE_X + BORE_W + 108, HEAD_TOP + 16);
-  ctx.lineTo(BORE_X + BORE_W + 115, HEAD_TOP + 60);
-  ctx.quadraticCurveTo(BORE_X + BORE_W + 118, HEAD_TOP + 90, BORE_X + BORE_W + 100, HEAD_TOP + 110);
-  ctx.stroke();
-
-  // Exhaust flow
-  if (isExhaust) {
-    ctx.save();
-    const dashOffset2 = (Date.now() * 0.04) % 20;
-    ctx.strokeStyle = '#909080';
-    ctx.lineWidth = 2; ctx.setLineDash([8,6]); ctx.lineDashOffset = dashOffset2;
-    ctx.beginPath();
-    ctx.moveTo(BORE_X + BORE_W + 28, HEAD_TOP + 36);
-    ctx.quadraticCurveTo(BORE_X + BORE_W + 80, HEAD_TOP + 36, BORE_X + BORE_W + 108, HEAD_TOP + 18);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // Smoke puffs
-    const sp = (Date.now() * 0.001) % 1;
-    [0, 0.33, 0.67].forEach(off => {
-      const p = (sp + off) % 1;
-      const sx = BORE_X + BORE_W + 108 + p * 12;
-      const sy = HEAD_TOP + 16 - p * 30;
-      const r = 3 + p * 8;
-      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2);
-      ctx.fillStyle = `rgba(130,126,110,${0.5*(1-p)})`;
-      ctx.fill();
-    });
-    ctx.restore();
-  }
-
-  // ── INTAKE VALVE ──
-  const ivOpen = isIntake;
-  const evOpen = isExhaust;
-  const ivLift = ivOpen ? 10 : 0;
-  const evLift = evOpen ? 10 : 0;
-
-  function drawValve(vx, lift, open) {
-    // Spring
-    ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 1.5;
-    for (let i = 0; i < 5; i++) {
-      ctx.beginPath();
-      ctx.moveTo(vx + (i%2===0?-4:4), HEAD_TOP + 18 + i*8);
-      ctx.lineTo(vx + (i%2===0?4:-4), HEAD_TOP + 18 + (i+1)*8);
-      ctx.stroke();
-    }
-    // Stem
-    const stemGrad = ctx.createLinearGradient(vx-4, 0, vx+4, 0);
-    stemGrad.addColorStop(0,'#8a8880'); stemGrad.addColorStop(0.5,'#d8d5cc'); stemGrad.addColorStop(1,'#8a8880');
-    ctx.fillStyle = stemGrad;
-    ctx.fillRect(vx-4, HEAD_TOP + 12 - lift, 8, HEAD_H - 8 + lift);
-    // Disc
-    ctx.fillStyle = '#b0ada5';
-    ctx.beginPath(); ctx.ellipse(vx, HEAD_TOP+HEAD_H - lift, 13, 4, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#d0cdc4';
-    ctx.beginPath(); ctx.ellipse(vx, HEAD_TOP+HEAD_H - lift - 2, 13, 3, 0, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#7a7870'; ctx.lineWidth = 0.8; ctx.stroke();
-  }
-  drawValve(CX - 50, ivLift, ivOpen);
-  drawValve(CX + 50, evLift, evOpen);
-
-  // Camshaft
-  ctx.fillStyle = '#8a8880';
-  ctx.beginPath(); ctx.roundRect(BORE_X + 20, HEAD_TOP - 2, BORE_W - 40, 6, 3); ctx.fill();
-  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
-  [[CX-50, HEAD_TOP-4],[CX+50, HEAD_TOP-4]].forEach(([ex,ey]) => {
-    ctx.fillStyle = '#b0ada5';
-    ctx.beginPath(); ctx.ellipse(ex, ey, 14, 8, 0, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = '#3a3830'; ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI*2); ctx.fill();
-  });
-
-  // ── SPARK PLUG ──
-  const px_sp = CX;
-  ctx.fillStyle = '#d0cdc4';
-  ctx.beginPath(); ctx.roundRect(px_sp-6, HEAD_TOP+2, 12, 34, 3); ctx.fill();
-  ctx.strokeStyle = '#7a7870'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.fillStyle = '#e8e5e0'; ctx.fillRect(px_sp-3, HEAD_TOP+6, 6, 22);
-  ctx.fillStyle = '#8a8880';
-  ctx.fillRect(px_sp-4, HEAD_TOP+36, 8, 14);
-
-  // Spark arc (power stroke)
-  if (isPower) {
-    sparkPhase += 0.18;
-    const visible = Math.sin(sparkPhase * 3) > 0;
-    if (visible) {
-      ctx.save();
-      ctx.shadowColor = '#ffee44'; ctx.shadowBlur = 8;
-      ctx.strokeStyle = '#ffe060'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(px_sp, HEAD_TOP+50);
-      ctx.lineTo(px_sp-4, HEAD_TOP+56);
-      ctx.lineTo(px_sp+3, HEAD_TOP+53);
-      ctx.lineTo(px_sp-2, HEAD_TOP+62);
-      ctx.stroke();
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(px_sp, HEAD_TOP+50);
-      ctx.lineTo(px_sp-4, HEAD_TOP+56);
-      ctx.lineTo(px_sp+3, HEAD_TOP+53);
-      ctx.lineTo(px_sp-2, HEAD_TOP+62);
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-
-  // ── PISTON ──
-  // Skirt
-  const pSkirtGrad = ctx.createLinearGradient(BORE_X+2, 0, BORE_X+BORE_W-2, 0);
-  pSkirtGrad.addColorStop(0,'#7a7870'); pSkirtGrad.addColorStop(0.12,'#b8b5ac');
-  pSkirtGrad.addColorStop(0.5,'#d8d5cc'); pSkirtGrad.addColorStop(0.88,'#b8b5ac'); pSkirtGrad.addColorStop(1,'#7a7870');
-  ctx.fillStyle = pSkirtGrad;
-  ctx.beginPath(); ctx.roundRect(BORE_X+2, pY, BORE_W-4, PISTON_H, 3); ctx.fill();
-  ctx.strokeStyle = '#6a6860'; ctx.lineWidth = 1.2; ctx.stroke();
-
-  // Crown
-  const crownGrad = ctx.createLinearGradient(0, pY, 0, pY+14);
-  crownGrad.addColorStop(0,'#dedad2'); crownGrad.addColorStop(1,'#a8a59c');
-  ctx.fillStyle = crownGrad;
-  ctx.fillRect(BORE_X+2, pY, BORE_W-4, 14);
-  // Crown bowl
-  ctx.fillStyle = '#b0ada5';
-  ctx.beginPath(); ctx.ellipse(CX, pY+10, 36, 6, 0, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#9a9890'; ctx.lineWidth = 0.6; ctx.stroke();
-
-  // Piston rings
-  [18, 24, 30, 36].forEach((ry, i) => {
-    ctx.strokeStyle = i < 2 ? '#9a9890' : '#7a7870';
-    ctx.lineWidth = i < 3 ? 2.5 : 2;
-    ctx.beginPath(); ctx.moveTo(BORE_X+2, pY+ry); ctx.lineTo(BORE_X+BORE_W-2, pY+ry); ctx.stroke();
-  });
-
-  // Wrist pin
-  const wpGrad = ctx.createLinearGradient(CX-30, 0, CX+30, 0);
-  wpGrad.addColorStop(0,'#6a6860'); wpGrad.addColorStop(0.4,'#c0bdb4'); wpGrad.addColorStop(1,'#6a6860');
-  ctx.fillStyle = wpGrad;
-  ctx.beginPath(); ctx.roundRect(CX-30, pY+38, 60, 8, 4); ctx.fill();
-  ctx.fillStyle = '#4a4840'; ctx.beginPath(); ctx.arc(CX, pY+42, 5, 0, Math.PI*2); ctx.fill();
-
-  // ── CONNECTING ROD ──
-  const rodGrad = ctx.createLinearGradient(CX-6, 0, CX+6, 0);
-  rodGrad.addColorStop(0,'#6a6860'); rodGrad.addColorStop(0.5,'#c0bdb4'); rodGrad.addColorStop(1,'#6a6860');
-  ctx.fillStyle = rodGrad;
-  ctx.beginPath();
-  ctx.moveTo(wristX-7, wristY);
-  ctx.lineTo(cp.x-9, cp.y);
-  ctx.lineTo(cp.x+9, cp.y);
-  ctx.lineTo(wristX+7, wristY);
-  ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
-
-  // Rod I-beam detail
-  ctx.strokeStyle = '#b8b5ac'; ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo((wristX+cp.x)/2, (wristY+cp.y)/2 - 20);
-  ctx.lineTo((wristX+cp.x)/2, (wristY+cp.y)/2 + 20);
-  ctx.stroke();
-
-  // Small end
-  ctx.fillStyle = '#c0bdb4'; ctx.beginPath(); ctx.arc(wristX, wristY, 11, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#5a5850'; ctx.beginPath(); ctx.arc(wristX, wristY, 5, 0, Math.PI*2); ctx.fill();
-  // Big end
-  ctx.fillStyle = '#b0ada5'; ctx.beginPath(); ctx.arc(cp.x, cp.y, 14, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#6a6860'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.fillStyle = '#6a6860'; ctx.beginPath(); ctx.arc(cp.x, cp.y, 7, 0, Math.PI*2); ctx.fill();
-
-  // ── CRANKSHAFT ──
-  // Counterweight
-  const cwAngle = angle + Math.PI;
-  ctx.fillStyle = '#7a7870';
-  ctx.beginPath();
-  ctx.arc(CX, CRANK_CY, 42, cwAngle - 0.8, cwAngle + 0.8);
-  ctx.lineTo(CX, CRANK_CY); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 0.8; ctx.stroke();
-
-  // Crank web
-  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 10; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(CX, CRANK_CY); ctx.lineTo(cp.x, cp.y); ctx.stroke();
-
-  // Main journal
-  const mainGrad = ctx.createRadialGradient(CX-8, CRANK_CY-8, 2, CX, CRANK_CY, 22);
-  mainGrad.addColorStop(0,'#d0cdc5'); mainGrad.addColorStop(1,'#5a5850');
-  ctx.fillStyle = mainGrad;
-  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 22, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#4a4840'; ctx.lineWidth = 1.5; ctx.stroke();
-  ctx.fillStyle = '#3a3830'; ctx.beginPath(); ctx.arc(CX, CRANK_CY, 10, 0, Math.PI*2); ctx.fill();
-
-  // Crank pin
-  const pinGrad = ctx.createRadialGradient(cp.x-3, cp.y-3, 1, cp.x, cp.y, 11);
-  pinGrad.addColorStop(0,'#d0cdc5'); pinGrad.addColorStop(1,'#5a5850');
-  ctx.fillStyle = pinGrad;
-  ctx.beginPath(); ctx.arc(cp.x, cp.y, 11, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#4a4840'; ctx.lineWidth = 1; ctx.stroke();
-
-  // ── FLYWHEEL ──
-  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 9; ctx.lineCap = 'butt';
-  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 58, 0, Math.PI*2); ctx.stroke();
-  ctx.strokeStyle = '#5a5850'; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 58, 0, Math.PI*2); ctx.stroke();
-  ctx.beginPath(); ctx.arc(CX, CRANK_CY, 50, 0, Math.PI*2); ctx.stroke();
-  // Spokes (rotate with crank)
-  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 2.5;
-  for (let s = 0; s < 8; s++) {
-    const sa = angle + s * Math.PI / 4;
-    ctx.beginPath();
-    ctx.moveTo(CX + Math.cos(sa)*24, CRANK_CY + Math.sin(sa)*24);
-    ctx.lineTo(CX + Math.cos(sa)*52, CRANK_CY + Math.sin(sa)*52);
-    ctx.stroke();
-  }
-
-  // ── CRANKCASE ──
-  ctx.fillStyle = '#c8c5bc';
-  ctx.beginPath();
-  ctx.moveTo(BORE_X-28, BORE_BOT+30);
-  ctx.lineTo(BORE_X-28, CRANK_CY+70);
-  ctx.quadraticCurveTo(BORE_X-28, CRANK_CY+90, BORE_X-8, CRANK_CY+90);
-  ctx.lineTo(BORE_X+BORE_W+8, CRANK_CY+90);
-  ctx.quadraticCurveTo(BORE_X+BORE_W+28, CRANK_CY+90, BORE_X+BORE_W+28, CRANK_CY+70);
-  ctx.lineTo(BORE_X+BORE_W+28, BORE_BOT+30);
-  ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = '#8a8880'; ctx.lineWidth = 1.2; ctx.stroke();
-
-  // Oil level
-  ctx.strokeStyle = 'rgba(160,120,30,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([6,4]);
-  ctx.beginPath(); ctx.moveTo(BORE_X-20, CRANK_CY+80); ctx.lineTo(BORE_X+BORE_W+20, CRANK_CY+80); ctx.stroke();
-  ctx.setLineDash([]);
-
-  // ── LABELS ──
-  ctx.font = '11px sans-serif'; ctx.fillStyle = '#777';
-  const labels = [
-    [BORE_X-28, HEAD_TOP+36, BORE_X-60, HEAD_TOP+26, 'intake valve', -1],
-    [BORE_X+BORE_W+28, HEAD_TOP+36, BORE_X+BORE_W+60, HEAD_TOP+26, 'exhaust valve', 1],
-    [CX, HEAD_TOP+4, CX+80, HEAD_TOP-6, 'spark plug', 1],
-    [BORE_X-28, pY+20, BORE_X-60, pY+14, 'piston rings', -1],
-    [BORE_X-28, BORE_BOT+20, BORE_X-60, BORE_BOT+22, 'cylinder bore', -1],
-    [BORE_X+BORE_W+28, pY+42, BORE_X+BORE_W+60, pY+40, 'wrist pin', 1],
-    [cp.x, cp.y, BORE_X+BORE_W+60, cp.y+16, 'crank pin', 1],
-    [CX, CRANK_CY, BORE_X+BORE_W+60, CRANK_CY+8, 'crankshaft', 1],
-    [CX, CRANK_CY+56, BORE_X-60, CRANK_CY+62, 'flywheel', -1],
-  ];
-  labels.forEach(([lx,ly,tx,ty,label,side]) => {
-    ctx.strokeStyle = '#ccc'; ctx.lineWidth = 0.6;
-    ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(tx,ty); ctx.stroke();
-    ctx.fillStyle = '#888';
-    ctx.textAlign = side < 0 ? 'right' : 'left';
-    ctx.fillText(label, tx + side*2, ty+4);
-  });
-  ctx.textAlign = 'center';
-
-  // ── STAGE LABEL ──
-  ctx.fillStyle = '#444'; ctx.font = 'bold 11px sans-serif';
-  const stageNames = ['intake stroke','compression stroke','power stroke','exhaust stroke'];
-  ctx.fillText(stageNames[stage].toUpperCase(), CX, H - 12);
-}
-
-let animating = false;
-let animFrom = 0, animTo = 0, animStart = 0, animDur = 750;
-
-function animLoop(now) {
-  if (animating) {
-    const p = Math.min((now - animStart) / animDur, 1);
-    const ep = easeInOut(p);
-    let da = animTo - animFrom;
-    if (Math.abs(da) > Math.PI) da -= Math.sign(da) * Math.PI * 2;
-    crankAngle = animFrom + da * ep;
-    drawEngine(crankAngle);
-    if (p < 1) { animId = requestAnimationFrame(animLoop); }
-    else { crankAngle = animTo; animating = false; drawEngine(crankAngle); }
-  }
-}
-
-function setStage(s) {
-  stage = s;
-  sparkPhase = 0;
-  const btns = ['b0','b1','b2','b3','ba'];
-  [0,1,2,3].forEach(i => {
-    const b = document.getElementById('b'+i);
-    if (i === s) {
-      b.style.background = s===2?'#8b2000':'#1a3a5c';
-      b.style.borderColor = s===2?'#8b2000':'#1a3a5c';
-      b.style.color = '#fff';
-    } else {
-      b.style.background = '#f5f5f3';
-      b.style.borderColor = '#ccc';
-      b.style.color = '#555';
-    }
-  });
-  document.getElementById('infoBar').textContent = STAGE_INFO[s];
-
-  animFrom = crankAngle;
-  animTo = STAGE_ANGLES[s];
-  animStart = performance.now();
-  animating = true;
-  if (animId) cancelAnimationFrame(animId);
-  animId = requestAnimationFrame(animLoop);
-}
-
-let autoOn = false, autoT = null;
-function toggleAuto() {
-  autoOn = !autoOn;
-  const ba = document.getElementById('ba');
-  if (autoOn) {
-    ba.textContent = '⏸ pause';
-    ba.style.background = '#1a3a5c'; ba.style.borderColor = '#1a3a5c'; ba.style.color = '#fff';
-    runAuto();
-  } else {
-    ba.textContent = '▶ auto';
-    ba.style.background = '#f5f5f3'; ba.style.borderColor = '#ccc'; ba.style.color = '#555';
-    if (autoT) clearTimeout(autoT);
-  }
-}
-function runAuto() {
-  if (!autoOn) return;
-  const next = (stage + 1) % 4;
-  setStage(next);
-  autoT = setTimeout(runAuto, 1200);
-}
-
-// Redraw loop for live animation effects (spark, smoke, flow dashes)
-let liveId;
-function liveLoop() {
-  if (!animating) drawEngine(crankAngle);
-  liveId = requestAnimationFrame(liveLoop);
-}
-
-setStage(0);
-liveLoop();
 </script>
+
+<script id="qanim-teacher-voice">
+(function initTeacherVoice(){
+  'use strict';
+  var _open=false,_recording=false,_mediaRec=null,_chunks=[],_audioBlob=null,_audioUrl=null,_timerInt=null,_timerSec=0;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _startTimer(){_timerSec=0;_timerInt=setInterval(function(){_timerSec++;var m=Math.floor(_timerSec/60),s=_timerSec%60;var el=_el('tv-timer');if(el)el.textContent=m+':'+(s<10?'0':'')+s;},1000);}
+  function _stopTimer(){clearInterval(_timerInt);_timerInt=null;}
+  function _setUIIdle(hasAudio){_recording=false;_el('tv-record-btn').disabled=false;_el('tv-stop-btn').disabled=true;_el('tv-play-btn').disabled=!hasAudio;_el('tv-delete-btn').disabled=!hasAudio;_el('tv-export-btn').disabled=!hasAudio;var ap=_el('tv-audio-player');if(ap)ap.className=hasAudio?'show':'';}
+  function _setUIRecording(){_recording=true;_el('tv-record-btn').disabled=true;_el('tv-stop-btn').disabled=false;_el('tv-play-btn').disabled=true;_el('tv-delete-btn').disabled=true;_el('tv-export-btn').disabled=true;var el=_el('tv-timer');if(el)el.textContent='0:00';}
+  function _syncCtrlBtn(hasAudio){var btn=_el('qanim-teacher-voice-btn');if(!btn)return;if(hasAudio)btn.classList.add('has-recording');else btn.classList.remove('has-recording','playing');}
+  function _startRecording(){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){alert('Audio recording not supported in this browser.');return;}
+    navigator.mediaDevices.getUserMedia({audio:true,video:false}).then(function(stream){
+      _chunks=[];var options={};
+      if(MediaRecorder.isTypeSupported('audio/webm'))options.mimeType='audio/webm';
+      else if(MediaRecorder.isTypeSupported('audio/ogg'))options.mimeType='audio/ogg';
+      _mediaRec=new MediaRecorder(stream,options);
+      _mediaRec.ondataavailable=function(e){if(e.data.size>0)_chunks.push(e.data);};
+      _mediaRec.onstop=function(){
+        stream.getTracks().forEach(function(t){t.stop();});_stopTimer();
+        _audioBlob=new Blob(_chunks,{type:_mediaRec.mimeType||'audio/webm'});
+        if(_audioUrl)URL.revokeObjectURL(_audioUrl);_audioUrl=URL.createObjectURL(_audioBlob);
+        var ap=_el('tv-audio-player');if(ap)ap.src=_audioUrl;
+        _setUIIdle(true);_syncCtrlBtn(true);
+      };
+      _mediaRec.start(100);_setUIRecording();_startTimer();
+      var wb=_el('tv-waveform-bar');if(wb)wb.className='active';
+    }).catch(function(err){alert('Could not access microphone: '+(err.message||err));});
+  }
+  function _stopRecording(){if(_mediaRec&&_mediaRec.state!=='inactive')_mediaRec.stop();var wb=_el('tv-waveform-bar');if(wb)wb.className='has-audio';}
+  function _deleteRecording(){if(!confirm('Delete the saved teacher voice recording?'))return;if(_audioUrl){URL.revokeObjectURL(_audioUrl);_audioUrl=null;}_audioBlob=null;var ap=_el('tv-audio-player');if(ap){ap.src='';ap.className='';}var wb=_el('tv-waveform-bar');if(wb)wb.className='';_setUIIdle(false);_syncCtrlBtn(false);}
+  function _exportAudio(){if(!_audioBlob){alert('No recording to export.');return;}var ext=(_audioBlob.type.indexOf('ogg')!==-1)?'ogg':'webm';var url=URL.createObjectURL(_audioBlob);var a=document.createElement('a');a.download='teacher_voice.'+ext;a.href=url;a.click();setTimeout(function(){URL.revokeObjectURL(url);},3000);}
+  function _importAudio(file){if(!file)return;var reader=new FileReader();reader.onloadend=function(){_audioUrl=reader.result;var ap=_el('tv-audio-player');if(ap)ap.src=_audioUrl;_setUIIdle(true);_syncCtrlBtn(true);};reader.readAsDataURL(file);}
+  function openPanel(){var bd=_el('tv-backdrop'),p=_el('tv-panel');if(!bd||!p)return;bd.classList.add('open');p.classList.add('open');p.setAttribute('aria-hidden','false');_open=true;}
+  function closePanel(){var bd=_el('tv-backdrop'),p=_el('tv-panel');if(bd)bd.classList.remove('open');if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}p_open=false;_open=false;}
+  window.openTeacherVoicePanel=openPanel;window.closeTeacherVoicePanel=closePanel;
+  _onReady(function(){
+    var bar=_el('qanim-controls-bar');
+    if(bar){var sep=document.createElement('div');sep.className='qanim-ctrl-sep';bar.appendChild(sep);
+      var btn=document.createElement('button');btn.id='qanim-teacher-voice-btn';btn.title='Teacher Voice';
+      btn.innerHTML='<span>&#x1F3A4;</span><span class="ctrl-label">Teacher Voice</span>';bar.appendChild(btn);}
+    _onReady(function(){
+      var ctrlBtn=_el('qanim-teacher-voice-btn');
+      if(ctrlBtn)ctrlBtn.addEventListener('click',function(e){e.stopPropagation();_open?closePanel():openPanel();});
+    });
+    var cb=_el('tv-close-btn');if(cb)cb.addEventListener('click',function(e){e.stopPropagation();closePanel();});
+    var bd=_el('tv-backdrop');if(bd)bd.addEventListener('click',function(e){if(e.target===bd)closePanel();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&_open)closePanel();});
+    var recBtn=_el('tv-record-btn');if(recBtn)recBtn.addEventListener('click',_startRecording);
+    var stopBtn=_el('tv-stop-btn');if(stopBtn)stopBtn.addEventListener('click',_stopRecording);
+    var playBtn=_el('tv-play-btn');if(playBtn)playBtn.addEventListener('click',function(){var ap=_el('tv-audio-player');if(!ap)return;if(ap.paused){ap.play();playBtn.textContent='\u23F8\uFE0F Pause';}else{ap.pause();playBtn.innerHTML='\u25B6\uFE0F Play';}ap.onended=function(){playBtn.innerHTML='\u25B6\uFE0F Play';};});
+    var delBtn=_el('tv-delete-btn');if(delBtn)delBtn.addEventListener('click',_deleteRecording);
+    var expBtn=_el('tv-export-btn');if(expBtn)expBtn.addEventListener('click',_exportAudio);
+    var impInput=_el('tv-import-input');if(impInput)impInput.addEventListener('change',function(e){var file=e.target.files&&e.target.files[0];if(file)_importAudio(file);e.target.value='';});
+  });
+})();
+</script>
+
+
+<script id="__nav_patch__">
+(function(){
+  if(window.__navPatched)return;window.__navPatched=true;
+  function showS(id){document.querySelectorAll('.csec').forEach(function(s){s.classList.remove('active');});var el=document.getElementById(id);if(el)el.classList.add('active');}
+  function togAcc(el){var b=el.nextElementSibling;if(!b)return;var o=b.classList.contains('open');el.classList.toggle('open',!o);b.classList.toggle('open',!o);}
+  function checkQ(btn,chosenIdx){var wrap=btn.closest('.qwrap')||btn.closest('.qblock');if(!wrap)return;if(wrap.getAttribute('data-answered')==='1')return;wrap.setAttribute('data-answered','1');var correctIdx=parseInt(wrap.getAttribute('data-correct')||'0',10);var opts=wrap.querySelectorAll('.qopt');opts.forEach(function(o){o.setAttribute('disabled','true');o.style.pointerEvents='none';});if(chosenIdx===correctIdx){btn.classList.add('correct');}else{btn.classList.add('wrong');if(opts[correctIdx])opts[correctIdx].classList.add('correct');}}
+  if(typeof window.showS!=='function')window.showS=showS;
+  if(typeof window.togAcc!=='function')window.togAcc=togAcc;
+  if(typeof window.checkQ!=='function')window.checkQ=checkQ;
+})();
+</script>
+
+
+
+<script id="qanim-step-controller">
+(function patchQAnimStepController(){
+  "use strict";
+  // The new Gemini-generated animation uses its own nextStep()/resetAnim() functions.
+  // This controller only adds a safety-net: if the page has scene-N groups (old format)
+  // it wires them up; otherwise it is a no-op.
+  function initSC(){
+    try{
+      var scenes=[];
+      for(var i=0;i<20;i++){var s=document.getElementById("scene-"+i);if(s){scenes.push(s);}else if(i>0){break;}}
+      if(scenes.length<1){console.log("[QAnim SC] No legacy scene-N groups — skipping SC init");return;}
+      // Legacy scene groups found — provide prevbtn/nextbtn wiring
+      var nextBtn=document.getElementById("nextbtn"),prevBtn=document.getElementById("prevbtn");
+      if(!nextBtn||!prevBtn){console.log("[QAnim SC] Legacy scenes found but no nav buttons — skipping");return;}
+      var cur=0;
+      function showS(idx){
+        if(idx<0||idx>=scenes.length)return;cur=idx;
+        for(var j=0;j<scenes.length;j++)scenes[j].setAttribute("display",j===idx?"block":"none");
+        var fn=window["animateScene"+idx];if(typeof fn==="function")requestAnimationFrame(function(){requestAnimationFrame(function(){try{fn();}catch(e){}});});
+      }
+      nextBtn.addEventListener("click",function(e){e.stopPropagation();if(cur<scenes.length-1)showS(cur+1);});
+      prevBtn.addEventListener("click",function(e){e.stopPropagation();if(cur>0)showS(cur-1);});
+      showS(0);
+      console.log("[QAnim SC] Legacy scene controller ready, "+scenes.length+" scenes");
+    }catch(err){console.error("[QAnim SC] Fatal:",err);}
+  }
+  if(document.readyState==="complete")initSC();else window.addEventListener("load",initSC);
+})();
+</script>
+
+</body>
+</html>
