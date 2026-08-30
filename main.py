@@ -48,6 +48,7 @@ from typing import Optional
 # ── Auth + Sync ───────────────────────────────────────────────────────────────
 from auth_routes import router as auth_router                          # pyrefly: ignore [missing-import]
 from sync_routes import router as sync_router                          # pyrefly: ignore [missing-import]
+from assignment_routes import router as assignment_router              # pyrefly: ignore [missing-import]
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 from admin_router import router as admin_router_obj, install_error_handler  # pyrefly: ignore [missing-import]
@@ -194,6 +195,7 @@ else:
 
 app.include_router(auth_router)       # /auth/*
 app.include_router(sync_router)       # /sync/*  (v6 normalized + legacy)
+app.include_router(assignment_router) # /sync/assignments/* & /sync/performance/*
 app.include_router(admin_router_obj)  # /admin/*
 
 # Global error handler → feeds /admin/errors ring
