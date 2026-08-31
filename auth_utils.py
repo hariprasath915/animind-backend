@@ -70,40 +70,31 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 # ══════════════════════════════════════════════════════════════════════
 # SUPABASE SERVICE CLIENT  (service-role key — never sent to browser)
-# Cached as a module-level singleton to avoid repeated create_client()
-# calls on every request (each call opens a new connection and is slow;
-# under Railway / Render free-tier this can cause 500 timeouts).
+# NOTE: We intentionally do NOT cache a singleton here.
+# If Railway / Render picks up new env vars after the process starts,
+# a cached client would still use the old (empty) values and every
+# DB call would fail with a RuntimeError.  The slight overhead of
+# create_client() per request is acceptable on free-tier deployments.
 # ══════════════════════════════════════════════════════════════════════
-
-_supabase_service_client: Optional["Client"] = None   # module-level cache
 
 
 def get_supabase(token: Optional[str] = None) -> "Client":
     """
-    Return a Supabase client.
-    - With a user token  → per-request client (RLS enforced as that user).
-    - Without a token    → module-level singleton with service-role key.
-      The singleton is created once and reused, avoiding the overhead of
-      create_client() on every route call.
+    Return a fresh Supabase service-role client.
+    Reads env vars at call time so that env-var changes picked up by
+    Railway / Render are always reflected without a redeploy.
     """
-    from supabase import ClientOptions
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+    # Re-read env vars at call time (not just at import time)
+    url         = os.getenv("SUPABASE_URL", "")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+
+    if not url or not service_key:
+        print(f"[AUTH] ⚠ get_supabase() missing env vars: url={bool(url)}, key={bool(service_key)}")
         raise RuntimeError(
             "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment."
         )
 
-    if token:
-        # Per-request client: acts as the authenticated user (RLS)
-        opts = ClientOptions()
-        opts.headers.update({"Authorization": f"Bearer {token}"})
-        return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY, options=opts)
-
-    # Service-role singleton (no user token needed)
-    global _supabase_service_client
-    if _supabase_service_client is None:
-        _supabase_service_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        print("[AUTH] ✅ Supabase service client initialised (singleton)")
-    return _supabase_service_client
+    return create_client(url, service_key)
 
 
 # ══════════════════════════════════════════════════════════════════════
