@@ -80,11 +80,15 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 def get_supabase(token: Optional[str] = None) -> "Client":
     """
-    Return a fresh Supabase service-role client.
-    Reads env vars at call time so that env-var changes picked up by
-    Railway / Render are always reflected without a redeploy.
+    Return a Supabase client.
+
+    - token=None  → service-role client (bypasses RLS, for admin DB ops)
+    - token=<jwt> → user-scoped client (auth.uid() resolves correctly inside
+                    SECURITY DEFINER RPCs like claim_teacher_pin)
+
+    Reads env vars at call time so Railway env-var changes are always picked up
+    without a redeploy (avoids stale singleton with empty values).
     """
-    # Re-read env vars at call time (not just at import time)
     url         = os.getenv("SUPABASE_URL", "")
     service_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
 
@@ -94,7 +98,20 @@ def get_supabase(token: Optional[str] = None) -> "Client":
             "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment."
         )
 
+    if token:
+        # User-scoped client: passes the caller's JWT as the Authorization header.
+        # Inside any SECURITY DEFINER RPC, auth.uid() will resolve to this user's UUID.
+        from supabase import ClientOptions
+        opts = ClientOptions()
+        opts.headers = {
+            "apikey":        service_key,
+            "Authorization": f"Bearer {token}",
+        }
+        return create_client(url, service_key, options=opts)
+
+    # Service-role client (no user context — bypasses RLS)
     return create_client(url, service_key)
+
 
 
 # ══════════════════════════════════════════════════════════════════════
