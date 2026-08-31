@@ -103,10 +103,10 @@ def onboarding_status(current_user: dict = Depends(get_current_user)):
             .maybe_single()
             .execute()
         )
-        completed = row.data is not None
+        # supabase-py v2: maybe_single() returns None when no row exists
+        completed = row is not None and row.data is not None
     except Exception as exc:
         print(f"[ONBOARDING] ⚠ status check failed for {user_id}: {exc}")
-        # Default to not completed so the user fills in the school name.
         completed = False
 
     return {"completed": completed}
@@ -137,7 +137,9 @@ def save_school(body: SchoolRequest, current_user: dict = Depends(get_current_us
             .maybe_single()
             .execute()
         )
-        if existing.data:
+        # supabase-py v2: maybe_single() returns None when no row exists
+        has_existing = existing is not None and existing.data is not None
+        if has_existing:
             sb.table("school_name").update({
                 "school":     body.school,
                 "updated_at": now,
@@ -171,7 +173,9 @@ def save_school(body: SchoolRequest, current_user: dict = Depends(get_current_us
             .execute()
         )
         provider = current_user.get("provider", "email")
-        if ul_existing.data:
+        # supabase-py v2: maybe_single() returns None when no row exists
+        has_ul = ul_existing is not None and ul_existing.data is not None
+        if has_ul:
             sb.table("user_login").update({
                 "email":      email,
                 "user_name":  name,
