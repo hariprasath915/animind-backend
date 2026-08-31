@@ -223,7 +223,8 @@ def register_student(current_user: dict = Depends(get_current_user)):
             .maybe_single()
             .execute()
         )
-        if not existing.data:
+        # supabase-py v2: maybe_single() returns None when no row exists
+        if not (existing is not None and existing.data):
             sb.table("student_login").insert({
                 "user_id":    user_id,
                 "user_name":  name,
