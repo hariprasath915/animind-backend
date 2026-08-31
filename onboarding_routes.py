@@ -251,38 +251,72 @@ def register_student(current_user: dict = Depends(get_current_user)):
 @router.post("/role/teacher/verify-pin")
 def verify_teacher_pin(body: PinRequest, current_user: dict = Depends(get_current_user)):
     """
-    Validate and claim a 6-digit teacher PIN via a SECURITY DEFINER RPC.
+    Validate and claim a 6-digit teacher PIN.
 
     Security model:
-      - Calls the Supabase RPC claim_teacher_pin(pin) using a user-scoped
-        client carrying the caller's JWT.  Inside the RPC, auth.uid() resolves
-        to this user's UUID — no user_id is accepted from the request body.
-      - The RPC atomically marks the PIN as 'claimed' (UPDATE WHERE pin_status
-        = 'active' AND user_id IS NULL) so no PIN can be reused.
+      - user_id / email come entirely from the verified JWT (get_current_user).
+        They are NEVER trusted from the request body.
+      - Uses the service-role client (bypasses RLS) to read teacher_pincode,
+        which has NO SELECT RLS policy — regular users cannot query it at all.
+      - The claim is atomic: UPDATE ... WHERE pin_status='active' AND user_id IS NULL
+        If two requests race, only one UPDATE will match → only one claim succeeds.
       - Returns { valid: true } on success; { valid: false } on failure.
-      - The teacher_pincode table has NO SELECT policy — users can never
-        enumerate available PINs directly.
     """
     user_id = current_user["id"]
     email   = current_user["email"]
-    token   = current_user.get("token", "")
+    name    = current_user.get("name", email)
+    now     = _now_iso()
 
-    # Use a user-scoped client so auth.uid() inside the RPC is correct
+    sb = get_supabase()   # service-role client — no JWT header tricks needed
+
     try:
-        sb_user = get_supabase(token=token)
-        result  = sb_user.rpc("claim_teacher_pin", {"p_pin": body.pin}).execute()
-        # result.data is a single boolean from the RPC RETURNS BOOLEAN
-        valid = bool(result.data)
-    except Exception as exc:
-        print(f"[ONBOARDING] ⚠ claim_teacher_pin RPC error for {email}: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="PIN verification service error. Please try again.",
+        # ── Step 1: Check the PIN exists, is active, and is unclaimed ─────────
+        pin_row = (
+            sb.table("teacher_pincode")
+            .select("id")
+            .eq("pin", body.pin.strip())
+            .eq("pin_status", "active")
+            .is_("user_id", "null")
+            .maybe_single()
+            .execute()
+        )
+        # supabase-py v2: maybe_single() returns None when no row matches
+        if pin_row is None or pin_row.data is None:
+            print(f"[ONBOARDING] ❌ Invalid/already-used PIN attempt by {email}")
+            return {"valid": False}
+
+        pin_id = pin_row.data["id"]
+
+        # ── Step 2: Atomically claim the PIN ──────────────────────────────────
+        # The WHERE conditions are repeated to guard against a simultaneous claim.
+        update_res = (
+            sb.table("teacher_pincode")
+            .update({
+                "pin_status": "claimed",
+                "user_id":    user_id,
+                "email":      email,
+                "user_name":  name,
+                "claimed_at": now,
+            })
+            .eq("id", pin_id)
+            .eq("pin_status", "active")   # re-check: still active?
+            .is_("user_id", "null")       # re-check: still unclaimed?
+            .execute()
         )
 
-    if valid:
-        print(f"[ONBOARDING] 🏫 Teacher PIN claimed by {email} (id={user_id})")
-    else:
-        print(f"[ONBOARDING] ❌ Invalid/already-used PIN attempt by {email}")
+        # If no rows were updated, someone else claimed it in the tiny race window
+        if not update_res.data:
+            print(f"[ONBOARDING] ❌ PIN race-condition loss for {email}")
+            return {"valid": False}
 
-    return {"valid": valid}
+        print(f"[ONBOARDING] 🔑 Teacher PIN claimed by {email} (id={user_id})")
+        return {"valid": True}
+
+    except Exception as exc:
+        import traceback
+        print(f"[ONBOARDING] ⚠ PIN verify error for {email}: {repr(exc)}")
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"PIN verification service error. Please try again.",
+        )
