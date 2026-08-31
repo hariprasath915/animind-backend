@@ -153,10 +153,12 @@ def save_school(body: SchoolRequest, current_user: dict = Depends(get_current_us
             }).execute()
             print(f"[ONBOARDING] 🏫 School saved for {email}: {body.school}")
     except Exception as exc:
-        print(f"[ONBOARDING] ⚠ school save failed for {email}: {exc}")
+        import traceback
+        print(f"[ONBOARDING] ⚠ school save FULL ERROR for {email}: {repr(exc)}")
+        print(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save school name. Please try again.",
+            detail=f"Failed to save school name: {str(exc)[:200]}",
         )
 
     # 2. Upsert user_login (idempotent — refreshes last_login on re-entry)
