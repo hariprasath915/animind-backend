@@ -2206,12 +2206,19 @@ async def upload_assessment_file(
 
 @router.get("/assessment/{subject}", status_code=200)
 def list_assessments(subject: str, current_user: dict = Depends(get_current_user)):
-    """All authenticated users: list all assessment rows for a subject."""
+    """All authenticated users: list all assessment rows for a subject.
+
+    Uses the service-role client for SELECT so that RLS is bypassed correctly.
+    The user-scoped client (_sb) inadvertently presents as service_role to
+    Supabase RLS (because create_client() is called with the service key even
+    when a user JWT is supplied), causing the 'authenticated'-role SELECT
+    policy to evaluate to FALSE and return 0 rows.
+    """
     tbl = _get_assessment_table(subject)
-    supabase = _sb(current_user)
+    service_sb = _get_service_client()
     try:
         res = (
-            supabase.table(tbl)
+            service_sb.table(tbl)
             .select("*")
             .order("topic_title", desc=False)
             .execute()
