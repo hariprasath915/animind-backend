@@ -83,11 +83,35 @@ import anthropic
 # ---------------------------------------------------------------------------
 # Client + model routing
 # ---------------------------------------------------------------------------
+# NOTE (v2.1.1 fix): every stage of the pipeline below now runs on the ASYNC
+# client and is properly awaited. Previously the pipeline functions were
+# declared `async def` but called the *synchronous* SDK client and
+# urllib.request.urlopen() directly inside them -- neither of which ever
+# yields to the event loop. Combined with timeout=600s and max_retries=4,
+# a single slow/overloaded API call could block the whole server process
+# for minutes, during which it can't answer anything (including health
+# checks). That's what upstream gateways/CDNs see as a dead backend and
+# report as a 502, and it stalls every other concurrent request too.
+CLIENT_TIMEOUT_SECONDS = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "55"))
+CLIENT_MAX_RETRIES     = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "1"))
+# Hard wall-clock cap for the *entire* generation pipeline. If this is hit
+# we always return a graceful, renderable failure result -- never leave the
+# request hanging past what a typical gateway timeout would allow.
+PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "75"))
+
+async_client = anthropic.AsyncAnthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+    timeout=CLIENT_TIMEOUT_SECONDS,
+    max_retries=CLIENT_MAX_RETRIES,
+)
+# Sync client kept only for non-async callers. The generation pipeline
+# itself never touches this one anymore.
 client = anthropic.Anthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
     default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-    timeout=600.0,
-    max_retries=4,
+    timeout=CLIENT_TIMEOUT_SECONDS,
+    max_retries=CLIENT_MAX_RETRIES,
 )
 
 SIM_MODEL        = "claude-sonnet-4-6"
@@ -360,6 +384,11 @@ def _fetch_image_refs(topic: str, max_results: int = 5) -> List[dict]:
 
     If either is absent or the HTTP call fails for any reason the function
     returns an empty list so the rest of the pipeline proceeds unchanged.
+
+    NOTE: this function is intentionally plain/blocking (urllib.request).
+    It must be called from async code via `await asyncio.to_thread(...)`
+    -- never call it directly inside an `async def`, or it will freeze
+    the event loop for up to its 8s timeout on every single request.
     """
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
         SimLogger.info("ImageRef", "Google keys not set -- skipping image search step")
@@ -493,7 +522,12 @@ _MULTI_EXPERIMENT_TOPICS = {
 }
 
 
-def _classify_topic(topic: str) -> str:
+async def _classify_topic(topic: str) -> str:
+    """
+    Keyword-match first (instant, no network). Only falls back to an LLM
+    call when keywords are ambiguous/absent -- and that call is awaited
+    on the async client so it never blocks the event loop.
+    """
     t = topic.lower()
     scores = {cat: sum(1 for k in kws if k in t) for cat, kws in _CATEGORY_KEYWORDS.items()}
     max_score = max(scores.values()) if scores else 0
@@ -502,7 +536,7 @@ def _classify_topic(topic: str) -> str:
         if len(top) == 1:
             return top[0]
     try:
-        resp = client.messages.create(
+        resp = await async_client.messages.create(
             model=CLASSIFIER_MODEL, max_tokens=MAX_TOK_CLASSIFIER,
             system="Reply with ONLY one category word from this exact list: "
                    + ", ".join(CATEGORIES),
@@ -1535,19 +1569,23 @@ async def _run_generation_pipeline(topic: str) -> dict:
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
     SimLogger.info("Pipeline", f"START v2.1 -- '{short_topic}'")
 
-    # Step 1: Classify
-    category = _classify_topic(topic)
+    # Step 1: Classify (awaited -- yields to the event loop instead of
+    # blocking it for the duration of the classifier call)
+    category = await _classify_topic(topic)
     SimLogger.info("Classifier", f"Category: {category}")
 
-    # Step 2: Image references
-    image_refs = _fetch_image_refs(topic)
+    # Step 2: Image references (blocking urllib call -- pushed to a worker
+    # thread so it can't freeze the event loop either)
+    image_refs = await asyncio.to_thread(_fetch_image_refs, topic)
 
     # Step 3: Build prompt
     system_blocks, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate
+    # Step 4: Generate (awaited on the async client -- this is the longest
+    # call in the pipeline and previously the biggest source of the
+    # event-loop-blocking / 502 problem)
     try:
-        msg = client.messages.create(
+        msg = await async_client.messages.create(
             model=SIM_MODEL, max_tokens=MAX_TOK,
             system=system_blocks,
             messages=[{"role": "user", "content": user_content}])
@@ -1624,7 +1662,17 @@ async def generate_simulation(topic: str) -> dict:
     if not topic:
         raise ValueError("Topic cannot be empty")
     try:
-        return await _run_generation_pipeline(topic)
+        return await asyncio.wait_for(
+            _run_generation_pipeline(topic), timeout=PIPELINE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        SimLogger.error(
+            "Pipeline",
+            f"Pipeline exceeded {PIPELINE_TIMEOUT_SECONDS:.0f}s wall-clock cap -- "
+            "returning graceful timeout result instead of hanging the request")
+        return _build_failure_result(
+            topic,
+            f"Generation took longer than {PIPELINE_TIMEOUT_SECONDS:.0f}s and was stopped. "
+            "Please try again -- shorter or more specific topics generate faster.")
     except Exception as e:
         SimLogger.error("Pipeline", f"UNHANDLED error -- falling back gracefully: {e}")
         return _build_failure_result(topic, f"Unexpected error: {e}")
