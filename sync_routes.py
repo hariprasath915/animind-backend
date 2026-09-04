@@ -2303,6 +2303,7 @@ class SessionCreate(BaseModel):
 
 class SessionJoin(BaseModel):
     student_email: Optional[str] = None
+    nickname:      Optional[str] = None
 
 
 def _generate_unique_pin(service_sb) -> str:
@@ -2455,6 +2456,7 @@ def join_assessment_session(
     row = {
         "session_id":    session_id,
         "student_email": body.student_email,
+        "nickname":      body.nickname,
     }
 
     try:
@@ -2463,3 +2465,24 @@ def join_assessment_session(
         return {"joined": True, "join_id": saved.get("id")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Join failed: {e}")
+
+
+@router.get("/assessment-session/{session_id}/join-count", status_code=200)
+def get_session_join_count(session_id: str):
+    """
+    Public endpoint - no JWT required.
+    Returns the current participant (join) count for a session.
+    Polled by the student lobby screen every few seconds to show live join counts.
+    """
+    service_sb = _get_service_client()
+    try:
+        res = (
+            service_sb.table("assessment_session_joins")
+            .select("id", count="exact")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        return {"session_id": session_id, "count": res.count or 0}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Join count failed: {e}")
+
