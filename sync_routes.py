@@ -2194,7 +2194,10 @@ async def upload_assessment_file(
     try:
         service_sb.storage.from_(bucket).upload(
             unique_name, data,
-            file_options={"content-type": file.content_type or "text/html"},
+            # Always force text/html — the browser often reports application/octet-stream
+            # for .html files, which causes Supabase to serve them as plain text and the
+            # iframe displays raw source code instead of rendering the quiz/content.
+            file_options={"content-type": "text/html; charset=utf-8"},
         )
         supa_url   = os.getenv("SUPABASE_URL", "")
         public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
@@ -2271,3 +2274,192 @@ def save_assessment(subject: str, payload: AssessmentSave, current_user: dict = 
         return {"success": True, "assessment": saved}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save {subject} assessment: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# ASSESSMENT SHARE SESSIONS  —  Teacher PIN/URL generation
+# ════════════════════════════════════════════════════════════════
+# Tables:
+#   assessment_sessions        — teacher-created sessions (PIN + slug)
+#   assessment_session_joins   — student join events per session
+#
+# Endpoints:
+#   POST /sync/assessment-session/create          — teacher creates session
+#   GET  /sync/assessment-session/by-pin/{pin}    — student/teacher look up by PIN
+#   GET  /sync/assessment-session/by-slug/{slug}  — student joins via shareable URL
+#   POST /sync/assessment-session/{sid}/join      — student records join
+# ════════════════════════════════════════════════════════════════
+
+from datetime import timedelta
+
+
+class SessionCreate(BaseModel):
+    subject:        str   = Field(..., min_length=1, max_length=50)
+    topic_title:    str   = Field(..., min_length=1, max_length=300)
+    assessment_num: int   = Field(..., ge=1, le=10)
+    assessment_url: Optional[str] = None
+    thumbnail_url:  Optional[str] = None
+
+
+class SessionJoin(BaseModel):
+    student_email: Optional[str] = None
+
+
+def _generate_unique_pin(service_sb) -> str:
+    """Generate a unique 6-digit PIN not already in use by a non-expired session."""
+    for _ in range(20):
+        pin = f"{secrets.randbelow(1_000_000):06d}"
+        # Check uniqueness among non-expired sessions only
+        res = (
+            service_sb.table("assessment_sessions")
+            .select("id")
+            .eq("pin", pin)
+            .gt("expires_at", datetime.now(timezone.utc).isoformat())
+            .execute()
+        )
+        if not (res.data or []):
+            return pin
+    raise HTTPException(status_code=500, detail="Could not generate a unique PIN — try again")
+
+
+@router.post("/assessment-session/create", status_code=201)
+def create_assessment_session(
+    payload: SessionCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Teacher creates a share session for a specific assessment.
+    Returns: { session_id, pin, slug, share_url, expires_at }
+    PIN is valid for 10 hours from creation.
+    """
+    service_sb = _get_service_client()
+
+    pin  = _generate_unique_pin(service_sb)
+    slug = secrets.token_hex(8)   # 16-char hex slug for shareable URL
+
+    now        = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(hours=10)).isoformat()
+
+    row = {
+        "pin":            pin,
+        "slug":           slug,
+        "subject":        payload.subject,
+        "topic_title":    payload.topic_title,
+        "assessment_num": payload.assessment_num,
+        "assessment_url": payload.assessment_url,
+        "thumbnail_url":  payload.thumbnail_url,
+        "teacher_id":     current_user.get("sub") or current_user.get("id"),
+        "teacher_email":  current_user.get("email"),
+        "expires_at":     expires_at,
+    }
+
+    try:
+        res = service_sb.table("assessment_sessions").insert(row).execute()
+        saved = (res.data or [{}])[0]
+        return {
+            "session_id": saved.get("id"),
+            "pin":        pin,
+            "slug":       slug,
+            "expires_at": expires_at,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
+
+
+@router.get("/assessment-session/by-pin/{pin}", status_code=200)
+def get_session_by_pin(pin: str):
+    """
+    Public endpoint — no JWT required.
+    Student enters a 6-digit PIN; returns session details if valid and non-expired.
+    """
+    service_sb = _get_service_client()
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        res = (
+            service_sb.table("assessment_sessions")
+            .select("*")
+            .eq("pin", pin.strip())
+            .eq("is_expired", False)
+            .gt("expires_at", now)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="PIN not found or expired")
+        session = rows[0]
+        # Count joins
+        joins_res = (
+            service_sb.table("assessment_session_joins")
+            .select("id", count="exact")
+            .eq("session_id", session["id"])
+            .execute()
+        )
+        join_count = joins_res.count or 0
+        return {**session, "join_count": join_count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PIN lookup failed: {e}")
+
+
+@router.get("/assessment-session/by-slug/{slug}", status_code=200)
+def get_session_by_slug(slug: str):
+    """
+    Public endpoint — no JWT required.
+    Student visits shareable URL ?session=<slug>; returns session details if valid.
+    """
+    service_sb = _get_service_client()
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        res = (
+            service_sb.table("assessment_sessions")
+            .select("*")
+            .eq("slug", slug.strip())
+            .eq("is_expired", False)
+            .gt("expires_at", now)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Session not found or expired")
+        session = rows[0]
+        joins_res = (
+            service_sb.table("assessment_session_joins")
+            .select("id", count="exact")
+            .eq("session_id", session["id"])
+            .execute()
+        )
+        join_count = joins_res.count or 0
+        return {**session, "join_count": join_count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Slug lookup failed: {e}")
+
+
+@router.post("/assessment-session/{session_id}/join", status_code=201)
+def join_assessment_session(
+    session_id: str,
+    body: SessionJoin = SessionJoin(),
+):
+    """
+    Public endpoint — no JWT required.
+    Records a student join event for analytics / participant count.
+    """
+    service_sb = _get_service_client()
+
+    row = {
+        "session_id":    session_id,
+        "student_email": body.student_email,
+    }
+
+    try:
+        res = service_sb.table("assessment_session_joins").insert(row).execute()
+        saved = (res.data or [{}])[0]
+        return {"joined": True, "join_id": saved.get("id")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Join failed: {e}")
