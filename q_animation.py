@@ -1096,8 +1096,12 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
 Scene script:
 {json.dumps(scene_summary, indent=2, ensure_ascii=False)[:2000]}
 
-Final answer: {sol.get('final_answer', 'See calculation')}
 Formula: {sol.get('formula', 'Governing formula')}
+
+NOTE: Steps 1–6 are the SETUP phase only. Do NOT reveal or hint at the
+numerical final answer anywhere in the SVG or stepsData.
+The answer will be shown later in Steps 7–9.
+Step 6 badges must end with a "? = ?" or "Unknown = ?" marker, not the value.
 
 Generate the SVG layers and JavaScript for this 6-step animation.
 Make the SVG rich, detailed, and domain-appropriate.
@@ -1130,7 +1134,9 @@ def _he(s: str) -> str:
 
 def _build_scene6_html(sol: dict) -> str:
     """Build Scene 7 (Main Formula) HTML — matches reference exactly."""
-    formula_text = _he(sol.get("formula", "Formula"))
+    formula_raw  = sol.get("formula", "Formula")
+    formula_attr = html_module.escape(formula_raw, quote=True)   # safe in HTML attribute
+    formula_text = _he(formula_raw)                               # plain-text fallback
     formula_name = _he(sol.get("formula_name", "Governing Equation"))
     variables = sol.get("variables", [])
     note_text = _he(sol.get("key_insight", ""))
@@ -1176,7 +1182,8 @@ def _build_scene6_html(sol: dict) -> str:
       <div class="s6-phase-caption" id="s6-phase-caption">This is the governing equation for this problem. Each symbol is explained below.</div>
       <div class="s6-formula-box">
         <div class="s6-formula-badge">Governing Equation</div>
-        <div class="s6-formula-main" id="s6-formula-text">{formula_text}</div>
+        <div class="s6-formula-main s6-math-formula" id="s6-formula-text"
+             data-formula="{formula_attr}">{formula_text}</div>
         <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_name}</div>
       </div>
       <div class="s6-vars-row" id="s6-vars-row">
@@ -1265,7 +1272,9 @@ def _build_scene7_html(sol: dict, scene: dict) -> str:
 
 def _build_scene9_html(sol: dict, to_find: list) -> str:
     """Build Scene 9 (Final Answer) HTML — matches reference exactly."""
-    formula_recap = _he(sol.get("formula", "Governing Formula"))
+    formula_raw    = sol.get("formula", "Governing Formula")
+    formula_recap  = _he(formula_raw)
+    formula_attr   = html_module.escape(formula_raw, quote=True)
     chain = sol.get("substitution_chain", [])
     answer_value = _he(sol.get("answer_value", "?"))
     answer_unit = _he(sol.get("answer_unit", ""))
@@ -1276,11 +1285,19 @@ def _build_scene9_html(sol: dict, to_find: list) -> str:
     chain_html = ""
     for row in chain:
         num = row.get("num", 1)
-        eq = _he(row.get("eq", ""))
+        eq_raw  = row.get("eq", "")
+        eq_attr = html_module.escape(eq_raw, quote=True)
+        eq_text = _he(eq_raw)
         # Add a descriptive step label if available
         step_labels = ["Write formula", "Substitute values", "Simplify", "Compute result", "Final answer"]
         step_label = step_labels[num - 1] if (num - 1) < len(step_labels) else f"Step {num}"
-        chain_html += f'<div class="s9-sub-row" data-s9-idx="{num-1}"><div class="s9-sub-num">{num}</div><div class="s9-sub-eq"><span class="s9-step-lbl">{step_label}:</span> {eq}</div></div>\n'
+        chain_html += (
+            f'<div class="s9-sub-row" data-s9-idx="{num-1}">'
+            f'<div class="s9-sub-num">{num}</div>'
+            f'<div class="s9-sub-eq s9-math-formula" data-formula="{eq_attr}">'
+            f'<span class="s9-step-lbl">{step_label}:</span> {eq_text}</div>'
+            f'</div>\n'
+        )
 
     return f"""<div id="qanim-scene9-overlay">
   <div class="s9-card">
@@ -1291,7 +1308,8 @@ def _build_scene9_html(sol: dict, to_find: list) -> str:
     <div class="s9-body">
       <div class="s9-formula-recap">
         <div class="s9-formula-recap-label">&#x1F4D0; Governing Formula (from Step 7)</div>
-        <div class="s9-formula-recap-eq" id="s9-formula-recap">{formula_recap}</div>
+        <div class="s9-formula-recap-eq s9-math-formula" id="s9-formula-recap"
+             data-formula="{formula_attr}">{formula_recap}</div>
       </div>
       <div class="s9-sub-chain" id="s9-sub-chain">
         {chain_html}
@@ -1372,6 +1390,12 @@ body.qanim-fullscreen .step-progress-wrap{display:none!important;}
 body.qanim-fullscreen .step-label{display:none!important;}
 body.qanim-fullscreen #qanim-controls-bar{bottom:10px;}
 body.qanim-fullscreen #qanim-fullscreen-btn{top:10px;right:12px;}
+body.qanim-fullscreen .control-panel{
+  padding:12px 20px 14px!important;flex-shrink:0;}
+body.qanim-fullscreen .info-box{
+  min-height:70px!important;padding:12px 16px!important;}
+body.qanim-fullscreen .actions{
+  margin-top:10px!important;}
 /* Step-6 Given/To-Find info panel */
 #step6-info-panel{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
   pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.4,0,.2,1);}
@@ -1400,6 +1424,11 @@ body.qanim-fullscreen #qanim-fullscreen-btn{top:10px;right:12px;}
   border:1.5px solid rgba(74,222,128,.35);border-radius:10px;padding:10px 14px;margin-bottom:8px;
   font-size:13.5px;font-weight:700;color:#4ade80;font-family:'Segoe UI',system-ui,sans-serif;}
 .s6info-find-chip-icon{font-size:16px;}
+.s6info-answer-hint{display:flex;align-items:center;gap:7px;margin-top:10px;
+  padding:8px 12px;border-radius:8px;background:rgba(148,163,184,.12);
+  border:1px dashed rgba(148,163,184,.40);font-size:11.5px;color:#94a3b8;
+  font-family:'Segoe UI',system-ui,sans-serif;}
+.s6info-answer-hint strong{color:#cbd5e1;}
 .dashboard{width:100%;max-width:900px;margin:0 auto;background:var(--panel-bg);
   border-radius:var(--border-radius);box-shadow:var(--shadow-card);overflow:hidden;
   border:1px solid var(--border);position:relative;}
@@ -2106,12 +2135,28 @@ def validate_final_html(html: str) -> None:
 
 
 def _build_step6_panel_html(sol: dict, scene: dict) -> str:
-    """Build the Step-6 Given Data / To Find overlay panel (inside svg-container)."""
-    given_list = sol.get("given_list", [])
-    to_find    = scene.get("to_find", ["The unknown quantity"])
+    """Build the Step-6 Given Data / To Find overlay panel (inside svg-container).
+    IMPORTANT: Must never reveal the final answer value — answer only appears in Steps 8–9.
+    """
+    given_list   = sol.get("given_list", [])
+    to_find      = scene.get("to_find", ["The unknown quantity"])
+    answer_value = str(sol.get("answer_value", "")).strip()   # used for scrubbing
+    final_answer = str(sol.get("final_answer", "")).strip()   # used for scrubbing
+
+    def _leaks_answer(text: str) -> bool:
+        """Return True if text appears to reveal the numerical final answer."""
+        if not answer_value or answer_value == "?":
+            return False
+        t = text.lower().strip()
+        # Block if the entry explicitly contains the answer number
+        return answer_value.lower() in t or (
+            final_answer and final_answer.lower() in t
+        )
 
     given_items = ""
     for g in given_list:
+        if _leaks_answer(g):
+            continue   # skip — this entry reveals the answer prematurely
         if "=" in g:
             sym, rest = g.split("=", 1)
             given_items += (
@@ -2133,12 +2178,23 @@ def _build_step6_panel_html(sol: dict, scene: dict) -> str:
 
     find_chips = ""
     for tf in to_find:
+        # Never show the numerical answer — strip it if it slipped in
+        tf_clean = tf
+        if answer_value and answer_value != "?" and answer_value in tf:
+            tf_clean = tf.replace(answer_value, "?")   # replace value with ?
         find_chips += (
             f'<div class="s6info-find-chip">'
             f'<span class="s6info-find-chip-icon">&#x2753;</span>'
-            f'<span>{_he(tf)}</span>'
+            f'<span>{_he(tf_clean)}</span>'
             f'</div>\n'
         )
+    # Always add a reminder that the answer will be revealed in Step 9
+    find_chips += (
+        '<div class="s6info-answer-hint">'
+        '<span>&#x1F512;</span>'
+        '<span>Answer revealed in <strong>Step 9</strong></span>'
+        '</div>\n'
+    )
 
     return f"""<div id="step6-info-panel" role="region" aria-label="Given data and target">
   <div class="s6info-card">
@@ -2384,6 +2440,11 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
       if (typeof window.qanimStartRAF === 'function') {{
         window.qanimStartRAF();
       }}
+
+      // Render any math formulas already in the DOM (Scene 7 & 9 overlays)
+      if (typeof window.qanimRenderMath === 'function') {{
+        window.qanimRenderMath();
+      }}
     }});
   </script>"""
 
@@ -2408,6 +2469,40 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   <style id="qanim-controls-styles">
 {_CONTROLS_CSS}
   </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script>
+  // ── KaTeX math renderer ────────────────────────────────────────────────────
+  // Scans any element with [data-formula] and renders its value with KaTeX.
+  // Falls back to showing the raw formula text if KaTeX is unavailable.
+  window.qanimRenderMath = function(scope) {{
+    var root = scope || document;
+    var els = root.querySelectorAll('[data-formula]:not([data-math-ok])');
+    if (!els.length) return;
+    if (typeof katex === 'undefined') {{
+      // KaTeX not yet loaded — retry once after a short delay
+      setTimeout(function(){{window.qanimRenderMath(scope);}}, 300);
+      return;
+    }}
+    els.forEach(function(el) {{
+      var f = el.getAttribute('data-formula');
+      if (!f) return;
+      try {{
+        katex.render(f, el, {{
+          throwOnError: false,
+          displayMode: el.classList.contains('s6-formula-main'),
+          output: 'html',
+          trust: true
+        }});
+        el.setAttribute('data-math-ok', '1');
+      }} catch(e) {{
+        // Keep the plain text fallback; mark as attempted to avoid retry loop
+        el.setAttribute('data-math-ok', 'err');
+        console.warn('[QAnim] KaTeX render failed:', e.message, f);
+      }}
+    }});
+  }};
+  </script>
 </head>
 <body>
 
@@ -2543,6 +2638,11 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     if(icon) icon.innerHTML = isFs ? '&#x2716;' : '&#x26F6;';
     if(label) label.textContent = isFs ? 'Exit' : 'Fullscreen';
     document.body.classList.toggle('qanim-fullscreen', isFs);
+    // Toggle SVG preserveAspectRatio: 'meet' shows full SVG; 'slice' fills container
+    var svg = document.getElementById('stage');
+    if(svg) svg.setAttribute('preserveAspectRatio', isFs ? 'xMidYMid meet' : 'xMidYMid slice');
+    // Re-render math formulas (layout shift may have cleared rendered content)
+    if(typeof window.qanimRenderMath === 'function') setTimeout(window.qanimRenderMath, 60);
   }}
 
   document.addEventListener('fullscreenchange', _onFsChange);
