@@ -2486,3 +2486,239 @@ def get_session_join_count(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Join count failed: {e}")
 
+
+# ════════════════════════════════════════════════════════════════
+# TEST STUDENTS  —  Student registration + result tracking
+# ════════════════════════════════════════════════════════════════
+# Table: test_students
+#
+# Endpoints:
+#   POST  /sync/test-students/register                   — public, student registers before assessment
+#   PATCH /sync/test-students/{record_id}/result         — public, save score after submission
+#   GET   /sync/test-students/by-session/{session_id}    — teacher-auth required, view results
+#   GET   /sync/test-students/by-pin/{pin}               — teacher-auth required, view results by PIN
+#   GET   /sync/test-students/by-assessment              — teacher-auth fallback (by subject+topic+num)
+# ════════════════════════════════════════════════════════════════
+
+
+class StudentRegister(BaseModel):
+    session_id:        Optional[str] = None
+    pin_code:          str           = Field(..., min_length=1, max_length=10)
+    student_name:      str           = Field(..., min_length=1, max_length=120)
+    roll_number:       str           = Field(..., min_length=1, max_length=50)
+    user_id:           Optional[str] = None   # email or nickname
+    subject:           Optional[str] = None
+    topic:             Optional[str] = None
+    assessment_number: Optional[int] = None
+
+
+class StudentResult(BaseModel):
+    result: str = Field(..., min_length=1, max_length=50)   # e.g. "70%"
+
+
+@router.post("/test-students/register", status_code=201)
+def register_test_student(payload: StudentRegister):
+    """
+    Public endpoint — no JWT required.
+    Called when the student clicks 'Start Assessment' after filling the registration form.
+    Inserts a row in test_students and returns the record id (used later to update result).
+    """
+    service_sb = _get_service_client()
+
+    row = {
+        "pin_code":          payload.pin_code,
+        "student_name":      payload.student_name,
+        "roll_number":       payload.roll_number,
+        "user_id":           payload.user_id,
+        "subject":           payload.subject,
+        "topic":             payload.topic,
+        "assessment_number": payload.assessment_number,
+        "result":            "Pending",
+    }
+    if payload.session_id:
+        row["session_id"] = payload.session_id
+
+    try:
+        res = service_sb.table("test_students").insert(row).execute()
+        saved = (res.data or [{}])[0]
+        return {"registered": True, "record_id": saved.get("id")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Registration failed: {e}")
+
+
+@router.patch("/test-students/{record_id}/result", status_code=200)
+def update_student_result(record_id: str, body: StudentResult):
+    """
+    Public endpoint — no JWT required.
+    Called (via postMessage relay from assessment iframe) when student submits the assessment.
+    Updates the result column for the student's registration record.
+    """
+    service_sb = _get_service_client()
+
+    try:
+        res = (
+            service_sb.table("test_students")
+            .update({"result": body.result})
+            .eq("id", record_id)
+            .execute()
+        )
+        updated = res.data or []
+        if not updated:
+            raise HTTPException(status_code=404, detail="Student record not found")
+        return {"updated": True, "record_id": record_id, "result": body.result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Result update failed: {e}")
+
+
+@router.get("/test-students/by-session/{session_id}", status_code=200)
+def get_results_by_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Teacher-authenticated endpoint.
+    Returns all student registrations for the given assessment session.
+    Verifies the requesting teacher owns the session.
+    """
+    service_sb = _get_service_client()
+    teacher_id    = current_user.get("sub") or current_user.get("id")
+    teacher_email = current_user.get("email")
+
+    # Verify teacher owns this session
+    try:
+        sess_res = (
+            service_sb.table("assessment_sessions")
+            .select("id, teacher_id, teacher_email")
+            .eq("id", session_id)
+            .limit(1)
+            .execute()
+        )
+        rows = sess_res.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Session not found")
+        sess = rows[0]
+        if sess.get("teacher_id") != teacher_id and sess.get("teacher_email") != teacher_email:
+            raise HTTPException(status_code=403, detail="You do not own this session")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Session lookup failed: {e}")
+
+    # Fetch student rows
+    try:
+        res = (
+            service_sb.table("test_students")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("timestamp", desc=False)
+            .execute()
+        )
+        return {"students": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
+
+
+@router.get("/test-students/by-pin/{pin}", status_code=200)
+def get_results_by_pin(
+    pin: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Teacher-authenticated endpoint.
+    Looks up the most recent session by PIN (must belong to calling teacher),
+    then returns all student rows for it.
+    """
+    service_sb = _get_service_client()
+    teacher_id    = current_user.get("sub") or current_user.get("id")
+    teacher_email = current_user.get("email")
+
+    # Find session owned by this teacher
+    try:
+        sess_res = (
+            service_sb.table("assessment_sessions")
+            .select("id, teacher_id, teacher_email, created_at")
+            .eq("pin", pin.strip())
+            .order("created_at", desc=True)
+            .limit(10)
+            .execute()
+        )
+        rows = sess_res.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="No session found for this PIN")
+        owned = [r for r in rows if r.get("teacher_id") == teacher_id or r.get("teacher_email") == teacher_email]
+        if not owned:
+            raise HTTPException(status_code=403, detail="You do not own this session")
+        session_id = owned[0]["id"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PIN session lookup failed: {e}")
+
+    # Fetch student rows
+    try:
+        res = (
+            service_sb.table("test_students")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("timestamp", desc=False)
+            .execute()
+        )
+        return {"session_id": session_id, "students": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
+
+
+@router.get("/test-students/by-assessment", status_code=200)
+def get_results_by_assessment(
+    subject: str,
+    topic_title: str,
+    assessment_num: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Teacher-authenticated endpoint (fallback).
+    Finds the most recent session matching subject+topic+assessment_num owned by this teacher,
+    then returns all student rows for it.
+    Used when 'View Results' is clicked before any specific PIN has been cached in the UI.
+    """
+    service_sb = _get_service_client()
+    teacher_id    = current_user.get("sub") or current_user.get("id")
+    teacher_email = current_user.get("email")
+
+    # Find most recent matching session owned by this teacher
+    try:
+        sess_res = (
+            service_sb.table("assessment_sessions")
+            .select("id, teacher_id, teacher_email, created_at")
+            .eq("subject", subject.strip())
+            .eq("topic_title", topic_title.strip())
+            .eq("assessment_num", assessment_num)
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        rows = sess_res.data or []
+        owned = [r for r in rows if r.get("teacher_id") == teacher_id or r.get("teacher_email") == teacher_email]
+        if not owned:
+            return {
+                "session_id": None, "students": [], "count": 0,
+                "message": "No shared session found — share this assessment first to see student results"
+            }
+        session_id = owned[0]["id"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Assessment session lookup failed: {e}")
+
+    # Fetch student rows
+    try:
+        res = (
+            service_sb.table("test_students")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("timestamp", desc=False)
+            .execute()
+        )
+        return {"session_id": session_id, "students": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
