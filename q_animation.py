@@ -500,7 +500,9 @@ No Markdown. No extra text. Only JSON.
 VISUAL GOAL
 ============================================================
 
-Create a premium, realistic scientific visualization tailored to the question.
+Create a PREMIUM, PHOTOREALISTIC scientific visualization tailored to the question.
+The animation must look like it belongs in a professional science textbook or museum exhibit.
+Make every element polished: gradients, shadows, highlights, glows, and smooth motion.
 
 Requirements:
 
@@ -552,15 +554,35 @@ grad-main, glow-important, marker-force, marker-dimension.
 Do not use external images, fonts, or URLs.
 
 ============================================================
-ANIMATION
+ANIMATION — SMOOTH & REALISTIC
 ============================================================
 
 - Reveal objects step by step (opacity + subtle scale/transform).
-- Use smooth transitions (400–900 ms).
-- Use ease-out or ease-in-out timing.
-- Motion must explain the concept (forces, motion, fields, changes).
+- Use smooth transitions (500–900 ms) with cubic-bezier easing (ease-out or ease-in-out).
+- NEVER use abrupt jumps — all motion must feel natural and physics-based.
+- Motion must visually explain the physical concept (e.g., projectile arc, wire stretching, satellite orbit).
 - No flashing, no jitter, no random decoration.
-- If continuous motion is needed (orbit, flow, wave), make it smooth and loopable.
+
+SMOOTH PHYSICS MOTION:
+- Projectile / ballistic: animate along a true parabolic arc using requestAnimationFrame.
+  Use parametric equations: x = x₀ + v₀ₓ·t, y = y₀ + v₀ᵧ·t − ½g·t².
+  Show the trajectory trail as a dashed path that appears incrementally.
+  Show velocity components (horizontal arrow constant length, vertical arrow shrinks then grows).
+- Orbit / circular motion: use sin/cos for perfectly smooth orbit.
+  Add a faint elliptical orbit path; planet/satellite casts a moving shadow.
+- Wave / oscillation: render sinusoidal wave with requestAnimationFrame, phase-shifting each frame.
+- Wire / elastic: animate length change with a smooth stretch transform.
+- Heat / diffusion: animate color gradient smoothly from hot (red) to cold (blue).
+- Fluid flow: animate streamlines or particle movement along defined paths.
+
+If continuous animation is needed, define:
+  window.qanimStartRAF = function(){{
+    if (window.qanimRafId) cancelAnimationFrame(window.qanimRafId);
+    window.qanimRafId = requestAnimationFrame(drawFrame);
+  }};
+
+If no continuous animation is needed, return:
+  "raf_js": ""
 
 If continuous animation is needed, define:
 
@@ -626,15 +648,24 @@ Do not use setAttribute('opacity', value).
 Do not use innerHTML for user text.
 
 ============================================================
-NOTATION AND LABELS
+NOTATION AND LABELS — MATHEMATICAL PRECISION
 ============================================================
 
-- Use correct symbols: Δ, θ, μ, ρ, Ω, ∞, °, ×, ·.
-- Use superscripts/subscripts with <tspan>.
-- Always include units: m, m², W, Ω, m/s², K, etc.
-- Keep labels short and readable.
-- Use high-contrast text.
-- Do not invent values. Match the verified solution.
+Always use correct mathematical symbols and notation:
+- Greek letters: Δ (delta), θ (theta), μ (mu), ρ (rho), Ω (omega), α (alpha), β (beta), φ (phi), λ (lambda), ω (angular velocity), π
+- Special: ∞, °, ×, ·, ≈, ≠, ≤, ≥, ∝, √, ∫
+- Subscripts using SVG <tspan baseline-shift="sub" font-size="75%">: v₀, aₓ, T₁, R₂, Fₙ
+- Superscripts using SVG <tspan baseline-shift="super" font-size="75%">: m², m³, v², s⁻¹
+- Units always in roman (non-italic): m, m/s, m/s², kg, N, W, J, Ω, K, °C, Pa, m²
+- Vector notation: add an arrow or bold label, e.g. F⃗, v⃗
+- Example label styles:
+    "v₀ = 20 m/s" not "v0 = 20 m/s"
+    "a = 9.8 m/s²" not "a = 9.8 m/s^2"
+    "ΔT = 120 K" not "DeltaT = 120 K"
+    "R₂ = ?" not "R2 = ?"
+- Keep labels short, readable, and never overlapping.
+- Use high-contrast text (white or light on dark backgrounds, dark on light).
+- Do not invent values. Match the verified solution exactly.
 
 ============================================================
 REALISM BY EXAMPLE (ADAPT TO QUESTION)
@@ -1142,8 +1173,9 @@ def _build_scene6_html(sol: dict) -> str:
     </div>
     <div class="s6-body">
       <div class="s6-phase-progress" id="s6-phase-progress">Step 1 of {len(variables) + 1} &mdash; The Formula</div>
-      <div class="s6-phase-caption" id="s6-phase-caption">This is the governing formula for this problem.</div>
+      <div class="s6-phase-caption" id="s6-phase-caption">This is the governing equation for this problem. Each symbol is explained below.</div>
       <div class="s6-formula-box">
+        <div class="s6-formula-badge">Governing Equation</div>
         <div class="s6-formula-main" id="s6-formula-text">{formula_text}</div>
         <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_name}</div>
       </div>
@@ -1245,7 +1277,10 @@ def _build_scene9_html(sol: dict, to_find: list) -> str:
     for row in chain:
         num = row.get("num", 1)
         eq = _he(row.get("eq", ""))
-        chain_html += f'<div class="s9-sub-row" data-s9-idx="{num-1}"><div class="s9-sub-num">{num}</div><div class="s9-sub-eq">{eq}</div></div>\n'
+        # Add a descriptive step label if available
+        step_labels = ["Write formula", "Substitute values", "Simplify", "Compute result", "Final answer"]
+        step_label = step_labels[num - 1] if (num - 1) < len(step_labels) else f"Step {num}"
+        chain_html += f'<div class="s9-sub-row" data-s9-idx="{num-1}"><div class="s9-sub-num">{num}</div><div class="s9-sub-eq"><span class="s9-step-lbl">{step_label}:</span> {eq}</div></div>\n'
 
     return f"""<div id="qanim-scene9-overlay">
   <div class="s9-card">
@@ -1311,6 +1346,27 @@ body{font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-seri
   background:rgba(8,145,178,.10);border:1px solid rgba(8,145,178,.22);font-size:11px;font-weight:700;
   color:var(--accent-cyan-dim);text-transform:uppercase;letter-spacing:.8px;}
 .page-chip::before{content:'▶';font-size:8px;}
+/* ── Fullscreen button ─────────────────────────────────────────────── */
+#qanim-fullscreen-btn{position:fixed;top:14px;right:16px;z-index:9000;
+  display:flex;align-items:center;gap:6px;padding:8px 14px;
+  border-radius:12px;border:1.5px solid rgba(8,145,178,.30);
+  background:rgba(255,255,255,.92);backdrop-filter:blur(12px);
+  color:var(--accent-cyan-dim);font-family:inherit;font-size:12px;font-weight:700;
+  cursor:pointer;box-shadow:0 4px 16px rgba(8,145,178,.18),0 1px 4px rgba(0,0,0,.08);
+  transition:background .2s,border-color .2s,color .2s,transform .18s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;}
+#qanim-fullscreen-btn:hover{background:rgba(8,145,178,.10);border-color:var(--accent-cyan);
+  transform:translateY(-2px);box-shadow:0 6px 22px rgba(8,145,178,.28);}
+#qanim-fullscreen-btn .fs-icon{font-size:14px;line-height:1;transition:transform .3s;}
+#qanim-fullscreen-btn.is-fullscreen{background:rgba(8,145,178,.12);border-color:var(--accent-cyan);}
+#qanim-fullscreen-btn.is-fullscreen .fs-icon{transform:rotate(180deg);}
+/* Fullscreen mode tweaks */
+body.qanim-fullscreen{padding:0!important;background:var(--panel-bg)!important;}
+body.qanim-fullscreen .dashboard{max-width:100%!important;border-radius:0!important;
+  box-shadow:none!important;border:none!important;height:100vh;display:flex;flex-direction:column;}
+body.qanim-fullscreen .page-header{display:none;}
+body.qanim-fullscreen .svg-container{flex:1 1 auto;aspect-ratio:unset!important;}
+body.qanim-fullscreen #qanim-controls-bar{bottom:10px;}
+body.qanim-fullscreen #qanim-fullscreen-btn{top:10px;right:12px;}
 .dashboard{width:100%;max-width:900px;margin:0 auto;background:var(--panel-bg);
   border-radius:var(--border-radius);box-shadow:var(--shadow-card);overflow:hidden;
   border:1px solid var(--border);position:relative;}
@@ -1384,10 +1440,11 @@ _SCENE6_CSS = """
 .s6-title-bar{text-align:center;padding:22px 28px 18px;background:#fff;border-bottom:1px solid #e8eef8;}
 .s6-title-bar h2{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-.3px;}
 .s6-body{padding:28px 32px 24px;background:linear-gradient(160deg,#eef2f9 0%,#e8f0fe 50%,#eff6ff 100%);}
-.s6-formula-box{background:#fff;border:2.5px solid #3b82f6;border-radius:18px;padding:20px 32px 16px;text-align:center;margin-bottom:10px;position:relative;}
-.s6-formula-main{font-family:'Courier New',monospace;font-size:28px;font-weight:900;color:#1d4ed8;letter-spacing:1px;line-height:1.4;word-break:break-word;opacity:0;transform:translateY(8px);transition:opacity .5s,transform .5s;}
+.s6-formula-box{background:#fff;border:2.5px solid #3b82f6;border-radius:18px;padding:20px 32px 16px;text-align:center;margin-bottom:10px;position:relative;box-shadow:0 4px 24px rgba(59,130,246,.12);}
+.s6-formula-badge{display:inline-block;padding:3px 10px;border-radius:20px;background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.28);font-size:10px;font-weight:800;color:#1d4ed8;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;}
+.s6-formula-main{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:30px;font-weight:700;color:#1d4ed8;letter-spacing:.5px;line-height:1.5;word-break:break-word;opacity:0;transform:translateY(8px);transition:opacity .5s,transform .5s;font-style:italic;}
 .s6-formula-main.s6-shown{opacity:1;transform:translateY(0);}
-.s6-formula-sublabel{font-size:11px;font-weight:700;color:#6366f1;letter-spacing:.3px;margin-top:8px;opacity:0;transition:opacity .4s ease .2s;}
+.s6-formula-sublabel{font-size:12px;font-weight:700;color:#6366f1;letter-spacing:.3px;margin-top:8px;opacity:0;transition:opacity .4s ease .2s;text-transform:uppercase;letter-spacing:1.2px;}
 .s6-formula-sublabel.s6-shown{opacity:1;}
 .s6-vars-row{display:flex;align-items:flex-start;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:24px;}
 .s6-var-box{display:flex;flex-direction:column;align-items:center;gap:0;min-width:120px;max-width:160px;opacity:0;transform:translateY(16px);transition:opacity .45s cubic-bezier(.4,0,.2,1),transform .4s cubic-bezier(.34,1.56,.64,1);}
@@ -1456,22 +1513,23 @@ _SCENE9_CSS = """
 .s9-body{padding:32px 36px 28px;background:#fff;display:flex;flex-direction:column;gap:22px;}
 .s9-formula-recap{background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:14px 20px;text-align:center;}
 .s9-formula-recap-label{font-size:10.5px;font-weight:800;color:#1d4ed8;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;}
-.s9-formula-recap-eq{font-family:'Courier New',monospace;font-size:18px;font-weight:900;color:#1d4ed8;}
+.s9-formula-recap-eq{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:20px;font-weight:700;color:#1d4ed8;font-style:italic;}
 .s9-sub-chain{display:flex;flex-direction:column;gap:10px;}
-.s9-sub-row{display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;opacity:0;transform:translateX(-18px);transition:opacity .4s,transform .4s cubic-bezier(.34,1.56,.64,1);}
+.s9-sub-row{display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;opacity:0;transform:translateX(-18px);transition:opacity .45s cubic-bezier(.34,1.56,.64,1),transform .45s cubic-bezier(.34,1.56,.64,1);}
 .s9-sub-row.s9-shown{opacity:1;transform:translateX(0);}
-.s9-sub-num{background:#0891b2;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;}
-.s9-sub-eq{font-family:'Courier New',monospace;font-size:15px;font-weight:700;color:#1e293b;flex:1;}
+.s9-sub-num{background:linear-gradient(135deg,#0891b2,#0e7490);color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;box-shadow:0 2px 6px rgba(8,145,178,.35);}
+.s9-sub-eq{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:16px;font-weight:600;color:#1e293b;flex:1;font-style:italic;}
 .s9-final-box{background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:3px solid #22c55e;border-radius:18px;padding:28px 32px;text-align:center;position:relative;overflow:hidden;opacity:0;transform:scale(.94);transition:opacity .5s ease .3s,transform .5s cubic-bezier(.34,1.56,.64,1) .3s;}
 .s9-final-box.s9-shown{opacity:1;transform:scale(1);}
 .s9-final-label{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#15803d;margin-bottom:12px;}
-.s9-final-value{font-family:'Courier New',monospace;font-size:36px;font-weight:900;color:#14532d;line-height:1.2;}
-.s9-final-value .s9-highlight{color:#16a34a;font-size:44px;}
-.s9-final-unit{font-size:15px;color:#166534;margin-top:8px;font-weight:600;}
-.s9-insight-bar{display:flex;align-items:flex-start;gap:10px;background:#fff7ed;border:1.5px solid #fed7aa;border-radius:10px;padding:13px 18px;opacity:0;transition:opacity .4s ease .6s;}
+.s9-final-value{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:36px;font-weight:700;color:#14532d;line-height:1.2;}
+.s9-final-value .s9-highlight{color:#16a34a;font-size:46px;font-weight:900;}
+.s9-final-unit{font-size:15px;color:#166534;margin-top:8px;font-weight:700;letter-spacing:.5px;}
+.s9-step-lbl{font-family:'Segoe UI',system-ui,sans-serif;font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.8px;font-style:normal;display:inline-block;margin-right:4px;}
+.s9-insight-bar{display:flex;align-items:flex-start;gap:10px;background:#fff7ed;border:1.5px solid #fed7aa;border-radius:10px;padding:13px 18px;opacity:0;transition:opacity .5s ease .7s;}
 .s9-insight-bar.s9-shown{opacity:1;}
 .s9-insight-icon{font-size:20px;flex-shrink:0;}
-.s9-insight-text{font-size:13px;color:#92400e;line-height:1.6;}
+.s9-insight-text{font-size:13px;color:#92400e;line-height:1.65;}
 .s9-insight-text strong{color:#78350f;}
 .s9-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 36px 22px;border-top:1px solid #bbf7d0;background:#f0fdf4;}
 """
@@ -2310,6 +2368,11 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 </div>
 </div>
 
+<!-- Fullscreen button -->
+<button id="qanim-fullscreen-btn" title="Toggle fullscreen" onclick="qanimToggleFullscreen()">
+  <span class="fs-icon">&#x26F6;</span><span>Fullscreen</span>
+</button>
+
 <div class="page-header">
   <div class="page-chip">Interactive Animation</div>
 </div>
@@ -2361,6 +2424,50 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 {_SCENE9_JS}
 {answerbox_js}
 {_GLOSSARY_JS}
+
+<script id="qanim-js-fullscreen">
+(function(){{
+  'use strict';
+  window.qanimToggleFullscreen = function(){{
+    var btn = document.getElementById('qanim-fullscreen-btn');
+    var isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+    if(!isFs){{
+      var el = document.documentElement;
+      if(el.requestFullscreen) el.requestFullscreen();
+      else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if(el.mozRequestFullScreen) el.mozRequestFullScreen();
+    }} else {{
+      if(document.exitFullscreen) document.exitFullscreen();
+      else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+      else if(document.mozCancelFullScreen) document.mozCancelFullScreen();
+    }}
+  }};
+
+  function _onFsChange(){{
+    var btn = document.getElementById('qanim-fullscreen-btn');
+    var icon = btn ? btn.querySelector('.fs-icon') : null;
+    var label = btn ? btn.querySelector('span:last-child') : null;
+    var isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+    if(btn) btn.classList.toggle('is-fullscreen', isFs);
+    if(icon) icon.innerHTML = isFs ? '&#x2716;' : '&#x26F6;';
+    if(label) label.textContent = isFs ? 'Exit' : 'Fullscreen';
+    document.body.classList.toggle('qanim-fullscreen', isFs);
+  }}
+
+  document.addEventListener('fullscreenchange', _onFsChange);
+  document.addEventListener('webkitfullscreenchange', _onFsChange);
+  document.addEventListener('mozfullscreenchange', _onFsChange);
+
+  // Keyboard shortcut: F key toggles fullscreen
+  document.addEventListener('keydown', function(e){{
+    if(e.key === 'f' || e.key === 'F'){{
+      var tag = (e.target||{{}}).tagName||'';
+      if(tag === 'INPUT' || tag === 'TEXTAREA') return;
+      window.qanimToggleFullscreen();
+    }}
+  }});
+}})();
+</script>
 
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
