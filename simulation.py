@@ -114,7 +114,8 @@ import anthropic
 # checks). That's what upstream gateways/CDNs see as a dead backend and
 # report as a 502, and it stalls every other concurrent request too.
 CLIENT_TIMEOUT_SECONDS = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "90"))
-CLIENT_MAX_RETRIES     = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "1"))
+# 0 = fail fast; don't retry a timed-out call (which would double the wait time)
+CLIENT_MAX_RETRIES     = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "0"))
 # Hard wall-clock cap for the *entire* generation pipeline. If this is hit
 # we always return a graceful, renderable failure result -- never leave the
 # request hanging past what a typical gateway timeout would allow.
@@ -154,18 +155,11 @@ client = anthropic.Anthropic(
     max_retries=CLIENT_MAX_RETRIES,
 )
 
-# NOTE (v2.1.2 fix): these were pointing at model strings that don't exist
-# ("claude-sonnet-4-6", bare "claude-haiku-4-5"), so every generation call
-# was failing at the Anthropic API level (model_not_found) on every single
-# request. That failure IS caught (see the try/except around
-# async_client.messages.create below) so it wouldn't itself surface as a
-# 502 -- but it meant every request burned its full retry budget and
-# CLIENT_TIMEOUT_SECONDS before giving up, which made every request slower
-# and more likely to be killed by an upstream gateway timeout (see the 502
-# note on PIPELINE_TIMEOUT_SECONDS above). Point these at real, current
-# model IDs and keep them overridable via env var so a future rename is a
-# config change, not a code change.
-SIM_MODEL        = os.environ.get("SIM_MODEL", "claude-sonnet-5")
+# v2.1.3 fix: reverted SIM_MODEL back to "claude-sonnet-4-6".
+# The v2.1.2 change to "claude-sonnet-5" caused 90+ second hangs because that
+# model ID is either unavailable on this account or significantly slower.
+# "claude-sonnet-4-6" is the proven working model for this pipeline.
+SIM_MODEL        = os.environ.get("SIM_MODEL", "claude-sonnet-4-6")
 CLASSIFIER_MODEL = os.environ.get("SIM_CLASSIFIER_MODEL", "claude-haiku-4-5-20251001")
 
 # NOTE (v2.1.2 fix): 32000 was needlessly high -- it's the single biggest
