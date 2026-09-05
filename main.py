@@ -41,7 +41,7 @@ import httpx
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -60,7 +60,7 @@ from claude_client import (                                            # pyrefly
     subtopics_json_to_genzet_args,
     generate_ultimate_learning_content,
 )
-from simulation import generate_simulation                               # pyrefly: ignore [missing-import]
+from simulation import generate_simulation, generate_simulation_stream       # pyrefly: ignore [missing-import]
 from pdf_handler import (                                              # pyrefly: ignore [missing-import]
     extract_pdf_text,
     find_subtopics_in_pdf,
@@ -304,6 +304,7 @@ async def health(request: Request):
                 "book_mode":          "POST /generate-from-book",
                 "topic_content":      "POST /generate-topic-content",
                 "simulation":         "POST /generate-simulation",
+                "simulation_stream":  "POST /generate-simulation-stream   (SSE, avoids gateway 502 on long generations)",
             },
             "admin": {
                 "errors": "GET /admin/errors  (X-Admin-Token header required)",
@@ -1062,6 +1063,95 @@ async def create_simulation(request: SimulationRequest):
     result["source"] = "generated"
     # generate_simulation never raises — on failure render_status == "error"
     return result
+
+
+@app.post("/generate-simulation-stream")
+async def create_simulation_stream(request: SimulationRequest):
+    """
+    Server-Sent Events version of /generate-simulation.
+
+    WHY THIS EXISTS: /generate-simulation holds one request open for the
+    entire pipeline and only writes a response at the very end. If that
+    takes longer than whatever gateway/proxy sits in front of this service
+    is willing to wait on a silent connection, it kills the connection and
+    the browser sees a raw 502 — even though generate_simulation() itself
+    never raises and always would have returned valid JSON eventually. This
+    endpoint sends bytes continuously for the life of the request instead,
+    so there's never a long enough silent gap for an inactivity-based
+    gateway timeout to trigger on.
+
+    Same cache-check + mode-hint logic as /generate-simulation, then
+    delegates to generate_simulation_stream() from simulation.py. Emits one
+    JSON object per SSE `data:` line:
+
+      {"type": "status", "stage": ..., "message": ...}  — progress updates
+      {"type": "chunk",  "text": ...}                   — raw streamed
+                                                            model output,
+                                                            for progress UX
+                                                            only (not
+                                                            renderable HTML
+                                                            until "done")
+      {"type": "done",   "result": {...}}                — same shape as
+                                                            /generate-simulation
+      {"type": "error",  "result": {...}}                — graceful failure,
+                                                            same shape as a
+                                                            render_status
+                                                            == "error" result
+
+    Frontend usage: read the stream with EventSource or a fetch() +
+    ReadableStream reader, show `status`/`chunk` events as a live progress
+    indicator, and swap in `result.html` once a `done` (or `error`) event
+    arrives.
+    """
+    topic = (request.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+    if len(topic) > 2000:
+        raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
+
+    if request.mode and request.mode.lower() not in ("general", ""):
+        topic_with_mode = f"{topic} (subject area: {request.mode})"
+    else:
+        topic_with_mode = topic
+
+    async def sse():
+        # ── Cache check first, same as /generate-simulation ─────────────
+        cached_html = _find_cached_simulation(topic)
+        if cached_html:
+            cached_result = {
+                "title":             topic,
+                "category":          "cached",
+                "summary":           f"Pre-built experiment loaded for: {topic}",
+                "controls_overview": [],
+                "key_formula":       "",
+                "learning_notes":    [],
+                "image_refs":        [],
+                "html":              cached_html,
+                "engine_version":    "cache",
+                "render_status":     "ok",
+                "source":            "cache",
+            }
+            yield f"data: {json.dumps({'type': 'done', 'result': cached_result})}\n\n"
+            return
+
+        # ── Otherwise stream the AI pipeline ─────────────────────────────
+        async for event in generate_simulation_stream(topic_with_mode):
+            if event.get("type") in ("done", "error") and "result" in event:
+                event["result"]["source"] = "generated"
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        sse(),
+        media_type="text/event-stream",
+        headers={
+            # Disable buffering on common proxies (nginx) so chunks are
+            # flushed immediately instead of batched, which would defeat
+            # the whole point of streaming.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.post("/generate-topic-content")
