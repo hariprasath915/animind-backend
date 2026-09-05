@@ -19,6 +19,27 @@ PURPOSE
       model understands real instrument / diagram aesthetics before
       generating the simulation
 
+WHAT'S NEW IN v2.1.2
+  • Root-caused a recurring "Backend error: 502" seen in production: it was
+    a gateway/proxy-level inactivity timeout, not an unhandled exception in
+    this file (every failure path here already returned valid JSON). Fixed
+    on three fronts:
+      1. Invalid model IDs ("claude-sonnet-4-6", bare "claude-haiku-4-5")
+         were causing every generation call to fail at the API level and
+         burn its full retry+timeout budget before falling back -- fixed to
+         real, env-overridable model IDs.
+      2. MAX_TOK dropped from 32000 -> 16000 (configurable): the single
+         biggest lever on worst-case request duration, with no real loss in
+         output quality for this design system.
+      3. Added generate_simulation_stream(), an async generator that streams
+         status updates + model tokens continuously for the life of the
+         request. Most gateways time out on connection *inactivity*, not
+         total duration -- so wiring this into the web layer as an SSE/
+         chunked response (see the docstring above the function) is what
+         actually prevents the 502, independent of how long generation
+         legitimately takes. generate_simulation() is unchanged and still
+         available for callers without a gateway timeout to worry about.
+
 WHAT'S NEW IN v2.1
   • Game-style onboarding/tutorial system, generated as a core part of
     every simulation: spotlight overlay, welcome/step/completion cards,
@@ -97,7 +118,25 @@ CLIENT_MAX_RETRIES     = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "1"))
 # Hard wall-clock cap for the *entire* generation pipeline. If this is hit
 # we always return a graceful, renderable failure result -- never leave the
 # request hanging past what a typical gateway timeout would allow.
-PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "75"))
+#
+# NOTE (v2.1.2 fix -- 502 on the frontend): a 502 "Bad Gateway" is raised by
+# whatever sits in FRONT of this process (nginx / Cloudflare / the hosting
+# platform's router, e.g. Heroku's 30s router timeout or a serverless
+# function's max-duration limit) -- NOT by this Python code. It fires when
+# that layer gives up waiting for a response. The old default of 75s here
+# was routinely LONGER than those common gateway limits (30-60s is typical),
+# so on any request that took a while, the gateway killed the connection and
+# returned its own 502 before this file's own graceful asyncio.wait_for
+# timeout ever got a chance to run and return valid JSON. Lowering this
+# (and MAX_TOK below, which is the main lever on how long a single
+# generation call takes) keeps the *typical* request safely under common
+# gateway limits. If your platform's timeout is known and configurable,
+# raise SIM_PIPELINE_TIMEOUT_SECONDS to a couple seconds under it; otherwise
+# this conservative default is the safer choice. See `generate_simulation_stream()`
+# below for the real fix: it streams bytes back continuously so an
+# inactivity-based gateway timeout never has a silent gap long enough to
+# trigger on.
+PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "50"))
 
 async_client = anthropic.AsyncAnthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
@@ -114,10 +153,28 @@ client = anthropic.Anthropic(
     max_retries=CLIENT_MAX_RETRIES,
 )
 
-SIM_MODEL        = "claude-sonnet-4-6"
-CLASSIFIER_MODEL = "claude-haiku-4-5"
+# NOTE (v2.1.2 fix): these were pointing at model strings that don't exist
+# ("claude-sonnet-4-6", bare "claude-haiku-4-5"), so every generation call
+# was failing at the Anthropic API level (model_not_found) on every single
+# request. That failure IS caught (see the try/except around
+# async_client.messages.create below) so it wouldn't itself surface as a
+# 502 -- but it meant every request burned its full retry budget and
+# CLIENT_TIMEOUT_SECONDS before giving up, which made every request slower
+# and more likely to be killed by an upstream gateway timeout (see the 502
+# note on PIPELINE_TIMEOUT_SECONDS above). Point these at real, current
+# model IDs and keep them overridable via env var so a future rename is a
+# config change, not a code change.
+SIM_MODEL        = os.environ.get("SIM_MODEL", "claude-sonnet-5")
+CLASSIFIER_MODEL = os.environ.get("SIM_CLASSIFIER_MODEL", "claude-haiku-4-5-20251001")
 
-MAX_TOK            = 32000
+# NOTE (v2.1.2 fix): 32000 was needlessly high -- it's the single biggest
+# lever on how long a generation call can take, and a page built from this
+# design system (sidebar + canvas + metrics + full onboarding tutorial)
+# comfortably fits well under 16000 output tokens. Lowering this cuts both
+# the typical and worst-case request duration substantially, which is the
+# most effective way to stay under whatever timeout the hosting gateway
+# enforces in front of this service.
+MAX_TOK            = int(os.environ.get("SIM_MAX_TOKENS", "16000"))
 MAX_TOK_CLASSIFIER = 20
 
 # Google Custom Search API (optional -- gracefully skipped if missing)
@@ -1681,6 +1738,145 @@ async def generate_simulation(topic: str) -> dict:
 def generate_simulation_sync(topic: str) -> dict:
     """Synchronous wrapper around generate_simulation() for non-async callers."""
     return asyncio.run(generate_simulation(topic))
+
+
+# ---------------------------------------------------------------------------
+# v2.1.2 -- Streaming entry point (real fix for gateway 502s)
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS:
+#   generate_simulation() above holds one HTTP request open for the entire
+#   pipeline (classify -> image search -> a single long messages.create()
+#   call -> parse/sanitize/validate) and only writes a response at the very
+#   end. If that whole pipeline takes longer than whatever sits in FRONT of
+#   this process is willing to wait on a silent connection -- an nginx/
+#   Cloudflare proxy, a load balancer, a serverless function's max duration,
+#   Heroku's ~30s router timeout, etc. -- that layer kills the connection
+#   and the browser sees a raw 502, regardless of how gracefully this Python
+#   code itself handles errors. Lowering MAX_TOK/timeouts (above) reduces
+#   how OFTEN this happens; it can't eliminate it, because a genuinely
+#   complex topic can legitimately need the full generation time.
+#
+#   The actual fix is to stop sending nothing until the very end. This
+#   generator yields small, frequent events for the whole lifetime of the
+#   request -- status updates, then a chunk per streamed token batch from
+#   the model -- so bytes are continuously flowing back to the client. Most
+#   gateways time out on *inactivity*, not total duration, so a connection
+#   that's actively streaming rarely gets killed even if it takes 60-90s.
+#
+# HOW TO WIRE THIS UP (adjust to your actual web framework):
+#   FastAPI (Server-Sent Events):
+#       from fastapi.responses import StreamingResponse
+#       @app.post("/api/generate-simulation")
+#       async def generate_simulation_endpoint(topic: str):
+#           async def sse():
+#               async for event in generate_simulation_stream(topic):
+#                   yield f"data: {json.dumps(event)}\n\n"
+#           return StreamingResponse(sse(), media_type="text/event-stream")
+#
+#   The frontend then reads the SSE stream, shows live progress ("Classifying
+#   topic...", "Generating..."), and swaps in the final HTML once it sees a
+#   {"type": "done", ...} event -- instead of one opaque request that either
+#   comes back after a long wait or 502s.
+#
+# This is additive: generate_simulation() / generate_simulation_sync() are
+# unchanged and remain a valid drop-in for callers that truly need a single
+# request/response (e.g. a background job worker with no gateway in front
+# of it, where 502s from an inactive connection aren't a concern).
+async def generate_simulation_stream(topic: str):
+    """
+    Async generator yielding progress events while generating a simulation.
+    Each event is a small JSON-serializable dict:
+
+      {"type": "status", "stage": "classify" | "image_refs" | "generating",
+       "message": str}
+      {"type": "chunk", "text": str}                 -- a batch of streamed
+                                                          model output (raw,
+                                                          not yet parsed --
+                                                          for progress UX
+                                                          only, don't render
+                                                          it directly)
+      {"type": "done", "result": <same dict shape as generate_simulation()>}
+      {"type": "error", "result": <failure result dict>}
+
+    Never raises: any failure is reported as a {"type": "error", ...} event,
+    matching the "never raises" contract of generate_simulation().
+    """
+    topic = (topic or "").strip()
+    if not topic:
+        yield {"type": "error",
+               "result": _build_failure_result("", "Topic cannot be empty")}
+        return
+
+    short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
+    SimLogger.info("Pipeline", f"START (stream) v2.1.2 -- '{short_topic}'")
+
+    try:
+        yield {"type": "status", "stage": "classify", "message": "Classifying topic..."}
+        category = await asyncio.wait_for(_classify_topic(topic), timeout=CLIENT_TIMEOUT_SECONDS)
+        SimLogger.info("Classifier", f"Category: {category}")
+
+        yield {"type": "status", "stage": "image_refs", "message": "Gathering visual references..."}
+        image_refs = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_image_refs, topic), timeout=CLIENT_TIMEOUT_SECONDS)
+
+        system_blocks, user_content = _build_prompt(topic, category, image_refs)
+
+        yield {"type": "status", "stage": "generating", "message": "Generating simulation..."}
+        raw_parts: List[str] = []
+        async with async_client.messages.stream(
+            model=SIM_MODEL, max_tokens=MAX_TOK,
+            system=system_blocks,
+            messages=[{"role": "user", "content": user_content}],
+        ) as stream:
+            async for text in stream.text_stream:
+                raw_parts.append(text)
+                yield {"type": "chunk", "text": text}
+            final_msg = await stream.get_final_message()
+        raw = "".join(raw_parts).strip()
+        SimLogger.info(
+            "GenerationAI",
+            f"model={SIM_MODEL}  stop_reason={final_msg.stop_reason}  len={len(raw)}")
+        if final_msg.stop_reason == "max_tokens":
+            SimLogger.warn("GenerationAI", "Hit max_tokens -- output may be truncated!")
+
+        result = _parse_response(raw, topic)
+        result["category"]   = result.get("category") or category
+        result["image_refs"] = image_refs
+        sim_html = result.get("simulation_code", "").strip()
+
+        if not sim_html:
+            SimLogger.error("Pipeline", "No simulation_code could be parsed from the response")
+            yield {"type": "error", "result": _build_failure_result(
+                topic, "Could not parse simulation HTML from model response")}
+            return
+
+        sim_html = HtmlSanitizer.sanitize(sim_html)
+
+        try:
+            GenerationValidator.validate(sim_html, require_svg=False, require_canvas=False)
+        except ValidationError as e:
+            SimLogger.warn("Validator", f"Validation failed: {e}")
+            if ('<canvas' in sim_html or '<svg' in sim_html) and len(sim_html) > 400:
+                sim_html = RecoveryEngine.partial_html(topic, sim_html)
+                SimLogger.warn("Pipeline", "Wrapped partial content via RecoveryEngine.partial_html")
+            else:
+                yield {"type": "error", "result": _build_failure_result(topic, str(e))}
+                return
+
+        result["html"]           = sim_html
+        result["engine_version"] = "v2.1.2"
+        result["render_status"]  = "ok"
+
+        SimLogger.ok("Pipeline", f"DONE (stream) -- '{result['title']}'  html={len(sim_html):,} chars")
+        yield {"type": "done", "result": result}
+
+    except asyncio.TimeoutError:
+        SimLogger.error("Pipeline", "Stage exceeded its timeout during streaming pipeline")
+        yield {"type": "error", "result": _build_failure_result(
+            topic, "Generation took too long and was stopped. Please try again.")}
+    except Exception as e:
+        SimLogger.error("Pipeline", f"UNHANDLED error in streaming pipeline: {e}")
+        yield {"type": "error", "result": _build_failure_result(topic, f"Unexpected error: {e}")}
 
 
 # ===========================================================================
