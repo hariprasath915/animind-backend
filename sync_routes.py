@@ -2572,6 +2572,131 @@ def update_student_result(record_id: str, body: StudentResult):
         raise HTTPException(status_code=500, detail=f"Result update failed: {e}")
 
 
+# ════════════════════════════════════════════════════════════════
+# QUIZ RESULTS  —  Detailed score storage per student
+# ════════════════════════════════════════════════════════════════
+# Workflow:
+#   Student submits quiz → iframe posts { type:'ASSESSMENT_RESULT', score, total, percentage }
+#   student.html catches it → POST /sync/quiz-results
+#   Backend inserts into quiz_results AND updates test_students.result
+#   Teacher clicks "View Results" → GET endpoint returns students + quiz_results joined
+# ════════════════════════════════════════════════════════════════
+
+class QuizResultSubmit(BaseModel):
+    test_student_id:  Optional[str] = None   # FK to test_students.id
+    session_id:       Optional[str] = None   # FK to assessment_sessions.id
+    pin_code:         str           = Field(..., min_length=1, max_length=10)
+    student_name:     str           = Field(..., min_length=1, max_length=120)
+    roll_number:      str           = Field(..., min_length=1, max_length=50)
+    score:            int           = Field(..., ge=0)          # correct answers e.g. 7
+    total_questions:  int           = Field(..., ge=1)          # total questions  e.g. 10
+    percentage:       float         = Field(..., ge=0, le=100)  # e.g. 70.0
+
+
+@router.post("/quiz-results", status_code=201)
+def submit_quiz_result(payload: QuizResultSubmit):
+    """
+    Public endpoint — no JWT required.
+    Called by student.html when the assessment iframe posts an ASSESSMENT_RESULT message.
+
+    Steps:
+      1. Inserts a row into quiz_results (score, total_questions, percentage).
+      2. Updates test_students.result to a human-readable string  e.g. '7/10 (70.00%)'.
+
+    Returns the new quiz_result id so the frontend can reference it.
+    """
+    service_sb = _get_service_client()
+
+    # Build a readable result string that will show in test_students.result
+    pct_str    = f"{payload.percentage:.2f}"
+    result_str = f"{payload.score}/{payload.total_questions} ({pct_str}%)"
+
+    # 1. Insert into quiz_results
+    qr_row = {
+        "pin_code":         payload.pin_code,
+        "student_name":     payload.student_name,
+        "roll_number":      payload.roll_number,
+        "score":            payload.score,
+        "total_questions":  payload.total_questions,
+        "percentage":       round(payload.percentage, 2),
+    }
+    if payload.test_student_id:
+        qr_row["test_student_id"] = payload.test_student_id
+    if payload.session_id:
+        qr_row["session_id"] = payload.session_id
+
+    try:
+        qr_res = service_sb.table("quiz_results").insert(qr_row).execute()
+        saved  = (qr_res.data or [{}])[0]
+        quiz_result_id = saved.get("id")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"quiz_results insert failed: {e}")
+
+    # 2. Update test_students.result (best-effort — don't fail if record not found)
+    if payload.test_student_id:
+        try:
+            service_sb.table("test_students") \
+                .update({"result": result_str}) \
+                .eq("id", payload.test_student_id) \
+                .execute()
+        except Exception as e:
+            print(f"[QUIZ] Warning: could not update test_students result: {e}")
+
+    print(f"[QUIZ] ✅ Quiz result saved: {result_str} student={payload.student_name!r} pin={payload.pin_code!r}")
+    return {"saved": True, "quiz_result_id": quiz_result_id, "result": result_str}
+
+
+def _attach_quiz_results(service_sb, students: list) -> list:
+    """
+    Helper: given a list of test_students rows, look up their quiz_results
+    and attach score, total_questions, percentage to each row.
+    Matches on test_student_id (preferred) or pin_code+student_name (fallback).
+    """
+    if not students:
+        return students
+
+    # Collect all test_student ids that are not None
+    ts_ids = [s["id"] for s in students if s.get("id")]
+    if not ts_ids:
+        return students
+
+    try:
+        qr_res = (
+            service_sb.table("quiz_results")
+            .select("test_student_id, score, total_questions, percentage, submitted_at")
+            .in_("test_student_id", ts_ids)
+            .order("submitted_at", desc=True)
+            .execute()
+        )
+        quiz_rows = qr_res.data or []
+    except Exception:
+        # Non-fatal — just return students without quiz data
+        return students
+
+    # Build a map: test_student_id → quiz_result row (keep latest)
+    qr_map: dict = {}
+    for qr in quiz_rows:
+        tid = qr.get("test_student_id")
+        if tid and tid not in qr_map:
+            qr_map[tid] = qr
+
+    # Attach quiz result fields to each student row
+    for s in students:
+        qr = qr_map.get(s.get("id"))
+        if qr:
+            s["quiz_score"]       = qr["score"]
+            s["quiz_total"]       = qr["total_questions"]
+            s["quiz_percentage"]  = float(qr["percentage"] or 0)
+            s["quiz_submitted_at"]= qr["submitted_at"]
+        else:
+            s["quiz_score"]       = None
+            s["quiz_total"]       = None
+            s["quiz_percentage"]  = None
+            s["quiz_submitted_at"]= None
+
+    return students
+
+
 @router.get("/test-students/by-session/{session_id}", status_code=200)
 def get_results_by_session(
     session_id: str,
@@ -2606,7 +2731,7 @@ def get_results_by_session(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Session lookup failed: {e}")
 
-    # Fetch student rows
+    # Fetch student rows + quiz_results
     try:
         res = (
             service_sb.table("test_students")
@@ -2615,7 +2740,8 @@ def get_results_by_session(
             .order("timestamp", desc=False)
             .execute()
         )
-        return {"students": res.data or [], "count": len(res.data or [])}
+        students = _attach_quiz_results(service_sb, res.data or [])
+        return {"students": students, "count": len(students)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
 
@@ -2656,7 +2782,7 @@ def get_results_by_pin(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PIN session lookup failed: {e}")
 
-    # Fetch student rows
+    # Fetch student rows + quiz_results
     try:
         res = (
             service_sb.table("test_students")
@@ -2665,7 +2791,8 @@ def get_results_by_pin(
             .order("timestamp", desc=False)
             .execute()
         )
-        return {"session_id": session_id, "students": res.data or [], "count": len(res.data or [])}
+        students = _attach_quiz_results(service_sb, res.data or [])
+        return {"session_id": session_id, "students": students, "count": len(students)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
 
@@ -2710,7 +2837,7 @@ def get_results_by_assessment(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Assessment session lookup failed: {e}")
 
-    # Fetch student rows
+    # Fetch student rows + quiz_results
     try:
         res = (
             service_sb.table("test_students")
@@ -2719,6 +2846,7 @@ def get_results_by_assessment(
             .order("timestamp", desc=False)
             .execute()
         )
-        return {"session_id": session_id, "students": res.data or [], "count": len(res.data or [])}
+        students = _attach_quiz_results(service_sb, res.data or [])
+        return {"session_id": session_id, "students": students, "count": len(students)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
