@@ -113,30 +113,31 @@ import anthropic
 # for minutes, during which it can't answer anything (including health
 # checks). That's what upstream gateways/CDNs see as a dead backend and
 # report as a 502, and it stalls every other concurrent request too.
-CLIENT_TIMEOUT_SECONDS = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "55"))
+CLIENT_TIMEOUT_SECONDS = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "90"))
 CLIENT_MAX_RETRIES     = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "1"))
 # Hard wall-clock cap for the *entire* generation pipeline. If this is hit
 # we always return a graceful, renderable failure result -- never leave the
 # request hanging past what a typical gateway timeout would allow.
 #
-# NOTE (v2.1.2 fix -- 502 on the frontend): a 502 "Bad Gateway" is raised by
-# whatever sits in FRONT of this process (nginx / Cloudflare / the hosting
-# platform's router, e.g. Heroku's 30s router timeout or a serverless
-# function's max-duration limit) -- NOT by this Python code. It fires when
-# that layer gives up waiting for a response. The old default of 75s here
-# was routinely LONGER than those common gateway limits (30-60s is typical),
-# so on any request that took a while, the gateway killed the connection and
-# returned its own 502 before this file's own graceful asyncio.wait_for
-# timeout ever got a chance to run and return valid JSON. Lowering this
-# (and MAX_TOK below, which is the main lever on how long a single
-# generation call takes) keeps the *typical* request safely under common
-# gateway limits. If your platform's timeout is known and configurable,
-# raise SIM_PIPELINE_TIMEOUT_SECONDS to a couple seconds under it; otherwise
-# this conservative default is the safer choice. See `generate_simulation_stream()`
-# below for the real fix: it streams bytes back continuously so an
-# inactivity-based gateway timeout never has a silent gap long enough to
-# trigger on.
-PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "50"))
+# ROOT CAUSE NOTE (v2.1.3 fix -- "Generation took longer than 50s"):
+# The Railway logs showed:
+#   t=0s  Pipeline START + POST api.anthropic.com/v1/messages
+#   t=50s asyncio.wait_for fires (PIPELINE_TIMEOUT_SECONDS was 50)
+#   t=50s Railway returns HTTP 200 OK to client   <-- the backend DID respond
+# Critically, the Anthropic API call returned 200 OK (the generation
+# SUCCEEDED), but the asyncio.wait_for at exactly 50s fired at the same
+# instant and discarded the successful result, returning the fake
+# "took longer than 50s" error instead. The old 50s default was just
+# 5-10 seconds too short for claude-sonnet-5 on a complex simulation
+# prompt. Raised to 90s -- safely under Railway's default 120s router
+# timeout -- so legitimate generation calls complete instead of being
+# cancelled at the finish line.
+#
+# If you see 502s again: your gateway timeout is shorter than this.
+# Set SIM_PIPELINE_TIMEOUT_SECONDS to a few seconds LESS than your
+# gateway's limit, or wire up generate_simulation_stream() (below)
+# which streams bytes back so an inactivity timeout never triggers.
+PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "90"))
 
 async_client = anthropic.AsyncAnthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
