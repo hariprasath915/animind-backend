@@ -1363,10 +1363,43 @@ body{font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-seri
 body.qanim-fullscreen{padding:0!important;background:var(--panel-bg)!important;}
 body.qanim-fullscreen .dashboard{max-width:100%!important;border-radius:0!important;
   box-shadow:none!important;border:none!important;height:100vh;display:flex;flex-direction:column;}
-body.qanim-fullscreen .page-header{display:none;}
+body.qanim-fullscreen .page-header{display:none!important;}
+body.qanim-fullscreen .question-banner{display:none!important;}
 body.qanim-fullscreen .svg-container{flex:1 1 auto;aspect-ratio:unset!important;}
+body.qanim-fullscreen .step-indicator{display:none!important;}
+body.qanim-fullscreen .step-color-legend{display:none!important;}
+body.qanim-fullscreen .step-progress-wrap{display:none!important;}
+body.qanim-fullscreen .step-label{display:none!important;}
 body.qanim-fullscreen #qanim-controls-bar{bottom:10px;}
 body.qanim-fullscreen #qanim-fullscreen-btn{top:10px;right:12px;}
+/* Step-6 Given/To-Find info panel */
+#step6-info-panel{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
+  pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.4,0,.2,1);}
+#step6-info-panel.s6info-visible{opacity:1;pointer-events:auto;}
+.s6info-card{display:flex;gap:0;background:rgba(10,22,44,.82);backdrop-filter:blur(14px);
+  border:1.5px solid rgba(8,145,178,.38);border-radius:18px;
+  box-shadow:0 8px 48px rgba(8,145,178,.22),0 2px 12px rgba(0,0,0,.35);
+  overflow:hidden;max-width:720px;width:90%;}
+.s6info-col{flex:1;padding:22px 24px;}
+.s6info-col-given{border-right:1.5px solid rgba(8,145,178,.25);}
+.s6info-col-find{}
+.s6info-heading{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1.8px;
+  margin-bottom:14px;display:flex;align-items:center;gap:7px;}
+.s6info-heading-given{color:#38bdf8;}
+.s6info-heading-given::before{content:'';width:8px;height:8px;border-radius:50%;background:#38bdf8;
+  flex-shrink:0;box-shadow:0 0 0 3px rgba(56,189,248,.22);}
+.s6info-heading-find{color:#4ade80;}
+.s6info-heading-find::before{content:'';width:8px;height:8px;border-radius:50%;background:#4ade80;
+  flex-shrink:0;box-shadow:0 0 0 3px rgba(74,222,128,.22);}
+.s6info-item{display:flex;align-items:flex-start;gap:9px;margin-bottom:9px;}
+.s6info-bullet{width:5px;height:5px;border-radius:50%;background:#38bdf8;flex-shrink:0;margin-top:6px;}
+.s6info-bullet-find{background:#4ade80;}
+.s6info-val{font-size:13px;color:#e2e8f0;line-height:1.55;font-family:'Segoe UI',system-ui,sans-serif;}
+.s6info-sym{font-weight:800;color:#fff;}
+.s6info-find-chip{display:inline-flex;align-items:center;gap:7px;background:rgba(74,222,128,.12);
+  border:1.5px solid rgba(74,222,128,.35);border-radius:10px;padding:10px 14px;margin-bottom:8px;
+  font-size:13.5px;font-weight:700;color:#4ade80;font-family:'Segoe UI',system-ui,sans-serif;}
+.s6info-find-chip-icon{font-size:16px;}
 .dashboard{width:100%;max-width:900px;margin:0 auto;background:var(--panel-bg);
   border-radius:var(--border-radius);box-shadow:var(--shadow-card);overflow:hidden;
   border:1px solid var(--border);position:relative;}
@@ -2072,6 +2105,55 @@ def validate_final_html(html: str) -> None:
         raise ValueError("Final HTML validation failed:\n  " + "\n  ".join(missing))
 
 
+def _build_step6_panel_html(sol: dict, scene: dict) -> str:
+    """Build the Step-6 Given Data / To Find overlay panel (inside svg-container)."""
+    given_list = sol.get("given_list", [])
+    to_find    = scene.get("to_find", ["The unknown quantity"])
+
+    given_items = ""
+    for g in given_list:
+        if "=" in g:
+            sym, rest = g.split("=", 1)
+            given_items += (
+                f'<div class="s6info-item">'
+                f'<span class="s6info-bullet"></span>'
+                f'<span class="s6info-val"><span class="s6info-sym">{_he(sym.strip())}</span>'
+                f' = {_he(rest.strip())}</span>'
+                f'</div>\n'
+            )
+        else:
+            given_items += (
+                f'<div class="s6info-item">'
+                f'<span class="s6info-bullet"></span>'
+                f'<span class="s6info-val">{_he(g)}</span>'
+                f'</div>\n'
+            )
+    if not given_items:
+        given_items = '<div class="s6info-item"><span class="s6info-bullet"></span><span class="s6info-val">See problem statement</span></div>\n'
+
+    find_chips = ""
+    for tf in to_find:
+        find_chips += (
+            f'<div class="s6info-find-chip">'
+            f'<span class="s6info-find-chip-icon">&#x2753;</span>'
+            f'<span>{_he(tf)}</span>'
+            f'</div>\n'
+        )
+
+    return f"""<div id="step6-info-panel" role="region" aria-label="Given data and target">
+  <div class="s6info-card">
+    <div class="s6info-col s6info-col-given">
+      <div class="s6info-heading s6info-heading-given">Given Data</div>
+      {given_items}
+    </div>
+    <div class="s6info-col s6info-col-find">
+      <div class="s6info-heading s6info-heading-find">To Find</div>
+      {find_chips}
+    </div>
+  </div>
+</div>"""
+
+
 def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     """Assemble the complete HTML file from all parts."""
 
@@ -2090,6 +2172,8 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     }]
     targets_json = json.dumps({"answer_targets": answer_targets}, ensure_ascii=False)
 
+    # Step-6 given/to-find panel
+    step6_panel_html = _build_step6_panel_html(sol, scene)
 
     # SVG content
     svg_defs = svg_data.get("svg_defs", "")
@@ -2211,6 +2295,12 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
         nextBtn.textContent = (idx === CONCEPT_STEP_COUNT - 1)
           ? 'Step 7: Formula \u25b6'
           : 'Next Step \u25b6';
+      }}
+
+      // ── Show/hide Step-6 given+to-find panel ──────────────────────────────
+      const s6panel = document.getElementById('step6-info-panel');
+      if (s6panel) {{
+        s6panel.classList.toggle('s6info-visible', idx === CONCEPT_STEP_COUNT - 1);
       }}
     }}
     window.applyStep = applyStep;
@@ -2393,6 +2483,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
       </g>
       {svg_layers}
     </svg>
+    {step6_panel_html}
   </div>
 
   <div class="control-panel">
