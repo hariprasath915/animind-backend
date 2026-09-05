@@ -27,6 +27,7 @@ import sys
 import io
 import os
 import re
+import time
 import uuid
 import hashlib
 import asyncio
@@ -304,7 +305,8 @@ async def health(request: Request):
                 "book_mode":          "POST /generate-from-book",
                 "topic_content":      "POST /generate-topic-content",
                 "simulation":         "POST /generate-simulation",
-                "simulation_stream":  "POST /generate-simulation-stream   (SSE, avoids gateway 502 on long generations)",
+                "simulation_stream":  "POST /generate-simulation-stream   (SSE, avoids gateway inactivity-timeout 502s)",
+                "simulation_job":     "POST /generate-simulation-job + GET /generate-simulation-job/{job_id}  (poll-based, avoids hard MAX-DURATION timeouts too)",
             },
             "admin": {
                 "errors": "GET /admin/errors  (X-Admin-Token header required)",
@@ -1152,6 +1154,143 @@ async def create_simulation_stream(request: SimulationRequest):
             "Connection": "keep-alive",
         },
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Poll-based simulation generation (the fix for HARD max-duration limits)
+# ══════════════════════════════════════════════════════════════════════════════
+# /generate-simulation-stream fixes gateways that time out on connection
+# *inactivity* -- but some hosts (Render's default proxy is a known one; some
+# serverless setups too) enforce a hard MAXIMUM REQUEST DURATION regardless of
+# whether bytes are actively flowing. No amount of streaming inside a single
+# HTTP request can get around a ceiling like that, because the platform kills
+# the connection at that wall-clock mark no matter what.
+#
+# The only way around a hard per-request ceiling is to stop making the
+# generation itself part of any one HTTP request. Instead: kick it off as a
+# background asyncio task and return a job_id immediately (this request
+# finishes in milliseconds), then let the frontend poll a status endpoint
+# every couple of seconds -- each individual poll is also just milliseconds,
+# so it's immune to the ceiling no matter how long the underlying generation
+# legitimately takes.
+#
+# CAVEAT: job state below lives in this process's memory. That's fine for a
+# single-worker/single-instance deployment (the common case for `uvicorn
+# main:app` on Railway/Render). If this is ever scaled to multiple worker
+# processes or multiple instances behind a load balancer, a poll request can
+# land on a different worker than the one running the job and 404 -- at that
+# point swap _SIM_JOBS for Redis or a DB row instead of an in-memory dict.
+
+_SIM_JOBS: dict = {}
+_SIM_JOBS_MAX_AGE_SECONDS = 3600  # garbage-collect finished/abandoned jobs after 1h
+
+
+def _cleanup_sim_jobs() -> None:
+    now = time.time()
+    stale = [jid for jid, j in _SIM_JOBS.items()
+             if now - j.get("updated_at", now) > _SIM_JOBS_MAX_AGE_SECONDS]
+    for jid in stale:
+        _SIM_JOBS.pop(jid, None)
+
+
+async def _run_simulation_job(job_id: str, topic: str, topic_with_mode: str) -> None:
+    job = _SIM_JOBS[job_id]
+    try:
+        # Same cache-check as the other two endpoints.
+        cached_html = _find_cached_simulation(topic)
+        if cached_html:
+            job["status"] = "done"
+            job["result"] = {
+                "title":             topic,
+                "category":          "cached",
+                "summary":           f"Pre-built experiment loaded for: {topic}",
+                "controls_overview": [],
+                "key_formula":       "",
+                "learning_notes":    [],
+                "image_refs":        [],
+                "html":              cached_html,
+                "engine_version":    "cache",
+                "render_status":     "ok",
+                "source":            "cache",
+            }
+            return
+
+        async for event in generate_simulation_stream(topic_with_mode):
+            job["updated_at"] = time.time()
+            if event["type"] == "status":
+                job["stage"]   = event.get("stage")
+                job["message"] = event.get("message")
+            elif event["type"] == "chunk":
+                job["chunks_received"] = job.get("chunks_received", 0) + 1
+            elif event["type"] in ("done", "error"):
+                event["result"]["source"] = "generated"
+                job["status"] = "done" if event["type"] == "done" else "error"
+                job["result"] = event["result"]
+    except Exception as e:
+        job["status"] = "error"
+        job["result"] = {
+            "title":             f"Simulation: {topic[:50]}",
+            "category":          "GENERAL_PROCESS",
+            "summary":           "Generation failed",
+            "controls_overview": [],
+            "key_formula":       "",
+            "learning_notes":    [],
+            "image_refs":        [],
+            "html":              "",
+            "engine_version":    "v2.1.2",
+            "render_status":     "error",
+            "error_reason":      f"Unexpected error: {e}",
+        }
+    finally:
+        job["updated_at"] = time.time()
+
+
+@app.post("/generate-simulation-job")
+async def create_simulation_job(request: SimulationRequest):
+    """
+    Start simulation generation as a background task; returns a job_id
+    immediately. Poll GET /generate-simulation-job/{job_id} for progress
+    and the final result -- see the module comment above for why this
+    exists.
+    """
+    topic = (request.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
+    if len(topic) > 2000:
+        raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
+
+    if request.mode and request.mode.lower() not in ("general", ""):
+        topic_with_mode = f"{topic} (subject area: {request.mode})"
+    else:
+        topic_with_mode = topic
+
+    _cleanup_sim_jobs()
+    job_id = uuid.uuid4().hex
+    _SIM_JOBS[job_id] = {
+        "status":  "running",
+        "stage":   None,
+        "message": "Starting…",
+        "result":  None,
+        "chunks_received": 0,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+    }
+    asyncio.create_task(_run_simulation_job(job_id, topic, topic_with_mode))
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/generate-simulation-job/{job_id}")
+async def get_simulation_job_status(job_id: str):
+    job = _SIM_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown or expired job_id")
+    return {
+        "status":          job["status"],
+        "stage":           job.get("stage"),
+        "message":         job.get("message"),
+        "chunks_received": job.get("chunks_received", 0),
+        "result":          job.get("result"),
+    }
 
 
 @app.post("/generate-topic-content")
