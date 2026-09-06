@@ -128,13 +128,35 @@ PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", 
 
 
 # Gemini async client (google-genai SDK)
+# api_version="v1" required for newer models (gemini-3.1+);
+# the default v1beta does not expose these models.
 _gemini_client = _google_genai.Client(
     api_key=os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
-    http_options=_genai_types.HttpOptions(timeout=int(CLIENT_TIMEOUT_SECONDS * 1000)),
+    http_options=_genai_types.HttpOptions(
+        timeout=int(CLIENT_TIMEOUT_SECONDS * 1000),
+        api_version="v1",
+    ),
 )
 
-SIM_MODEL        = os.environ.get("SIM_MODEL", "gemini-2.5-pro-preview-05-06")
+SIM_MODEL        = os.environ.get("SIM_MODEL", "gemini-3.1-pro-preview")
 CLASSIFIER_MODEL = os.environ.get("SIM_CLASSIFIER_MODEL", "gemini-2.0-flash")
+
+# Startup validation: catch bad SIM_MODEL values immediately at import time
+# so the error appears at the top of Railway deploy logs, not at first request.
+_KNOWN_BAD_PATTERNS = [
+    "gemini-2.5-pro-preview-05-06",  # date-suffix variant not supported in v1beta
+    "gemini-2.5-pro-preview-06",
+    "claude-",                        # switched away from Anthropic
+]
+if any(bad in SIM_MODEL for bad in _KNOWN_BAD_PATTERNS):
+    print(
+        f"[SimEngine] CRITICAL WARNING: SIM_MODEL='{SIM_MODEL}' is a known-bad model ID "
+        f"that will cause 404 NOT_FOUND errors on every generation call. "
+        f"Use 'gemini-2.5-pro' or 'gemini-2.0-flash'. "
+        f"Fix: update SIM_MODEL in Railway Variables and redeploy."
+    )
+else:
+    print(f"[SimEngine] Model configured: SIM_MODEL='{SIM_MODEL}', CLASSIFIER='{CLASSIFIER_MODEL}'")
 
 # ROOT CAUSE FIX (v2.1.4):
 # Analysis showed: SYSTEM prompt = 7,204 input tokens + MAX_TOK=16,000 output tokens.
