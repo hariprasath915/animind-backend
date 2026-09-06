@@ -133,7 +133,7 @@ _gemini_client = _google_genai.Client(
     http_options=_genai_types.HttpOptions(timeout=int(CLIENT_TIMEOUT_SECONDS * 1000)),
 )
 
-SIM_MODEL        = os.environ.get("SIM_MODEL", "gemini-3.1-pro-preview")
+SIM_MODEL        = os.environ.get("SIM_MODEL", "gemini-2.5-pro-preview-05-06")
 CLASSIFIER_MODEL = os.environ.get("SIM_CLASSIFIER_MODEL", "gemini-2.0-flash")
 
 # ROOT CAUSE FIX (v2.1.4):
