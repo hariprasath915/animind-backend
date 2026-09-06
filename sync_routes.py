@@ -87,8 +87,14 @@ def _parse_iso(s: Optional[str]) -> str:
 
 
 def _sb(user: dict):
-    """Return a Supabase client authenticated with the user's token."""
+    """Return a user-scoped Supabase client (anon key + user JWT)."""
     return get_supabase(user.get("token"))
+
+
+def _sb_admin():
+    """Return a service-role Supabase client (bypasses RLS).
+    Only use for routes that read shared/public data, not user-owned rows."""
+    return get_supabase()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -102,167 +108,179 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
     Returns saved items + subjects tree + vault entries in one round-trip.
     Replaces the three separate pull calls that existed in v2.
     """
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
+    # Fix #5: Wrap all DB calls in try/except so a Supabase 401 / connection
+    # error returns a clean 502 instead of propagating as an unhandled 500
+    # that floods Railway with 500+ log lines/sec and triggers the rate limiter.
+    try:
+        supabase = _sb(current_user)
+        user_id  = current_user["id"]
 
-    # ── 1. Generated items (is_saved=True only) ──────────────────
-    items_res = (
-        supabase.table("generated_items")
-        .select("id, item_type, title, prompt, explanation, html_code, playlist, is_saved, source_topic, source_subtopic, source_pdf_name, created_at, updated_at")
-        .eq("user_id", user_id)
-        .eq("is_saved", True)
-        .is_("deleted_at", "null")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    items = items_res.data or []
+        # ── 1. Generated items (is_saved=True only) ──────────────────
+        items_res = (
+            supabase.table("generated_items")
+            .select("id, item_type, title, prompt, explanation, html_code, playlist, is_saved, source_topic, source_subtopic, source_pdf_name, created_at, updated_at")
+            .eq("user_id", user_id)
+            .eq("is_saved", True)
+            .is_("deleted_at", "null")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        items = items_res.data or []
 
-    # ── 2. Subjects tree ─────────────────────────────────────────
-    subjects_res = (
-        supabase.table("engineering_subjects")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("sort_order")
-        .execute()
-    )
-    subjects = subjects_res.data or []
-    subject_ids = [s["id"] for s in subjects]
-
-    cos, topics = [], []
-    if subject_ids:
-        cos_res = (
-            supabase.table("course_outcomes")
+        # ── 2. Subjects tree ─────────────────────────────────────────
+        subjects_res = (
+            supabase.table("engineering_subjects")
             .select("*")
-            .in_("subject_id", subject_ids)
+            .eq("user_id", user_id)
             .order("sort_order")
             .execute()
         )
-        cos = cos_res.data or []
-        co_ids = [c["id"] for c in cos]
-        if co_ids:
-            topics_res = (
-                supabase.table("course_topics")
-                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
-                .in_("co_id", co_ids)
+        subjects = subjects_res.data or []
+        subject_ids = [s["id"] for s in subjects]
+
+        cos, topics = [], []
+        if subject_ids:
+            cos_res = (
+                supabase.table("course_outcomes")
+                .select("*")
+                .in_("subject_id", subject_ids)
                 .order("sort_order")
                 .execute()
             )
-            topics = topics_res.data or []
+            cos = cos_res.data or []
+            co_ids = [c["id"] for c in cos]
+            if co_ids:
+                topics_res = (
+                    supabase.table("course_topics")
+                    .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
+                    .in_("co_id", co_ids)
+                    .order("sort_order")
+                    .execute()
+                )
+                topics = topics_res.data or []
 
-    # Build nested engineeringCourses-compatible structure
-    topics_by_co = {}
-    for t in topics:
-        html_cache   = t.get("html_code_cache")
-        db_type      = t.get("topic_type") or "animation"
-        # Derive display type: prefer DB value, fall back to content sniffing
-        if db_type == "ppt_upload":
-            display_type = "ppt_upload"
-        elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
-            display_type = "html_upload"
-        else:
-            display_type = "animation"
-        topics_by_co.setdefault(t["co_id"], []).append({
-            "id":               t["id"],
-            "name":             t["name"],
-            "description":      t.get("description", ""),
-            "prompt":           t.get("prompt", ""),
-            # animCode and html_code carry HTML for animation/html_upload topics
-            "animCode":         html_cache,
-            "html_code":        html_cache,
-            # PPT-specific fields
-            "type":             display_type,
-            "pptUrl":           t.get("ppt_public_url"),
-            "pptStoragePath":   t.get("ppt_storage_path"),
-            "fileName":         t.get("ppt_file_name"),
-            "created_at":       t["created_at"],
-            "generated_item_id": t.get("generated_item_id"),
-        })
+        # Build nested engineeringCourses-compatible structure
+        topics_by_co = {}
+        for t in topics:
+            html_cache   = t.get("html_code_cache")
+            db_type      = t.get("topic_type") or "animation"
+            # Derive display type: prefer DB value, fall back to content sniffing
+            if db_type == "ppt_upload":
+                display_type = "ppt_upload"
+            elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
+                display_type = "html_upload"
+            else:
+                display_type = "animation"
+            topics_by_co.setdefault(t["co_id"], []).append({
+                "id":               t["id"],
+                "name":             t["name"],
+                "description":      t.get("description", ""),
+                "prompt":           t.get("prompt", ""),
+                # animCode and html_code carry HTML for animation/html_upload topics
+                "animCode":         html_cache,
+                "html_code":        html_cache,
+                # PPT-specific fields
+                "type":             display_type,
+                "pptUrl":           t.get("ppt_public_url"),
+                "pptStoragePath":   t.get("ppt_storage_path"),
+                "fileName":         t.get("ppt_file_name"),
+                "created_at":       t["created_at"],
+                "generated_item_id": t.get("generated_item_id"),
+            })
 
-    cos_by_subject = {}
-    for co in cos:
-        cos_by_subject.setdefault(co["subject_id"], []).append({
-            "id":          co["id"],
-            "coNum":       co["co_num"],
-            "name":        co.get("description", ""),   # ✅ frontend reads co.name
-            "description": co.get("description", ""),
-            "topics":      topics_by_co.get(co["id"], []),
-        })
+        cos_by_subject = {}
+        for co in cos:
+            cos_by_subject.setdefault(co["subject_id"], []).append({
+                "id":          co["id"],
+                "coNum":       co["co_num"],
+                "name":        co.get("description", ""),   # ✅ frontend reads co.name
+                "description": co.get("description", ""),
+                "topics":      topics_by_co.get(co["id"], []),
+            })
 
+        subjects_tree = [
+            {
+                "id":          s["id"],
+                "name":        s["name"],
+                "description": s.get("description", ""),
+                "share_token": s.get("share_token"),
+                "cos":         cos_by_subject.get(s["id"], []),
+                "syllabus": {
+                    "pdf_name": s.get("syllabus_pdf_name"),
+                    "units":    s.get("syllabus_units"),
+                } if s.get("syllabus_pdf_name") else None,
+            }
+            for s in subjects
+        ]
 
-    subjects_tree = [
-        {
-            "id":          s["id"],
-            "name":        s["name"],
-            "description": s.get("description", ""),
-            "share_token": s.get("share_token"),
-            "cos":         cos_by_subject.get(s["id"], []),
-            "syllabus": {
-                "pdf_name": s.get("syllabus_pdf_name"),
-                "units":    s.get("syllabus_units"),
-            } if s.get("syllabus_pdf_name") else None,
-        }
-        for s in subjects
-    ]
-
-    # ── 3. Vault entries ─────────────────────────────────────────
-    vault_res = (
-        supabase.table("video_vault")
-        .select("id, name, file_name, file_size, public_url, storage_path, mime_type, created_at")
-        .eq("user_id", user_id)
-        .is_("deleted_at", "null")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    vault = vault_res.data or []
-
-    # ── 4. Subject Units (File Mode — Unit/Lesson containers) ────
-    units_res = (
-        supabase.table("subject_units")
-        .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
-        .eq("user_id", user_id)
-        .order("sort_order")
-        .execute()
-    )
-    subject_units = units_res.data or []
-    unit_ids = [u["id"] for u in subject_units]
-
-    # ── 5. Unit Lessons (library lesson IDs per unit) ─────────────
-    unit_lesson_rows = []
-    if unit_ids:
-        ul_res = (
-            supabase.table("unit_lessons")
-            .select("unit_id, lesson_id, sort_order")
+        # ── 3. Vault entries ─────────────────────────────────────────
+        vault_res = (
+            supabase.table("video_vault")
+            .select("id, name, file_name, file_size, public_url, storage_path, mime_type, created_at")
             .eq("user_id", user_id)
-            .in_("unit_id", unit_ids)
+            .is_("deleted_at", "null")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        vault = vault_res.data or []
+
+        # ── 4. Subject Units (File Mode — Unit/Lesson containers) ────
+        units_res = (
+            supabase.table("subject_units")
+            .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
+            .eq("user_id", user_id)
             .order("sort_order")
             .execute()
         )
-        unit_lesson_rows = ul_res.data or []
+        subject_units = units_res.data or []
+        unit_ids = [u["id"] for u in subject_units]
 
-    # Build lessons_by_unit map  { unit_id → [lesson_id, …] }
-    lessons_by_unit: dict = {}
-    for row in unit_lesson_rows:
-        lessons_by_unit.setdefault(row["unit_id"], []).append(row["lesson_id"])
+        # ── 5. Unit Lessons (library lesson IDs per unit) ─────────────
+        unit_lesson_rows = []
+        if unit_ids:
+            ul_res = (
+                supabase.table("unit_lessons")
+                .select("unit_id, lesson_id, sort_order")
+                .eq("user_id", user_id)
+                .in_("unit_id", unit_ids)
+                .order("sort_order")
+                .execute()
+            )
+            unit_lesson_rows = ul_res.data or []
 
-    # Attach lessons list to each unit row
-    for u in subject_units:
-        u["lesson_ids"] = lessons_by_unit.get(u["id"], [])
+        # Build lessons_by_unit map  { unit_id → [lesson_id, …] }
+        lessons_by_unit: dict = {}
+        for row in unit_lesson_rows:
+            lessons_by_unit.setdefault(row["unit_id"], []).append(row["lesson_id"])
 
-    # Build units_by_subject map  { subject_id → [unit, …] }
-    units_by_subject: dict = {}
-    for u in subject_units:
-        units_by_subject.setdefault(u["subject_id"], []).append(u)
+        # Attach lessons list to each unit row
+        for u in subject_units:
+            u["lesson_ids"] = lessons_by_unit.get(u["id"], [])
 
-    # Attach units to the subjects tree (new field: s["units"])
-    for s in subjects_tree:
-        s["units"] = units_by_subject.get(s["id"], [])
+        # Build units_by_subject map  { subject_id → [unit, …] }
+        units_by_subject: dict = {}
+        for u in subject_units:
+            units_by_subject.setdefault(u["subject_id"], []).append(u)
 
-    print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(subject_units)} units, {len(vault)} vault — user={current_user['email']!r}")
-    return {
-        "items":    items,
-        "subjects": subjects_tree,
-        "vault":    vault,
-    }
+        # Attach units to the subjects tree (new field: s["units"])
+        for s in subjects_tree:
+            s["units"] = units_by_subject.get(s["id"], [])
+
+        print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(subject_units)} units, {len(vault)} vault — user={current_user['email']!r}")
+        return {
+            "items":    items,
+            "subjects": subjects_tree,
+            "vault":    vault,
+        }
+
+    except HTTPException:
+        raise  # re-raise 401/403 from get_current_user unchanged
+    except Exception as exc:
+        print(f"[SYNC] /all ERROR for user={current_user.get('email')!r}: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to load user data. Please try again.",
+        )
 
 
 # ════════════════════════════════════════════════════════════════
