@@ -75,15 +75,18 @@ GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 
 # Safe defaults — use the stable model IDs that are always available on v1.
 # "gemini-3.1-pro-preview" matches what q_animation uses in production.
-_SAFE_DEFAULT_SIM_MODEL        = "gemini-3.1-pro-preview"
+_SAFE_DEFAULT_SIM_MODEL        = "gemini-2.5-pro"
 _SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-2.0-flash"
 
-# Patterns known to cause 404 NOT_FOUND on the v1 API.
+# Patterns known to cause 404 NOT_FOUND on the v1 API for Google AI Studio keys.
 # Each entry: (regex_pattern, safe_replacement)
 _BAD_MODEL_PATTERNS = [
+    # gemini-3.1 does NOT exist on Google AI Studio (only on internal Vertex AI preview).
+    # Log proof: 'gemini-3.1-pro-preview is not found for API version v1'
+    (r"gemini-3\.[\d]+",                         "gemini-2.5-pro"),
     # Date-suffix preview variants — retired periodically by Google
-    (r"gemini-[\d.]+-pro-preview-\d{2}-\d{2}",  "gemini-3.1-pro-preview"),
-    (r"gemini-[\d.]+-pro-preview-\d{2}",         "gemini-3.1-pro-preview"),
+    (r"gemini-[\d.]+-pro-preview-\d{2}-\d{2}",  "gemini-2.5-pro"),
+    (r"gemini-[\d.]+-pro-preview-\d{2}",         "gemini-2.5-pro"),
     (r"gemini-[\d.]+-flash-preview-\d{2}-\d{2}", "gemini-2.0-flash"),
     (r"gemini-[\d.]+-flash-preview-\d{2}",       "gemini-2.0-flash"),
     # Anthropic model IDs (switched away from Claude)
