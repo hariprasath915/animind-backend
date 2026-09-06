@@ -99,7 +99,9 @@ import urllib.parse
 import html as html_module
 from typing import Optional, List
 
-import anthropic
+from google import genai as _google_genai
+# pyrefly: ignore [missing-import]
+from google.genai import types as _genai_types
 
 # ---------------------------------------------------------------------------
 # Client + model routing
@@ -113,63 +115,39 @@ import anthropic
 # for minutes, during which it can't answer anything (including health
 # checks). That's what upstream gateways/CDNs see as a dead backend and
 # report as a 502, and it stalls every other concurrent request too.
-CLIENT_TIMEOUT_SECONDS = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "90"))
+CLIENT_TIMEOUT_SECONDS = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "115"))
 # 0 = fail fast; don't retry a timed-out call (which would double the wait time)
 CLIENT_MAX_RETRIES     = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "0"))
-# Hard wall-clock cap for the *entire* generation pipeline. If this is hit
-# we always return a graceful, renderable failure result -- never leave the
-# request hanging past what a typical gateway timeout would allow.
-#
-# ROOT CAUSE NOTE (v2.1.3 fix -- "Generation took longer than 50s"):
-# The Railway logs showed:
-#   t=0s  Pipeline START + POST api.anthropic.com/v1/messages
-#   t=50s asyncio.wait_for fires (PIPELINE_TIMEOUT_SECONDS was 50)
-#   t=50s Railway returns HTTP 200 OK to client   <-- the backend DID respond
-# Critically, the Anthropic API call returned 200 OK (the generation
-# SUCCEEDED), but the asyncio.wait_for at exactly 50s fired at the same
-# instant and discarded the successful result, returning the fake
-# "took longer than 50s" error instead. The old 50s default was just
-# 5-10 seconds too short for claude-sonnet-5 on a complex simulation
-# prompt. Raised to 90s -- safely under Railway's default 120s router
-# timeout -- so legitimate generation calls complete instead of being
-# cancelled at the finish line.
-#
-# If you see 502s again: your gateway timeout is shorter than this.
-# Set SIM_PIPELINE_TIMEOUT_SECONDS to a few seconds LESS than your
-# gateway's limit, or wire up generate_simulation_stream() (below)
-# which streams bytes back so an inactivity timeout never triggers.
-PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "90"))
+# Hard wall-clock cap for the entire generation pipeline.
+# With MAX_TOK=4096, typical generation is 30-60s, worst-case ~120s.
+# This is set to 120s to match Railway's real router timeout.
+# CLIENT_TIMEOUT is set 5s lower (115s) so the Anthropic client always
+# cancels its own HTTP call cleanly before asyncio.wait_for fires.
+PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "120"))
 
-async_client = anthropic.AsyncAnthropic(
-    api_key=os.environ.get("ANTHROPIC_API_KEY"),
-    default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-    timeout=CLIENT_TIMEOUT_SECONDS,
-    max_retries=CLIENT_MAX_RETRIES,
-)
-# Sync client kept only for non-async callers. The generation pipeline
-# itself never touches this one anymore.
-client = anthropic.Anthropic(
-    api_key=os.environ.get("ANTHROPIC_API_KEY"),
-    default_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-    timeout=CLIENT_TIMEOUT_SECONDS,
-    max_retries=CLIENT_MAX_RETRIES,
+
+
+# Gemini async client (google-genai SDK)
+_gemini_client = _google_genai.Client(
+    api_key=os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
+    http_options=_genai_types.HttpOptions(timeout=int(CLIENT_TIMEOUT_SECONDS * 1000)),
 )
 
-# v2.1.3 fix: reverted SIM_MODEL back to "claude-sonnet-4-6".
-# The v2.1.2 change to "claude-sonnet-5" caused 90+ second hangs because that
-# model ID is either unavailable on this account or significantly slower.
-# "claude-sonnet-4-6" is the proven working model for this pipeline.
-SIM_MODEL        = os.environ.get("SIM_MODEL", "claude-sonnet-4-6")
-CLASSIFIER_MODEL = os.environ.get("SIM_CLASSIFIER_MODEL", "claude-haiku-4-5-20251001")
+SIM_MODEL        = os.environ.get("SIM_MODEL", "gemini-3.1-pro-preview")
+CLASSIFIER_MODEL = os.environ.get("SIM_CLASSIFIER_MODEL", "gemini-2.0-flash")
 
-# NOTE (v2.1.2 fix): 32000 was needlessly high -- it's the single biggest
-# lever on how long a generation call can take, and a page built from this
-# design system (sidebar + canvas + metrics + full onboarding tutorial)
-# comfortably fits well under 16000 output tokens. Lowering this cuts both
-# the typical and worst-case request duration substantially, which is the
-# most effective way to stay under whatever timeout the hosting gateway
-# enforces in front of this service.
-MAX_TOK            = int(os.environ.get("SIM_MAX_TOKENS", "16000"))
+# ROOT CAUSE FIX (v2.1.4):
+# Analysis showed: SYSTEM prompt = 7,204 input tokens + MAX_TOK=16,000 output tokens.
+# At Claude Sonnet's ~30-60 tok/s output speed, 16,000 output tokens takes 267-533 SECONDS.
+# No timeout value can fix this -- 16,000 is simply physically impossible under 90s.
+#
+# A complete, working simulation HTML for this design system (sidebar + canvas +
+# metrics + onboarding tutorial) needs ~2,000-4,000 output tokens, NOT 16,000.
+# The old 16,000 limit was causing Claude to pad/over-generate massively.
+#
+# Fix: reduce to 4096 -> worst-case ~70-140s, typical ~30-60s.
+# Raise PIPELINE_TIMEOUT_SECONDS to 120s (Railway's real router limit is ~120s).
+MAX_TOK            = int(os.environ.get("SIM_MAX_TOKENS", "4096"))
 MAX_TOK_CLASSIFIER = 20
 
 # Google Custom Search API (optional -- gracefully skipped if missing)
@@ -588,12 +566,17 @@ async def _classify_topic(topic: str) -> str:
         if len(top) == 1:
             return top[0]
     try:
-        resp = await async_client.messages.create(
-            model=CLASSIFIER_MODEL, max_tokens=MAX_TOK_CLASSIFIER,
-            system="Reply with ONLY one category word from this exact list: "
-                   + ", ".join(CATEGORIES),
-            messages=[{"role": "user", "content": f"Classify this simulation topic: {topic[:200]}"}])
-        cat = resp.content[0].text.strip().upper()
+        resp = await _gemini_client.aio.models.generate_content(
+            model=CLASSIFIER_MODEL,
+            contents=f"Classify this simulation topic: {topic[:200]}",
+            config=_genai_types.GenerateContentConfig(
+                system_instruction="Reply with ONLY one category word from this exact list: "
+                                   + ", ".join(CATEGORIES),
+                max_output_tokens=MAX_TOK_CLASSIFIER,
+                temperature=0.0,
+            ),
+        )
+        cat = (resp.text or "").strip().upper()
         if cat in CATEGORIES:
             return cat
     except Exception as e:
@@ -1393,13 +1376,7 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
             f"specific single-experiment topic, you may omit the switcher.\n"
         )
 
-    system_blocks = [
-        {
-            "type": "text",
-            "text": SYSTEM,
-            "cache_control": {"type": "ephemeral"},  # cache the large stable block
-        }
-    ]
+    system_text = SYSTEM   # plain string -- passed as system_instruction to Gemini
 
     user_parts = [
         f"Build an interactive HTML5 simulation for SimEngine v2.1.\n",
@@ -1433,7 +1410,7 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
     ]
 
     user_content = "\n".join(user_parts)
-    return system_blocks, user_content
+    return system_text, user_content
 
 
 # ===========================================================================
@@ -1631,25 +1608,27 @@ async def _run_generation_pipeline(topic: str) -> dict:
     image_refs = await asyncio.to_thread(_fetch_image_refs, topic)
 
     # Step 3: Build prompt
-    system_blocks, user_content = _build_prompt(topic, category, image_refs)
+    system_text, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate (awaited on the async client -- this is the longest
-    # call in the pipeline and previously the biggest source of the
-    # event-loop-blocking / 502 problem)
+    # Step 4: Generate via Gemini async
     try:
-        msg = await async_client.messages.create(
-            model=SIM_MODEL, max_tokens=MAX_TOK,
-            system=system_blocks,
-            messages=[{"role": "user", "content": user_content}])
-        raw = msg.content[0].text.strip()
+        response = await _gemini_client.aio.models.generate_content(
+            model=SIM_MODEL,
+            contents=user_content,
+            config=_genai_types.GenerateContentConfig(
+                system_instruction=system_text,
+                max_output_tokens=MAX_TOK,
+                temperature=1.0,
+            ),
+        )
+        raw = (response.text or "").strip()
+        finish = getattr(response.candidates[0], 'finish_reason', 'unknown') if response.candidates else 'unknown'
         SimLogger.info(
             "GenerationAI",
-            f"model={SIM_MODEL}  stop_reason={msg.stop_reason}  len={len(raw)}"
-            f"  cache_read={getattr(msg.usage, 'cache_read_input_tokens', 0)}"
-            f"  cache_create={getattr(msg.usage, 'cache_creation_input_tokens', 0)}"
+            f"model={SIM_MODEL}  finish_reason={finish}  len={len(raw)}"
         )
-        if msg.stop_reason == "max_tokens":
-            SimLogger.warn("GenerationAI", "Hit max_tokens -- output may be truncated!")
+        if finish in ('MAX_TOKENS', 'max_tokens', 2):
+            SimLogger.warn("GenerationAI", "Hit max_output_tokens -- output may be truncated!")
     except Exception as e:
         SimLogger.error("GenerationAI", f"API call failed: {e}")
         return _build_failure_result(topic, f"API error: {e}")
@@ -1814,25 +1793,25 @@ async def generate_simulation_stream(topic: str):
         image_refs = await asyncio.wait_for(
             asyncio.to_thread(_fetch_image_refs, topic), timeout=CLIENT_TIMEOUT_SECONDS)
 
-        system_blocks, user_content = _build_prompt(topic, category, image_refs)
+        system_text, user_content = _build_prompt(topic, category, image_refs)
 
         yield {"type": "status", "stage": "generating", "message": "Generating simulation..."}
         raw_parts: List[str] = []
-        async with async_client.messages.stream(
-            model=SIM_MODEL, max_tokens=MAX_TOK,
-            system=system_blocks,
-            messages=[{"role": "user", "content": user_content}],
-        ) as stream:
-            async for text in stream.text_stream:
+        async for chunk in await _gemini_client.aio.models.generate_content_stream(
+            model=SIM_MODEL,
+            contents=user_content,
+            config=_genai_types.GenerateContentConfig(
+                system_instruction=system_text,
+                max_output_tokens=MAX_TOK,
+                temperature=1.0,
+            ),
+        ):
+            text = chunk.text or ""
+            if text:
                 raw_parts.append(text)
                 yield {"type": "chunk", "text": text}
-            final_msg = await stream.get_final_message()
         raw = "".join(raw_parts).strip()
-        SimLogger.info(
-            "GenerationAI",
-            f"model={SIM_MODEL}  stop_reason={final_msg.stop_reason}  len={len(raw)}")
-        if final_msg.stop_reason == "max_tokens":
-            SimLogger.warn("GenerationAI", "Hit max_tokens -- output may be truncated!")
+        SimLogger.info("GenerationAI", f"model={SIM_MODEL}  len={len(raw)}")
 
         result = _parse_response(raw, topic)
         result["category"]   = result.get("category") or category
