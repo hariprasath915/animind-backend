@@ -1364,33 +1364,39 @@ def legacy_sync_animation(
 @router.get("/animations", status_code=200)
 def legacy_get_animations(current_user: dict = Depends(get_current_user)):
     """LEGACY — use GET /sync/items instead."""
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-    res = (
-        supabase.table("contents")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    rows = [
-        r for r in (res.data or [])
-        if r.get("body", {}).get("anim_id") not in (_ENG_COURSES_SENTINEL, _VAULT_SENTINEL)
-    ]
-    animations = [
-        {
-            "id":             r["body"].get("anim_id", r["id"]),
-            "filename":       r["body"].get("filename") or r["title"],
-            "title":          r["title"],
-            "prompt":         r["prompt"],
-            "explanation":    r["body"].get("explanation", ""),
-            "animation_code": r["body"].get("animation_code", ""),
-            "playlist":       r["playlist"],
-            "created_at":     r["created_at"],
-        }
-        for r in rows
-    ]
-    return {"user_id": user_id, "count": len(animations), "animations": animations}
+    try:
+        supabase = _sb(current_user)
+        user_id  = current_user["id"]
+        res = (
+            supabase.table("contents")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        rows = [
+            r for r in (res.data or [])
+            if r.get("body", {}).get("anim_id") not in (_ENG_COURSES_SENTINEL, _VAULT_SENTINEL)
+        ]
+        animations = [
+            {
+                "id":             r["body"].get("anim_id", r["id"]),
+                "filename":       r["body"].get("filename") or r["title"],
+                "title":          r["title"],
+                "prompt":         r["prompt"],
+                "explanation":    r["body"].get("explanation", ""),
+                "animation_code": r["body"].get("animation_code", ""),
+                "playlist":       r["playlist"],
+                "created_at":     r["created_at"],
+            }
+            for r in rows
+        ]
+        return {"user_id": user_id, "count": len(animations), "animations": animations}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[SYNC] /animations ERROR for user={current_user.get('email')!r}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to load animations. Please try again.")
 
 
 @router.delete("/animations/{anim_id}", status_code=200)
@@ -1460,20 +1466,26 @@ def legacy_save_courses(
 @router.get("/courses", status_code=200)
 def legacy_get_courses(current_user: dict = Depends(get_current_user)):
     """LEGACY — use GET /sync/subjects instead."""
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-    res = (
-        supabase.table("contents")
-        .select("body")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    if res.data and res.data[0].get("body"):
-        return {"courses": res.data[0]["body"].get("courses") or []}
-    return {"courses": []}
+    try:
+        supabase = _sb(current_user)
+        user_id  = current_user["id"]
+        res = (
+            supabase.table("contents")
+            .select("body")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data and res.data[0].get("body"):
+            return {"courses": res.data[0]["body"].get("courses") or []}
+        return {"courses": []}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[SYNC] /courses ERROR for user={current_user.get('email')!r}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to load courses. Please try again.")
 
 
 class _VaultBlobPayload(BaseModel):
@@ -1519,20 +1531,26 @@ def legacy_save_vault(
 @router.get("/vault", status_code=200)
 def legacy_get_vault(current_user: dict = Depends(get_current_user)):
     """LEGACY — use GET /sync/vault/entries instead."""
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-    res = (
-        supabase.table("contents")
-        .select("body")
-        .eq("user_id", user_id)
-        .contains("body", {"anim_id": _VAULT_SENTINEL})
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    if res.data and res.data[0].get("body"):
-        return {"entries": res.data[0]["body"].get("entries") or []}
-    return {"entries": []}
+    try:
+        supabase = _sb(current_user)
+        user_id  = current_user["id"]
+        res = (
+            supabase.table("contents")
+            .select("body")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": _VAULT_SENTINEL})
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data and res.data[0].get("body"):
+            return {"entries": res.data[0]["body"].get("entries") or []}
+        return {"entries": []}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[SYNC] /vault ERROR for user={current_user.get('email')!r}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to load vault. Please try again.")
 
 
 class _SaveHtmlRequest(BaseModel):
