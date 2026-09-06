@@ -73,10 +73,12 @@ MAX_TOK_CLASSIFIER  = 20
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 
-# Safe defaults — use the stable model IDs that are always available on v1.
-# "gemini-3.1-pro-preview" matches what q_animation uses in production.
-_SAFE_DEFAULT_SIM_MODEL        = "gemini-2.5-pro"
+# Safe defaults — use model IDs confirmed working on Google AI Studio API keys.
+# NOTE: gemini-3.1-pro-preview returned 404 in prod logs. If it fails again,
+# set SIM_MODEL=gemini-2.5-flash in Railway Variables as a working fallback.
+_SAFE_DEFAULT_SIM_MODEL        = "gemini-3.1-pro-preview"
 _SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-2.0-flash"
+
 
 # Patterns known to cause 404 NOT_FOUND on the v1 API for Google AI Studio keys.
 # Each entry: (regex_pattern, safe_replacement)
@@ -122,14 +124,13 @@ CLASSIFIER_MODEL = _sanitize_model_id(
 print(f"[SimEngine] Model configured: SIM_MODEL='{SIM_MODEL}', CLASSIFIER='{CLASSIFIER_MODEL}'")
 
 # Gemini async client.
-# api_version="v1" is required for gemini-3.1+ and gemini-2.5+;
-# the default v1beta does not expose these models and returns
-# "not found for API version v1beta".
+# NOTE: Do NOT set api_version="v1" here — the v1 GA endpoint does not expose
+# preview/recent models like gemini-2.5-flash. The SDK default (v1beta) supports
+# all current Gemini models on Google AI Studio API keys.
 _gemini_client = _google_genai.Client(
     api_key=os.environ.get("GEMINI_API_KEY") or GOOGLE_API_KEY,
     http_options=_genai_types.HttpOptions(
         timeout=int(CLIENT_TIMEOUT_SECONDS * 1000),
-        api_version="v1",
     ),
 )
 
@@ -1344,25 +1345,33 @@ async def _run_generation_pipeline(topic: str) -> dict:
     # Step 3: Build prompt
     system_text, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate via Gemini async
+    # Step 4: Generate via Gemini (mirrors q_animation._call_gemini pattern exactly)
     try:
+        try:
+            config = _genai_types.GenerateContentConfig(
+                system_instruction=system_text,
+                temperature=0.7,
+                max_output_tokens=MAX_TOK,
+                thinking_config=_genai_types.ThinkingConfig(thinking_level="low"),
+            )
+        except Exception:
+            # ThinkingConfig not supported on this SDK version — use minimal config
+            config = _genai_types.GenerateContentConfig(
+                system_instruction=system_text,
+                temperature=0.7,
+                max_output_tokens=MAX_TOK,
+            )
         response = await _gemini_client.aio.models.generate_content(
             model=SIM_MODEL,
             contents=user_content,
-            config=_genai_types.GenerateContentConfig(
-                system_instruction=system_text,
-                max_output_tokens=MAX_TOK,
-                temperature=1.0,
-                automatic_function_calling=_genai_types.AutomaticFunctionCallingConfig(
-                    disable=True
-                ),
-            ),
+            config=config,
         )
         raw    = (response.text or "").strip()
         finish = getattr(response.candidates[0], 'finish_reason', 'unknown') if response.candidates else 'unknown'
         SimLogger.info("GenerationAI", f"model={SIM_MODEL}  finish_reason={finish}  len={len(raw)}")
         if finish in ('MAX_TOKENS', 'max_tokens', 2):
             SimLogger.warn("GenerationAI", "Hit max_output_tokens -- output may be truncated!")
+
     except Exception as e:
         err_str = str(e)
         is_model_not_found = (
@@ -1518,17 +1527,23 @@ async def generate_simulation_stream(topic: str):
 
         yield {"type": "status", "stage": "generating", "message": "Generating simulation..."}
         raw_parts: List[str] = []
+        try:
+            stream_config = _genai_types.GenerateContentConfig(
+                system_instruction=system_text,
+                temperature=0.7,
+                max_output_tokens=MAX_TOK,
+                thinking_config=_genai_types.ThinkingConfig(thinking_level="low"),
+            )
+        except Exception:
+            stream_config = _genai_types.GenerateContentConfig(
+                system_instruction=system_text,
+                temperature=0.7,
+                max_output_tokens=MAX_TOK,
+            )
         async for chunk in await _gemini_client.aio.models.generate_content_stream(
             model=SIM_MODEL,
             contents=user_content,
-            config=_genai_types.GenerateContentConfig(
-                system_instruction=system_text,
-                max_output_tokens=MAX_TOK,
-                temperature=1.0,
-                automatic_function_calling=_genai_types.AutomaticFunctionCallingConfig(
-                    disable=True
-                ),
-            ),
+            config=stream_config,
         ):
             text = chunk.text or ""
             if text:
@@ -1536,6 +1551,7 @@ async def generate_simulation_stream(topic: str):
                 yield {"type": "chunk", "text": text}
         raw = "".join(raw_parts).strip()
         SimLogger.info("GenerationAI", f"model={SIM_MODEL}  len={len(raw)}")
+
 
         result   = _parse_response(raw, topic)
         result["category"]   = result.get("category") or category
