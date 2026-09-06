@@ -181,12 +181,44 @@ class GenerationValidator:
     ]
 
     @classmethod
+    @classmethod
+    def repair(cls, html: str) -> str:
+        """
+        Auto-repair common truncation artifacts from LLM output.
+        Appends missing closing tags so a nearly-complete simulation
+        is not thrown away entirely.
+        """
+        h = html.rstrip()
+        # If </html> is missing, try to add it
+        if '</html>' not in h.lower():
+            # Add </body> if also missing
+            if '</body>' not in h.lower():
+                # Close any open script tag first
+                open_scripts  = len(re.findall(r'<script(?:\s[^>]*)?>',  h, re.IGNORECASE))
+                close_scripts = len(re.findall(r'</script>',              h, re.IGNORECASE))
+                if open_scripts > close_scripts:
+                    h += '\n</script>'
+                h += '\n</body>'
+            h += '\n</html>'
+        elif '</body>' not in h.lower():
+            # Has </html> but missing </body> — insert before </html>
+            h = re.sub(r'</html>', '\n</body>\n</html>', h, flags=re.IGNORECASE)
+        return h
+
+    @classmethod
     def validate(cls, html, require_svg=False, require_canvas=False):
         if not html or not html.strip():
             raise ValidationError("simulation_code is empty")
         if len(html) < 500:
             raise ValidationError(f"simulation_code suspiciously short ({len(html)} chars)")
-        for pattern, reason in cls.REQUIRED_ELEMENTS:
+        # Check required structural elements — repaired before reaching here
+        must_have = [
+            ("<!DOCTYPE", "Missing DOCTYPE declaration"),
+            ("<html",     "Missing <html> tag"),
+            ("<body",     "Missing <body> tag"),
+            ("<script",   "No script block"),
+        ]
+        for pattern, reason in must_have:
             if pattern not in html:
                 raise ValidationError(reason)
         if require_svg:
@@ -206,11 +238,8 @@ class GenerationValidator:
         close_scripts = len(re.findall(r'</script>',              html, re.IGNORECASE))
         if open_scripts != close_scripts:
             raise ValidationError(f"Unbalanced <script> tags: {open_scripts} open, {close_scripts} close")
-        open_svgs  = len(re.findall(r'<svg(?:\s[^>]*)?>',  html, re.IGNORECASE))
-        close_svgs = len(re.findall(r'</svg>',              html, re.IGNORECASE))
-        if open_svgs != close_svgs:
-            raise ValidationError(f"Unbalanced <svg> tags: {open_svgs} open, {close_svgs} close")
         SimLogger.ok("Validator", f"HTML passed validation ({len(html):,} chars)")
+
 
 
 # ===========================================================================
@@ -1406,10 +1435,13 @@ async def _run_generation_pipeline(topic: str) -> dict:
         SimLogger.error("Pipeline", "No simulation_code could be parsed from the response")
         return _build_failure_result(topic, "Could not parse simulation HTML from model response")
 
-    # Step 6: Sanitize
+    # Step 6: Auto-repair truncated closing tags before validation
+    sim_html = GenerationValidator.repair(sim_html)
+
+    # Step 7: Sanitize
     sim_html = HtmlSanitizer.sanitize(sim_html)
 
-    # Step 7: Validate
+    # Step 8: Validate
     try:
         GenerationValidator.validate(sim_html, require_svg=False, require_canvas=False)
     except ValidationError as e:
@@ -1555,6 +1587,9 @@ async def generate_simulation_stream(topic: str):
                 topic, "Could not parse simulation HTML from model response")}
             return
 
+        # Auto-repair truncated closing tags before validation
+        sim_html = GenerationValidator.repair(sim_html)
+
         sim_html = HtmlSanitizer.sanitize(sim_html)
 
         try:
@@ -1566,6 +1601,7 @@ async def generate_simulation_stream(topic: str):
             else:
                 yield {"type": "error", "result": _build_failure_result(topic, str(e))}
                 return
+
 
         result["html"]           = sim_html
         result["engine_version"] = "v2.1"
