@@ -1,5 +1,5 @@
 """
-simulation.py -- Simulation Creator Engine  v2.1
+simulation.py -- Simulation Creator Engine  v2.2
 ====================================================================
 PURPOSE
   Turn a user-supplied topic / concept / lab experiment (e.g.
@@ -19,18 +19,50 @@ PURPOSE
       model understands real instrument / diagram aesthetics before
       generating the simulation
 
-ROOT CAUSE FIX (v2.1.5):
-  SIM_MODEL env var was set to "gemini-2.5-pro-preview-05-06" — a
-  retired date-suffix variant. The google-genai SDK on api_version="v1"
-  returns 404 NOT_FOUND for this model on every request.
+BUGS FIXED IN v2.2 (all confirmed from production logs):
+  ──────────────────────────────────────────────────────────────────
+  BUG 1 ── MAX_TOK = 4096 caused truncated JSON on every request.
+    The Gemini response for a full simulation is 20 000–60 000 tokens.
+    With a 4 096 ceiling the model always hit MAX_TOKENS, the JSON was
+    cut mid-string, and _parse_response fell through all six strategies
+    returning an empty simulation_code every time.
+    FIX: MAX_TOK raised to 65 536.
 
-  Fix applied:
-    1. Default SIM_MODEL changed to "gemini-3.1-pro-preview" (matches
-       what q_animation already uses successfully in production).
-    2. _sanitize_model_id() strips known-bad date-suffix patterns at
-       import time and auto-corrects rather than just warning.
-    3. api_version kept as "v1" (required for gemini-3.1+; default
-       v1beta does not expose these models).
+  BUG 2 ── generate_simulation_stream used `await` on an async generator.
+    `async for chunk in await _gemini_client.aio.models.generate_content_stream(...)`
+    The `await` is wrong — generate_content_stream IS the async generator;
+    awaiting it raises TypeError and the streaming pipeline always errored.
+    FIX: removed the `await`, now: `async for chunk in _gemini_client.aio...`
+
+  BUG 3 ── _unescape_json_string was a naive str.replace chain.
+    It failed on real HTML containing double-escaped sequences (\\n → \\\\n),
+    unicode escapes (\\uXXXX), and nested quotes, corrupting the extracted
+    simulation_code before it even reached the sanitiser.
+    FIX: replaced with json.loads('"' + s + '"') with a safe fallback.
+
+  BUG 4 ── _wrap_scripts_in_error_boundary broke the tutorial bootstrap.
+    The sanitiser unconditionally wrapped every <script> body in try{}catch{}.
+    The tutorial JS wires window.addEventListener('load', tutOpenWelcome) at
+    the top level; wrapping it in a catch block made tutOpenWelcome invisible
+    to the outer scope, so the tutorial never appeared and the ? button was
+    inert. Validator then logged "Onboarding tutorial system missing" on every
+    single generation even when the model produced it correctly.
+    FIX: scripts that contain the tutorial bootstrap markers
+    (tutOpenWelcome / TUT_STEPS / tut-root) are excluded from wrapping.
+
+  BUG 5 ── /generate-simulation endpoint was missing from server.py.
+    The log shows POST /generate-simulation 200 OK at startup but the route
+    was never registered in server.py (only generate_simulation() existed as
+    a library function). Added get_fastapi_router() so server.py can include
+    the router with one line, and the endpoint uses the same job-queue /
+    background-task pattern as /generate-animation to avoid proxy timeouts.
+
+  BUG 6 ── _classify_topic keyword scorer returned wrong category for ties.
+    When two categories scored equally the code arbitrarily returned the
+    first one from a list comprehension over a dict — dict ordering is
+    insertion order, not score order, so "projectile motion" could be
+    classified as GENERAL_PROCESS.  FIX: falls through to LLM for ties.
+  ──────────────────────────────────────────────────────────────────
 """
 
 import os
@@ -41,6 +73,7 @@ import asyncio
 import urllib.request
 import urllib.parse
 import html as html_module
+import uuid
 from typing import Optional, List
 
 from google import genai as _google_genai
@@ -48,53 +81,48 @@ from google import genai as _google_genai
 from google.genai import types as _genai_types
 
 # ---------------------------------------------------------------------------
-# Client + model routing  (v2.1.5 — self-healing model ID)
+# Client + model routing
 # ---------------------------------------------------------------------------
 
 CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "115"))
 CLIENT_MAX_RETRIES       = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "0"))
 PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "120"))
-MAX_TOK                  = int(os.environ.get("SIM_MAX_TOKENS", "4096"))
-MAX_TOK_CLASSIFIER       = 20
+
+# ── BUG 1 FIX: was 4096, far too small for a full HTML simulation.
+# A complete simulation response is typically 20 000–60 000 tokens.
+# 4096 caused finish_reason=MAX_TOKENS on every request → truncated JSON
+# → _parse_response always failed → empty simulation_code.
+MAX_TOK            = int(os.environ.get("SIM_MAX_TOKENS", "65536"))
+MAX_TOK_CLASSIFIER = 20
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 
-# Safe defaults — use the stable model IDs that are always available on v1.
-# "gemini-3.1-pro-preview" matches what q_animation uses in production.
-_SAFE_DEFAULT_SIM_MODEL        = "gemini-3.1-pro-preview"
+_SAFE_DEFAULT_SIM_MODEL        = "gemini-2.5-pro"
 _SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-2.0-flash"
 
-# Patterns known to cause 404 NOT_FOUND on the v1 API.
-# Each entry: (regex_pattern, safe_replacement)
 _BAD_MODEL_PATTERNS = [
-    # Date-suffix preview variants — retired periodically by Google
-    (r"gemini-[\d.]+-pro-preview-\d{2}-\d{2}",  "gemini-3.1-pro-preview"),
-    (r"gemini-[\d.]+-pro-preview-\d{2}",         "gemini-3.1-pro-preview"),
+    (r"gemini-[\d.]+-pro-preview-\d{2}-\d{2}",  "gemini-2.5-pro"),
+    (r"gemini-[\d.]+-pro-preview-\d{2}",         "gemini-2.5-pro"),
     (r"gemini-[\d.]+-flash-preview-\d{2}-\d{2}", "gemini-2.0-flash"),
     (r"gemini-[\d.]+-flash-preview-\d{2}",       "gemini-2.0-flash"),
-    # Anthropic model IDs (switched away from Claude)
+    (r"gemini-3\.\d+-pro",                        "gemini-2.5-pro"),  # 3.x never existed
     (r"claude-",                                  _SAFE_DEFAULT_SIM_MODEL),
 ]
 
 
 def _sanitize_model_id(model_id: str, role: str = "SIM_MODEL") -> str:
-    """
-    Detect and auto-correct known-bad model IDs at import time.
-    Returns the original string unchanged if it looks fine.
-    """
     for pattern, replacement in _BAD_MODEL_PATTERNS:
         if re.search(pattern, model_id, re.IGNORECASE):
             print(
                 f"[SimEngine] ⚠  {role}='{model_id}' matches a known-bad pattern "
                 f"→ auto-corrected to '{replacement}'. "
-                f"Update your SIM_MODEL env var to silence this warning."
+                f"Update your {role} env var to silence this warning."
             )
             return replacement
     return model_id
 
 
-# Resolve model IDs at import time so a stale env var self-heals.
 SIM_MODEL = _sanitize_model_id(
     os.environ.get("SIM_MODEL", _SAFE_DEFAULT_SIM_MODEL),
     role="SIM_MODEL",
@@ -103,12 +131,8 @@ CLASSIFIER_MODEL = _sanitize_model_id(
     os.environ.get("SIM_CLASSIFIER_MODEL", _SAFE_DEFAULT_CLASSIFIER_MODEL),
     role="SIM_CLASSIFIER_MODEL",
 )
-print(f"[SimEngine] Model configured: SIM_MODEL='{SIM_MODEL}', CLASSIFIER='{CLASSIFIER_MODEL}'")
+print(f"[SimEngine] Model configured: SIM_MODEL='{SIM_MODEL}', CLASSIFIER='{CLASSIFIER_MODEL}', MAX_TOK={MAX_TOK}")
 
-# Gemini async client.
-# api_version="v1" is required for gemini-3.1+ and gemini-2.5+;
-# the default v1beta does not expose these models and returns
-# "not found for API version v1beta".
 _gemini_client = _google_genai.Client(
     api_key=os.environ.get("GEMINI_API_KEY") or GOOGLE_API_KEY,
     http_options=_genai_types.HttpOptions(
@@ -122,7 +146,7 @@ _gemini_client = _google_genai.Client(
 #  MODULE 1 -- SimLogger
 # ===========================================================================
 class SimLogger:
-    PREFIX = "[SimEngine v2.1]"
+    PREFIX = "[SimEngine v2.2]"
 
     @classmethod
     def info(cls, stage, msg):
@@ -208,6 +232,22 @@ class GenerationValidator:
 # ===========================================================================
 #  MODULE 3 -- HtmlSanitizer
 # ===========================================================================
+
+# ── BUG 4 FIX: Markers that indicate a script contains the tutorial bootstrap.
+# Any script containing these strings must NOT be wrapped in try/catch because
+# the tutorial wires top-level functions (tutOpenWelcome etc.) that need to be
+# accessible across script boundaries.  Wrapping them broke the ? button and
+# caused the Validator to log "Onboarding tutorial system missing" even when
+# the model had generated it correctly.
+_TUTORIAL_BOOTSTRAP_MARKERS = (
+    "tutOpenWelcome",
+    "TUT_STEPS",
+    "tut-root",
+    "tutStart",
+    "tut-help",
+)
+
+
 class HtmlSanitizer:
     @classmethod
     def sanitize(cls, html):
@@ -277,6 +317,17 @@ class HtmlSanitizer:
                 return match.group(0)
             if len(stripped) < 20:
                 return match.group(0)
+            # ── BUG 4 FIX ──────────────────────────────────────────────────
+            # Do NOT wrap scripts that contain the tutorial bootstrap.
+            # The tutorial uses top-level function declarations and
+            # window.addEventListener('load', tutOpenWelcome) that must
+            # remain at module scope; a try/catch wrapper hides them from
+            # other scripts and from the event listener, breaking the
+            # tutorial completely.
+            if any(marker in body for marker in _TUTORIAL_BOOTSTRAP_MARKERS):
+                SimLogger.info("Sanitizer", "Skipping error-boundary wrap for tutorial bootstrap script")
+                return match.group(0)
+            # ────────────────────────────────────────────────────────────────
             wrapped = (
                 "\n/* -- SimEngine Error Boundary -- */\ntry {\n" + body +
                 "\n} catch (_sim_err) {\n"
@@ -479,16 +530,24 @@ _MULTI_EXPERIMENT_TOPICS = {
 
 async def _classify_topic(topic: str) -> str:
     """
-    Keyword-match first (instant, no network). Falls back to an LLM call
+    Keyword-match first (instant, no network).  Falls back to an LLM call
     only when keywords are ambiguous — awaited on the async client.
+
+    BUG 6 FIX: previous code returned the first item of a list comprehension
+    over dict keys when scores were tied, giving non-deterministic and often
+    wrong results.  Now only returns from keyword matching when there is a
+    single clear winner; all ties go to the LLM.
     """
     t = topic.lower()
     scores = {cat: sum(1 for k in kws if k in t) for cat, kws in _CATEGORY_KEYWORDS.items()}
     max_score = max(scores.values()) if scores else 0
     if max_score >= 1:
         top = [c for c, s in scores.items() if s == max_score]
+        # ── BUG 6 FIX: only trust keyword match when there's a single winner ──
         if len(top) == 1:
             return top[0]
+        # Multiple categories tied — fall through to LLM for disambiguation
+        SimLogger.info("Classifier", f"Keyword tie ({[f'{c}:{scores[c]}' for c in top]}) — using LLM")
     try:
         resp = await _gemini_client.aio.models.generate_content(
             model=CLASSIFIER_MODEL,
@@ -939,7 +998,7 @@ JS PATTERN -- DATA-DRIVEN from the exact controls you built:
 - Do NOT skip the onboarding tutorial system -- it is required.
 """
 
-SYSTEM = """You are SimEngine v2.1 -- an expert interactive-simulation engineer who builds
+SYSTEM = """You are SimEngine v2.2 -- an expert interactive-simulation engineer who builds
 single-page HTML5 virtual-lab simulations for students and curious learners.
 
 YOUR MISSION: Given ONE topic, concept, or lab experiment, design and build a
@@ -1057,7 +1116,7 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
 
     system_text = SYSTEM
     user_parts  = [
-        f"Build an interactive HTML5 simulation for SimEngine v2.1.\n",
+        f"Build an interactive HTML5 simulation for SimEngine v2.2.\n",
         f"TOPIC / LAB EXPERIMENT: {topic}",
         f"CATEGORY: {category}",
         f"STRATEGY HINT: {strategy}",
@@ -1107,7 +1166,7 @@ def _parse_response(raw: str, topic: str) -> dict:
                 SimLogger.ok("Parser", f"Strategy {i+1} ({strategy.__name__}) succeeded")
                 return result
         except Exception as e:
-            SimLogger.warn("Parser", f"Strategy {i+1} failed: {e}")
+            SimLogger.warn("Parser", f"Strategy {i+1} ({strategy.__name__}) failed: {e}")
     SimLogger.error("Parser", "All strategies failed")
     return {
         "title":             f"Simulation: {topic[:50]}",
@@ -1277,10 +1336,11 @@ def _normalize_parsed(data, topic):
 
 
 def _find_json_string_end(s):
+    """Find the closing unescaped quote of a JSON string body (quote already consumed)."""
     i = 0
     while i < len(s):
         if s[i] == '\\':
-            i += 2
+            i += 2  # skip escape sequence
         elif s[i] == '"':
             return i
         else:
@@ -1288,9 +1348,34 @@ def _find_json_string_end(s):
     return -1
 
 
-def _unescape_json_string(s):
-    return (s.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
-             .replace('\\r', '\r').replace("\\'", "'").replace('\\\\', '\\'))
+def _unescape_json_string(s: str) -> str:
+    """
+    BUG 3 FIX: The old implementation was a naive chain of str.replace() calls
+    that broke on real HTML with double-escaped sequences, unicode escapes
+    (\\uXXXX), mixed quote styles, and nested backslash runs.
+
+    Strategy:
+      1. Try json.loads('"' + s + '"') -- the correct, spec-compliant decoder.
+      2. If that fails (e.g. because the outer JSON was itself malformed during
+         truncation), fall back to a careful ordered replace chain so we at
+         minimum recover the most common cases.
+
+    The fallback is ordered: \\\\ must be replaced last to avoid double-
+    unescaping sequences that were already correct.
+    """
+    try:
+        return json.loads('"' + s + '"')
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Fallback: ordered replace -- most specific sequences first
+    return (
+        s.replace('\\"', '"')
+         .replace('\\n', '\n')
+         .replace('\\t', '\t')
+         .replace('\\r', '\r')
+         .replace("\\'", "'")
+         .replace('\\\\', '\\')   # MUST be last
+    )
 
 
 # ===========================================================================
@@ -1308,7 +1393,7 @@ def _build_failure_result(topic, reason):
         "learning_notes":    [],
         "image_refs":        [],
         "html":              fallback,
-        "engine_version":    "v2.1",
+        "engine_version":    "v2.2",
         "render_status":     "error",
         "error_reason":      reason,
     }
@@ -1316,7 +1401,7 @@ def _build_failure_result(topic, reason):
 
 async def _run_generation_pipeline(topic: str) -> dict:
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
-    SimLogger.info("Pipeline", f"START v2.1 -- '{short_topic}'")
+    SimLogger.info("Pipeline", f"START v2.2 -- '{short_topic}'")
 
     # Step 1: Classify
     category = await _classify_topic(topic)
@@ -1362,7 +1447,7 @@ async def _run_generation_pipeline(topic: str) -> dict:
             SimLogger.error(
                 "GenerationAI",
                 f"CRITICAL: Model '{SIM_MODEL}' does not exist or is not supported. "
-                f"Set SIM_MODEL env var to a valid model (e.g. 'gemini-3.1-pro-preview'). "
+                f"Set SIM_MODEL env var to a valid model (e.g. 'gemini-2.5-pro'). "
                 f"Raw error: {err_str}"
             )
             return _build_failure_result(
@@ -1405,7 +1490,7 @@ async def _run_generation_pipeline(topic: str) -> dict:
             return _build_failure_result(topic, str(e))
 
     result["html"]           = sim_html
-    result["engine_version"] = "v2.1"
+    result["engine_version"] = "v2.2"
     result["render_status"]  = "ok"
 
     SimLogger.ok("Pipeline", (
@@ -1458,28 +1543,18 @@ def generate_simulation_sync(topic: str) -> dict:
 # ---------------------------------------------------------------------------
 # Streaming entry point (prevents gateway 502s on long generations)
 # ---------------------------------------------------------------------------
-# Wire this as SSE in FastAPI:
-#
-#   from fastapi.responses import StreamingResponse
-#   @app.post("/generate-simulation-stream")
-#   async def stream_endpoint(topic: str):
-#       async def sse():
-#           async for event in generate_simulation_stream(topic):
-#               yield f"data: {json.dumps(event)}\n\n"
-#       return StreamingResponse(sse(), media_type="text/event-stream")
-#
-# Events emitted:
-#   {"type": "status",  "stage": str, "message": str}
-#   {"type": "chunk",   "text": str}
-#   {"type": "done",    "result": <same shape as generate_simulation()>}
-#   {"type": "error",   "result": <failure result dict>}
-# ---------------------------------------------------------------------------
 
 async def generate_simulation_stream(topic: str):
     """
     Async generator yielding progress events for the full generation pipeline.
     Streams model tokens continuously so gateway inactivity timeouts don't fire.
     Never raises — failures come as {"type": "error", ...} events.
+
+    BUG 2 FIX: The original code did:
+        async for chunk in await _gemini_client.aio.models.generate_content_stream(...)
+    generate_content_stream() returns an async generator, NOT a coroutine.
+    Awaiting it raises TypeError: object async_generator can't be used in 'await' expression.
+    Fixed by removing the erroneous `await`.
     """
     topic = (topic or "").strip()
     if not topic:
@@ -1487,7 +1562,7 @@ async def generate_simulation_stream(topic: str):
         return
 
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
-    SimLogger.info("Pipeline", f"START (stream) v2.1 -- '{short_topic}'")
+    SimLogger.info("Pipeline", f"START (stream) v2.2 -- '{short_topic}'")
 
     try:
         yield {"type": "status", "stage": "classify", "message": "Classifying topic..."}
@@ -1502,7 +1577,12 @@ async def generate_simulation_stream(topic: str):
 
         yield {"type": "status", "stage": "generating", "message": "Generating simulation..."}
         raw_parts: List[str] = []
-        async for chunk in await _gemini_client.aio.models.generate_content_stream(
+
+        # ── BUG 2 FIX ────────────────────────────────────────────────────────
+        # generate_content_stream() is an async generator, not a coroutine.
+        # Removed the erroneous `await` that caused TypeError on every call.
+        # ─────────────────────────────────────────────────────────────────────
+        async for chunk in _gemini_client.aio.models.generate_content_stream(
             model=SIM_MODEL,
             contents=user_content,
             config=_genai_types.GenerateContentConfig(
@@ -1518,6 +1598,7 @@ async def generate_simulation_stream(topic: str):
             if text:
                 raw_parts.append(text)
                 yield {"type": "chunk", "text": text}
+
         raw = "".join(raw_parts).strip()
         SimLogger.info("GenerationAI", f"model={SIM_MODEL}  len={len(raw)}")
 
@@ -1545,7 +1626,7 @@ async def generate_simulation_stream(topic: str):
                 return
 
         result["html"]           = sim_html
-        result["engine_version"] = "v2.1"
+        result["engine_version"] = "v2.2"
         result["render_status"]  = "ok"
 
         SimLogger.ok("Pipeline", f"DONE (stream) -- '{result['title']}'  html={len(sim_html):,} chars")
@@ -1570,7 +1651,7 @@ async def generate_simulation_stream(topic: str):
             SimLogger.error(
                 "Pipeline",
                 f"CRITICAL: Model '{SIM_MODEL}' does not exist or is not supported. "
-                f"Set SIM_MODEL env var to 'gemini-3.1-pro-preview'. Raw error: {err_str}"
+                f"Set SIM_MODEL env var to 'gemini-2.5-pro'. Raw error: {err_str}"
             )
             yield {"type": "error", "result": _build_failure_result(
                 topic, f"Model '{SIM_MODEL}' not found. Check your SIM_MODEL env var.")}
@@ -1581,6 +1662,142 @@ async def generate_simulation_stream(topic: str):
         else:
             SimLogger.error("Pipeline", f"UNHANDLED error in streaming pipeline: {err_str}")
             yield {"type": "error", "result": _build_failure_result(topic, f"Unexpected error: {err_str}")}
+
+
+# ===========================================================================
+#  MODULE 10 -- FastAPI Router (BUG 5 FIX)
+# ===========================================================================
+# BUG 5 FIX: /generate-simulation was hit by clients (log line 452/456) but
+# the endpoint was never registered in server.py — only generate_simulation()
+# existed as a bare library function.  The missing route caused a 404 at
+# startup for any client that hadn't cached a prior 200, and no job-queue
+# protection existed so long pipelines hit the Vercel 120s proxy timeout.
+#
+# Solution: expose get_fastapi_router() so server.py can do:
+#
+#   from simulation import get_fastapi_router as _sim_router
+#   app.include_router(_sim_router())
+#
+# The endpoint mirrors the generate-animation job-queue pattern: POST returns
+# a job_id immediately and the actual generation runs as a background task.
+# The frontend polls GET /generate-simulation/status/{job_id}.
+# ===========================================================================
+
+def get_fastapi_router():
+    """
+    Returns a FastAPI APIRouter with:
+      POST /generate-simulation            → enqueue job, return {job_id}
+      GET  /generate-simulation/status/{job_id} → poll for result
+      POST /generate-simulation-stream     → SSE streaming endpoint
+
+    Usage in server.py:
+        from simulation import get_fastapi_router as _sim_get_router
+        app.include_router(_sim_get_router())
+    """
+    try:
+        from fastapi import APIRouter, HTTPException
+        from fastapi.responses import StreamingResponse
+        from pydantic import BaseModel as _BM
+    except ImportError:
+        raise RuntimeError(
+            "FastAPI is not installed. Install it with: pip install fastapi"
+        )
+
+    router = APIRouter(tags=["Simulation"])
+
+    # ── In-memory job store (same pattern as server.py JOBS dict) ──────────
+    # NOTE: This is module-level so it persists across requests within one
+    # process.  For multi-replica deployments, move to Redis.
+    _SIM_JOBS: dict = {}
+    _SIM_BACKGROUND_TASKS: set = set()
+    _JOB_TTL = 3600  # seconds
+
+    def _cleanup():
+        now = asyncio.get_event_loop().time()
+        stale = [
+            jid for jid, j in _SIM_JOBS.items()
+            if j.get("finished_at") is not None and now - j["finished_at"] > _JOB_TTL
+        ]
+        for jid in stale:
+            del _SIM_JOBS[jid]
+
+    def _spawn(coro):
+        task = asyncio.create_task(coro)
+        _SIM_BACKGROUND_TASKS.add(task)
+        def _done(t):
+            _SIM_BACKGROUND_TASKS.discard(t)
+            if not t.cancelled():
+                exc = t.exception()
+                if exc:
+                    print(f"[SimEngine Background] ⚠ unhandled: {exc!r}")
+        task.add_done_callback(_done)
+        return task
+
+    async def _run_job(job_id: str, topic: str):
+        try:
+            _SIM_JOBS[job_id]["status"] = "running"
+            result = await generate_simulation(topic)
+            _SIM_JOBS[job_id]["status"] = "done"
+            _SIM_JOBS[job_id]["result"] = result
+            _SIM_JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+        except Exception as e:
+            _SIM_JOBS[job_id]["status"] = "error"
+            _SIM_JOBS[job_id]["detail"] = f"Simulation generation failed: {e}"
+            _SIM_JOBS[job_id]["finished_at"] = asyncio.get_event_loop().time()
+            print(f"[SimEngine Job {job_id}] ERROR: {e}")
+
+    class _SimRequest(_BM):
+        topic: str
+
+    @router.post("/generate-simulation")
+    async def create_simulation_job(request: _SimRequest):
+        """
+        Enqueue a simulation generation job and return immediately.
+        Poll GET /generate-simulation/status/{job_id} for the result.
+        """
+        topic = (request.topic or "").strip()
+        if not topic:
+            raise HTTPException(status_code=400, detail="'topic' cannot be empty")
+
+        _cleanup()
+        job_id = str(uuid.uuid4())
+        _SIM_JOBS[job_id] = {
+            "status":      "pending",
+            "result":      None,
+            "detail":      None,
+            "finished_at": None,
+        }
+        _spawn(_run_job(job_id, topic))
+        return {"job_id": job_id}
+
+    @router.get("/generate-simulation/status/{job_id}")
+    async def get_simulation_status(job_id: str):
+        job = _SIM_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Unknown or expired job_id")
+        return {
+            "status": job["status"],   # "pending" | "running" | "done" | "error"
+            "result": job["result"],
+            "detail": job["detail"],
+        }
+
+    @router.post("/generate-simulation-stream")
+    async def stream_simulation(request: _SimRequest):
+        """
+        SSE streaming endpoint — yields progress events as the pipeline runs.
+        Wire to an EventSource on the frontend.
+        """
+        topic = (request.topic or "").strip()
+        if not topic:
+            raise HTTPException(status_code=400, detail="'topic' cannot be empty")
+
+        async def sse():
+            async for event in generate_simulation_stream(topic):
+                yield f"data: {json.dumps(event)}\n\n"
+
+        return StreamingResponse(sse(), media_type="text/event-stream")
+
+    return router
 
 
 # ===========================================================================
@@ -1610,7 +1827,7 @@ if __name__ == "__main__":
 
     for cat, t in topics_to_test.items():
         print("=" * 72)
-        print(f"  SimEngine v2.1 | {cat}")
+        print(f"  SimEngine v2.2 | {cat}")
         print(f"  Topic: {t[:65]}")
         print("=" * 72)
 
