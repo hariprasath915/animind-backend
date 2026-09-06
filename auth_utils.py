@@ -82,15 +82,25 @@ def get_supabase(token: Optional[str] = None) -> "Client":
     """
     Return a Supabase client.
 
-    - token=None  → service-role client (bypasses RLS, for admin DB ops)
-    - token=<jwt> → user-scoped client (auth.uid() resolves correctly inside
-                    SECURITY DEFINER RPCs like claim_teacher_pin)
+    - token=None  → service-role client (bypasses RLS, for admin/backend-only ops)
+    - token=<jwt> → user-scoped client using ANON key + user JWT as Authorization.
+
+    ROOT CAUSE FIX:
+    The old code sent service_key as the base client key AND injected the user JWT
+    as an Authorization header on top. Supabase PostgREST cannot reconcile two
+    conflicting credential sources (service role key vs user JWT) and rejects with
+    401 Invalid API key.
+
+    Correct pattern: user-scoped calls must use the ANON key as the base, with the
+    user JWT as the Authorization header. This is exactly what the browser does
+    and what PostgREST expects for RLS to work correctly.
 
     Reads env vars at call time so Railway env-var changes are always picked up
     without a redeploy (avoids stale singleton with empty values).
     """
     url         = os.getenv("SUPABASE_URL", "")
     service_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+    anon_key    = os.getenv("SUPABASE_ANON_KEY")    or os.getenv("SUPABASE_KEY", "")
 
     if not url or not service_key:
         print(f"[AUTH] ⚠ get_supabase() missing env vars: url={bool(url)}, key={bool(service_key)}")
@@ -99,17 +109,18 @@ def get_supabase(token: Optional[str] = None) -> "Client":
         )
 
     if token:
-        # User-scoped client: passes the caller's JWT as the Authorization header.
-        # Inside any SECURITY DEFINER RPC, auth.uid() will resolve to this user's UUID.
+        # Use ANON key + user JWT — the standard Supabase authenticated client pattern.
+        # PostgREST will call auth.uid() from the JWT, making RLS policies work correctly.
+        # DO NOT use service_key here — it conflicts with the user JWT and causes 401.
         from supabase import ClientOptions
         opts = ClientOptions()
         opts.headers = {
-            "apikey":        service_key,
+            "apikey":        anon_key,
             "Authorization": f"Bearer {token}",
         }
-        return create_client(url, service_key, options=opts)
+        return create_client(url, anon_key, options=opts)
 
-    # Service-role client (no user context — bypasses RLS)
+    # Service-role client (no user context — bypasses RLS, for backend-only ops)
     return create_client(url, service_key)
 
 
