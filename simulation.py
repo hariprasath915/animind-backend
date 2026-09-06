@@ -49,16 +49,14 @@ from google.genai import types as _genai_types
 # Client + model routing  (v2.1.5 — self-healing model ID)
 # ---------------------------------------------------------------------------
 
-CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "115"))
+CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "300"))
 CLIENT_MAX_RETRIES       = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "0"))
-PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "120"))
+PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "310"))
 
-# BUG FIX: Hard cap MAX_TOK at 8192.
-# Railway log showed SIM_MAX_TOKENS=65536 set as env var. At 65,536 output tokens,
-# generation takes ~655 seconds and always times out. No output is ever returned.
-# Cap ensures the env var can never cause a timeout regardless of what is set in Railway.
-_MAX_TOK_HARD_CAP = 8192
-_max_tok_raw = int(os.environ.get("SIM_MAX_TOKENS", "4096"))
+# BUG FIX: Cap MAX_TOK to prevent excessive timeouts, but allow enough tokens
+# for very complex simulations (which can exceed 15k tokens).
+_MAX_TOK_HARD_CAP = 32768
+_max_tok_raw = int(os.environ.get("SIM_MAX_TOKENS", "32768"))
 if _max_tok_raw > _MAX_TOK_HARD_CAP:
     print(
         f"[SimEngine] ⚠  SIM_MAX_TOKENS={_max_tok_raw} exceeds hard cap of {_MAX_TOK_HARD_CAP}. "
