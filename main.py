@@ -12,7 +12,9 @@ Entry point (Railway / Render):
     uvicorn main:app --host 0.0.0.0 --port $PORT
 
 Environment variables:
-    ANTHROPIC_API_KEY        — sk-ant-... key for AI generation
+    GEMINI_API_KEY           — AI studio key for simulation generation
+    GOOGLE_API_KEY           — (Optional) Google Cloud API key for image search
+    GOOGLE_CSE_ID            — (Optional) Programmable Search Engine ID
     SUPABASE_URL             — https://<project-id>.supabase.co
     SUPABASE_ANON_KEY        — anon/public key (auth_routes sign-up/sign-in)
     SUPABASE_SERVICE_KEY     — service-role key (backend-only DB CRUD)
@@ -27,7 +29,6 @@ import sys
 import io
 import os
 import re
-import time
 import uuid
 import hashlib
 import asyncio
@@ -42,7 +43,7 @@ import httpx
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -61,7 +62,7 @@ from claude_client import (                                            # pyrefly
     subtopics_json_to_genzet_args,
     generate_ultimate_learning_content,
 )
-from simulation import generate_simulation, generate_simulation_stream       # pyrefly: ignore [missing-import]
+from simulation import generate_simulation                               # pyrefly: ignore [missing-import]
 from pdf_handler import (                                              # pyrefly: ignore [missing-import]
     extract_pdf_text,
     find_subtopics_in_pdf,
@@ -120,6 +121,15 @@ async def lifespan(app: FastAPI):
         pass
     print("[SHUTDOWN] GenZet / Animind shutting down.")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOGGING CONFIGURATION (Silencing library spam to avoid Railway rate limits)
+# ══════════════════════════════════════════════════════════════════════════════
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("postgrest").setLevel(logging.WARNING)
+logging.getLogger("supabase").setLevel(logging.WARNING)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FASTAPI APP
@@ -305,8 +315,6 @@ async def health(request: Request):
                 "book_mode":          "POST /generate-from-book",
                 "topic_content":      "POST /generate-topic-content",
                 "simulation":         "POST /generate-simulation",
-                "simulation_stream":  "POST /generate-simulation-stream   (SSE, avoids gateway inactivity-timeout 502s)",
-                "simulation_job":     "POST /generate-simulation-job + GET /generate-simulation-job/{job_id}  (poll-based, avoids hard MAX-DURATION timeouts too)",
             },
             "admin": {
                 "errors": "GET /admin/errors  (X-Admin-Token header required)",
@@ -1055,242 +1063,10 @@ async def create_simulation(request: SimulationRequest):
         }
 
     # ── Step 2: Generate via AI pipeline ─────────────────────────────────────
-    # Optionally prepend the subject-mode as context hint
-    if request.mode and request.mode.lower() not in ("general", ""):
-        topic_with_mode = f"{topic} (subject area: {request.mode})"
-    else:
-        topic_with_mode = topic
-
-    result = await generate_simulation(topic_with_mode)
+    result = await generate_simulation(topic)
     result["source"] = "generated"
     # generate_simulation never raises — on failure render_status == "error"
     return result
-
-
-@app.post("/generate-simulation-stream")
-async def create_simulation_stream(request: SimulationRequest):
-    """
-    Server-Sent Events version of /generate-simulation.
-
-    WHY THIS EXISTS: /generate-simulation holds one request open for the
-    entire pipeline and only writes a response at the very end. If that
-    takes longer than whatever gateway/proxy sits in front of this service
-    is willing to wait on a silent connection, it kills the connection and
-    the browser sees a raw 502 — even though generate_simulation() itself
-    never raises and always would have returned valid JSON eventually. This
-    endpoint sends bytes continuously for the life of the request instead,
-    so there's never a long enough silent gap for an inactivity-based
-    gateway timeout to trigger on.
-
-    Same cache-check + mode-hint logic as /generate-simulation, then
-    delegates to generate_simulation_stream() from simulation.py. Emits one
-    JSON object per SSE `data:` line:
-
-      {"type": "status", "stage": ..., "message": ...}  — progress updates
-      {"type": "chunk",  "text": ...}                   — raw streamed
-                                                            model output,
-                                                            for progress UX
-                                                            only (not
-                                                            renderable HTML
-                                                            until "done")
-      {"type": "done",   "result": {...}}                — same shape as
-                                                            /generate-simulation
-      {"type": "error",  "result": {...}}                — graceful failure,
-                                                            same shape as a
-                                                            render_status
-                                                            == "error" result
-
-    Frontend usage: read the stream with EventSource or a fetch() +
-    ReadableStream reader, show `status`/`chunk` events as a live progress
-    indicator, and swap in `result.html` once a `done` (or `error`) event
-    arrives.
-    """
-    topic = (request.topic or "").strip()
-    if not topic:
-        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
-    if len(topic) > 2000:
-        raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
-
-    if request.mode and request.mode.lower() not in ("general", ""):
-        topic_with_mode = f"{topic} (subject area: {request.mode})"
-    else:
-        topic_with_mode = topic
-
-    async def sse():
-        # ── Cache check first, same as /generate-simulation ─────────────
-        cached_html = _find_cached_simulation(topic)
-        if cached_html:
-            cached_result = {
-                "title":             topic,
-                "category":          "cached",
-                "summary":           f"Pre-built experiment loaded for: {topic}",
-                "controls_overview": [],
-                "key_formula":       "",
-                "learning_notes":    [],
-                "image_refs":        [],
-                "html":              cached_html,
-                "engine_version":    "cache",
-                "render_status":     "ok",
-                "source":            "cache",
-            }
-            yield f"data: {json.dumps({'type': 'done', 'result': cached_result})}\n\n"
-            return
-
-        # ── Otherwise stream the AI pipeline ─────────────────────────────
-        async for event in generate_simulation_stream(topic_with_mode):
-            if event.get("type") in ("done", "error") and "result" in event:
-                event["result"]["source"] = "generated"
-            yield f"data: {json.dumps(event)}\n\n"
-
-    return StreamingResponse(
-        sse(),
-        media_type="text/event-stream",
-        headers={
-            # Disable buffering on common proxies (nginx) so chunks are
-            # flushed immediately instead of batched, which would defeat
-            # the whole point of streaming.
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Poll-based simulation generation (the fix for HARD max-duration limits)
-# ══════════════════════════════════════════════════════════════════════════════
-# /generate-simulation-stream fixes gateways that time out on connection
-# *inactivity* -- but some hosts (Render's default proxy is a known one; some
-# serverless setups too) enforce a hard MAXIMUM REQUEST DURATION regardless of
-# whether bytes are actively flowing. No amount of streaming inside a single
-# HTTP request can get around a ceiling like that, because the platform kills
-# the connection at that wall-clock mark no matter what.
-#
-# The only way around a hard per-request ceiling is to stop making the
-# generation itself part of any one HTTP request. Instead: kick it off as a
-# background asyncio task and return a job_id immediately (this request
-# finishes in milliseconds), then let the frontend poll a status endpoint
-# every couple of seconds -- each individual poll is also just milliseconds,
-# so it's immune to the ceiling no matter how long the underlying generation
-# legitimately takes.
-#
-# CAVEAT: job state below lives in this process's memory. That's fine for a
-# single-worker/single-instance deployment (the common case for `uvicorn
-# main:app` on Railway/Render). If this is ever scaled to multiple worker
-# processes or multiple instances behind a load balancer, a poll request can
-# land on a different worker than the one running the job and 404 -- at that
-# point swap _SIM_JOBS for Redis or a DB row instead of an in-memory dict.
-
-_SIM_JOBS: dict = {}
-_SIM_JOBS_MAX_AGE_SECONDS = 3600  # garbage-collect finished/abandoned jobs after 1h
-
-
-def _cleanup_sim_jobs() -> None:
-    now = time.time()
-    stale = [jid for jid, j in _SIM_JOBS.items()
-             if now - j.get("updated_at", now) > _SIM_JOBS_MAX_AGE_SECONDS]
-    for jid in stale:
-        _SIM_JOBS.pop(jid, None)
-
-
-async def _run_simulation_job(job_id: str, topic: str, topic_with_mode: str) -> None:
-    job = _SIM_JOBS[job_id]
-    try:
-        # Same cache-check as the other two endpoints.
-        cached_html = _find_cached_simulation(topic)
-        if cached_html:
-            job["status"] = "done"
-            job["result"] = {
-                "title":             topic,
-                "category":          "cached",
-                "summary":           f"Pre-built experiment loaded for: {topic}",
-                "controls_overview": [],
-                "key_formula":       "",
-                "learning_notes":    [],
-                "image_refs":        [],
-                "html":              cached_html,
-                "engine_version":    "cache",
-                "render_status":     "ok",
-                "source":            "cache",
-            }
-            return
-
-        async for event in generate_simulation_stream(topic_with_mode):
-            job["updated_at"] = time.time()
-            if event["type"] == "status":
-                job["stage"]   = event.get("stage")
-                job["message"] = event.get("message")
-            elif event["type"] == "chunk":
-                job["chunks_received"] = job.get("chunks_received", 0) + 1
-            elif event["type"] in ("done", "error"):
-                event["result"]["source"] = "generated"
-                job["status"] = "done" if event["type"] == "done" else "error"
-                job["result"] = event["result"]
-    except Exception as e:
-        job["status"] = "error"
-        job["result"] = {
-            "title":             f"Simulation: {topic[:50]}",
-            "category":          "GENERAL_PROCESS",
-            "summary":           "Generation failed",
-            "controls_overview": [],
-            "key_formula":       "",
-            "learning_notes":    [],
-            "image_refs":        [],
-            "html":              "",
-            "engine_version":    "v2.1.2",
-            "render_status":     "error",
-            "error_reason":      f"Unexpected error: {e}",
-        }
-    finally:
-        job["updated_at"] = time.time()
-
-
-@app.post("/generate-simulation-job")
-async def create_simulation_job(request: SimulationRequest):
-    """
-    Start simulation generation as a background task; returns a job_id
-    immediately. Poll GET /generate-simulation-job/{job_id} for progress
-    and the final result -- see the module comment above for why this
-    exists.
-    """
-    topic = (request.topic or "").strip()
-    if not topic:
-        raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
-    if len(topic) > 2000:
-        raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
-
-    if request.mode and request.mode.lower() not in ("general", ""):
-        topic_with_mode = f"{topic} (subject area: {request.mode})"
-    else:
-        topic_with_mode = topic
-
-    _cleanup_sim_jobs()
-    job_id = uuid.uuid4().hex
-    _SIM_JOBS[job_id] = {
-        "status":  "running",
-        "stage":   None,
-        "message": "Starting…",
-        "result":  None,
-        "chunks_received": 0,
-        "created_at": time.time(),
-        "updated_at": time.time(),
-    }
-    asyncio.create_task(_run_simulation_job(job_id, topic, topic_with_mode))
-    return {"job_id": job_id, "status": "running"}
-
-
-@app.get("/generate-simulation-job/{job_id}")
-async def get_simulation_job_status(job_id: str):
-    job = _SIM_JOBS.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Unknown or expired job_id")
-    return {
-        "status":          job["status"],
-        "stage":           job.get("stage"),
-        "message":         job.get("message"),
-        "chunks_received": job.get("chunks_received", 0),
-        "result":          job.get("result"),
-    }
 
 
 @app.post("/generate-topic-content")
