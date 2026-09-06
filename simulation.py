@@ -1695,8 +1695,48 @@ async def _run_generation_pipeline(topic: str) -> dict:
         if finish in ('MAX_TOKENS', 'max_tokens', 2):
             SimLogger.warn("GenerationAI", "Hit max_output_tokens -- output may be truncated!")
     except Exception as e:
-        SimLogger.error("GenerationAI", f"API call failed: {e}")
-        return _build_failure_result(topic, f"API error: {e}")
+        err_str = str(e)
+        # ── Detect fatal, non-retryable API errors and log them loudly ──────────
+        # Previously these were silently swallowed as fallback HTML with 200 OK,
+        # making Railway logs show nothing. Now they surface as CRITICAL log lines.
+        is_model_not_found = (
+            "404" in err_str or
+            "NOT_FOUND" in err_str or
+            "not found" in err_str.lower() or
+            "is not supported for generateContent" in err_str
+        )
+        is_auth_error = (
+            "401" in err_str or
+            "403" in err_str or
+            "UNAUTHENTICATED" in err_str or
+            "API_KEY_INVALID" in err_str
+        )
+
+        if is_model_not_found:
+            SimLogger.error(
+                "GenerationAI",
+                f"CRITICAL: Model '{SIM_MODEL}' does not exist or is not supported. "
+                f"Set SIM_MODEL env var to a valid model (e.g. 'gemini-2.5-pro'). "
+                f"Raw error: {err_str}"
+            )
+            return _build_failure_result(
+                topic,
+                f"Model '{SIM_MODEL}' not found. Check your SIM_MODEL environment variable."
+            )
+        elif is_auth_error:
+            SimLogger.error(
+                "GenerationAI",
+                f"CRITICAL: API authentication failed ({err_str[:200]}). "
+                f"Check GEMINI_API_KEY environment variable."
+            )
+            return _build_failure_result(
+                topic,
+                "API authentication failed. Check your GEMINI_API_KEY."
+            )
+        else:
+            SimLogger.error("GenerationAI", f"API call failed: {err_str}")
+            return _build_failure_result(topic, f"API error: {err_str}")
+
 
     # Step 5: Parse
     result = _parse_response(raw, topic)
@@ -1917,8 +1957,39 @@ async def generate_simulation_stream(topic: str):
         yield {"type": "error", "result": _build_failure_result(
             topic, "Generation took too long and was stopped. Please try again.")}
     except Exception as e:
-        SimLogger.error("Pipeline", f"UNHANDLED error in streaming pipeline: {e}")
-        yield {"type": "error", "result": _build_failure_result(topic, f"Unexpected error: {e}")}
+        err_str = str(e)
+        is_model_not_found = (
+            "404" in err_str or "NOT_FOUND" in err_str or
+            "not found" in err_str.lower() or
+            "is not supported for generateContent" in err_str
+        )
+        is_auth_error = (
+            "401" in err_str or "403" in err_str or
+            "UNAUTHENTICATED" in err_str or "API_KEY_INVALID" in err_str
+        )
+        if is_model_not_found:
+            SimLogger.error(
+                "Pipeline",
+                f"CRITICAL: Model '{SIM_MODEL}' does not exist or is not supported. "
+                f"Set SIM_MODEL env var to a valid model (e.g. 'gemini-2.5-pro'). "
+                f"Raw error: {err_str}"
+            )
+            yield {"type": "error", "result": _build_failure_result(
+                topic,
+                f"Model '{SIM_MODEL}' not found. Check your SIM_MODEL environment variable."
+            )}
+        elif is_auth_error:
+            SimLogger.error(
+                "Pipeline",
+                f"CRITICAL: API authentication failed. Check GEMINI_API_KEY. ({err_str[:200]})"
+            )
+            yield {"type": "error", "result": _build_failure_result(
+                topic, "API authentication failed. Check your GEMINI_API_KEY."
+            )}
+        else:
+            SimLogger.error("Pipeline", f"UNHANDLED error in streaming pipeline: {err_str}")
+            yield {"type": "error", "result": _build_failure_result(topic, f"Unexpected error: {err_str}")}
+
 
 
 # ===========================================================================
