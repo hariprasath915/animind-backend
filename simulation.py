@@ -181,7 +181,6 @@ class GenerationValidator:
     ]
 
     @classmethod
-    @classmethod
     def repair(cls, html: str) -> str:
         """
         Auto-repair common truncation artifacts from LLM output.
