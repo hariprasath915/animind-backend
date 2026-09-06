@@ -1423,6 +1423,7 @@ def _parse_response(raw: str, topic: str) -> dict:
         _parse_stripped_json,
         _parse_brace_extracted,
         _parse_field_by_field,
+        _parse_markdown_fenced,   # Gemini often wraps in ```html ... ```
         _parse_bare_html,
     ]
     for i, strategy in enumerate(strategies):
@@ -1507,6 +1508,67 @@ def _extract_simulation_code_field(raw):
     if end == -1:
         return ""
     return _unescape_json_string(content[:end])
+
+
+def _parse_markdown_fenced(raw, topic):
+    """Handle Gemini's default output of ```html\n...\n``` or ```json\n...\n```."""
+    # Strip outer markdown fence if the whole response is one fenced block
+    stripped = raw.strip()
+    fence_match = re.match(r'^```(?:html|json)?\s*\n?(.*?)\n?```$', stripped, re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        inner = fence_match.group(1).strip()
+        # Inner might be JSON
+        try:
+            data = json.loads(inner)
+            result = _normalize_parsed(data, topic)
+            if result:
+                return result
+        except Exception:
+            pass
+        # Inner might be bare HTML
+        for marker in ['<!DOCTYPE html>', '<html', '<svg']:
+            idx = inner.find(marker)
+            if idx != -1:
+                end = inner.rfind('</html>')
+                code = inner[idx:end + 7] if end != -1 else inner[idx:]
+                if len(code) > 200:
+                    return {
+                        "title":             f"Simulation: {topic[:50]}",
+                        "category":          "GENERAL_PROCESS",
+                        "summary":           "Interactive simulation",
+                        "controls_overview": [],
+                        "key_formula":       "",
+                        "learning_notes":    [],
+                        "simulation_code":   code.strip(),
+                    }
+    # Also handle ```html anywhere in a longer response
+    for pat in [r'```html\s*\n(.*?)\n```', r'```json\s*\n(.*?)\n```']:
+        m = re.search(pat, raw, re.DOTALL | re.IGNORECASE)
+        if m:
+            inner = m.group(1).strip()
+            try:
+                data = json.loads(inner)
+                result = _normalize_parsed(data, topic)
+                if result:
+                    return result
+            except Exception:
+                pass
+            for marker in ['<!DOCTYPE html>', '<html']:
+                idx = inner.find(marker)
+                if idx != -1:
+                    end = inner.rfind('</html>')
+                    code = inner[idx:end + 7] if end != -1 else inner[idx:]
+                    if len(code) > 200:
+                        return {
+                            "title":             f"Simulation: {topic[:50]}",
+                            "category":          "GENERAL_PROCESS",
+                            "summary":           "Interactive simulation",
+                            "controls_overview": [],
+                            "key_formula":       "",
+                            "learning_notes":    [],
+                            "simulation_code":   code.strip(),
+                        }
+    return None
 
 
 def _parse_bare_html(raw, topic):
@@ -1619,6 +1681,9 @@ async def _run_generation_pipeline(topic: str) -> dict:
                 system_instruction=system_text,
                 max_output_tokens=MAX_TOK,
                 temperature=1.0,
+                automatic_function_calling=_genai_types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
             ),
         )
         raw = (response.text or "").strip()
@@ -1804,6 +1869,9 @@ async def generate_simulation_stream(topic: str):
                 system_instruction=system_text,
                 max_output_tokens=MAX_TOK,
                 temperature=1.0,
+                automatic_function_calling=_genai_types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
             ),
         ):
             text = chunk.text or ""
