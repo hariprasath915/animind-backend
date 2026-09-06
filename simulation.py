@@ -72,7 +72,7 @@ GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 # Safe defaults — use model IDs confirmed working on Google AI Studio API keys.
 # Google API confirmed: gemini-3.1-pro-preview is the replacement for gemini-2.5-pro.
 _SAFE_DEFAULT_SIM_MODEL        = "gemini-3.1-pro-preview"
-_SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-2.0-flash"
+_SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-3.1-pro-preview"
 
 
 # Confirmed working: gemini-3.1-pro-preview (Google's own API error message said to use it)
@@ -81,8 +81,8 @@ _BAD_MODEL_PATTERNS = [
     # Date-suffix preview variants — retired periodically by Google
     (r"gemini-[\d.]+-pro-preview-\d{2}-\d{2}",  "gemini-3.1-pro-preview"),
     (r"gemini-[\d.]+-pro-preview-\d{2}",         "gemini-3.1-pro-preview"),
-    (r"gemini-[\d.]+-flash-preview-\d{2}-\d{2}", "gemini-2.0-flash"),
-    (r"gemini-[\d.]+-flash-preview-\d{2}",       "gemini-2.0-flash"),
+    (r"gemini-[\d.]+-flash-preview-\d{2}-\d{2}", "gemini-3.1-pro-preview"),
+    (r"gemini-[\d.]+-flash-preview-\d{2}",       "gemini-3.1-pro-preview"),
     # Anthropic model IDs (switched away from Claude)
     (r"claude-",                                  _SAFE_DEFAULT_SIM_MODEL),
 ]
@@ -1021,58 +1021,57 @@ Return ONLY raw JSON (no markdown, no code fences, no commentary):
 
 STRATEGY_TEMPLATES = {
     "PHYSICS_MECHANICS":
-        "Canvas with a ground/axis reference. Main controls: initial conditions "
-        "(angle, velocity, mass, length) + physical constants (g, friction, k). "
-        "REQUIRED equations: Newton's 2nd law F=ma, energy E=KE+PE, specific to "
-        "the experiment (pendulum: θ''=-(g/L)sinθ; projectile: x=v₀cosθ·t, "
-        "y=v₀sinθ·t-½gt²; spring: F=-kx). "
-        "Metrics: period T, max velocity, current KE, current PE, total E.",
+        "Canvas MUST draw a physical, visual scene (e.g. pendulums swinging, blocks sliding, "
+        "springs bouncing, planets orbiting) rather than just a graph. "
+        "REQUIRED equations: Newton's 2nd law F=ma, energy E=KE+PE. "
+        "Metrics: period T, velocity, current KE, current PE, total E.",
 
     "PHYSICS_WAVES_OPTICS":
-        "Canvas with rays/wavefronts on a dark background, glow strokes for beams. "
-        "REQUIRED equations: Snell's n₁sinθ₁=n₂sinθ₂; lens 1/f=1/do+1/di; "
-        "mirror same form; critical angle θc=arcsin(n₂/n₁); magnification M=-di/do. "
-        "Metrics: angles θ₁/θ₂, image distance di, magnification M, critical angle.",
+        "Canvas MUST draw physical optical components (lenses, mirrors, prisms) and visual "
+        "light rays/wavefronts on a dark background. "
+        "REQUIRED equations: Snell's law; lens/mirror equations. "
+        "Metrics: angles θ₁/θ₂, image distance, magnification, critical angle.",
 
     "ELECTRICITY_CIRCUITS":
-        "Schematic-style canvas: draw a real circuit diagram with animated current flow. "
-        "REQUIRED equations: Ohm's V=IR; RC: V(t)=V₀(1-e^(-t/RC)), τ=RC; "
-        "RLC: resonance ω₀=1/√(LC), Q=ω₀L/R. "
+        "Canvas MUST draw a visual, interactive circuit diagram (resistors, capacitors, batteries) "
+        "with animated particles or arrows showing current flow. "
+        "REQUIRED equations: Ohm's V=IR; RC/RLC dynamics. "
         "Metrics: current I, charge Q, time constant τ, power P=V²/R.",
 
     "CHEMISTRY":
-        "Canvas showing a reaction-progress diagram or titration curve. "
-        "REQUIRED equations: rate law r=k[A]^m[B]^n; Arrhenius k=A·e^(-Ea/RT); "
-        "equilibrium K=[products]/[reactants]; Henderson-Hasselbalch pH=pKa+log([A⁻]/[HA]). "
-        "Metrics: rate constant k, equilibrium position Q vs K, pH, half-life.",
+        "Canvas MUST draw a visual laboratory setup (e.g. flasks, beakers, burettes, burners) "
+        "with animated liquid colors, bubbles, or particles. Do NOT just draw a graph. If a "
+        "titration curve or reaction plot is needed, draw it alongside the physical beaker/flask. "
+        "REQUIRED equations: rate laws, equilibrium, Henderson-Hasselbalch, Nernst. "
+        "Metrics: rate constant k, pH, concentration, cell potential.",
 
     "BIOLOGY":
-        "Canvas showing biological shapes (cells, population curves). "
-        "REQUIRED equations: logistic growth dN/dt=rN(1-N/K); Lotka-Volterra; "
-        "Michaelis-Menten v=Vmax[S]/(Km+[S]). "
-        "Metrics: population at time t, growth rate dN/dt, doubling time.",
+        "Canvas MUST draw visual biological structures (cells dividing, DNA strands, bacteria in a petri dish, "
+        "ecosystem agents). Do NOT just draw a population graph. "
+        "REQUIRED equations: logistic growth, Michaelis-Menten. "
+        "Metrics: population count, growth rate, substrate concentration.",
 
     "MATH_GEOMETRY":
-        "Canvas coordinate plane with axes, grid, and a plotted function/shape. "
-        "Metrics: roots, extrema, area under curve (numerical integration), period.",
+        "Canvas MUST draw interactive geometric shapes, curves, or fractals on a coordinate plane. "
+        "Metrics: area, perimeter, roots, extrema, period.",
 
     "CS_ALGORITHMS":
-        "Canvas showing an array/tree/graph with labeled nodes/bars. "
-        "Metrics: comparisons count, swaps count, current Big-O class, elapsed steps.",
+        "Canvas MUST draw visual data structures (nodes, trees, arrays) with animated highlights "
+        "showing the algorithm's progress step-by-step. "
+        "Metrics: comparisons count, swaps count, elapsed steps.",
 
     "EARTH_ENV_SCIENCE":
-        "Canvas showing a cross-section or time-series plot. "
-        "REQUIRED equations: radiative forcing ΔF=α·ln(C/C₀). "
-        "Metrics: projected values at chosen year, rate of change, anomaly vs baseline.",
+        "Canvas MUST draw a visual cross-section of the earth, atmosphere, or environment "
+        "(e.g. clouds, ice caps, tectonic plates) rather than just a time-series plot. "
+        "Metrics: projected temperature, CO2 concentration, sea level.",
 
     "ECONOMICS_SOCIAL":
-        "Light-theme canvas/SVG plotting supply-demand curves or a time-series. "
-        "REQUIRED equations: consumer surplus CS=½(Pmax-Pe)·Qe; elasticity E=(ΔQ/Q)/(ΔP/P). "
-        "Metrics: equilibrium price Pe, quantity Qe, consumer/producer surplus.",
+        "Canvas drawing supply-demand curves or market agents. "
+        "Metrics: equilibrium price, quantity, consumer/producer surplus.",
 
     "GENERAL_PROCESS":
-        "Choose the visualization that best fits the specific process. "
-        "Expose the 3-6 parameters that most meaningfully change the outcome. "
+        "Canvas MUST draw a highly visual, physical representation of the process "
+        "(e.g. machines, agents, fluid flow) alongside any necessary data plots. "
         "Show a metrics strip with the most informative derived values.",
 }
 
