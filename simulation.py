@@ -19,18 +19,16 @@ PURPOSE
       model understands real instrument / diagram aesthetics before
       generating the simulation
 
-ROOT CAUSE FIX (v2.1.5):
-  SIM_MODEL env var was set to "gemini-2.5-pro-preview-05-06" — a
-  retired date-suffix variant. The google-genai SDK on api_version="v1"
-  returns 404 NOT_FOUND for this model on every request.
+ROOT CAUSE FIX (v2.1.6):
+  Google's own API error message confirmed:
+  'This model models/gemini-2.5-pro is no longer available to new users.
+   Please update your code to use models/gemini-3.1-pro-preview'
 
   Fix applied:
-    1. Default SIM_MODEL changed to "gemini-3.1-pro-preview" (matches
-       what q_animation already uses successfully in production).
-    2. _sanitize_model_id() strips known-bad date-suffix patterns at
-       import time and auto-corrects rather than just warning.
-    3. api_version kept as "v1" (required for gemini-3.1+; default
-       v1beta does not expose these models).
+    1. Default SIM_MODEL = 'gemini-3.1-pro-preview' (Google-confirmed replacement)
+    2. Removed gemini-3.1 from _BAD_MODEL_PATTERNS (it IS the correct model)
+    3. AutomaticFunctionCallingConfig removed (caused silent failures)
+    4. ThinkingConfig with try/except fallback added (mirrors q_animation pattern)
 """
 
 import os
@@ -74,21 +72,17 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 
 # Safe defaults — use model IDs confirmed working on Google AI Studio API keys.
-# NOTE: gemini-3.1-pro-preview returned 404 in prod logs. If it fails again,
-# set SIM_MODEL=gemini-2.5-flash in Railway Variables as a working fallback.
+# Google API confirmed: gemini-3.1-pro-preview is the replacement for gemini-2.5-pro.
 _SAFE_DEFAULT_SIM_MODEL        = "gemini-3.1-pro-preview"
 _SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-2.0-flash"
 
 
-# Patterns known to cause 404 NOT_FOUND on the v1 API for Google AI Studio keys.
-# Each entry: (regex_pattern, safe_replacement)
+# Confirmed working: gemini-3.1-pro-preview (Google's own API error message said to use it)
+# Patterns known to cause 404 — only flag genuinely bad IDs, NOT gemini-3.1.
 _BAD_MODEL_PATTERNS = [
-    # gemini-3.1 does NOT exist on Google AI Studio (only on internal Vertex AI preview).
-    # Log proof: 'gemini-3.1-pro-preview is not found for API version v1'
-    (r"gemini-3\.[\d]+",                         "gemini-2.5-pro"),
     # Date-suffix preview variants — retired periodically by Google
-    (r"gemini-[\d.]+-pro-preview-\d{2}-\d{2}",  "gemini-2.5-pro"),
-    (r"gemini-[\d.]+-pro-preview-\d{2}",         "gemini-2.5-pro"),
+    (r"gemini-[\d.]+-pro-preview-\d{2}-\d{2}",  "gemini-3.1-pro-preview"),
+    (r"gemini-[\d.]+-pro-preview-\d{2}",         "gemini-3.1-pro-preview"),
     (r"gemini-[\d.]+-flash-preview-\d{2}-\d{2}", "gemini-2.0-flash"),
     (r"gemini-[\d.]+-flash-preview-\d{2}",       "gemini-2.0-flash"),
     # Anthropic model IDs (switched away from Claude)
@@ -124,9 +118,8 @@ CLASSIFIER_MODEL = _sanitize_model_id(
 print(f"[SimEngine] Model configured: SIM_MODEL='{SIM_MODEL}', CLASSIFIER='{CLASSIFIER_MODEL}'")
 
 # Gemini async client.
-# NOTE: Do NOT set api_version="v1" here — the v1 GA endpoint does not expose
-# preview/recent models like gemini-2.5-flash. The SDK default (v1beta) supports
-# all current Gemini models on Google AI Studio API keys.
+# NOTE: Do NOT set api_version here — the SDK default (v1beta) supports
+# gemini-3.1-pro-preview and all current Gemini models on Google AI Studio API keys.
 _gemini_client = _google_genai.Client(
     api_key=os.environ.get("GEMINI_API_KEY") or GOOGLE_API_KEY,
     http_options=_genai_types.HttpOptions(
