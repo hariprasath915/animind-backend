@@ -118,7 +118,7 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
         # ── 1. Generated items (is_saved=True only) ──────────────────
         items_res = (
             supabase.table("generated_items")
-            .select("id, item_type, title, prompt, explanation, html_code, playlist, is_saved, source_topic, source_subtopic, source_pdf_name, created_at, updated_at")
+            .select("id, item_type, title, prompt, explanation, html_code, playlist, is_saved, source_topic, source_subtopic, source_pdf_name, created_at, updated_at, unit_id")
             .eq("user_id", user_id)
             .eq("is_saved", True)
             .is_("deleted_at", "null")
@@ -837,6 +837,113 @@ def save_unit_lessons(
 
     print(f"[SYNC] ✅ Unit lessons saved: unit={unit_id} count={len(new_ids)} user={current_user['email']!r}")
     return {"success": True, "unit_id": unit_id, "count": len(new_ids)}
+
+
+# ════════════════════════════════════════════════════════════════
+# SAVE TO UNIT  —  "Save in File" from Creator with AI
+# ════════════════════════════════════════════════════════════════
+
+class SaveToUnitRequest(BaseModel):
+    unit_id:      str
+    subject_id:   str
+    title:        str   = Field(default="Untitled", max_length=500)
+    html:         str   = Field(default="")
+    prompt:       str   = Field(default="")
+    explanation:  str   = Field(default="")
+    content_type: str   = Field(default="animation")  # 'animation' | 'notes' | 'simulation'
+
+
+@router.post("/save-to-unit", status_code=201)
+def save_to_unit(
+    body:         SaveToUnitRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Save an AI-generated output (animation / notes / simulation) directly
+    into a File-Mode unit.
+
+    Steps:
+      1. Insert a row into `generated_items` with unit_id set.
+      2. Insert a row into `unit_lessons` linking that item to the unit.
+      3. Return the new item's id, title, and unit_id.
+    """
+    _ensure_user_row(current_user)
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+
+    # Map content_type → item_type used by generated_items table
+    type_map = {
+        "animation":  "ai_creator",
+        "notes":      "ai_creator",
+        "simulation": "ai_creator",
+    }
+    item_type = type_map.get(body.content_type, "ai_creator")
+
+    # 1. Insert into generated_items (with unit_id)
+    row = {
+        "user_id":     user_id,
+        "item_type":   item_type,
+        "title":       (body.title or "Untitled").strip(),
+        "prompt":      body.prompt or "",
+        "explanation": body.explanation or "",
+        "html_code":   body.html or "",
+        "playlist":    "__file_unit__",   # sentinel so Library hides it
+        "is_saved":    True,
+        "unit_id":     body.unit_id,
+        "created_at":  _now(),
+    }
+    res     = supabase.table("generated_items").insert(row).execute()
+    item_id = res.data[0]["id"] if res.data else None
+
+    if not item_id:
+        raise HTTPException(status_code=500, detail="Failed to save item to database.")
+
+    # 2. Insert into unit_lessons to link the item to the unit
+    ul_row = {
+        "unit_id":    body.unit_id,
+        "lesson_id":  item_id,
+        "user_id":    user_id,
+        "sort_order": 0,
+    }
+    supabase.table("unit_lessons").insert(ul_row).execute()
+
+    print(
+        f"[SYNC] ✅ Saved to unit: item={item_id} unit={body.unit_id} "
+        f"type={body.content_type} title={body.title!r} user={current_user['email']!r}"
+    )
+    return {
+        "success":  True,
+        "id":       item_id,
+        "title":    body.title,
+        "unit_id":  body.unit_id,
+        "item_type": item_type,
+    }
+
+
+@router.get("/unit-ai-items/{unit_id}", status_code=200)
+def get_unit_ai_items(
+    unit_id:      str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Return all AI-generated items (generated_items) that are saved
+    to a specific File-Mode unit, ordered by creation date descending.
+    """
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+
+    res = (
+        supabase.table("generated_items")
+        .select("id, item_type, title, prompt, explanation, html_code, playlist, created_at, unit_id")
+        .eq("user_id",  user_id)
+        .eq("unit_id",  unit_id)
+        .eq("is_saved", True)
+        .is_("deleted_at", "null")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    items = res.data or []
+    return {"unit_id": unit_id, "items": items, "count": len(items)}
 
 
 # ════════════════════════════════════════════════════════════════
