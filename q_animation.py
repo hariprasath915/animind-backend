@@ -740,6 +740,64 @@ Check silently:
 """
 
 
+def _rebuild_steps_data_js(scene: dict) -> str:
+    """Rebuild stepsData from scene dict to avoid JS syntax errors."""
+    steps_data = []
+    
+    all_layers = [
+        "layer-frame", "layer-object", "layer-param1",
+        "layer-param2", "layer-derived", "layer-summary"
+    ]
+    if scene.get("svg_layers"):
+        all_layers = list(scene["svg_layers"].keys())
+        
+    for s in scene.get("steps", []):
+        badges_html = []
+        for b in s.get("badges", []):
+            b_text = html_module.escape(str(b.get("text", "")))
+            b_type = html_module.escape(str(b.get("type", "cyan")))
+            badges_html.append(f'<span class="badge badge-{b_type}">{b_text}</span>')
+            
+        layer_ops = {}
+        visible_layers = s.get("layers_visible", [])
+        for layer in all_layers:
+            layer_ops[layer] = 1 if layer in visible_layers else 0
+            
+        steps_data.append({
+            "title": str(s.get("title", "")),
+            "desc": str(s.get("description", "")),
+            "badges": badges_html,
+            "blurOp": 0.38 if s.get("blur") else 0.0,
+            "layerOpacities": layer_ops,
+            "overlays": []
+        })
+        
+    return "var stepsData = " + json.dumps(steps_data, indent=2) + ";"
+
+
+def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
+    """Call Gemini to generate the SVG and step data."""
+    if _gemini_client is None:
+        return {"svg_defs": "", "svg_layers": "", "steps_data_js": "var stepsData=[];", "apply_step_js": "function applyStep(idx){window.currentStep=idx;}", "raf_js": ""}
+
+    scene_str = json.dumps(scene, indent=2)
+    sol_str = json.dumps(sol, indent=2)
+    prompt = f"Question:\\n{question}\\n\\nScene Script:\\n{scene_str}\\n\\nSolution:\\n{sol_str}\\n\\nGenerate the 6-step SVG concept animation as JSON."
+
+    for attempt in range(1, 4):
+        try:
+            raw = _call_gemini(prompt, _SVG_BUILDER_SYSTEM, max_tokens=MAX_TOKENS_HTML)
+            data = json.loads(_sanitize_json(raw))
+            data["_scene"] = scene
+            return _sanitize_svg_data(data)
+        except Exception as e:
+            Log.warn("SVGBuilder", f"Attempt {attempt} failed: {e}")
+            if attempt < 3:
+                import time as _t; _t.sleep(15 * attempt)
+                
+    return {"svg_defs": "", "svg_layers": "", "steps_data_js": "var stepsData=[];", "apply_step_js": "function applyStep(idx){window.currentStep=idx;}", "raf_js": ""}
+
+
 def _sanitize_svg_data(data: dict) -> dict:
     """
     Post-process Gemini's svg_data to fix all known hallucination bugs.
@@ -984,236 +1042,257 @@ def _sanitize_svg_data(data: dict) -> dict:
     )
     data["svg_layers"] = svg_layers
 
-    Log.ok("SVGSanitizer", "svg_data post-processed (bugs 1-4 fixed)")
-    return data
+    # ── Fallback RAF: auto-inject slider-crank animation if Gemini skipped it ─
+    # Root cause: Gemini sometimes omits raf_js entirely, leaving the crank/
+    # piston completely static even though the SVG has crank-group / rod-group /
+    # slider-group elements. We detect this and inject a physics-correct
+    # slider-crank animation loop automatically.
+    raf_js = data.get("raf_js", "").strip()
+    if not raf_js:
+        layers_html = data.get("svg_layers", "")
+        has_crank  = "crank-group"  in layers_html
+        has_rod    = "rod-group"    in layers_html
+        has_slider = "slider-group" in layers_html
+        if has_crank and has_rod and has_slider:
+            Log.ok("SVGSanitizer", "raf_js empty — injecting slider-crank fallback animation")
+            data["raf_js"] = """\
+window.qanimStartRAF = function() {
+  if (window.qanimRafId) cancelAnimationFrame(window.qanimRafId);
 
-
-def _rebuild_steps_data_js(scene: dict) -> str:
-    """
-    Generate guaranteed-safe stepsData JS from the scene dict.
-    Writes badges as a JS ARRAY of strings: outer-single / inner-double quotes.
-    This matches the reference HTML format exactly and is immune to any quote conflict.
-
-    Format: badges: ['<span class="badge badge-cyan">text</span>', ...]
-    applyStep renders with: (stepsData[idx].badges || []).join('')
-    """
-    steps = scene.get("steps", [])
-    all_layer_ids = list(scene.get("svg_layers", {}).keys())
-    CLS = {"cyan": "badge-cyan", "orange": "badge-orange", "green": "badge-green"}
-
-    def _badge_arr(badges):
-        parts = []
-        for b in badges:
-            cls = CLS.get(b.get("type", "cyan"), "badge-cyan")
-            text = html_module.escape(str(b.get("text", "")))
-            # outer=single, inner=double: always safe in JS regardless of context
-            parts.append("'<span class=\"badge " + cls + "\">'" + " + " + repr(text) + " + '</span>'")
-        if not parts:
-            return "[]"
-        # Build the actual JS array of string literals
-        items = []
-        for b in badges:
-            cls = CLS.get(b.get("type", "cyan"), "badge-cyan")
-            text = html_module.escape(str(b.get("text", "")))
-            items.append("'<span class=\"badge " + cls + "\">" + text + "</span>'")
-        return "[" + ", ".join(items) + "]"
-
-    rows = []
-    for s in steps:
-        lo = {lid: 0 for lid in all_layer_ids}
-        for vis in s.get("layers_visible", []):
-            if vis in lo:
-                lo[vis] = 1
-        blur = 0.38 if s.get("blur", False) else 0.0
-        badge_arr = _badge_arr(s.get("badges", []))
-        lo_pairs = ", ".join(f'"{k}": {v}' for k, v in lo.items())
-        # Fix C: use json.dumps() for safe serialization — immune to backslash,
-        # emoji, curly-quotes, and any other character that breaks manual escaping.
-        # json.dumps() produces a double-quoted JS string literal: "Step 1: ..."
-        title_js = json.dumps(str(s.get("title", "")), ensure_ascii=False)
-        desc_js  = json.dumps(str(s.get("description", "")), ensure_ascii=False)
-        rows.append(
-            '  {\n'
-            f'    title: {title_js},\n'
-            f'    desc: {desc_js},\n'
-            f'    badges: {badge_arr},\n'
-            f'    blurOp: {blur},\n'
-            f'    layerOpacities: {{{lo_pairs}}},\n'
-            '    overlays: []\n'
-            '  }'
-        )
-
-    return "var stepsData = [\n" + ",\n".join(rows) + "\n];\nwindow.stepsData = stepsData;"
-
-
-def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
-    """Call Gemini to generate SVG layers + stepsData JS."""
-    FALLBACK_SVG = """<g class="svg-layer" id="layer-frame" style="opacity:1">
-  <rect width="850" height="478" fill="#f8fafc"/>
-  <rect width="850" height="478" fill="url(#grid-pat)" opacity="0.6"/>
-  <text x="425" y="48" font-family="'Inter','Segoe UI',sans-serif" font-size="16" font-weight="700" fill="#475569" text-anchor="middle">Physical Setup — Step 1</text>
-  <line x1="50" y1="380" x2="800" y2="380" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,3"/>
-</g>
-<rect id="blur-shield" width="100%" height="100%" fill="#e2eaf8" opacity="0" pointer-events="none"/>
-<g class="svg-layer" id="layer-object" style="opacity:0">
-  <rect x="250" y="165" width="350" height="120" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2.5"/>
-  <text x="425" y="232" font-family="'Inter','Segoe UI',sans-serif" font-size="17" font-weight="700" fill="#1d4ed8" text-anchor="middle">Main Object</text>
-</g>
-<g class="svg-layer" id="layer-param1" style="opacity:0">
-  <rect x="80" y="55" width="190" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
-  <text x="175" y="87" font-family="'Inter','Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#15803d" text-anchor="middle">Given: Value 1</text>
-</g>
-<g class="svg-layer" id="layer-param2" style="opacity:0">
-  <rect x="580" y="55" width="190" height="52" rx="10" fill="#fff7ed" stroke="#d97706" stroke-width="2"/>
-  <text x="675" y="87" font-family="'Inter','Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#92400e" text-anchor="middle">Given: Value 2</text>
-</g>
-<g class="svg-layer" id="layer-derived" style="opacity:0">
-  <rect x="310" y="340" width="230" height="56" rx="10" fill="#faf5ff" stroke="#7c3aed" stroke-width="2"/>
-  <text x="425" y="374" font-family="'Inter','Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#6d28d9" text-anchor="middle">Derived Quantity</text>
-</g>
-<g class="svg-layer" id="layer-summary" style="opacity:0">
-  <rect x="30" y="395" width="280" height="70" rx="12" fill="#eff6ff" stroke="#0891b2" stroke-width="2"/>
-  <text x="170" y="427" font-family="'Inter','Segoe UI',sans-serif" font-size="13" font-weight="800" fill="#0e7490" text-anchor="middle">Given Data</text>
-  <text x="170" y="447" font-family="'Inter','Segoe UI',sans-serif" font-size="11" fill="#475569" text-anchor="middle">See problem statement</text>
-  <rect x="540" y="395" width="280" height="70" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
-  <text x="680" y="427" font-family="'Inter','Segoe UI',sans-serif" font-size="13" font-weight="800" fill="#15803d" text-anchor="middle">Unknown = ?</text>
-  <text x="680" y="447" font-family="'Inter','Segoe UI',sans-serif" font-size="11" fill="#475569" text-anchor="middle">To be found</text>
-</g>"""
-
-    FALLBACK_DEFS = """<pattern id="grid-pat" width="40" height="40" patternUnits="userSpaceOnUse">
-  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#94a3b8" stroke-width="0.5" stroke-opacity="0.25"/>
-</pattern>"""
-
-    steps = scene.get("steps", [])
-    all_layer_ids = list(scene.get("svg_layers", {}).keys())
-
-    # Build fallback stepsData — badges ALWAYS as JS array (never a string)
-    # so that (data.badges || []).join('') is always safe in applyStep.
-    fallback_steps_js = _rebuild_steps_data_js(scene)
-
-    # Fix E/H: Canonical fallback applyStep — uses CONCEPT_STEP_COUNT/TOTAL_STEP_COUNT
-    # constants so clamping is always correct. The 'window.totalSteps || 5' bug that
-    # caused Next at Step 6 to access stepsData[6]=undefined has been eliminated.
-    # NOTE: assemble_html() injects its own authoritative applyStep in nav_js and does NOT
-    # inject this FALLBACK_APPLY. This string is only used by build_svg_and_steps()'s
-    # emergency fallback return path (when all Gemini calls fail).
-    FALLBACK_APPLY = """function applyStep(idx) {
-  var CONCEPT_STEP_COUNT = 6;
-  var TOTAL_STEP_COUNT   = 9;
-  var clamped = Math.max(0, Math.min(Number(idx) || 0, CONCEPT_STEP_COUNT - 1));
-  window.currentStep = clamped;
-  var data = (window.stepsData && window.stepsData[clamped]) || {};
-  var bs = document.getElementById('blur-shield');
-  if (bs) bs.style.opacity = (typeof data.blurOp === 'number') ? data.blurOp : 0;
-  var lo = data.layerOpacities || {};
-  for (var lid in lo) { var el = document.getElementById(lid); if (el) el.style.opacity = lo[lid]; }
-  var titleEl = document.getElementById('info-title');
-  if (titleEl) titleEl.textContent = data.title || '';
-  var badgeEl = document.getElementById('info-badges');
-  if (badgeEl) { var bdg = data.badges; badgeEl.innerHTML = Array.isArray(bdg) ? bdg.join('') : ''; }
-  var descEl = document.getElementById('info-desc');
-  if (descEl) descEl.textContent = data.desc || '';
-  var dots = document.querySelectorAll('.step-dot');
-  for (var i = 0; i < dots.length; i++) {
-    dots[i].classList.toggle('active', i === clamped);
-    dots[i].classList.toggle('done',   i < clamped);
+  // ── Auto-detect pivot + dimensions from SVG at runtime ─────────────────
+  var PX = 200, PY = 300, R = 120, L = 280;
+  var stg = document.getElementById('stage');
+  if (stg) {
+    var pg = stg.querySelector('#layer-object > g[transform], #layer-param1 > g[transform]');
+    if (pg) {
+      var dm = (pg.getAttribute('transform')||'').match(/translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\)/);
+      if (dm) { PX = parseFloat(dm[1]); PY = parseFloat(dm[2]); }
+    }
+    var cl0 = stg.querySelector('#crank-group line, #crank-body');
+    if (cl0) { R = Math.abs(parseFloat(cl0.getAttribute('y2') || '-120')); }
+    var rl0 = stg.querySelector('#rod-group line, #rod-body');
+    if (rl0) {
+      var rx2 = parseFloat(rl0.getAttribute('x2')||'280');
+      var rx1 = parseFloat(rl0.getAttribute('x1')||'0');
+      L = Math.abs(rx2 - rx1) || L;
+    }
   }
-  var lbl = document.getElementById('step-label');
-  if (lbl) lbl.textContent = 'Step ' + (clamped + 1) + ' of ' + TOTAL_STEP_COUNT;
-  var bar = document.getElementById('step-bar');
-  if (bar) bar.style.width = (((clamped + 1) / TOTAL_STEP_COUNT) * 100) + '%';
-  var pb = document.getElementById('btn-prev');
-  if (pb) pb.disabled = (clamped === 0);
-  var nb = document.getElementById('btn-next');
-  if (nb) nb.textContent = (clamped === CONCEPT_STEP_COUNT - 1) ? 'Step 7: Formula \u25b6' : 'Next Step \u25b6';
-}"""
 
-    if _gemini_client is None:
-        return {"svg_defs": FALLBACK_DEFS, "svg_layers": FALLBACK_SVG,
-                "steps_data_js": fallback_steps_js, "apply_step_js": FALLBACK_APPLY, "raf_js": ""}
+  var OMEGA  = 1.5;
+  var TARGET = Math.PI / 2;
+  var startTime = null, frozenTheta = null, freezeAt = null;
+  var _findBadge = null, _thetaAnnot = null;
 
-    scene_summary = {
-        "title": scene.get("title", ""),
-        "steps": [{"step_number": s["step_number"], "label": s["label"], "title": s["title"],
-                   "description": s["description"], "badges": s.get("badges", []),
-                   "layers_visible": s.get("layers_visible", []), "blur": s.get("blur", False)}
-                  for s in steps],
-        "svg_layers": {k: v["description"] for k, v in scene.get("svg_layers", {}).items()},
+  // ── Annotation builders ───────────────────────────────────────────────
+  function _buildFindBadge(stage) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var g = document.createElementNS(ns, 'g');
+    g.id = 'qanim-find-badge';
+    g.style.cssText = 'opacity:0;transition:opacity 0.7s ease;';
+    var glow = document.createElementNS(ns, 'rect');
+    glow.setAttribute('x','-80'); glow.setAttribute('y','-26');
+    glow.setAttribute('width','160'); glow.setAttribute('height','52'); glow.setAttribute('rx','14');
+    glow.setAttribute('fill','#fef3c7'); glow.setAttribute('opacity','0.55');
+    g.appendChild(glow);
+    var r = document.createElementNS(ns, 'rect');
+    r.setAttribute('x','-74'); r.setAttribute('y','-22');
+    r.setAttribute('width','148'); r.setAttribute('height','44'); r.setAttribute('rx','11');
+    r.setAttribute('fill','#fffbeb'); r.setAttribute('stroke','#f59e0b'); r.setAttribute('stroke-width','2.5');
+    r.style.filter = 'drop-shadow(0 4px 12px rgba(245,158,11,.35))';
+    g.appendChild(r);
+    var t = document.createElementNS(ns, 'text');
+    t.setAttribute('text-anchor','middle'); t.setAttribute('x','0'); t.setAttribute('y','6');
+    t.setAttribute('font-family','Inter,sans-serif'); t.setAttribute('font-size','15');
+    t.setAttribute('font-weight','900'); t.setAttribute('fill','#92400e');
+    t.textContent = '\u27A4 Find  v = ?';
+    g.appendChild(t);
+    g.setAttribute('transform', 'translate(' + (PX + L * 0.75) + ',' + (PY - 62) + ')');
+    var anchor = stage.querySelector('#layer-derived') || stage.lastElementChild;
+    anchor.parentNode.insertBefore(g, anchor.nextSibling);
+    _findBadge = g; return g;
+  }
+
+  function _buildThetaAnnot(stage) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var g = document.createElementNS(ns, 'g');
+    g.id = 'qanim-theta-annot';
+    g.style.cssText = 'opacity:0;transition:opacity 0.7s ease;';
+    g.setAttribute('transform', 'translate(' + PX + ',' + PY + ')');
+    var sector = document.createElementNS(ns, 'path');
+    sector.setAttribute('d','M 0 0 L 50 0 A 50 50 0 0 0 0 -50 Z');
+    sector.setAttribute('fill','#6366f1'); sector.setAttribute('fill-opacity','0.08');
+    g.appendChild(sector);
+    var arc = document.createElementNS(ns, 'path');
+    arc.setAttribute('d','M 50 0 A 50 50 0 0 0 0 -50');
+    arc.setAttribute('fill','none'); arc.setAttribute('stroke','#6366f1');
+    arc.setAttribute('stroke-width','2.5'); arc.setAttribute('stroke-dasharray','6,3');
+    g.appendChild(arc);
+    var box = document.createElementNS(ns, 'path');
+    box.setAttribute('d','M 18 0 L 18 -18 L 0 -18');
+    box.setAttribute('fill','none'); box.setAttribute('stroke','#6366f1'); box.setAttribute('stroke-width','2');
+    g.appendChild(box);
+    var lbg = document.createElementNS(ns, 'rect');
+    lbg.setAttribute('x','34'); lbg.setAttribute('y','-66');
+    lbg.setAttribute('width','74'); lbg.setAttribute('height','26'); lbg.setAttribute('rx','7');
+    lbg.setAttribute('fill','#eef2ff'); lbg.setAttribute('stroke','#818cf8'); lbg.setAttribute('stroke-width','1.5');
+    g.appendChild(lbg);
+    var t = document.createElementNS(ns, 'text');
+    t.setAttribute('x','40'); t.setAttribute('y','-47');
+    t.setAttribute('font-family','Inter,sans-serif'); t.setAttribute('font-size','14');
+    t.setAttribute('font-weight','800'); t.setAttribute('fill','#4f46e5');
+    t.textContent = '\u03b8 = 90\u00b0';
+    g.appendChild(t);
+    var anchor = stage.querySelector('#layer-param2') || stage.lastElementChild;
+    anchor.parentNode.insertBefore(g, anchor.nextSibling);
+    _thetaAnnot = g; return g;
+  }
+
+  function _showAnnotations(stage, show) {
+    if (!_findBadge)  _findBadge  = document.getElementById('qanim-find-badge')  || _buildFindBadge(stage);
+    if (!_thetaAnnot) _thetaAnnot = document.getElementById('qanim-theta-annot') || _buildThetaAnnot(stage);
+    if (_findBadge)  _findBadge.style.opacity  = show ? '1' : '0';
+    if (_thetaAnnot) _thetaAnnot.style.opacity = show ? '1' : '0';
+  }
+
+  // ── Core kinematics ──────────────────────────────────────────────────
+  function _draw(stage, theta) {
+    var cosT = Math.cos(theta), sinT = Math.sin(theta);
+    var aX = R * cosT,  aY = -R * sinT;
+    var disc = L*L - R*R*sinT*sinT;
+    if (disc < 0) disc = 0;
+    var bX = R * cosT + Math.sqrt(disc);
+
+    // Crank
+    var cg = stage.querySelector('#crank-group');
+    if (cg) {
+      ['#crank-glow','#crank-body','#crank-shine'].forEach(function(sel) {
+        var ln = cg.querySelector(sel);
+        if (ln) { ln.setAttribute('x2', aX.toFixed(2)); ln.setAttribute('y2', aY.toFixed(2)); }
+      });
+      var sh = cg.querySelector('#crank-shine');
+      if (sh) { sh.setAttribute('x2',(aX*.96).toFixed(2)); sh.setAttribute('y2',(aY*.96).toFixed(2)); }
+      ['#crank-pin-outer','#crank-pin-inner'].forEach(function(sel) {
+        var c = cg.querySelector(sel);
+        if (c) { c.setAttribute('cx', aX.toFixed(2)); c.setAttribute('cy', aY.toFixed(2)); }
+      });
+      var ps = cg.querySelector('#crank-pin-shine');
+      if (ps) { ps.setAttribute('cx',(aX-2).toFixed(2)); ps.setAttribute('cy',(aY-3).toFixed(2)); }
+      var lbl = cg.querySelector('#crank-label, text');
+      if (lbl) { lbl.setAttribute('x',(aX/2-30).toFixed(1)); lbl.setAttribute('y',(aY/2+7).toFixed(1)); }
+      // fallback: update all circles[1] as crank pin
+      var ccs = cg.querySelectorAll('circle');
+      if (ccs[1]) { ccs[1].setAttribute('cx',aX.toFixed(2)); ccs[1].setAttribute('cy',aY.toFixed(2)); }
+      if (ccs[2]) { ccs[2].setAttribute('cx',aX.toFixed(2)); ccs[2].setAttribute('cy',aY.toFixed(2)); }
+      if (ccs[3]) { ccs[3].setAttribute('cx',(aX-2).toFixed(2)); ccs[3].setAttribute('cy',(aY-3).toFixed(2)); }
     }
 
-    prompt = f"""Question to animate:
-\"\"\"{question[:1200]}\"\"\"
-
-Scene script:
-{json.dumps(scene_summary, indent=2, ensure_ascii=False)[:2000]}
-
-Formula: {sol.get('formula', 'Governing formula')}
-
-NOTE: Steps 1–6 are the SETUP phase only. Do NOT reveal or hint at the
-numerical final answer anywhere in the SVG or stepsData.
-The answer will be shown later in Steps 7–9.
-Step 6 badges must end with a "? = ?" or "Unknown = ?" marker, not the value.
-
-Generate the SVG layers and JavaScript for this 6-step animation.
-Make the SVG rich, detailed, and domain-appropriate.
-The stepsData must reflect the exact scene script steps."""
-
-    for attempt in range(1, 4):
-        try:
-            raw = _call_gemini(prompt, _SVG_BUILDER_SYSTEM, max_tokens=MAX_TOKENS_HTML // 2)
-            data = json.loads(_sanitize_json(raw))
-            if data.get("svg_layers") and data.get("steps_data_js"):
-                Log.ok("SVGBuilder", f"Got SVG ({len(data.get('svg_layers',''))} chars)")
-                data["_scene"] = scene   # passed to _sanitize_svg_data for stepsData rebuild
-                return _sanitize_svg_data(data)
-        except Exception as e:
-            Log.warn("SVGBuilder", f"Attempt {attempt} failed: {e}")
-            if attempt < 3:
-                import time as _t; _t.sleep(15 * attempt)
-
-    return {"svg_defs": FALLBACK_DEFS, "svg_layers": FALLBACK_SVG,
-            "steps_data_js": fallback_steps_js, "apply_step_js": FALLBACK_APPLY, "raf_js": ""}
-
-
-# ===========================================================================
-# HTML Assembly — reference-exact templates
-# ===========================================================================
-
-def _he(s: str) -> str:
-    return html_module.escape(str(s))
-
-
-def _build_scene6_html(sol: dict) -> str:
-    """Build Scene 7 (Main Formula) HTML — matches reference exactly."""
-    formula_raw  = sol.get("formula", "Formula")
-    formula_attr = html_module.escape(formula_raw, quote=True)   # safe in HTML attribute
-    formula_text = _he(formula_raw)                               # plain-text fallback
-    formula_name = _he(sol.get("formula_name", "Governing Equation"))
-    variables = sol.get("variables", [])
-    note_text = _he(sol.get("key_insight", ""))
-
-    COLOR_MAP = {
-        "blue": "s6v-blue", "cyan": "s6v-teal", "orange": "s6v-orange",
-        "green": "s6v-green", "red": "s6v-red", "purple": "s6v-purple",
-        "teal": "s6v-teal", "amber": "s6v-orange", "violet": "s6v-purple",
+    // Rod
+    var rg = stage.querySelector('#rod-group');
+    if (rg) {
+      ['#rod-shadow','#rod-body','#rod-cl'].forEach(function(sel) {
+        var ln = rg.querySelector(sel);
+        if (ln) {
+          ln.setAttribute('x1',aX.toFixed(2)); ln.setAttribute('y1',aY.toFixed(2));
+          ln.setAttribute('x2',bX.toFixed(2)); ln.setAttribute('y2','0');
+        }
+      });
+      var be = rg.querySelector('#rod-big-end');
+      if (be) { be.setAttribute('cx',aX.toFixed(2)); be.setAttribute('cy',aY.toFixed(2)); }
+      var se = rg.querySelector('#rod-small-end');
+      if (se) { se.setAttribute('cx',bX.toFixed(2)); se.setAttribute('cy','0'); }
+      // fallback circles
+      var rcs = rg.querySelectorAll('circle');
+      if (rcs[0]) { rcs[0].setAttribute('cx',aX.toFixed(2)); rcs[0].setAttribute('cy',aY.toFixed(2)); }
+      if (rcs[1]) { rcs[1].setAttribute('cx',aX.toFixed(2)); rcs[1].setAttribute('cy',aY.toFixed(2)); }
+      if (rcs[2]) { rcs[2].setAttribute('cx',bX.toFixed(2)); rcs[2].setAttribute('cy','0'); }
+      if (rcs[3]) { rcs[3].setAttribute('cx',bX.toFixed(2)); rcs[3].setAttribute('cy','0'); }
+      var rlbl = rg.querySelector('#rod-label, text');
+      if (rlbl) { rlbl.setAttribute('x',((aX+bX)/2+6).toFixed(1)); rlbl.setAttribute('y',(aY/2-16).toFixed(1)); }
     }
 
-    var_boxes = ""
-    for v in variables:
-        sym = _he(v.get("symbol", "?"))
-        name = _he(v.get("name", "Variable"))
-        val = _he(v.get("value", ""))
-        unit = _he(v.get("unit", ""))
-        color_cls = COLOR_MAP.get(v.get("color", "blue"), "s6v-blue")
-        val_str = f"{val} {unit}".strip() if val else ""
-        var_boxes += f"""<div class="s6-var-box {color_cls}" data-idx="{variables.index(v)}">
-          <div class="s6-var-arrow"></div>
-          <div class="s6-var-inner">
-            <span class="s6-var-sym">{sym}</span>
-            <span class="s6-var-name">{name}</span>
-            <span class="s6-var-val">{_he(val_str)}</span>
-          </div>
-        </div>
+    // A label
+    var Albl = stage.querySelector('#lbl-A');
+    if (Albl) { Albl.setAttribute('x',(aX+14).toFixed(1)); Albl.setAttribute('y',(aY-10).toFixed(1)); }
+
+    // Slider
+    var sg = stage.querySelector('#slider-group');
+    if (sg) {
+      var tfm = sg.getAttribute('transform') || '';
+      if (tfm.indexOf('translate') !== -1) {
+        sg.setAttribute('transform','translate('+bX.toFixed(2)+', 0)');
+      }
+    }
+
+    // Velocity arrow
+    var vg = stage.querySelector('#velocity-group');
+    if (vg) {
+      var denom = Math.sqrt(disc);
+      var vel = -R*OMEGA*sinT;
+      if (denom > 1) vel -= (R*R*OMEGA*sinT*cosT)/denom;
+      var vEnd = bX + vel*0.38;
+      var vgl = vg.querySelector('#vel-glow');
+      if (vgl) { vgl.setAttribute('x1',bX.toFixed(2)); vgl.setAttribute('x2',vEnd.toFixed(2)); }
+      var vl = vg.querySelector('#vel-line, line');
+      if (vl) { vl.setAttribute('x1',bX.toFixed(2)); vl.setAttribute('x2',vEnd.toFixed(2)); }
+      var mid = (bX+vEnd)/2;
+      var vlbg = vg.querySelector('#vel-lbl-bg');
+      if (vlbg) { vlbg.setAttribute('x',(mid-33).toFixed(1)); }
+      var vlt = vg.querySelector('#vel-label, text');
+      if (vlt) { vlt.setAttribute('x',(mid-16).toFixed(1)); }
+    } else {
+      // fallback: no velocity-group, find line in layer-derived
+      var vl2 = stage.querySelector('#layer-derived line');
+      if (vl2) {
+        var denom2 = Math.sqrt(disc), vel2 = -R*OMEGA*sinT;
+        if (denom2 > 1) vel2 -= (R*R*OMEGA*sinT*cosT)/denom2;
+        var vEnd2 = bX + vel2*0.38;
+        vl2.setAttribute('x1',bX.toFixed(2)); vl2.setAttribute('y1','0');
+        vl2.setAttribute('x2',vEnd2.toFixed(2)); vl2.setAttribute('y2','0');
+      }
+    }
+  }
+
+  // ── RAF loop ─────────────────────────────────────────────────────────
+  function drawFrame(now) {
+    if (!startTime) startTime = now;
+    var stage = document.getElementById('stage');
+    if (!stage) { window.qanimRafId = requestAnimationFrame(drawFrame); return; }
+
+    var step = Number(window.currentStep) || 0;
+    var isStep6 = (step >= 5);
+    var theta;
+
+    if (!isStep6) {
+      frozenTheta = null; freezeAt = null;
+      theta = OMEGA * ((now - startTime) / 1000);
+      _showAnnotations(stage, false);
+    } else {
+      if (freezeAt === null) {
+        var rawT = OMEGA * ((now - startTime) / 1000);
+        frozenTheta = ((rawT % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
+        freezeAt = now;
+      }
+      var elapsed = Math.min((now - freezeAt) / 1100, 1);
+      var ease = 1 - Math.pow(1 - elapsed, 4);
+      var diff = TARGET - frozenTheta;
+      while (diff >  Math.PI) diff -= 2*Math.PI;
+      while (diff < -Math.PI) diff += 2*Math.PI;
+      theta = frozenTheta + diff * ease;
+      _showAnnotations(stage, elapsed > 0.88);
+    }
+
+    _draw(stage, theta);
+    window.qanimRafId = requestAnimationFrame(drawFrame);
+  }
+
+  window.qanimRafId = requestAnimationFrame(drawFrame);
+};
+if (!window.__qanimRAFStarted) {
+  window.__qanimRAFStarted = true;
+  document.addEventListener('DOMContentLoaded', function() {
+    if (typeof window.qanimStartRAF === 'function') window.qanimStartRAF();
+  });
+}
 """
 
     note_bar = ""
