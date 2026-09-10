@@ -532,9 +532,13 @@ Requirements:
    - Each layer must have a clear visual purpose.
 
 4. Design style:
-   - Dark scientific background (deep navy, charcoal, or space-like).
-   - High-contrast main objects (cyan, blue, green, orange, violet).
-   - Soft gradients, subtle glow, and clean strokes.
+   - LIGHT, CLEAN, PROFESSIONAL background — always use white or very light grey/blue (#f8fafc, #eef5ff, #f0f6ff).
+   - NEVER use dark navy, charcoal, black, or dark space backgrounds.
+   - HIGH-CONTRAST main objects using vivid, saturated colors (cyan #0891b2, blue #2563eb, green #16a34a, orange #d97706, violet #7c3aed) on the light background.
+   - Mechanism parts (cranks, rods, sliders, gears, links, pistons, wheels): draw them clearly with thick strokes (2–4px), gradient fills, and subtle drop shadows.
+   - Text labels: dark (#1e293b, #0f172a) on the light background — always readable.
+   - Soft gradients on objects only, NOT on the background.
+   - Subtle grid lines (#cbd5e1 at 0.25 opacity) for scale reference.
    - No clutter. Every element must help understanding.
 
 ============================================================
@@ -543,13 +547,14 @@ SVG DEFS
 
 Create a <defs> section with only what you use:
 
-- Gradients for main objects and background.
-- Glow filters for important elements.
+- Gradients for main objects (NOT for the background — background must stay light).
+- Drop shadows / subtle glow filters for important elements (use low opacity, e.g. flood-opacity="0.18").
 - Arrow markers for forces, motion, fields, or dimensions.
-- Optional subtle grid, field lines, or pattern.
+- A subtle light grid pattern: <pattern id="bg-grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#cbd5e1" stroke-width="0.4"/></pattern>
 
-Use clear IDs like:
-grad-main, glow-important, marker-force, marker-dimension.
+Recommended gradient IDs:
+  grad-crank, grad-rod, grad-slider, grad-plate, grad-wire, grad-object — all vivid colors on top of light fills.
+  Do NOT create dark background gradients.
 
 Do not use external images, fonts, or URLs.
 
@@ -671,38 +676,50 @@ Always use correct mathematical symbols and notation:
 REALISM BY EXAMPLE (ADAPT TO QUESTION)
 ============================================================
 
-Adapt realism to the topic:
+Adapt realism to the topic. ALWAYS use a LIGHT BACKGROUND (#f8fafc, #eef5ff, or #f0f6ff):
+
+- Mechanisms (slider-crank, four-bar linkage, cam-follower, gear trains, etc.):
+  - Crank: thick circular/elliptical arc or line, gradient-filled (e.g. steel blue #2563eb→#1d4ed8), pivot pin circle.
+  - Connecting rod: thick line with end circles at pin joints, labeled with its length.
+  - Slider: a filled rectangle (piston) on a horizontal guide rail with clear end-stops.
+  - Guide rail: a double horizontal line (I-beam), light grey fill, with tick marks.
+  - Fixed pivot: a triangle with hatch lines beneath it (ground symbol).
+  - Show the crank angle θ as an arc with label near the pivot.
+  - Show the slider path as a dashed horizontal line.
+  - Velocity arrows: vivid orange arrows with labels (v⃗, ω, r, l).
+  - All components labeled: crank (r), rod (l), slider, fixed point O, pin A, slider B.
 
 - Space / gravity:
-  - Planet: spherical, gradient shading, atmosphere glow.
+  - Planet: spherical, gradient shading, atmosphere glow on LIGHT background.
   - Satellite / spacecraft: body + panels + antenna, slight shadow.
   - Orbit: smooth circular/elliptical path with subtle glow.
-  - Background: dark space with small stars.
+  - Background: very light blue (#eef5ff) with faint dots for stars.
 
 - Mechanics:
-  - Blocks, ramps, pulleys: clean 3D-like shading, clear edges.
+  - Blocks, ramps, pulleys: clean 3D-like shading, clear edges on light background.
   - Forces: well-sized arrows with labels (F, mg, N, T).
   - Motion: path lines or velocity arrows.
 
 - Electricity / circuits:
-  - Wires: clean paths with consistent stroke.
-  - Components (R, C, L, battery): clear symbols, slight glow.
+  - Wires: clean paths with consistent stroke (#1e293b) on white/light background.
+  - Components (R, C, L, battery): clear symbols, vivid color coding.
   - Current direction: small arrows along wires.
 
 - Heat / fluids:
-  - Plates, fins, pipes: smooth gradients for temperature/flow.
+  - Plates, fins, pipes: smooth gradients for temperature/flow on light background.
   - Arrows for heat flow or fluid direction.
-  - Color coding for hot/cold regions.
+  - Color coding for hot (red/orange) / cold (blue/cyan) regions.
 
 - Waves / optics:
-  - Rays, wavefronts, lenses, mirrors: precise geometry.
+  - Rays, wavefronts, lenses, mirrors: precise geometry on light background.
   - Smooth sinusoidal waves or ray paths.
   - Clear labels for angles, focal points, etc.
 
 Always:
-- Make the main object look like a real physical system.
-- Use lighting/shading to suggest depth.
-- Keep labels and arrows clean and unambiguous.
+- Light background (#f8fafc, #eef5ff, or #f0f6ff) — mandatory.
+- Make the main object look like a real physical system with high visual fidelity.
+- Use gradients and shading on objects to suggest depth (NOT on the background).
+- Keep labels and arrows clean, dark (#1e293b), and unambiguous.
 
 ============================================================
 VALIDATION BEFORE OUTPUT
@@ -718,6 +735,8 @@ Check silently:
 - applyStep uses style.opacity and join('').
 - Progress label says "of 9".
 - Notation matches the solution.
+- layer-frame contains a light background rect (fill="#f8fafc" or similar light color) as the FIRST child.
+- NO dark backgrounds anywhere in the SVG.
 """
 
 
@@ -1002,35 +1021,39 @@ def _rebuild_steps_data_js(scene: dict) -> str:
 def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
     """Call Gemini to generate SVG layers + stepsData JS."""
     FALLBACK_SVG = """<g class="svg-layer" id="layer-frame" style="opacity:1">
-  <rect width="850" height="478" fill="url(#grid-pat)" opacity="0.4"/>
-  <text x="425" y="60" font-family="'Segoe UI',sans-serif" font-size="18" font-weight="700" fill="#475569" text-anchor="middle">Physical Setup</text>
+  <rect width="850" height="478" fill="#f8fafc"/>
+  <rect width="850" height="478" fill="url(#grid-pat)" opacity="0.6"/>
+  <text x="425" y="48" font-family="'Inter','Segoe UI',sans-serif" font-size="16" font-weight="700" fill="#475569" text-anchor="middle">Physical Setup — Step 1</text>
+  <line x1="50" y1="380" x2="800" y2="380" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,3"/>
 </g>
-<rect id="blur-shield" width="100%" height="100%" fill="#c2d4e8" opacity="0" pointer-events="none"/>
+<rect id="blur-shield" width="100%" height="100%" fill="#e2eaf8" opacity="0" pointer-events="none"/>
 <g class="svg-layer" id="layer-object" style="opacity:0">
-  <rect x="275" y="189" width="300" height="100" rx="8" fill="#bfdbfe" stroke="#3b82f6" stroke-width="2"/>
-  <text x="425" y="244" font-family="'Segoe UI',sans-serif" font-size="16" font-weight="700" fill="#1d4ed8" text-anchor="middle">Main Object</text>
+  <rect x="250" y="165" width="350" height="120" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="425" y="232" font-family="'Inter','Segoe UI',sans-serif" font-size="17" font-weight="700" fill="#1d4ed8" text-anchor="middle">Main Object</text>
 </g>
 <g class="svg-layer" id="layer-param1" style="opacity:0">
-  <rect x="100" y="60" width="160" height="50" rx="8" fill="rgba(22,163,74,0.12)" stroke="#16a34a" stroke-width="1.5"/>
-  <text x="180" y="92" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#15803d" text-anchor="middle">Given: Value 1</text>
+  <rect x="80" y="55" width="190" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="175" y="87" font-family="'Inter','Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#15803d" text-anchor="middle">Given: Value 1</text>
 </g>
 <g class="svg-layer" id="layer-param2" style="opacity:0">
-  <rect x="590" y="60" width="160" height="50" rx="8" fill="rgba(217,119,6,0.12)" stroke="#d97706" stroke-width="1.5"/>
-  <text x="670" y="92" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#92400e" text-anchor="middle">Given: Value 2</text>
+  <rect x="580" y="55" width="190" height="52" rx="10" fill="#fff7ed" stroke="#d97706" stroke-width="2"/>
+  <text x="675" y="87" font-family="'Inter','Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#92400e" text-anchor="middle">Given: Value 2</text>
 </g>
 <g class="svg-layer" id="layer-derived" style="opacity:0">
-  <rect x="325" y="340" width="200" height="50" rx="8" fill="rgba(124,58,237,0.12)" stroke="#7c3aed" stroke-width="1.5"/>
-  <text x="425" y="372" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#6d28d9" text-anchor="middle">Derived Quantity</text>
+  <rect x="310" y="340" width="230" height="56" rx="10" fill="#faf5ff" stroke="#7c3aed" stroke-width="2"/>
+  <text x="425" y="374" font-family="'Inter','Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#6d28d9" text-anchor="middle">Derived Quantity</text>
 </g>
 <g class="svg-layer" id="layer-summary" style="opacity:0">
-  <rect x="30" y="340" width="260" height="120" rx="12" fill="rgba(8,145,178,0.1)" stroke="#0891b2" stroke-width="1.5"/>
-  <text x="160" y="370" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="800" fill="#0e7490" text-anchor="middle">Given Data</text>
-  <rect x="560" y="340" width="260" height="120" rx="12" fill="rgba(22,163,74,0.1)" stroke="#16a34a" stroke-width="1.5"/>
-  <text x="690" y="370" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="800" fill="#15803d" text-anchor="middle">Unknown: ?</text>
+  <rect x="30" y="395" width="280" height="70" rx="12" fill="#eff6ff" stroke="#0891b2" stroke-width="2"/>
+  <text x="170" y="427" font-family="'Inter','Segoe UI',sans-serif" font-size="13" font-weight="800" fill="#0e7490" text-anchor="middle">Given Data</text>
+  <text x="170" y="447" font-family="'Inter','Segoe UI',sans-serif" font-size="11" fill="#475569" text-anchor="middle">See problem statement</text>
+  <rect x="540" y="395" width="280" height="70" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="680" y="427" font-family="'Inter','Segoe UI',sans-serif" font-size="13" font-weight="800" fill="#15803d" text-anchor="middle">Unknown = ?</text>
+  <text x="680" y="447" font-family="'Inter','Segoe UI',sans-serif" font-size="11" fill="#475569" text-anchor="middle">To be found</text>
 </g>"""
 
     FALLBACK_DEFS = """<pattern id="grid-pat" width="40" height="40" patternUnits="userSpaceOnUse">
-  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" stroke-opacity="0.07"/>
+  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#94a3b8" stroke-width="0.5" stroke-opacity="0.25"/>
 </pattern>"""
 
     steps = scene.get("steps", [])
@@ -1559,6 +1582,7 @@ body.qanim-fullscreen .actions { margin-top: 10px !important; }
   width: 100%; aspect-ratio: 16/9;
   position: relative; overflow: hidden;
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(145deg, #f8fafc 0%, #eef5ff 55%, #f0f6ff 100%);
 }
 svg { display: block; width: 100%; height: 100%; }
 .svg-layer { transition: opacity .55s var(--ease-smooth); }
@@ -1814,7 +1838,7 @@ body.qanim-fullscreen .actions{
   background:linear-gradient(135deg,var(--accent-cyan-dim),var(--accent-cyan));flex-shrink:0;}
 .q-text{font-size:15px;color:var(--text-main);line-height:1.6;font-weight:450;max-width:820px;}
 .svg-container{width:100%;aspect-ratio:16/9;
-  background:radial-gradient(ellipse at 35% 38%,#eef5ff 0%,#dce8f5 45%,#c8d9ed 85%,#b8ccdf 100%);
+  background:linear-gradient(145deg,#f8fafc 0%,#eef5ff 55%,#f0f6ff 100%);
   position:relative;overflow:hidden;border-bottom:1px solid var(--border);}
 svg{display:block;width:100%;height:100%;}
 .svg-layer{transition:opacity .55s cubic-bezier(.4,0,.2,1);}
@@ -3318,9 +3342,15 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     <svg xmlns="http://www.w3.org/2000/svg" id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
       <defs>
         {svg_defs}
+        <!-- Guaranteed light background pattern -->
+        <pattern id="qanim-grid-light" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#cbd5e1" stroke-width="0.4" opacity="0.5"/>
+        </pattern>
       </defs>
+      <!-- Always-on light base: overrides any dark fill Gemini may produce -->
       <g id="layer-canvas-bg">
-        <rect width="100%" height="100%" fill="url(#grid)" opacity="0.5"/>
+        <rect width="850" height="478" fill="#f8fafc"/>
+        <rect width="850" height="478" fill="url(#qanim-grid-light)" opacity="0.8"/>
       </g>
       {svg_layers}
     </svg>
