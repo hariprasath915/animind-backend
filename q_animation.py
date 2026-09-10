@@ -783,6 +783,16 @@ def _sanitize_svg_data(data: dict) -> dict:
     """
     import re as _re
 
+    # ── Fix svg_defs: strip any <defs>...</defs> wrapper ─────────────────────
+    # Gemini sometimes returns svg_defs with its own <defs> opening and/or
+    # </defs> closing tag. We inject it INSIDE our own <defs> block, so an
+    # extra </defs> prematurely closes our block, causing invalid SVG where
+    # the injected light-bg pattern falls outside defs → gradients break.
+    raw_defs = data.get("svg_defs", "")
+    raw_defs = _re.sub(r'^\s*<defs[^>]*>', '', raw_defs, flags=_re.IGNORECASE).strip()
+    raw_defs = _re.sub(r'\s*</defs>\s*$', '', raw_defs, flags=_re.IGNORECASE).strip()
+    data["svg_defs"] = raw_defs
+
     # ── Bug 3 / Fix D: stepsData ALWAYS rebuilt from Python scene dict ────────
     # Root cause of Steps 1-6 not rendering:
     #   Gemini writes badge HTML inside JS string literals, causing SyntaxErrors
@@ -933,18 +943,36 @@ def _sanitize_svg_data(data: dict) -> dict:
     data["raf_js"] = raf_js
 
     # ── Bug 1 in SVG: non-frame layers with opacity="1" attribute ─────────
+    # IMPORTANT: Only fix the 6 canonical layer-* IDs (layer-object, layer-param1, etc.).
+    # Sub-groups inside layers (crank-group, rod-group, slider-group, etc.) must NOT
+    # be forced to opacity:0 — they should remain at whatever the SVG author set,
+    # because applyStep() only sets opacity on the top-level layer-* groups.
+    # Setting sub-group opacity to 0 makes them invisible even after applyStep.
+    _CANONICAL_LAYERS = {
+        "layer-frame", "layer-object",
+        "layer-param1", "layer-param2",
+        "layer-derived", "layer-summary",
+    }
+
     svg_layers = data.get("svg_layers", "")
 
     def _fix_layer_opacity(m):
         tag = m.group(0)
         gid = _re.search(r'id=["\']([^"\']+)["\']', tag)
         layer_id = gid.group(1) if gid else ""
+        # Only touch the canonical layer-* groups, leave sub-groups untouched
+        if layer_id not in _CANONICAL_LAYERS:
+            return tag
         if layer_id == "layer-frame":
-            return tag  # layer-frame must always be visible
-        # Replace SVG opacity attribute with CSS style (CSS transition works on style)
+            # layer-frame must always start visible
+            tag = _re.sub(r'\bopacity=["\']0["\']', 'style="opacity:1"', tag)
+            tag = _re.sub(r'style=["\']opacity:\s*0["\']', 'style="opacity:1"', tag)
+            if 'opacity' not in tag and 'style' not in tag:
+                tag = tag.rstrip('>') + ' style="opacity:1">'
+            return tag
+        # All other canonical layers start hidden
         tag = _re.sub(r'\bopacity=["\']1["\']', 'style="opacity:0"', tag)
         tag = _re.sub(r'\bopacity=["\']0["\']', 'style="opacity:0"', tag)
-        # If still no style/opacity, add it
         if 'opacity' not in tag and 'style' not in tag:
             tag = tag.rstrip('>') + ' style="opacity:0">'
         return tag
@@ -3003,6 +3031,12 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 
     # SVG content
     svg_defs = svg_data.get("svg_defs", "")
+    # Strip any <defs>...</defs> wrapper Gemini may have included in svg_defs.
+    # We inject svg_defs INSIDE our own <defs> block in the template, so any
+    # extra </defs> or <defs> tags would produce malformed SVG (broken gradients).
+    import re as _re_assemble
+    svg_defs = _re_assemble.sub(r'^\s*<defs[^>]*>', '', svg_defs, flags=_re_assemble.IGNORECASE).strip()
+    svg_defs = _re_assemble.sub(r'\s*</defs>\s*$', '', svg_defs, flags=_re_assemble.IGNORECASE).strip()
     svg_layers = svg_data.get("svg_layers", "")
     steps_data_js = svg_data.get("steps_data_js", "var stepsData = [];")
     apply_step_js = svg_data.get("apply_step_js", "function applyStep(idx){window.currentStep=idx;}")
