@@ -30,6 +30,10 @@ import html as html_module
 from typing import Optional
 import os as _os
 
+def _he(text) -> str:
+    """Helper to escape HTML and handle None."""
+    return html_module.escape(str(text)) if text is not None else ""
+
 # ── Gemini SDK import ──────────────────────────────────────────────────────
 _GEMINI_AVAILABLE = False
 _GEMINI_SDK_STYLE = None
@@ -782,7 +786,14 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
 
     scene_str = json.dumps(scene, indent=2)
     sol_str = json.dumps(sol, indent=2)
-    prompt = f"Question:\\n{question}\\n\\nScene Script:\\n{scene_str}\\n\\nSolution:\\n{sol_str}\\n\\nGenerate the 6-step SVG concept animation as JSON."
+    # NOTE: Use string concatenation (NOT f-string) here.
+    # sol_str and scene_str are JSON-dumped dicts that may contain literal
+    # {variable_name} text (e.g. {note_text} in a formula or note field).
+    # Python f-string interpolation would try to evaluate those as Python
+    # expressions, raising NameError: name 'note_text' is not defined.
+    prompt = ("Question:\n" + question + "\n\nScene Script:\n" + scene_str
+              + "\n\nSolution:\n" + sol_str
+              + "\n\nGenerate the 6-step SVG concept animation as JSON.")
 
     for attempt in range(1, 4):
         try:
@@ -1294,7 +1305,28 @@ if (!window.__qanimRAFStarted) {
   });
 }
 """
+    return data
 
+def _build_scene6_html(sol: dict, scene: dict) -> str:
+    """Build Scene 7 (Main Formula) HTML — matches reference exactly."""
+    formula_raw    = sol.get("formula", "Governing Formula")
+    formula_text   = _he(formula_raw)
+    formula_attr   = html_module.escape(formula_raw, quote=True)
+    formula_name   = _he(sol.get("formula_name", "Formula"))
+
+    variables = sol.get("variables", [])
+    var_boxes = ""
+    for v in variables:
+        sym = _he(v.get("sym", "?"))
+        name = _he(v.get("name", "Variable"))
+        val = _he(v.get("val", ""))
+        var_boxes += f"""<div class="s6-var-box">
+          <div class="s6-var-sym">{sym}</div>
+          <div class="s6-var-desc">{name}</div>
+          <div class="s6-var-val">{val}</div>
+        </div>\n"""
+
+    note_text = _he(sol.get("note", ""))
     note_bar = ""
     if note_text:
         note_bar = f"""<div class="s6-note-bar" id="s6-note-bar">
@@ -3130,7 +3162,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     color_legend = _build_color_legend(scene)
 
     # Scene overlays
-    scene6_html = _build_scene6_html(sol)
+    scene6_html = _build_scene6_html(sol, scene)
     scene7_html = _build_scene7_html(sol, scene)
     scene9_html = _build_scene9_html(sol, to_find)
     glossary_panel = _build_glossary_panel(glossary)
