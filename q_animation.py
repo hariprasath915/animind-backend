@@ -106,12 +106,12 @@ class Log:
 # Gemini caller
 # ===========================================================================
 def _call_gemini(user_prompt: str, system_prompt: str, max_tokens: int = 4000) -> str:
-    """Call Gemini with retry on 429/503."""
+    """Call Gemini with retry on 429/503 and connection/stream errors."""
     import time as _time
     if _gemini_client is None:
         raise RuntimeError(f"Gemini unavailable: {_GEMINI_DISABLED_REASON}")
-    MAX_RETRIES = 3
-    RETRY_DELAYS = [10, 25, 50]
+    MAX_RETRIES = 4
+    RETRY_DELAYS = [15, 35, 70]
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             if _GEMINI_SDK_STYLE == "generativeai":
@@ -147,8 +147,28 @@ def _call_gemini(user_prompt: str, system_prompt: str, max_tokens: int = 4000) -
             # 404 = model not found / not available — never retryable, fail immediately
             if "404" in err or "NOT_FOUND" in err:
                 raise
-            retryable = ("429" in err or "503" in err or "overloaded" in err.lower()
-                         or "Resource has been exhausted" in err)
+            err_lower = err.lower()
+            retryable = (
+                "429" in err or "503" in err or "overloaded" in err_lower
+                or "resource has been exhausted" in err_lower
+                # Network / stream errors — covers the exact wsarecv crash:
+                #   "stream reading error: read tcp ... wsarecv:
+                #    An existing connection was forcibly closed by the remote host"
+                or "wsarecv"            in err_lower
+                or "forcibly closed"    in err_lower
+                or "stream reading"     in err_lower
+                or "read tcp"           in err_lower
+                or "connection reset"   in err_lower
+                or "connectionreset"    in err_lower
+                or "connection aborted" in err_lower
+                or "broken pipe"        in err_lower
+                or "brokenpipe"         in err_lower
+                or "remotedisconnected" in err_lower
+                or "eof"                in err_lower
+                or isinstance(e, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError))
+            )
+            if retryable:
+                Log.warn("Gemini", f"Attempt {attempt}/{MAX_RETRIES} — network/rate error: {err[:120]}")
             if retryable and attempt < MAX_RETRIES:
                 _time.sleep(RETRY_DELAYS[attempt - 1])
                 continue
