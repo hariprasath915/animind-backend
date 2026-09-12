@@ -564,6 +564,16 @@ Requirements:
    - All other layers start hidden (opacity="0").
    - Each layer must have a clear visual purpose.
 
+3b. PREMIUM QUALITY REQUIREMENTS (mandatory for every output):
+   - Every main object MUST use at least one linearGradient or radialGradient for 3-D depth.
+   - Every main object MUST have a <filter> drop-shadow (feDropShadow or feMerge) for lift.
+   - Use stroke-linecap="round" and stroke-linejoin="round" on all mechanical parts.
+   - Important labels must have a subtle pill background (a <rect> behind the text, rx≥5, fill white/light, opacity 0.85).
+   - Annotation arrows must use <marker> arrowheads (not just bare lines).
+   - Color palette must be vivid and harmonious — pick 3–5 coordinated accent colors, never plain red/blue/green.
+   - All layer reveal transitions must use opacity 0→1 plus a subtle scale or translateY transform (done via JS in applyStep).
+   - The layer-summary (Step 6) must show a polished "callout" box with rounded corners, gradient background, and a glowing border for the "? unknown" label.
+
 4. Design style:
    - LIGHT, CLEAN, PROFESSIONAL background — always use white or very light grey/blue (#f8fafc, #eef5ff, #f0f6ff).
    - NEVER use dark navy, charcoal, black, or dark space backgrounds.
@@ -595,13 +605,16 @@ Do not use external images, fonts, or URLs.
 ANIMATION — SMOOTH & REALISTIC
 ============================================================
 
-- Reveal objects step by step (opacity + subtle scale/transform).
-- Use smooth transitions (500–900 ms) with cubic-bezier easing (ease-out or ease-in-out).
+- Reveal objects step by step (opacity 0→1 combined with a translateY(12px)→0 or scale(0.92)→1 transform).
+- Use smooth transitions (600–900 ms) with cubic-bezier(0.34,1.56,0.64,1) spring easing for objects
+  and cubic-bezier(0.4,0,0.2,1) for opacity.
 - NEVER use abrupt jumps — all motion must feel natural and physics-based.
 - Motion must visually explain the physical concept (e.g., projectile arc, wire stretching, satellite orbit).
 - No flashing, no jitter, no random decoration.
+- applyStep must set layer opacity via element.style.opacity (NOT setAttribute). It may also toggle
+  a CSS class (e.g. 'layer-shown') that drives a CSS transition for scale/translate if desired.
 
-SMOOTH PHYSICS MOTION:
+SMOOTH PHYSICS MOTION (mandatory if the concept involves dynamics):
 - Projectile / ballistic: animate along a true parabolic arc using requestAnimationFrame.
   Use parametric equations: x = x₀ + v₀ₓ·t, y = y₀ + v₀ᵧ·t − ½g·t².
   Show the trajectory trail as a dashed path that appears incrementally.
@@ -610,8 +623,9 @@ SMOOTH PHYSICS MOTION:
   Add a faint elliptical orbit path; planet/satellite casts a moving shadow.
 - Wave / oscillation: render sinusoidal wave with requestAnimationFrame, phase-shifting each frame.
 - Wire / elastic: animate length change with a smooth stretch transform.
-- Heat / diffusion: animate color gradient smoothly from hot (red) to cold (blue).
-- Fluid flow: animate streamlines or particle movement along defined paths.
+- Heat / diffusion: animate a stop-color or fill interpolation smoothly from hot (#ef4444) to cold (#3b82f6).
+- Fluid flow: animate streamlines or particle movement along defined SVG paths.
+- Rotating machinery: use requestAnimationFrame with sin/cos kinematics; show angle arcs and velocity arrows.
 
 If continuous animation is needed, define:
   window.qanimStartRAF = function(){{
@@ -1350,13 +1364,27 @@ def _build_scene6_html(sol: dict, scene: dict) -> str:
     variables = sol.get("variables", [])
     var_boxes = ""
     for v in variables:
-        sym = _he(v.get("sym", "?"))
+        # Support both Gemini key names: "symbol" (correct) and "sym" (legacy)
+        sym_raw  = v.get("symbol") or v.get("sym") or "?"
+        sym  = _he(sym_raw)
         name = _he(v.get("name", "Variable"))
-        val = _he(v.get("val", ""))
-        var_boxes += f"""<div class="s6-var-box">
-          <div class="s6-var-sym">{sym}</div>
-          <div class="s6-var-desc">{name}</div>
-          <div class="s6-var-val">{val}</div>
+        # Show value + unit together if available
+        val_raw  = v.get("value") or v.get("val") or ""
+        unit_raw = v.get("unit", "")
+        val_disp = _he((val_raw + (" " + unit_raw if unit_raw else "")).strip())
+        # Map color string to CSS variant class
+        color_map = {
+            "blue": "s6v-blue", "green": "s6v-green", "orange": "s6v-orange",
+            "red": "s6v-red", "purple": "s6v-purple", "teal": "s6v-teal",
+        }
+        color_cls = color_map.get(str(v.get("color", "blue")).lower(), "s6v-blue")
+        var_boxes += f"""<div class="s6-var-box {color_cls}">
+          <div class="s6-var-arrow"></div>
+          <div class="s6-var-inner">
+            <span class="s6-var-sym">{sym}</span>
+            <span class="s6-var-name">{sym} &mdash; {name}</span>
+            <span class="s6-var-val">{val_disp}</span>
+          </div>
         </div>\n"""
 
     note_text = _he(sol.get("note", ""))
@@ -2242,6 +2270,59 @@ _SCENE6_CSS = """
 .s6-phase-progress{font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#0891b2;text-align:center;margin-bottom:4px;min-height:14px;}
 .s6-phase-caption{font-size:13px;font-weight:600;color:#334155;text-align:center;margin-bottom:20px;line-height:1.5;min-height:18px;transition:opacity .3s;}
 .s6-var-box.s6-active .s6-var-inner{box-shadow:0 0 0 4px rgba(8,145,178,.20),0 4px 16px rgba(8,145,178,.22);transform:scale(1.05);transition:transform .3s cubic-bezier(.34,1.56,.64,1),box-shadow .3s;}
+
+/* ── Step-6 "To Find" floating badge (Update 2) ──────────────────────────── */
+/* Replaces the old two-column Given/ToFind card.                             */
+/* Shows a small, elegant badge directly on the SVG so the unknown is visible */
+/* in context — without covering the diagram.                                 */
+#step6-info-panel {
+  position: absolute;
+  bottom: 18px; right: 18px;
+  z-index: 10;
+  pointer-events: none; opacity: 0;
+  transition: opacity .45s cubic-bezier(.4,0,.2,1);
+}
+#step6-info-panel.s6info-visible { opacity: 1; pointer-events: auto; }
+
+.s6tofind-badge {
+  background: rgba(10,22,44,.82);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(74,222,128,.42);
+  border-radius: 16px;
+  padding: 14px 18px 12px;
+  min-width: 180px;
+  max-width: 280px;
+  box-shadow: 0 0 0 1px rgba(74,222,128,.14), 0 8px 32px rgba(74,222,128,.22), 0 2px 8px rgba(0,0,0,.38);
+}
+.s6tofind-heading {
+  font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+  font-size: 9.5px; font-weight: 900;
+  text-transform: uppercase; letter-spacing: 1.8px;
+  color: #4ade80; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 4px;
+}
+.s6tofind-chip {
+  display: flex; align-items: center; gap: 9px;
+  background: rgba(74,222,128,.13);
+  border: 1.5px solid rgba(74,222,128,.32);
+  border-radius: 10px; padding: 9px 13px; margin-bottom: 8px;
+}
+.s6tofind-icon { font-size: 15px; flex-shrink: 0; }
+.s6tofind-label {
+  font-family: 'Fira Code','Courier New',monospace;
+  font-size: 14px; font-weight: 800; color: #4ade80;
+  letter-spacing: .3px;
+}
+.s6tofind-hint {
+  display: flex; align-items: center; gap: 6px;
+  font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+  font-size: 11px; color: #94a3b8;
+  margin-top: 4px; padding: 6px 10px;
+  border: 1px dashed rgba(148,163,184,.32); border-radius: 8px;
+  background: rgba(148,163,184,.07);
+}
+.s6tofind-hint strong { color: #cbd5e1; }
 """
 
 _SCENE7_CSS = """
@@ -3073,77 +3154,45 @@ def validate_final_html(html: str) -> None:
 
 
 def _build_step6_panel_html(sol: dict, scene: dict) -> str:
-    """Build the Step-6 Given Data / To Find overlay panel (inside svg-container).
-    IMPORTANT: Must never reveal the final answer value — answer only appears in Steps 8–9.
+    """Build the Step-6 'To Find' floating badge shown directly on the SVG canvas.
+
+    Change (Update 2): The old two-column "Given Data / To Find" card overlay is
+    removed.  Instead, we show a minimal, visually unobtrusive floating badge that
+    labels the unknown quantity with its notation (e.g. "T₃ ?") right on the SVG
+    so the student can see WHERE the unknown lives in the physical diagram.
+
+    IMPORTANT: Must never reveal the final answer value — the answer only appears
+    in Steps 8–9.
     """
-    given_list   = sol.get("given_list", [])
     to_find      = scene.get("to_find", ["The unknown quantity"])
     answer_value = str(sol.get("answer_value", "")).strip()   # used for scrubbing
     final_answer = str(sol.get("final_answer", "")).strip()   # used for scrubbing
 
-    def _leaks_answer(text: str) -> bool:
-        """Return True if text appears to reveal the numerical final answer."""
-        if not answer_value or answer_value == "?":
-            return False
-        t = text.lower().strip()
-        # Block if the entry explicitly contains the answer number
-        return answer_value.lower() in t or (
-            final_answer and final_answer.lower() in t
-        )
-
-    given_items = ""
-    for g in given_list:
-        if _leaks_answer(g):
-            continue   # skip — this entry reveals the answer prematurely
-        if "=" in g:
-            sym, rest = g.split("=", 1)
-            given_items += (
-                f'<div class="s6info-item">'
-                f'<span class="s6info-bullet"></span>'
-                f'<span class="s6info-val"><span class="s6info-sym">{_he(sym.strip())}</span>'
-                f' = {_he(rest.strip())}</span>'
-                f'</div>\n'
-            )
-        else:
-            given_items += (
-                f'<div class="s6info-item">'
-                f'<span class="s6info-bullet"></span>'
-                f'<span class="s6info-val">{_he(g)}</span>'
-                f'</div>\n'
-            )
-    if not given_items:
-        given_items = '<div class="s6info-item"><span class="s6info-bullet"></span><span class="s6info-val">See problem statement</span></div>\n'
-
-    find_chips = ""
+    # Build compact "Find: SYMBOL ?" chips — one per unknown
+    find_items_html = ""
     for tf in to_find:
-        # Never show the numerical answer — strip it if it slipped in
+        # Never reveal the numerical answer
         tf_clean = tf
         if answer_value and answer_value != "?" and answer_value in tf:
-            tf_clean = tf.replace(answer_value, "?")   # replace value with ?
-        find_chips += (
-            f'<div class="s6info-find-chip">'
-            f'<span class="s6info-find-chip-icon">&#x2753;</span>'
-            f'<span>{_he(tf_clean)}</span>'
+            tf_clean = tf.replace(answer_value, "?")
+        find_items_html += (
+            f'<div class="s6tofind-chip">'
+            f'<span class="s6tofind-icon">&#x2753;</span>'
+            f'<span class="s6tofind-label">{_he(tf_clean)}&thinsp;?</span>'
             f'</div>\n'
         )
-    # Always add a reminder that the answer will be revealed in Step 9
-    find_chips += (
-        '<div class="s6info-answer-hint">'
-        '<span>&#x1F512;</span>'
-        '<span>Answer revealed in <strong>Step 9</strong></span>'
-        '</div>\n'
+
+    hint = (
+        '<div class="s6tofind-hint">'
+        '<span>&#x1F512;</span> Answer revealed in <strong>Step&nbsp;9</strong>'
+        '</div>'
     )
 
-    return f"""<div id="step6-info-panel" role="region" aria-label="Given data and target">
-  <div class="s6info-card">
-    <div class="s6info-col s6info-col-given">
-      <div class="s6info-heading s6info-heading-given">Given Data</div>
-      {given_items}
-    </div>
-    <div class="s6info-col s6info-col-find">
-      <div class="s6info-heading s6info-heading-find">To Find</div>
-      {find_chips}
-    </div>
+    return f"""<div id="step6-info-panel" role="region" aria-label="What to find">
+  <div class="s6tofind-badge">
+    <div class="s6tofind-heading">&#x1F3AF;&thinsp;Find</div>
+    {find_items_html}
+    {hint}
   </div>
 </div>"""
 
