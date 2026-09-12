@@ -789,7 +789,7 @@ def _rebuild_steps_data_js(scene: dict) -> str:
         for b in s.get("badges", []):
             b_text = html_module.escape(str(b.get("text", "")))
             b_type = html_module.escape(str(b.get("type", "cyan")))
-            badges_html.append(f'<span class="badge badge-{b_type}">{b_text}</span>')
+            badges_html.append(f"<span class='badge badge-{b_type}'>{b_text}</span>")
             
         layer_ops = {}
         visible_layers = s.get("layers_visible", [])
