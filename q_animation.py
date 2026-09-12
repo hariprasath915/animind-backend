@@ -81,11 +81,20 @@ else:
 
 MAX_TOKENS_SOLUTION  = 4000
 MAX_TOKENS_SCENE     = 8000
-MAX_TOKENS_HTML      = 28000
+# ── Reduced from 28000 to 18000 ──────────────────────────────────────────────
+# Root cause of TCP stream kills: requesting 28k tokens streams ~120KB over IPv6
+# which gets killed mid-stream by the network (wsarecv: connection forcibly closed).
+# 18000 tokens is sufficient for a well-formed 6-step SVG animation JSON and
+# produces ~60-70KB streams which are much more stable on Indian ISP connections.
+MAX_TOKENS_HTML      = 18000
 TIMEOUT_SOLUTION     = 120.0
 TIMEOUT_SCENE        = 150.0
-TIMEOUT_HTML         = 300.0
-PIPELINE_TIMEOUT     = 600.0
+# ── Increased from 300s to 480s ───────────────────────────────────────────────
+# With MAX_RETRIES=4 and RETRY_DELAYS=[15,35,70], worst-case retry time is
+# 120s (generation) + 15+35+70=120s (sleeps) = 240s. The old 300s left only
+# 60s headroom. 480s gives 240s headroom even in worst-case retry scenarios.
+TIMEOUT_HTML         = 480.0
+PIPELINE_TIMEOUT     = 660.0
 
 
 # ===========================================================================
@@ -815,16 +824,20 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
               + "\n\nSolution:\n" + sol_str
               + "\n\nGenerate the 6-step SVG concept animation as JSON.")
 
-    for attempt in range(1, 4):
+    for attempt in range(1, 5):   # 4 attempts total
         try:
             raw = _call_gemini(prompt, _SVG_BUILDER_SYSTEM, max_tokens=MAX_TOKENS_HTML)
             data = json.loads(_sanitize_json(raw))
             data["_scene"] = scene
             return _sanitize_svg_data(data)
         except Exception as e:
-            Log.warn("SVGBuilder", f"Attempt {attempt} failed: {e}")
-            if attempt < 3:
-                import time as _t; _t.sleep(15 * attempt)
+            err = str(e)
+            Log.warn("SVGBuilder", f"Attempt {attempt}/4 failed: {err[:120]}")
+            if attempt < 4:
+                # Short sleep between JSON-parse retries.
+                # Network-level errors are already retried inside _call_gemini.
+                import time as _t
+                _t.sleep(10 * attempt)
                 
     return {"svg_defs": "", "svg_layers": "", "steps_data_js": "var stepsData=[];", "apply_step_js": "function applyStep(idx){window.currentStep=idx;}", "raf_js": ""}
 
@@ -1889,7 +1902,6 @@ button {
   box-shadow: 0 2px 8px rgba(15,23,42,.10);
   transform: translateY(-1px);
 }
-"
 :root {
   --bg-color: #eef2f9;
   --panel-bg: #ffffff;
@@ -2192,7 +2204,6 @@ _SCENE6_CSS = """
   padding: 18px 32px 24px; border-top: 1px solid var(--border);
   background: var(--panel-bg);
 }
-"
 #qanim-scene-modal-backdrop{display:none;position:fixed;inset:0;z-index:7400;background:rgba(15,23,42,.50);backdrop-filter:blur(6px);opacity:0;transition:opacity .25s ease;}
 #qanim-scene-modal-backdrop.qanim-scene-visible{display:block!important;opacity:1;}
 #qanim-scene6-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(860px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s ease,transform .3s cubic-bezier(.34,1.56,.64,1);}
@@ -2335,7 +2346,6 @@ _SCENE7_CSS = """
   .s7-body-cols { flex-direction: column; }
   .s7-left-col { width: 100%; border-right: none; border-bottom: 1.5px solid var(--border); }
 }
-"
 #qanim-scene7-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(900px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s cubic-bezier(.34,1.56,.64,1);}
 #qanim-scene7-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
 .s7-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(37,99,235,.12),0 2px 8px rgba(0,0,0,.07);border:1px solid #e8eef8;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
@@ -2494,7 +2504,6 @@ _SCENE9_CSS = """
   padding: 18px 36px 24px; border-top: 1px solid #bbf7d0;
   background: linear-gradient(135deg, #f0fdf4, #dcfce7);
 }
-"
 #qanim-scene9-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(780px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s cubic-bezier(.34,1.56,.64,1);}
 #qanim-scene9-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
 .s9-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(22,163,74,.18),0 2px 8px rgba(0,0,0,.08);border:2px solid #86efac;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
