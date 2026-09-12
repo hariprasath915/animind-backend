@@ -1109,7 +1109,7 @@ window.qanimStartRAF = function() {
   if (stg) {
     var pg = stg.querySelector('#layer-object > g[transform], #layer-param1 > g[transform]');
     if (pg) {
-      var dm = (pg.getAttribute('transform')||'').match(/translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\)/);
+      var dm = (pg.getAttribute('transform')||'').match(/translate\\(\\s*([-\\d.]+)[,\\s]+([-\\d.]+)\\)/);
       if (dm) { PX = parseFloat(dm[1]); PY = parseFloat(dm[2]); }
     }
     var cl0 = stg.querySelector('#crank-group line, #crank-body');
