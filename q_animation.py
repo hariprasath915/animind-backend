@@ -261,7 +261,17 @@ Solve the given problem and return ONLY valid JSON (no markdown, no fences):
     {"num": "8.3", "label": "Substitute and solve", "eq": "Q = 25 × 2 × 120 = 6000 W", "note": "Final value"}
   ],
   "system_title": "Hot Plate in Forced Airflow",
-  "system_label2": "Forced convection over a hot surface"
+  "system_label2": "Forced convection over a hot surface",
+  "customize": {
+    "fields": [
+      {"id": "h",  "symbol": "h",   "label": "Convective coefficient", "default": 25,  "unit": "W/m²·K"},
+      {"id": "A",  "symbol": "A",   "label": "Surface area",           "default": 2,   "unit": "m²"},
+      {"id": "Ts", "symbol": "Ts",  "label": "Surface temperature",    "default": 150, "unit": "°C"},
+      {"id": "Ti", "symbol": "T∞",  "label": "Ambient temperature",  "default": 30,  "unit": "°C"}
+    ],
+    "compute_js": "var Q = vals.h * vals.A * Math.abs(vals.Ts - vals.Ti); return { answer: _fmt(Q), answer_unit: 'W', answer_label: 'Q', derived: {'Q (heat loss)': _fmt(Q) + ' W'} };",
+    "question_template": "A surface with area {A} m² and convective coefficient h = {h} W/m²·K. Surface temperature = {Ts} °C, ambient temperature = {Ti} °C. Find the heat loss rate Q."
+  }
 }
 
 Rules:
@@ -278,6 +288,9 @@ Rules:
 - approach_steps: 2–4 numbered steps for Scene 8 right panel; each has num, label, eq, note.
 - system_title: short name of the physical system (for Scene 8 left panel).
 - system_label2: one-line description (for Scene 8 left panel).
+- customize.fields: one entry per GIVEN numeric value (not the unknown). id = valid JS identifier. default = original numeric value as a number.
+- customize.compute_js: JS function body (not the function declaration) that receives vals (object keyed by field id) and _fmt(v) helper. Must return {answer, answer_unit, answer_label, derived:{label:value_str}}.
+- customize.question_template: question text with {id} placeholders for each field.
 - Pure JSON only."""
 
 
@@ -1675,65 +1688,8 @@ body.qanim-fullscreen .control-panel { padding: 12px 20px 14px !important; flex-
 body.qanim-fullscreen .info-box { min-height: 70px !important; padding: 12px 16px !important; }
 body.qanim-fullscreen .actions { margin-top: 10px !important; }
 
-/* ── Step-6 info panel ───────────────────────────────────────────────────── */
-#step6-info-panel {
-  position: absolute; inset: 0; z-index: 10;
-  display: flex; align-items: center; justify-content: center;
-  pointer-events: none; opacity: 0;
-  transition: opacity .45s var(--ease-smooth);
-}
-#step6-info-panel.s6info-visible { opacity: 1; pointer-events: auto; }
-.s6info-card {
-  display: flex; gap: 0;
-  background: rgba(10,22,44,.84); backdrop-filter: blur(18px);
-  border: 1.5px solid rgba(var(--c-primary-rgb,3,105,161),.38);
-  border-radius: 20px;
-  box-shadow: 0 12px 56px rgba(var(--c-primary-rgb,3,105,161),.22), 0 2px 12px rgba(0,0,0,.40);
-  overflow: hidden; max-width: 720px; width: 90%;
-}
-.s6info-col { flex: 1; padding: 24px 26px; }
-.s6info-col-given { border-right: 1.5px solid rgba(var(--c-primary-rgb,3,105,161),.22); }
-.s6info-heading {
-  font-size: 9.5px; font-weight: 900; text-transform: uppercase;
-  letter-spacing: 2px; margin-bottom: 16px;
-  display: flex; align-items: center; gap: 7px;
-}
-.s6info-heading-given { color: #38bdf8; }
-.s6info-heading-given::before {
-  content: ''; width: 8px; height: 8px; border-radius: 50%;
-  background: #38bdf8; flex-shrink: 0;
-  box-shadow: 0 0 0 3px rgba(56,189,248,.22), 0 0 8px rgba(56,189,248,.40);
-}
-.s6info-heading-find { color: #4ade80; }
-.s6info-heading-find::before {
-  content: ''; width: 8px; height: 8px; border-radius: 50%;
-  background: #4ade80; flex-shrink: 0;
-  box-shadow: 0 0 0 3px rgba(74,222,128,.22), 0 0 8px rgba(74,222,128,.40);
-}
-.s6info-item { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 10px; }
-.s6info-bullet { width: 5px; height: 5px; border-radius: 50%; background: #38bdf8; flex-shrink: 0; margin-top: 7px; }
-.s6info-bullet-find { background: #4ade80; }
-.s6info-val { font-size: 13px; color: #e2e8f0; line-height: 1.6; font-family: 'Inter', system-ui, sans-serif; }
-.s6info-sym { font-weight: 800; color: #fff; }
-.s6info-find-chip {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: rgba(74,222,128,.12); border: 1.5px solid rgba(74,222,128,.35);
-  border-radius: 11px; padding: 11px 15px; margin-bottom: 9px;
-  font-size: 13.5px; font-weight: 700; color: #4ade80;
-  font-family: 'Inter', system-ui, sans-serif;
-}
-.s6info-find-chip-icon { font-size: 17px; }
-.s6info-answer-hint {
-  display: flex; align-items: center; gap: 7px; margin-top: 12px;
-  padding: 8px 13px; border-radius: 9px;
-  background: rgba(148,163,184,.10);
-  border: 1px dashed rgba(148,163,184,.38);
-  font-size: 11.5px; color: #94a3b8;
-  font-family: 'Inter', system-ui, sans-serif;
-}
-.s6info-answer-hint strong { color: #cbd5e1; }
-
 /* ── Dashboard card ──────────────────────────────────────────────────────── */
+
 .dashboard {
   width: 100%; max-width: 900px; margin: 0 auto;
   background: var(--panel-bg);
@@ -1989,39 +1945,6 @@ body.qanim-fullscreen .info-box{
   min-height:70px!important;padding:12px 16px!important;}
 body.qanim-fullscreen .actions{
   margin-top:10px!important;}
-/* Step-6 Given/To-Find info panel */
-#step6-info-panel{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
-  pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.4,0,.2,1);}
-#step6-info-panel.s6info-visible{opacity:1;pointer-events:auto;}
-.s6info-card{display:flex;gap:0;background:rgba(10,22,44,.82);backdrop-filter:blur(14px);
-  border:1.5px solid rgba(8,145,178,.38);border-radius:18px;
-  box-shadow:0 8px 48px rgba(8,145,178,.22),0 2px 12px rgba(0,0,0,.35);
-  overflow:hidden;max-width:720px;width:90%;}
-.s6info-col{flex:1;padding:22px 24px;}
-.s6info-col-given{border-right:1.5px solid rgba(8,145,178,.25);}
-.s6info-col-find{}
-.s6info-heading{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1.8px;
-  margin-bottom:14px;display:flex;align-items:center;gap:7px;}
-.s6info-heading-given{color:#38bdf8;}
-.s6info-heading-given::before{content:'';width:8px;height:8px;border-radius:50%;background:#38bdf8;
-  flex-shrink:0;box-shadow:0 0 0 3px rgba(56,189,248,.22);}
-.s6info-heading-find{color:#4ade80;}
-.s6info-heading-find::before{content:'';width:8px;height:8px;border-radius:50%;background:#4ade80;
-  flex-shrink:0;box-shadow:0 0 0 3px rgba(74,222,128,.22);}
-.s6info-item{display:flex;align-items:flex-start;gap:9px;margin-bottom:9px;}
-.s6info-bullet{width:5px;height:5px;border-radius:50%;background:#38bdf8;flex-shrink:0;margin-top:6px;}
-.s6info-bullet-find{background:#4ade80;}
-.s6info-val{font-size:13px;color:#e2e8f0;line-height:1.55;font-family:'Segoe UI',system-ui,sans-serif;}
-.s6info-sym{font-weight:800;color:#fff;}
-.s6info-find-chip{display:inline-flex;align-items:center;gap:7px;background:rgba(74,222,128,.12);
-  border:1.5px solid rgba(74,222,128,.35);border-radius:10px;padding:10px 14px;margin-bottom:8px;
-  font-size:13.5px;font-weight:700;color:#4ade80;font-family:'Segoe UI',system-ui,sans-serif;}
-.s6info-find-chip-icon{font-size:16px;}
-.s6info-answer-hint{display:flex;align-items:center;gap:7px;margin-top:10px;
-  padding:8px 12px;border-radius:8px;background:rgba(148,163,184,.12);
-  border:1px dashed rgba(148,163,184,.40);font-size:11.5px;color:#94a3b8;
-  font-family:'Segoe UI',system-ui,sans-serif;}
-.s6info-answer-hint strong{color:#cbd5e1;}
 .dashboard{width:100%;max-width:900px;margin:0 auto;background:var(--panel-bg);
   border-radius:var(--border-radius);box-shadow:var(--shadow-card);overflow:hidden;
   border:1px solid var(--border);position:relative;}
@@ -2616,6 +2539,7 @@ _SCENE9_CSS = """
 """
 
 _CONTROLS_CSS = """
+/* ── Controls bar ─────────────────────────────────────────────────────────── */
 #answerbox-backdrop{display:none;position:fixed;inset:0;z-index:8400;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);}
 #answerbox-backdrop.open{display:block;}
 #answerbox-panel{display:flex;flex-direction:column;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.96);z-index:8500;width:min(480px,94vw);max-height:85vh;border-radius:18px;overflow:hidden;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 48px rgba(124,58,237,.18);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s cubic-bezier(.34,1.56,.64,1);}
@@ -3048,6 +2972,544 @@ _GLOSSARY_JS = """
 """
 
 
+
+# ===========================================================================
+# Customize Panel
+# ===========================================================================
+
+_CUSTOMIZE_CSS = """
+<style id="qanim-customize-styles">
+#customize-backdrop {
+  display:none; position:fixed; inset:0; z-index:8800;
+  background:rgba(15,23,42,.52); backdrop-filter:blur(5px);
+}
+#customize-backdrop.open { display:block; }
+
+#customize-panel {
+  display:flex; flex-direction:column;
+  position:fixed; top:50%; left:50%;
+  transform:translate(-50%,-50%) scale(.96);
+  z-index:8900; width:min(520px,95vw); max-height:88vh;
+  border-radius:20px; overflow:hidden;
+  background:#fff;
+  border:1px solid #e2e8f0;
+  box-shadow:0 8px 56px rgba(99,102,241,.22),0 2px 10px rgba(0,0,0,.10);
+  opacity:0; pointer-events:none;
+  transition:opacity .26s, transform .26s cubic-bezier(.34,1.56,.64,1);
+}
+#customize-panel.open {
+  opacity:1; pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1);
+}
+.cust-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 22px;
+  background:linear-gradient(135deg,#f5f3ff,#eff6ff);
+  border-bottom:1px solid #e2e8f0; flex-shrink:0;
+}
+.cust-header-title {
+  font-size:16px; font-weight:800; color:#1e293b;
+  display:flex; align-items:center; gap:8px;
+}
+.cust-header-badge {
+  font-size:10px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1px; padding:2px 9px; border-radius:20px;
+  background:rgba(99,102,241,.12); border:1px solid rgba(99,102,241,.28);
+  color:#4338ca;
+}
+.cust-close-btn {
+  width:30px; height:30px; border-radius:8px;
+  border:1px solid #e2e8f0; background:#f8fafc;
+  color:#64748b; font-size:13px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  transition:background .15s; padding:0;
+}
+.cust-close-btn:hover { background:#fee2e2; color:#dc2626; }
+.cust-body {
+  padding:20px 22px; overflow-y:auto; flex:1 1 auto;
+  display:flex; flex-direction:column; gap:0;
+}
+.cust-section-title {
+  font-size:10px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1.4px; color:#6366f1; margin-bottom:12px;
+  display:flex; align-items:center; gap:6px;
+}
+.cust-section-title::after {
+  content:''; flex:1; height:1px;
+  background:linear-gradient(90deg,rgba(99,102,241,.25),transparent);
+}
+.cust-field-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:12px;
+  margin-bottom:18px;
+}
+.cust-field { display:flex; flex-direction:column; gap:4px; }
+.cust-field label {
+  font-size:11.5px; font-weight:700; color:#475569;
+  display:flex; align-items:center; gap:5px;
+}
+.cust-field label .cust-sym {
+  font-family:'Fira Code','Courier New',monospace;
+  font-weight:900; font-size:13px; color:#0e7490;
+}
+.cust-field input {
+  padding:9px 12px; border-radius:9px;
+  border:1.5px solid #e2e8f0; background:#f8fafc;
+  font-family:inherit; font-size:13.5px; font-weight:600;
+  color:#1e293b; outline:none;
+  transition:border-color .15s,background .15s;
+  box-sizing:border-box; width:100%;
+}
+.cust-field input:focus {
+  border-color:#6366f1; background:#fff;
+  box-shadow:0 0 0 3px rgba(99,102,241,.12);
+}
+.cust-field .cust-unit { font-size:10.5px; color:#94a3b8; margin-top:1px; }
+.cust-preview-box {
+  background:linear-gradient(135deg,#f5f3ff,#eff6ff);
+  border:1.5px solid rgba(99,102,241,.28);
+  border-radius:12px; padding:14px 16px; margin-bottom:16px;
+}
+.cust-preview-title {
+  font-size:10.5px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1.2px; color:#4338ca; margin-bottom:10px;
+}
+.cust-preview-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+.cust-preview-item {
+  display:flex; align-items:center; gap:6px;
+  font-size:12.5px; color:#334155;
+}
+.cust-preview-item .cpv-sym {
+  font-weight:800; color:#1e293b;
+  font-family:'Fira Code','Courier New',monospace; font-size:13px;
+}
+.cust-preview-item .cpv-arrow { color:#6366f1; font-size:11px; font-weight:700; }
+.cust-result-bar {
+  background:linear-gradient(135deg,#f0fdf4,#dcfce7);
+  border:1.5px solid #86efac; border-radius:12px;
+  padding:13px 16px; margin-bottom:16px; display:none;
+}
+.cust-result-bar.visible { display:block; }
+.cust-result-title {
+  font-size:10.5px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1.2px; color:#15803d; margin-bottom:7px;
+}
+.cust-result-values {
+  font-size:14px; font-weight:700; color:#14532d;
+  font-family:'Fira Code','Courier New',monospace;
+}
+.cust-error-bar {
+  background:#fef2f2; border:1.5px solid #fecaca;
+  border-radius:10px; padding:10px 14px;
+  font-size:12.5px; color:#b91c1c; font-weight:600;
+  margin-bottom:14px; display:none;
+}
+.cust-error-bar.visible { display:block; }
+.cust-footer {
+  display:flex; gap:10px; justify-content:flex-end;
+  padding:16px 22px; border-top:1px solid #f1f5f9;
+  background:#fafbff; flex-shrink:0;
+}
+.cust-btn-reset {
+  padding:10px 20px; border-radius:10px; border:1.5px solid #e2e8f0;
+  background:#fff; color:#64748b; font-size:13px; font-weight:700;
+  font-family:inherit; cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.cust-btn-reset:hover { background:#f8fafc; border-color:#94a3b8; color:#334155; }
+.cust-btn-apply {
+  padding:10px 24px; border-radius:10px; border:none;
+  background:linear-gradient(135deg,#4f46e5,#6366f1);
+  color:#fff; font-size:13px; font-weight:700; font-family:inherit;
+  cursor:pointer; box-shadow:0 3px 12px rgba(99,102,241,.35);
+  transition:background .15s,transform .12s,box-shadow .15s;
+}
+.cust-btn-apply:hover {
+  background:linear-gradient(135deg,#4338ca,#4f46e5);
+  transform:translateY(-1px); box-shadow:0 5px 18px rgba(99,102,241,.42);
+}
+.cust-btn-apply:active { transform:translateY(0); }
+@keyframes cust-pulse-ring {
+  0%   { box-shadow:0 0 0 0 rgba(99,102,241,.5); }
+  70%  { box-shadow:0 0 0 8px rgba(99,102,241,0); }
+  100% { box-shadow:0 0 0 0 rgba(99,102,241,0); }
+}
+.cust-applied-ring { animation:cust-pulse-ring .7s ease-out; }
+</style>
+"""
+
+
+def _build_customize_html(sol: dict, scene: dict) -> str:
+    """Build the Customize panel HTML + JS for live value editing.
+
+    Reads sol["customize"] produced by Gemini. Falls back gracefully to a
+    no-op if the field is absent (e.g. fallback mode or old Gemini response).
+    Returns two strings joined: (css_html, panel_html_and_js).
+    """
+    cust = sol.get("customize") or {}
+    fields = cust.get("fields") or []
+    compute_js_body = cust.get("compute_js", "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };") or ""
+    question_template = cust.get("question_template", "") or ""
+
+    # Sanitize compute_js_body — strip outer function wrapper if Gemini added one
+    import re as _re_cust
+    compute_js_body = _re_cust.sub(
+        r'^\s*function\s+compute\s*\([^)]*\)\s*\{', '', compute_js_body, flags=_re_cust.DOTALL
+    ).strip()
+    if compute_js_body.endswith('}'):
+        compute_js_body = compute_js_body[:-1].strip()
+
+    if not fields:
+        # No customize data — return the CSS only (no panel, no button)
+        return _CUSTOMIZE_CSS + ""
+
+    # Build field inputs HTML
+    fields_html = ""
+    for f in fields:
+        fid   = _he(str(f.get("id",  "v")))
+        sym   = _he(str(f.get("symbol", fid)))
+        label = _he(str(f.get("label", sym)))
+        unit  = _he(str(f.get("unit",  "")))
+        default_val = f.get("default", 0)
+        fields_html += f"""      <div class="cust-field">
+        <label><span class="cust-sym">{sym}</span> {label}</label>
+        <input type="number" id="cust-field-{fid}" value="{default_val}" step="any">
+        <span class="cust-unit">Unit: {unit}</span>
+      </div>\n"""
+
+    # Build defaults JS object
+    defaults_entries = ", ".join(
+        f"{f.get('id','v')}: {f.get('default', 0)}"
+        for f in fields
+    )
+    defaults_js = f"{{ {defaults_entries} }}"
+
+    # Build readInputs JS — reads each field by id
+    read_parts = []
+    for f in fields:
+        fid_raw = f.get("id", "v")
+        read_parts.append(
+            f"vals['{fid_raw}'] = parseFloat((document.getElementById('cust-field-{fid_raw}') || {{}}).value || '0');"
+        )
+    read_lines = "\n    ".join(read_parts)
+
+    # Build preview rows — show each field value in the preview grid
+    preview_html = ""
+    for f in fields:
+        fid = _he(str(f.get("id", "v")))
+        sym = _he(str(f.get("symbol", fid)))
+        unit = _he(str(f.get("unit", "")))
+        preview_html += f'      <div class="cust-preview-item"><span class="cpv-sym">{sym}</span><span class="cpv-arrow">\u2192</span><span id="cpv-{fid}">--</span></div>\n'
+
+    # The JS question template — replace {id} placeholders with vals[id]
+    if question_template:
+        # Build JS expression to reconstruct question string
+        # e.g. 'Find Q. h={h}' -> 'Find Q. h=' + vals.h + ''
+        import re as _re2
+        # Escape backtick/backslash in question_template for JS template literal
+        qt_js_safe = question_template.replace('\\', '\\\\').replace('`', "\\`")
+        # Replace {id} with ${vals.id} for JS template literals
+        for f in fields:
+            fid = f.get("id", "v")
+            qt_js_safe = qt_js_safe.replace(f'{{{fid}}}', f'${{_fmt(vals.{fid})}}')
+        question_tmpl_js = f'`{qt_js_safe}`'
+    else:
+        question_tmpl_js = "null"
+
+    # Build given list JS for s6/s7 panels — one entry per field
+    given_parts = []
+    _dq = '"'  # double-quote char, used to avoid backslash inside f-string
+    for f in fields:
+        fsym    = _he(str(f.get("symbol", f.get("id", "v"))))
+        fid_raw = f.get("id", "v")
+        funit   = _he(str(f.get("unit", "")))
+        piece = (
+            "'<span class=" + _dq + "s6info-sym" + _dq + ">'"
+            f"+'{fsym}'+'</span> = '+_fmt(vals.{fid_raw})+' {funit}'"
+        )
+        given_parts.append(piece)
+    given_entries_js = "[" + ", ".join(given_parts) + "]"
+
+    panel_html = f"""
+<!-- ╒═════════════════════════════════════════════════════════════
+     CUSTOMIZE PANEL
+     ╙═════════════════════════════════════════════════════════════ -->
+<div id="customize-backdrop"></div>
+<div id="customize-panel" role="dialog" aria-label="Customize question values" aria-hidden="true">
+  <div class="cust-header">
+    <div class="cust-header-title">
+      &#x2699;&#xFE0F; Customize Values
+      <span class="cust-header-badge">Live Update</span>
+    </div>
+    <button class="cust-close-btn" id="cust-close-btn">&#x2715;</button>
+  </div>
+
+  <div class="cust-body">
+    <div class="cust-section-title">Given Parameters</div>
+    <div class="cust-field-grid">
+{fields_html}
+    </div>
+
+    <div class="cust-section-title">Live Preview</div>
+    <div class="cust-preview-box">
+      <div class="cust-preview-title">&#x1F4D0; Calculated Values</div>
+      <div class="cust-preview-grid" id="cust-preview-grid">
+{preview_html}
+        <div class="cust-preview-item"><span class="cpv-sym" id="cpv-answer-label">?</span><span class="cpv-arrow">&#x2192;</span><span id="cpv-answer">--</span></div>
+      </div>
+    </div>
+
+    <div class="cust-result-bar" id="cust-result-bar">
+      <div class="cust-result-title">&#x2705; Ready to Apply</div>
+      <div class="cust-result-values" id="cust-result-values"></div>
+    </div>
+
+    <div class="cust-error-bar" id="cust-error-bar">
+      &#x26A0;&#xFE0F; <span id="cust-error-msg">Please enter valid positive numbers.</span>
+    </div>
+  </div>
+
+  <div class="cust-footer">
+    <button class="cust-btn-reset" id="cust-btn-reset">&#x21BA; Reset Defaults</button>
+    <button class="cust-btn-apply" id="cust-btn-apply">&#x2713; Apply &amp; Update</button>
+  </div>
+</div>
+
+<script id="qanim-js-customize">
+(function initCustomize(){{
+  'use strict';
+  if(window.__qanimCustomizeInit)return;
+  window.__qanimCustomizeInit=true;
+
+  var DEFAULTS = {defaults_js};
+  var CURRENT  = Object.assign({{}}, DEFAULTS);
+
+  function _el(id){{ return document.getElementById(id); }}
+  function _round(v, d){{ var m=Math.pow(10,d); return Math.round(v*m)/m; }}
+  function _fmt(v){{
+    if(typeof v !== 'number' || isNaN(v)) return '?';
+    if(v === 0) return '0';
+    if(Math.abs(v) < 0.001 || Math.abs(v) >= 1e6) return v.toExponential(3);
+    return _round(v, 4) + '';
+  }}
+
+  function compute(vals){{
+    try {{ {compute_js_body} }}
+    catch(e){{ console.warn('[QAnim Customize] compute error:', e); return null; }}
+  }}
+
+  function readInputs(){{
+    var vals = {{}};
+    {read_lines}
+    return vals;
+  }}
+
+  function validate(vals){{
+    var keys = Object.keys(vals);
+    for(var i=0;i<keys.length;i++){{
+      if(isNaN(vals[keys[i]])) return 'Please enter valid numbers in all fields.';
+    }}
+    return null;
+  }}
+
+  function updatePreview(){{
+    var vals = readInputs();
+    var err  = validate(vals);
+    var errBar = _el('cust-error-bar'), errMsg = _el('cust-error-msg');
+    var resBar = _el('cust-result-bar'), resVal = _el('cust-result-values');
+
+    if(err){{
+      if(errBar) errBar.classList.add('visible');
+      if(errMsg) errMsg.textContent = err;
+      if(resBar) resBar.classList.remove('visible');
+      return;
+    }}
+    if(errBar) errBar.classList.remove('visible');
+
+    // Update per-field preview chips
+    var fieldIds = Object.keys(DEFAULTS);
+    fieldIds.forEach(function(id){{
+      var el = _el('cpv-' + id);
+      if(el) el.textContent = _fmt(vals[id]);
+    }});
+
+    var c = compute(vals);
+    if(c && c.answer !== undefined){{
+      var ansEl    = _el('cpv-answer');       if(ansEl) ansEl.textContent = c.answer + (c.answer_unit ? ' ' + c.answer_unit : '');
+      var ansLabel = _el('cpv-answer-label'); if(ansLabel) ansLabel.textContent = c.answer_label || 'Answer';
+      if(resBar) resBar.classList.add('visible');
+      if(resVal) resVal.textContent = (c.answer_label || '?') + ' = ' + c.answer + ' ' + (c.answer_unit || '');
+    }}
+  }}
+
+  function applyToAnimation(vals, c){{
+    CURRENT = Object.assign({{}}, vals);
+
+    // 1. Question banner text
+    var newQ = {question_tmpl_js};
+    if(newQ) document.querySelectorAll('.q-text').forEach(function(el){{ el.textContent = newQ; }});
+
+    // 2. SVG layer text labels — match any text element whose content
+    //    contains a field symbol or value pattern, and update it
+    var fieldIds = Object.keys(DEFAULTS);
+    fieldIds.forEach(function(id){{
+      var dflt = DEFAULTS[id];
+      var newV = _fmt(vals[id]);
+      // Attempt to update any SVG text containing the default value
+      document.querySelectorAll('svg text').forEach(function(t){{
+        if(t.textContent.indexOf(dflt) > -1) {{
+          t.textContent = t.textContent.replace(String(dflt), newV);
+        }}
+      }});
+    }});
+
+    // 3. stepsData badges & descriptions (Steps 3–6 concept animation)
+    if(window.stepsData && Array.isArray(window.stepsData)){{
+      // Update steps 2-5 (0-indexed) with new badge values if badges reference field values
+      window.stepsData.forEach(function(step, idx){{
+        if(!step) return;
+        // Replace old numeric value strings in badges with new ones
+        var newBadges = (step.badges || []).map(function(b){{
+          var out = b;
+          fieldIds.forEach(function(id){{
+            // Replace occurrences of DEFAULTS[id] in the badge HTML text
+            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+            out = out.replace(re, _fmt(vals[id]));
+          }});
+          return out;
+        }});
+        step.badges = newBadges;
+        if(step.desc){{
+          var newDesc = step.desc;
+          fieldIds.forEach(function(id){{
+            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+            newDesc = newDesc.replace(re, _fmt(vals[id]));
+          }});
+          step.desc = newDesc;
+        }}
+      }});
+      applyStep(window.currentStep || 0);
+    }}
+
+    // 4. Step-6 To-Find badge — keep unchanged (shows unknown symbol, not values)
+
+    // 5. Scene 7 (Step 8) given list
+    var s7given = _el('s7-given-list');
+    if(s7given){{
+      var givenLines = {given_entries_js};
+      s7given.innerHTML = givenLines.map(function(g){{
+        return '<div class="s7-given-item">' + g + '</div>';
+      }}).join('');
+    }}
+
+    // 6. Scene 9 (Step 9) & Scene 8 substitution chain — update numeric values
+    var s9chain = _el('s9-sub-chain');
+    if(s9chain){{
+      var rows = s9chain.querySelectorAll('.s9-sub-row');
+      rows.forEach(function(row){{
+        var eq = row.querySelector('.s9-sub-eq');
+        if(!eq) return;
+        var text = eq.innerHTML;
+        fieldIds.forEach(function(id){{
+          var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+          text = text.replace(re, _fmt(vals[id]));
+        }});
+        eq.innerHTML = text;
+      }});
+    }}
+
+    // 7. Scene 9 final answer value
+    if(c && c.answer !== undefined){{
+      var fv = _el('s9-final-value');
+      if(fv){{
+        var hl = fv.querySelector('.s9-highlight');
+        if(hl) hl.textContent = c.answer;
+      }}
+      var fu = _el('s9-final-unit');
+      if(fu) fu.innerHTML = 'Units: <strong>' + (c.answer_unit || '') + '</strong>';
+      var st = _el('s9-insight-text');
+      if(st && c.answer_label) st.innerHTML = '<strong>Result:</strong> ' + c.answer_label + ' = ' + c.answer + ' ' + (c.answer_unit || '');
+    }}
+
+    // 8. Answer Box target
+    if(window._answerTargets && window._answerTargets[0] && c && c.answer !== undefined){{
+      window._answerTargets[0].value = c.answer;
+      window._answerTargets[0].unit  = c.answer_unit || '';
+    }}
+
+    // 9. Reset animation to step 1
+    if(typeof resetAnim === 'function') resetAnim();
+  }}
+
+  function openPanel(){{
+    var bd = _el('customize-backdrop'), p = _el('customize-panel');
+    if(bd){{ bd.classList.add('open'); }}
+    if(p){{ p.classList.add('open'); p.setAttribute('aria-hidden','false'); }}
+    updatePreview();
+  }}
+
+  function closePanel(){{
+    var bd = _el('customize-backdrop'), p = _el('customize-panel');
+    if(bd){{ bd.classList.remove('open'); }}
+    if(p){{ p.classList.remove('open'); p.setAttribute('aria-hidden','true'); }}
+  }}
+
+  function onReady(fn){{
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else setTimeout(fn, 0);
+  }}
+
+  onReady(function(){{
+    // Wire close/backdrop
+    var cb = _el('cust-close-btn'); if(cb) cb.addEventListener('click', closePanel);
+    var bd = _el('customize-backdrop'); if(bd) bd.addEventListener('click', closePanel);
+    document.addEventListener('keydown', function(e){{ if(e.key === 'Escape') closePanel(); }});
+
+    // Wire open button
+    var ob = _el('customize-ctrl-btn'); if(ob) ob.addEventListener('click', openPanel);
+
+    // Wire input fields — live preview on every keystroke
+    Object.keys(DEFAULTS).forEach(function(id){{
+      var inp = _el('cust-field-' + id);
+      if(inp) inp.addEventListener('input', updatePreview);
+    }});
+
+    // Reset defaults
+    var rb = _el('cust-btn-reset');
+    if(rb) rb.addEventListener('click', function(){{
+      Object.keys(DEFAULTS).forEach(function(id){{
+        var inp = _el('cust-field-' + id);
+        if(inp) inp.value = DEFAULTS[id];
+      }});
+      updatePreview();
+    }});
+
+    // Apply & Update
+    var ab = _el('cust-btn-apply');
+    if(ab) ab.addEventListener('click', function(){{
+      var vals = readInputs();
+      var err  = validate(vals);
+      if(err){{
+        var errBar = _el('cust-error-bar'), errMsg = _el('cust-error-msg');
+        if(errBar) errBar.classList.add('visible');
+        if(errMsg) errMsg.textContent = err;
+        return;
+      }}
+      var c = compute(vals);
+      applyToAnimation(vals, c);
+      closePanel();
+      // pulse the button
+      var custBtn = _el('customize-ctrl-btn');
+      if(custBtn){{ custBtn.classList.add('cust-applied-ring'); setTimeout(function(){{ custBtn.classList.remove('cust-applied-ring'); }}, 800); }}
+    }});
+
+    updatePreview();
+  }});
+}})();
+</script>
+"""
+    return _CUSTOMIZE_CSS + panel_html
+
+
 # ===========================================================================
 # Main HTML Assembler
 # ===========================================================================
@@ -3250,6 +3712,15 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   <button class="qanim-ctrl-btn" id="glossary-ctrl-btn" title="Difficult words explained" style="position:relative;">
     <span>&#x1F4D6;</span><span class="ctrl-label">Glossary</span>{glossary_badge}
   </button>""" if glossary else ""
+
+    # Customize panel
+    customize_html = _build_customize_html(sol, scene)
+    has_customize   = bool((sol.get("customize") or {}).get("fields"))
+    customize_sep   = '<div class="qanim-ctrl-sep"></div>' if has_customize else ""
+    customize_btn   = f"""  {customize_sep}
+  <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Change question values live">
+    <span>&#x2699;&#xFE0F;</span><span class="ctrl-label">Customize</span>
+  </button>""" if has_customize else ""
 
     # Answer box JS with targets
     answerbox_js = _ANSWERBOX_JS_TMPL.replace("{{TARGETS_JSON}}", targets_json)
@@ -3609,6 +4080,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 {_SCENE9_JS}
 {answerbox_js}
 {_GLOSSARY_JS}
+{customize_html}
 
 <script id="qanim-js-fullscreen">
 (function(){{
@@ -3662,7 +4134,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
-  </button>{glossary_btn}
+  </button>{glossary_btn}{customize_btn}
 </div>
 
 </body>
