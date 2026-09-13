@@ -129,29 +129,23 @@ def get_supabase(token: Optional[str] = None) -> "Client":
 # ══════════════════════════════════════════════════════════════════════
 # Haezet has no single `role` column — role is inferred from which
 # onboarding table has a row for this user (see onboarding_routes.py):
-#   • a row in `student_login`                          → "student"
-#   • a row in `teacher_pincode` with pin_status="claimed" → "teacher"
-#   • neither (onboarding not completed yet)             → None
+#   • a claimed row in `teacher_pincode` (pin_status="claimed")  → "teacher"
+#   • a row in `student_login`                                   → "student"
+#   • neither (onboarding not completed yet)                     → None
+#
+# Teacher is checked FIRST and wins if both rows exist. Claiming a teacher
+# PIN is a deliberate, explicit action (typing a 6-digit code someone gave
+# you), whereas a stray student_login row can exist for reasons that don't
+# reflect the user's current intent — e.g. an earlier test run, or picking
+# Student first and switching to Teacher afterward. Treating "claimed a
+# teacher PIN" as authoritative avoids that ambiguity.
 #
 # Uses the service-role client (bypasses RLS) since this is a backend-only
 # lookup, same pattern as onboarding_routes.py's own table reads.
 
 def get_user_role(user_id: str) -> Optional[str]:
-    """Return 'student', 'teacher', or None if the user hasn't picked a role yet."""
+    """Return 'teacher', 'student', or None if the user hasn't picked a role yet."""
     sb = get_supabase()
-
-    try:
-        student_row = (
-            sb.table("student_login")
-            .select("id")
-            .eq("user_id", user_id)
-            .maybe_single()
-            .execute()
-        )
-        if student_row is not None and student_row.data:
-            return "student"
-    except Exception as exc:
-        print(f"[AUTH] ⚠ role lookup (student_login) failed for {user_id}: {exc}")
 
     try:
         teacher_row = (
@@ -166,6 +160,19 @@ def get_user_role(user_id: str) -> Optional[str]:
             return "teacher"
     except Exception as exc:
         print(f"[AUTH] ⚠ role lookup (teacher_pincode) failed for {user_id}: {exc}")
+
+    try:
+        student_row = (
+            sb.table("student_login")
+            .select("id")
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        if student_row is not None and student_row.data:
+            return "student"
+    except Exception as exc:
+        print(f"[AUTH] ⚠ role lookup (student_login) failed for {user_id}: {exc}")
 
     return None
 
