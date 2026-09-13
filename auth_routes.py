@@ -42,7 +42,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, EmailStr, Field
 from supabase import create_client
 
-from auth_utils import get_current_user, get_supabase
+from auth_utils import get_current_user, get_supabase, get_user_role
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -163,6 +163,7 @@ class UserProfile(BaseModel):
     name:       str
     avatar_url: str
     provider:   str
+    role:       Optional[str] = None   # "student" | "teacher" | None (onboarding not done yet)
 
 
 class OAuthCallbackRequest(BaseModel):
@@ -341,6 +342,11 @@ def verify_token(current_user: dict = Depends(get_current_user)):
     Validate an existing JWT (called on every page load for auto-login).
     Returns the user profile extracted from the verified token.
     The user_id here is auth.users.id — same UUID on every device.
+
+    `role` is looked up via get_user_role() — see auth_utils.py. It is
+    None until the user has completed the onboarding role-selection step
+    (student_login / teacher_pincode row), in which case the frontend
+    falls back to treating them as a student.
     """
     return UserProfile(
         user_id=current_user["id"],
@@ -348,6 +354,7 @@ def verify_token(current_user: dict = Depends(get_current_user)):
         name=current_user.get("name", ""),
         avatar_url=current_user.get("avatar_url", ""),
         provider=(current_user.get("app_metadata") or {}).get("provider", "email"),
+        role=get_user_role(current_user["id"]),
     )
 
 
@@ -375,6 +382,7 @@ def get_me(current_user: dict = Depends(get_current_user)):
                 name=row.data.get("name", ""),
                 avatar_url=row.data.get("avatar_url", ""),
                 provider=row.data.get("provider", "email"),
+                role=get_user_role(user_id),
             )
     except Exception as exc:
         print(f"[AUTH] ⚠ /me DB lookup failed for {user_id}: {exc}")
@@ -386,6 +394,7 @@ def get_me(current_user: dict = Depends(get_current_user)):
         name=current_user.get("name", ""),
         avatar_url=current_user.get("avatar_url", ""),
         provider=(current_user.get("app_metadata") or {}).get("provider", "email"),
+        role=get_user_role(user_id),
     )
 
 
