@@ -124,6 +124,52 @@ def get_supabase(token: Optional[str] = None) -> "Client":
     return create_client(url, service_key)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# ROLE LOOKUP  (student vs teacher)
+# ══════════════════════════════════════════════════════════════════════
+# Haezet has no single `role` column — role is inferred from which
+# onboarding table has a row for this user (see onboarding_routes.py):
+#   • a row in `student_login`                          → "student"
+#   • a row in `teacher_pincode` with pin_status="claimed" → "teacher"
+#   • neither (onboarding not completed yet)             → None
+#
+# Uses the service-role client (bypasses RLS) since this is a backend-only
+# lookup, same pattern as onboarding_routes.py's own table reads.
+
+def get_user_role(user_id: str) -> Optional[str]:
+    """Return 'student', 'teacher', or None if the user hasn't picked a role yet."""
+    sb = get_supabase()
+
+    try:
+        student_row = (
+            sb.table("student_login")
+            .select("id")
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        if student_row is not None and student_row.data:
+            return "student"
+    except Exception as exc:
+        print(f"[AUTH] ⚠ role lookup (student_login) failed for {user_id}: {exc}")
+
+    try:
+        teacher_row = (
+            sb.table("teacher_pincode")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("pin_status", "claimed")
+            .maybe_single()
+            .execute()
+        )
+        if teacher_row is not None and teacher_row.data:
+            return "teacher"
+    except Exception as exc:
+        print(f"[AUTH] ⚠ role lookup (teacher_pincode) failed for {user_id}: {exc}")
+
+    return None
+
+
 
 # ══════════════════════════════════════════════════════════════════════
 # JWT VERIFICATION  (Supabase-issued tokens)
@@ -206,3 +252,4 @@ def create_access_token(user_id: str, email: str, name: str) -> str:
         "Supabase Auth issues the JWT on sign-in. "
         "The backend only VERIFIES tokens, not creates them."
     )
+  
