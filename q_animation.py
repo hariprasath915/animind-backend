@@ -797,6 +797,65 @@ Check silently:
 - Notation matches the solution.
 - layer-frame contains a light background rect (fill="#f8fafc" or similar light color) as the FIRST child.
 - NO dark backgrounds anywhere in the SVG.
+
+============================================================
+PER-STEP PHYSICS MOTION (mandatory for dynamic problems)
+============================================================
+
+CRITICAL: The applyStep() function you provide in "apply_step_js" is DISCARDED at
+runtime and replaced by a Python-controlled implementation. Therefore:
+
+  ► NEVER put per-step motion code inside applyStep().
+  ► ALL step-dependent motion MUST live inside the RAF loop ("raf_js").
+
+How to drive step-specific motion from the RAF loop:
+
+1. At the top of your drawFrame() function, read:
+     var step = (typeof window.currentStep === 'number') ? window.currentStep : 0;
+
+2. Maintain a 'prevStep' variable. When step !== prevStep, reset the motion
+   state for the new step (record startTime, set start/end positions):
+     if (step !== prevStep) {
+       prevStep = step;
+       motionStartTime = performance.now();
+       // set startPos, endPos based on step
+     }
+
+3. For each step that involves physical motion, smoothly interpolate over ~1500 ms:
+     var elapsed = Math.min(performance.now() - motionStartTime, 1500);
+     var t = elapsed / 1500;   // 0 → 1
+     // easing: ease-in-out
+     t = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+     var pos = startPos + (endPos - startPos) * t;
+     // apply pos to the SVG element's transform
+
+4. For static steps (just showing labels, forces, values) — no motion needed;
+   simply ensure the relevant SVG element is at its final position.
+
+Examples of CORRECT step-keyed motion in raf_js:
+
+  Rolling disc problem — step 3 shows disc at max height:
+    When step === 3, animate the disc element from y=bottomY to y=topY
+    along the incline path, over 1.5 s. On subsequent RAF ticks, hold at topY.
+
+  Projectile — step 4 shows peak:
+    When step === 4, animate the projectile along its parabolic arc
+    from launch to peak. Display the trajectory trail incrementally.
+
+  Orbit — always animating:
+    Use elapsed total time (not step-based) for continuous orbital motion.
+    Pause the orbit (stop updating angle) if the current step is a static annotation.
+
+  Wire stretching — step 2 shows elongation:
+    When step === 2, smoothly scale the wire element from 1.0 to stretchRatio.
+
+When to use motion vs. static:
+  - Step involves a physical PROCESS or end-STATE of motion → use RAF motion.
+  - Step only labels, annotates, or shows a given value → keep element static.
+  - Always tie motion to the PHYSICS of the step, so the student sees WHY.
+
+Do NOT return an empty "raf_js" for problems involving dynamics.
+Return "raf_js": "" ONLY for purely static problems (circuit labels, formula derivation).
 """
 
 
@@ -3353,6 +3412,13 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         given_parts.append(piece)
     given_entries_js = "[" + ", ".join(given_parts) + "]"
 
+    # Build UNITS JS object — maps field id → unit string for Scene 6 var-box updates
+    units_entries = ", ".join(
+        f"'{f.get('id','v')}': '{_he(str(f.get('unit','')))}'"
+        for f in fields
+    )
+    units_js = f"{{ {units_entries} }}"
+
     panel_html = f"""
 <!-- ╒═════════════════════════════════════════════════════════════
      CUSTOMIZE PANEL
@@ -3516,7 +3582,14 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
 
     // 4. Step-6 To-Find badge — keep unchanged (shows unknown symbol, not values)
 
-    // 5. Scene 7 (Step 8) given list
+    // 5. Scene 6 (Step 7) variable boxes — update by field id
+    var UNITS = {units_js};
+    fieldIds.forEach(function(id){{
+      var el = _el('s6v-' + id + '-val');
+      if(el) el.textContent = _fmt(vals[id]) + (UNITS[id] ? ' ' + UNITS[id] : '');
+    }});
+
+    // 6. Scene 7/8 (Step 8) given list
     var s7given = _el('s7-given-list');
     if(s7given){{
       var givenLines = {given_entries_js};
@@ -3525,7 +3598,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
       }}).join('');
     }}
 
-    // 6. Scene 9 (Step 9) & Scene 8 substitution chain — update numeric values
+    // 7. Scene 9 (Step 9) substitution chain — update numeric values
     var s9chain = _el('s9-sub-chain');
     if(s9chain){{
       var rows = s9chain.querySelectorAll('.s9-sub-row');
@@ -3541,7 +3614,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
       }});
     }}
 
-    // 7. Scene 9 final answer value
+    // 8. Scene 9 final answer value
     if(c && c.answer !== undefined){{
       var fv = _el('s9-final-value');
       if(fv){{
@@ -3554,14 +3627,30 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
       if(st && c.answer_label) st.innerHTML = '<strong>Result:</strong> ' + c.answer_label + ' = ' + c.answer + ' ' + (c.answer_unit || '');
     }}
 
-    // 8. Answer Box target
+    // 9. Answer Box — update live targets via the global hook (Fix: was missing __qanimSetAnswerTargets)
+    if(typeof window.__qanimSetAnswerTargets === 'function' && c && c.answer !== undefined){{
+      window.__qanimSetAnswerTargets([{{
+        label: c.answer_label || 'Final Answer',
+        value: String(c.answer),
+        unit:  c.answer_unit || '',
+        insight: 'Calculated with updated values: ' + (c.answer_label || '') + ' = ' + c.answer + ' ' + (c.answer_unit || '') + '.'
+      }}]);
+    }}
+    // Also update the legacy _answerTargets array if present
     if(window._answerTargets && window._answerTargets[0] && c && c.answer !== undefined){{
       window._answerTargets[0].value = c.answer;
       window._answerTargets[0].unit  = c.answer_unit || '';
     }}
 
-    // 9. Reset animation to step 1
-    if(typeof resetAnim === 'function') resetAnim();
+    // 10. Close any open modal overlays and return to Step 1
+    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){{
+      var ov = _el(id); if(ov) ov.classList.remove('qanim-scene-visible');
+    }});
+    var bd2 = _el('qanim-scene-modal-backdrop');
+    if(bd2) bd2.classList.remove('qanim-scene-visible');
+    var svgCont = document.querySelector('.svg-container');
+    if(svgCont) svgCont.style.opacity = '1';
+    if(typeof window.applyStep === 'function') window.applyStep(0);
   }}
 
   function openPanel(){{
@@ -3621,9 +3710,14 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
       var c = compute(vals);
       applyToAnimation(vals, c);
       closePanel();
-      // pulse the button
+      // Pulse the Customize button in the controls bar
       var custBtn = _el('customize-ctrl-btn');
-      if(custBtn){{ custBtn.classList.add('cust-applied-ring'); setTimeout(function(){{ custBtn.classList.remove('cust-applied-ring'); }}, 800); }}
+      if(custBtn){{
+        custBtn.classList.remove('cust-applied-ring');
+        void custBtn.offsetWidth; // force reflow to restart animation
+        custBtn.classList.add('cust-applied-ring');
+        setTimeout(function(){{ custBtn.classList.remove('cust-applied-ring'); }}, 800);
+      }}
     }});
 
     updatePreview();
