@@ -1118,12 +1118,95 @@ def _sanitize_svg_data(data: dict) -> dict:
     # piston completely static even though the SVG has crank-group / rod-group /
     # slider-group elements. We detect this and inject a physics-correct
     # slider-crank animation loop automatically.
+    #
+    # Bug 2 fix — Incomplete mechanism:
+    # Gemini sometimes generates only the connecting rod and slider but omits the
+    # rotating crank entirely. The animation then shows a partial mechanism.
+    # Fix: if rod-group or slider-group is present but crank-group is absent,
+    # inject a complete fallback crank SVG into layer-object so every slider-crank
+    # question always renders all three components.
     raf_js = data.get("raf_js", "").strip()
     if not raf_js:
         layers_html = data.get("svg_layers", "")
         has_crank  = "crank-group"  in layers_html
         has_rod    = "rod-group"    in layers_html
         has_slider = "slider-group" in layers_html
+
+        # If the mechanism is partially present (rod/slider but NO crank),
+        # synthesise a complete crank group and insert it into layer-object.
+        if (has_rod or has_slider) and not has_crank:
+            Log.warn("SVGSanitizer", "crank-group missing — injecting fallback SVG crank into layer-object")
+            _fallback_crank_svg = """<g id="crank-group">
+  <!-- fallback crank: pivot at (200,300), r=120 -->
+  <defs>
+    <linearGradient id="grad-crank-fb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <filter id="shadow-crank-fb" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="3" stdDeviation="4" flood-color="#1d4ed8" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <!-- pivot pin -->
+  <circle cx="200" cy="300" r="9" fill="#1e293b" stroke="#0ea5e9" stroke-width="2.5"
+          filter="url(#shadow-crank-fb)"/>
+  <circle cx="200" cy="300" r="4" fill="#38bdf8"/>
+  <!-- crank arm (x1="200" y1="300" x2 / y2 are updated by RAF) -->
+  <line id="crank-glow" x1="200" y1="300" x2="200" y2="180"
+        stroke="#93c5fd" stroke-width="14" stroke-linecap="round" opacity="0.35"/>
+  <line id="crank-body" x1="200" y1="300" x2="200" y2="180"
+        stroke="url(#grad-crank-fb)" stroke-width="9" stroke-linecap="round"
+        filter="url(#shadow-crank-fb)"/>
+  <line id="crank-shine" x1="200" y1="300" x2="200" y2="185"
+        stroke="rgba(255,255,255,0.45)" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- crank-pin (wrist pin A, updated by RAF) -->
+  <circle id="crank-pin-outer" cx="200" cy="180" r="9" fill="#1d4ed8"
+          stroke="#93c5fd" stroke-width="2.5"/>
+  <circle id="crank-pin-inner" cx="200" cy="180" r="4.5" fill="#bfdbfe"/>
+  <circle id="crank-pin-shine" cx="198" cy="178" r="2" fill="white" opacity="0.7"/>
+  <!-- crank-radius label -->
+  <rect x="158" y="228" width="40" height="18" rx="5" fill="white" opacity="0.85"/>
+  <text id="crank-label" x="164" y="241" font-family="Inter,sans-serif" font-size="12"
+        font-weight="800" fill="#1d4ed8">r</text>
+  <!-- ground symbol -->
+  <polygon points="200,300 192,316 208,316" fill="#64748b"/>
+  <line x1="186" y1="316" x2="214" y2="316" stroke="#475569" stroke-width="2.5"/>
+  <line x1="184" y1="320" x2="188" y2="316" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="190" y1="320" x2="194" y2="316" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="196" y1="320" x2="200" y2="316" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="202" y1="320" x2="206" y2="316" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="208" y1="320" x2="212" y2="316" stroke="#94a3b8" stroke-width="1.5"/>
+</g>"""
+            # Insert the fallback crank into layer-object (before its closing tag).
+            # If layer-object has a </g> closing tag, insert before it; otherwise append.
+            svg_lyr = data.get("svg_layers", "")
+            import re as _re_crank
+            # Find the layer-object group and insert crank just before </g>
+            def _insert_crank(m):
+                inner = m.group(1)
+                return f'<g id="layer-object">{inner}\n{_fallback_crank_svg}\n</g>'
+            svg_lyr_new = _re_crank.sub(
+                r'<g\s+id=["\']layer-object["\']>(.*?)</g>',
+                _insert_crank,
+                svg_lyr,
+                count=1,
+                flags=_re_crank.DOTALL,
+            )
+            if svg_lyr_new != svg_lyr:
+                data["svg_layers"] = svg_lyr_new
+                layers_html = svg_lyr_new
+                has_crank = True
+                Log.ok("SVGSanitizer", "Fallback crank SVG injected into layer-object")
+            else:
+                # layer-object not found — append a new layer before svg_layers end
+                data["svg_layers"] = (
+                    f'<g id="layer-object" style="opacity:0">\n{_fallback_crank_svg}\n</g>\n'
+                    + svg_lyr
+                )
+                layers_html = data["svg_layers"]
+                has_crank = True
+                Log.ok("SVGSanitizer", "Fallback crank SVG prepended as new layer-object")
+
         if has_crank and has_rod and has_slider:
             Log.ok("SVGSanitizer", "raf_js empty — injecting slider-crank fallback animation")
             data["raf_js"] = """\
@@ -3142,24 +3225,65 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     """Build the Customize panel HTML + JS for live value editing.
 
     Reads sol["customize"] produced by Gemini. Falls back gracefully to a
-    no-op if the field is absent (e.g. fallback mode or old Gemini response).
-    Returns two strings joined: (css_html, panel_html_and_js).
+    synthesised version from sol["variables"] if the field is absent — so the
+    Customize panel is always shown when there are known given values.
+    Returns the combined CSS + panel HTML + JS string.
     """
+    import re as _re_cust
+
     cust = sol.get("customize") or {}
     fields = cust.get("fields") or []
-    compute_js_body = cust.get("compute_js", "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };") or ""
+    compute_js_body = cust.get("compute_js", "") or ""
     question_template = cust.get("question_template", "") or ""
 
+    # ── Bug 1 fix: auto-synthesise customize from variables when Gemini omits it ─
+    # Root cause: Gemini sometimes returns a solution without the "customize" key
+    # (or with an empty "fields" list). _build_customize_html then returns only the
+    # CSS, has_customize stays False, and the Customize button is never injected.
+    # Fix: if fields is still empty, build a basic one from sol["variables"] (the
+    # "blue" / given variables) so the panel is always available.
+    if not fields:
+        variables = sol.get("variables") or []
+        for v in variables:
+            color = str(v.get("color", "blue")).lower()
+            if color in ("blue", "given", "input"):  # only given values, not the unknown
+                raw_id = str(v.get("symbol") or v.get("sym") or "v")
+                # make a safe JS identifier
+                safe_id = _re_cust.sub(r'[^a-zA-Z0-9_]', '_', raw_id).strip('_') or "v"
+                try:
+                    default_val = float(str(v.get("value") or v.get("val") or "0").replace("?", "").split()[0])
+                except (ValueError, IndexError):
+                    default_val = 0.0
+                fields.append({
+                    "id":      safe_id,
+                    "symbol":  raw_id,
+                    "label":   str(v.get("name", raw_id)),
+                    "unit":    str(v.get("unit", "")),
+                    "default": default_val,
+                })
+        if fields and not compute_js_body:
+            # Build a generic compute that returns the answer_value as a number
+            compute_js_body = (
+                "var ans = parseFloat('" + str(sol.get("answer_value", "0")).replace("'", "") + "');"
+                " return { answer: _fmt(ans), answer_unit: '" +
+                str(sol.get("answer_unit", "")).replace("'", "") + "',"
+                " answer_label: '" + str(sol.get("formula", "Answer")).replace("'", "")[:40] + "',"
+                " derived: {} };"
+            )
+        if fields and not question_template:
+            question_template = sol.get("formula", "") or ""
+
     # Sanitize compute_js_body — strip outer function wrapper if Gemini added one
-    import re as _re_cust
     compute_js_body = _re_cust.sub(
         r'^\s*function\s+compute\s*\([^)]*\)\s*\{', '', compute_js_body, flags=_re_cust.DOTALL
     ).strip()
     if compute_js_body.endswith('}'):
         compute_js_body = compute_js_body[:-1].strip()
+    if not compute_js_body:
+        compute_js_body = "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };"
 
     if not fields:
-        # No customize data — return the CSS only (no panel, no button)
+        # Still no customize data after synthesis — return the CSS only (no panel, no button)
         return _CUSTOMIZE_CSS + ""
 
     # Build field inputs HTML
@@ -3714,8 +3838,14 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   </button>""" if glossary else ""
 
     # Customize panel
-    customize_html = _build_customize_html(sol, scene)
-    has_customize   = bool((sol.get("customize") or {}).get("fields"))
+    # Bug 1 fix: has_customize must reflect whether _build_customize_html actually
+    # built a panel (including synthesised fallback from variables), NOT just
+    # whether Gemini returned a customize.fields list in the solution JSON.
+    # The panel HTML always starts with _CUSTOMIZE_CSS; if it is substantially
+    # longer than that CSS-only stub, the panel was built and the button must show.
+    customize_html  = _build_customize_html(sol, scene)
+    _CSS_ONLY_LEN   = len(_CUSTOMIZE_CSS) + 50   # tolerance for trivial whitespace
+    has_customize   = len(customize_html) > _CSS_ONLY_LEN
     customize_sep   = '<div class="qanim-ctrl-sep"></div>' if has_customize else ""
     customize_btn   = f"""  {customize_sep}
   <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Change question values live">
