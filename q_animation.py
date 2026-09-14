@@ -310,6 +310,8 @@ def generate_solution(question: str) -> dict:
         "approach_steps": [{"num": "8.1", "label": "Identify formula", "eq": "Governing formula", "note": ""}, {"num": "8.2", "label": "Substitute", "eq": "Given values", "note": ""}, {"num": "8.3", "label": "Compute", "eq": "Result", "note": ""}],
         "system_title": "Physical System",
         "system_label2": "Applying the formula",
+        # Fallback customize — a minimal single-field panel so the button always works
+        "customize": {"fields": [], "compute_js": "", "question_template": ""},
         "_fallback": True,
     }
     if _gemini_client is None:
@@ -688,7 +690,9 @@ Rules:
 - badges must be an array of HTML strings.
 - blurOp = 0.0 for steps 1 and 6; 0.38 for steps 2–5.
 - layerOpacities must include all layers.
-- Step 6 shows all layers and clearly marks the unknown (e.g., "R₂ = ?").
+- Step 6 shows all layers. DO NOT include "? unknown" or "= ?" badges in step 6.
+  Step 6 is the "Complete Setup" — show only the given parameters as badges (cyan/orange/green).
+  The unknown is revealed only in Steps 7-9 (the formula/solution overlay scenes).
 
 ============================================================
 APPLY STEP JAVASCRIPT
@@ -3299,27 +3303,32 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     # Root cause: Gemini sometimes returns a solution without the "customize" key
     # (or with an empty "fields" list). _build_customize_html then returns only the
     # CSS, has_customize stays False, and the Customize button is never injected.
-    # Fix: if fields is still empty, build a basic one from sol["variables"] (the
-    # "blue" / given variables) so the panel is always available.
+    # Fix: if fields is still empty, build a basic one from sol["variables"].
+    # We accept ALL variables that are NOT explicitly marked as unknown/answer
+    # (color "green" or value containing "?") as editable given fields.
     if not fields:
         variables = sol.get("variables") or []
         for v in variables:
             color = str(v.get("color", "blue")).lower()
-            if color in ("blue", "given", "input"):  # only given values, not the unknown
-                raw_id = str(v.get("symbol") or v.get("sym") or "v")
-                # make a safe JS identifier
-                safe_id = _re_cust.sub(r'[^a-zA-Z0-9_]', '_', raw_id).strip('_') or "v"
-                try:
-                    default_val = float(str(v.get("value") or v.get("val") or "0").replace("?", "").split()[0])
-                except (ValueError, IndexError):
-                    default_val = 0.0
-                fields.append({
-                    "id":      safe_id,
-                    "symbol":  raw_id,
-                    "label":   str(v.get("name", raw_id)),
-                    "unit":    str(v.get("unit", "")),
-                    "default": default_val,
-                })
+            val_str = str(v.get("value") or v.get("val") or "")
+            # Skip the unknown/answer variable
+            if color in ("green",) or "?" in val_str or "to find" in val_str.lower():
+                continue
+            raw_id = str(v.get("symbol") or v.get("sym") or "v")
+            # make a safe JS identifier
+            safe_id = _re_cust.sub(r'[^a-zA-Z0-9_]', '_', raw_id).strip('_') or "v"
+            try:
+                default_val = float(val_str.replace("?", "").split()[0])
+            except (ValueError, IndexError):
+                # Symbolic value (e.g. "M", "R", "h") — keep as 1.0 placeholder
+                default_val = 1.0
+            fields.append({
+                "id":      safe_id,
+                "symbol":  raw_id,
+                "label":   str(v.get("name", raw_id)),
+                "unit":    str(v.get("unit", "")),
+                "default": default_val,
+            })
         if fields and not compute_js_body:
             # Build a generic compute that returns the answer_value as a number
             compute_js_body = (
@@ -4041,11 +4050,10 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
           : 'Next Step \u25b6';
       }}
 
-      // ── Show/hide Step-6 given+to-find panel ──────────────────────────────
+      // ── Step-6 floating badge: permanently hidden (was cluttering the SVG canvas)
+      // The "To Find" unknown is only shown in Step 9 (final answer overlay).
       const s6panel = document.getElementById('step6-info-panel');
-      if (s6panel) {{
-        s6panel.classList.toggle('s6info-visible', idx === CONCEPT_STEP_COUNT - 1);
-      }}
+      if (s6panel) s6panel.style.display = 'none';
     }}
     window.applyStep = applyStep;
 
