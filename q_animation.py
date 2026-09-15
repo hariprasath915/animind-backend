@@ -288,10 +288,55 @@ Rules:
 - approach_steps: 2–4 numbered steps for Scene 8 right panel; each has num, label, eq, note.
 - system_title: short name of the physical system (for Scene 8 left panel).
 - system_label2: one-line description (for Scene 8 left panel).
-- customize.fields: one entry per GIVEN numeric value (not the unknown). id = valid JS identifier. default = original numeric value as a number.
-- customize.compute_js: JS function body (not the function declaration) that receives vals (object keyed by field id) and _fmt(v) helper. Must return {answer, answer_unit, answer_label, derived:{label:value_str}}.
+- customize.fields: one entry per GIVEN numeric value (not the unknown). id = valid JS identifier. default = original numeric value as a number. For percentage values (e.g. 25% loss) use the raw percentage number as default (e.g. 25, not 0.25).
+- customize.compute_js: JS function body (not the function declaration) that receives vals (object keyed by field id) and _fmt(v) helper. Must return {answer, answer_unit, answer_label, derived:{label:value_str}}. ALWAYS include a guard for invalid inputs (e.g. zero height, negative fraction). For percentage fields, convert inside JS: var frac = 1 - vals.loss/100;
 - customize.question_template: question text with {id} placeholders for each field.
-- Pure JSON only."""
+- ALWAYS include the customize block. NEVER omit it, even for rolling/rotation/energy questions.
+- Pure JSON only.
+
+SECOND EXAMPLE — Rolling body with energy loss (ring on incline):
+{
+  "steps": [
+    "Step 1: For a ring I=mR2, rolling gives KE_total=mv2",
+    "Step 2: Energy balance: mv2 = (1-0.25)*mgh = 0.75*mgh",
+    "Step 3: Solve: v = sqrt(0.75*9.81*5) = 6.07 m/s"
+  ],
+  "final_answer": "v = 6.07 m/s",
+  "answer_value": "6.07",
+  "answer_unit": "m/s",
+  "key_insight": "A ring converts half its available KE to rotation, so friction removes more energy than for a disk.",
+  "formula": "v = sqrt((1-f)*g*h)",
+  "formula_name": "Energy Conservation with Rolling Loss",
+  "variables": [
+    {"symbol": "v", "name": "Speed at bottom",    "value": "? (to find)", "unit": "m/s",  "color": "green"},
+    {"symbol": "g", "name": "Gravitational accel","value": "9.81",         "unit": "m/s2", "color": "blue"},
+    {"symbol": "h", "name": "Vertical height",    "value": "5",            "unit": "m",    "color": "blue"},
+    {"symbol": "f", "name": "Loss fraction",      "value": "0.25",         "unit": "",     "color": "orange"}
+  ],
+  "substitution_chain": [
+    {"num": 1, "eq": "v = sqrt((1-f)*g*h)"},
+    {"num": 2, "eq": "v = sqrt((1-0.25)*9.81*5)"},
+    {"num": 3, "eq": "v = sqrt(0.75*49.05)"},
+    {"num": 4, "eq": "v = sqrt(36.79) = 6.07 m/s"}
+  ],
+  "given_list": ["h = 5 m", "Energy loss = 25%", "Ring: I = mR2", "g = 9.81 m/s2"],
+  "approach_steps": [
+    {"num": "8.1", "label": "Total KE of ring", "eq": "KE = mv2 (ring rolling)", "note": "I=mR2 and v=omegaR"},
+    {"num": "8.2", "label": "Energy equation",  "eq": "mv2 = 0.75*mgh",          "note": "25% lost"},
+    {"num": "8.3", "label": "Solve for v",      "eq": "v = sqrt(0.75*g*h)",      "note": "Final"}
+  ],
+  "system_title": "Ring Rolling Down Incline",
+  "system_label2": "Rolling with energy loss due to friction",
+  "customize": {
+    "fields": [
+      {"id": "h",    "symbol": "h", "label": "Vertical height",     "default": 5,    "unit": "m"},
+      {"id": "loss", "symbol": "f", "label": "Energy loss",         "default": 25,   "unit": "%"},
+      {"id": "g",    "symbol": "g", "label": "Gravitational accel", "default": 9.81, "unit": "m/s2"}
+    ],
+    "compute_js": "var frac = 1 - vals.loss / 100; if(frac < 0) frac = 0; if(vals.h <= 0 || vals.g <= 0) return {answer:'?', answer_unit:'m/s', answer_label:'v', derived:{}}; var v = Math.sqrt(frac * vals.g * vals.h); return {answer: _fmt(v), answer_unit: 'm/s', answer_label: 'v', derived: {'Speed v': _fmt(v) + ' m/s', 'Energy retained': _fmt(frac * 100) + ' %'}};",
+    "question_template": "A ring rolls from height {h} m. {loss}% of mechanical energy lost to friction. g = {g} m/s2. Find speed at the bottom."
+  }
+}"""
 
 
 def generate_solution(question: str) -> dict:
@@ -3351,8 +3396,69 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         compute_js_body = "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };"
 
     if not fields:
-        # Still no customize data after synthesis — return the CSS only (no panel, no button)
-        return _CUSTOMIZE_CSS + ""
+        # No fields after all synthesis attempts — return CSS + a minimal panel
+        # that shows a friendly message. The button always exists in the DOM, so
+        # opening it must show something rather than nothing.
+        _no_fields_panel = """
+<div id="customize-backdrop"></div>
+<div id="customize-panel" role="dialog" aria-label="Customize question values" aria-hidden="true">
+  <div class="cust-header">
+    <div class="cust-header-title">
+      &#x2699;&#xFE0F; Customize Values
+      <span class="cust-header-badge">Live Update</span>
+    </div>
+    <button class="cust-close-btn" id="cust-close-btn">&#x2715;</button>
+  </div>
+  <div class="cust-body" style="align-items:center;justify-content:center;min-height:120px;">
+    <div style="text-align:center;padding:32px 20px;">
+      <div style="font-size:32px;margin-bottom:12px;">&#x2699;&#xFE0F;</div>
+      <div style="font-size:14px;font-weight:700;color:#475569;margin-bottom:6px;">
+        No customisable fields available
+      </div>
+      <div style="font-size:12.5px;color:#94a3b8;line-height:1.6;">
+        The AI did not identify any numeric input values<br>that can be changed for this question.
+      </div>
+    </div>
+  </div>
+  <div class="cust-footer" style="justify-content:center;">
+    <button class="cust-btn-reset" id="cust-btn-reset" onclick="
+      var p=document.getElementById('customize-panel');
+      var b=document.getElementById('customize-backdrop');
+      if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+      if(b)b.classList.remove('open');
+    ">Close</button>
+  </div>
+</div>
+<script id="qanim-js-customize">
+(function initCustomize(){
+  'use strict';
+  if(window.__qanimCustomizeInit)return;
+  window.__qanimCustomizeInit=true;
+  function _el(id){return document.getElementById(id);}
+  function openPanel(){
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.add('open');
+    if(p){p.classList.add('open');p.setAttribute('aria-hidden','false');}
+  }
+  function closePanel(){
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.remove('open');
+    if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+  }
+  function onReady(fn){
+    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);
+    else setTimeout(fn,0);
+  }
+  onReady(function(){
+    var ob=_el('customize-ctrl-btn');if(ob)ob.addEventListener('click',openPanel);
+    var cb=_el('cust-close-btn');if(cb)cb.addEventListener('click',closePanel);
+    var bd=_el('customize-backdrop');if(bd)bd.addEventListener('click',closePanel);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closePanel();});
+  });
+})();
+</script>
+"""
+        return _CUSTOMIZE_CSS + _no_fields_panel
 
     # Build field inputs HTML
     fields_html = ""
@@ -3940,20 +4046,19 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     <span>&#x1F4D6;</span><span class="ctrl-label">Glossary</span>{glossary_badge}
   </button>""" if glossary else ""
 
-    # Customize panel
-    # Bug 1 fix: has_customize must reflect whether _build_customize_html actually
-    # built a panel (including synthesised fallback from variables), NOT just
-    # whether Gemini returned a customize.fields list in the solution JSON.
-    # The panel HTML always starts with _CUSTOMIZE_CSS; if it is substantially
-    # longer than that CSS-only stub, the panel was built and the button must show.
-    customize_html  = _build_customize_html(sol, scene)
-    _CSS_ONLY_LEN   = len(_CUSTOMIZE_CSS) + 50   # tolerance for trivial whitespace
-    has_customize   = len(customize_html) > _CSS_ONLY_LEN
-    customize_sep   = '<div class="qanim-ctrl-sep"></div>' if has_customize else ""
-    customize_btn   = f"""  {customize_sep}
+    # Customize panel — button is ALWAYS injected unconditionally.
+    # Root-cause fix: all previous approaches conditioned the button on whether
+    # Gemini returned customize.fields or variables could be synthesised.
+    # When both paths yield nothing the button disappears entirely.
+    # Solution: decouple the button from the panel content — the button is always
+    # written into the DOM, and the JS opens whatever panel _build_customize_html
+    # produced (full panel, fallback message, or a graceful empty state).
+    customize_html = _build_customize_html(sol, scene)
+    customize_sep  = '<div class="qanim-ctrl-sep"></div>'
+    customize_btn  = f"""  {customize_sep}
   <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Change question values live">
     <span>&#x2699;&#xFE0F;</span><span class="ctrl-label">Customize</span>
-  </button>""" if has_customize else ""
+  </button>"""
 
     # Answer box JS with targets
     answerbox_js = _ANSWERBOX_JS_TMPL.replace("{{TARGETS_JSON}}", targets_json)
