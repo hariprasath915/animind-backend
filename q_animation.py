@@ -3386,12 +3386,22 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         if fields and not question_template:
             question_template = sol.get("formula", "") or ""
 
-    # Sanitize compute_js_body — strip outer function wrapper if Gemini added one
-    compute_js_body = _re_cust.sub(
-        r'^\s*function\s+compute\s*\([^)]*\)\s*\{', '', compute_js_body, flags=_re_cust.DOTALL
-    ).strip()
-    if compute_js_body.endswith('}'):
-        compute_js_body = compute_js_body[:-1].strip()
+    # ── RC#1 FIX: Sanitize compute_js_body safely ────────────────────────────
+    # Strip outer `function compute(vals) { ... }` wrapper ONLY when the regex
+    # actually matched it.  The old endswith('}') approach fired on ANY body
+    # ending with } — e.g. `return {answer: _fmt(Q), derived: {}}` — silently
+    # truncating the last brace and producing a JS SyntaxError every time.
+    _wrapper_re = _re_cust.compile(
+        r'^\s*function\s+compute\s*\([^)]*\)\s*\{(.*)\}\s*$',
+        _re_cust.DOTALL
+    )
+    _wrapper_match = _wrapper_re.match(compute_js_body)
+    if _wrapper_match:
+        # Strip ONLY the matched outer wrapper braces — inner content is untouched
+        compute_js_body = _wrapper_match.group(1).strip()
+    else:
+        # No outer wrapper — leave compute_js_body exactly as Gemini returned it
+        compute_js_body = compute_js_body.strip()
     if not compute_js_body:
         compute_js_body = "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };"
 
@@ -3534,7 +3544,17 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     )
     units_js = f"{{ {units_entries} }}"
 
-    panel_html = f"""
+    # ── RC#2 FIX: Wrap the entire f-string in try/except ─────────────────────
+    # The panel_html f-string injects multiple Gemini-sourced variables
+    # (compute_js_body, defaults_js, read_lines, given_entries_js, units_js,
+    # question_tmpl_js).  If any of those contain a bare {word} pattern that
+    # Python's f-string parser treats as a format specifier, Python raises
+    # KeyError or ValueError.  Since _build_customize_html() previously had no
+    # try/except, that exception propagated all the way up to
+    # generate_animation_html_sync() which then returned _fallback_html() —
+    # a page with no Customize panel at all — with no visible log message.
+    try:
+        panel_html = f"""
 <!-- ╒═════════════════════════════════════════════════════════════
      CUSTOMIZE PANEL
      ╙═════════════════════════════════════════════════════════════ -->
@@ -3667,7 +3687,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
       }});
     }});
 
-    // 3. stepsData badges & descriptions (Steps 3–6 concept animation)
+    // 3. stepsData badges & descriptions (Steps 3-6 concept animation)
     if(window.stepsData && Array.isArray(window.stepsData)){{
       // Update steps 2-5 (0-indexed) with new badge values if badges reference field values
       window.stepsData.forEach(function(step, idx){{
@@ -3742,7 +3762,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
       if(st && c.answer_label) st.innerHTML = '<strong>Result:</strong> ' + c.answer_label + ' = ' + c.answer + ' ' + (c.answer_unit || '');
     }}
 
-    // 9. Answer Box — update live targets via the global hook (Fix: was missing __qanimSetAnswerTargets)
+    // 9. Answer Box — update live targets via the global hook
     if(typeof window.__qanimSetAnswerTargets === 'function' && c && c.answer !== undefined){{
       window.__qanimSetAnswerTargets([{{
         label: c.answer_label || 'Final Answer',
@@ -3840,7 +3860,83 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
 }})();
 </script>
 """
-    return _CUSTOMIZE_CSS + panel_html
+        return _CUSTOMIZE_CSS + panel_html
+
+    except (KeyError, ValueError, IndexError) as _fstr_err:
+        # RC#2: A bare {word} in Gemini-sourced content (compute_js_body,
+        # defaults_js, read_lines, given_entries_js, units_js, or
+        # question_tmpl_js) was interpreted as a Python format specifier and
+        # caused a KeyError / ValueError.  Log it and fall back to the
+        # no-fields panel so the Customize button still opens something useful
+        # instead of taking down the entire page silently.
+        import logging as _log_cust
+        _log_cust.getLogger(__name__).warning(
+            '[_build_customize_html] f-string interpolation error '
+            '(likely bare {word} in Gemini JS output) — '
+            'falling back to no-fields panel. Error: %s', _fstr_err
+        )
+        # Re-use the minimal no-fields panel defined earlier in this function.
+        # We can't reference _no_fields_panel (different branch), so inline it.
+        _fb_panel = """
+<div id="customize-backdrop"></div>
+<div id="customize-panel" role="dialog" aria-label="Customize question values" aria-hidden="true">
+  <div class="cust-header">
+    <div class="cust-header-title">
+      &#x2699;&#xFE0F; Customize Values
+      <span class="cust-header-badge">Live Update</span>
+    </div>
+    <button class="cust-close-btn" id="cust-close-btn">&#x2715;</button>
+  </div>
+  <div class="cust-body" style="align-items:center;justify-content:center;min-height:120px;">
+    <div style="text-align:center;padding:32px 20px;">
+      <div style="font-size:32px;margin-bottom:12px;">&#x2699;&#xFE0F;</div>
+      <div style="font-size:14px;font-weight:700;color:#475569;margin-bottom:6px;">
+        Customize panel could not be generated
+      </div>
+      <div style="font-size:12.5px;color:#94a3b8;line-height:1.6;">
+        The AI returned a formula containing special characters<br>that prevented the live editor from loading.
+      </div>
+    </div>
+  </div>
+  <div class="cust-footer" style="justify-content:center;">
+    <button class="cust-btn-reset" id="cust-btn-reset" onclick="
+      var p=document.getElementById('customize-panel');
+      var b=document.getElementById('customize-backdrop');
+      if(p){{p.classList.remove('open');p.setAttribute('aria-hidden','true');}}
+      if(b)b.classList.remove('open');
+    ">Close</button>
+  </div>
+</div>
+<script id="qanim-js-customize">
+(function initCustomize(){{
+  'use strict';
+  if(window.__qanimCustomizeInit)return;
+  window.__qanimCustomizeInit=true;
+  function _el(id){{return document.getElementById(id);}}
+  function openPanel(){{
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.add('open');
+    if(p){{p.classList.add('open');p.setAttribute('aria-hidden','false');}}
+  }}
+  function closePanel(){{
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.remove('open');
+    if(p){{p.classList.remove('open');p.setAttribute('aria-hidden','true');}}
+  }}
+  function onReady(fn){{
+    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);
+    else setTimeout(fn,0);
+  }}
+  onReady(function(){{
+    var ob=_el('customize-ctrl-btn');if(ob)ob.addEventListener('click',openPanel);
+    var cb=_el('cust-close-btn');if(cb)cb.addEventListener('click',closePanel);
+    var bd=_el('customize-backdrop');if(bd)bd.addEventListener('click',closePanel);
+    document.addEventListener('keydown',function(e){{if(e.key==='Escape')closePanel();}});
+  }});
+}})();
+</script>
+"""
+        return _CUSTOMIZE_CSS + _fb_panel
 
 
 # ===========================================================================
