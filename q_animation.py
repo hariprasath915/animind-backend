@@ -72,21 +72,40 @@ if _GEMINI_AVAILABLE:
             _GEMINI_DISABLED_REASON = repr(e)
     else:
         try:
-            _gemini_client = _google_genai.Client(api_key=_gkey)
-            print(f"[QAnim] Gemini ready (google-genai, model={GEMINI_MODEL})")
+            # ── Fix: Force IPv4 to prevent wsarecv TCP stream kills ──────────
+            # The google-genai SDK uses httpx internally. By default it resolves
+            # generativelanguage.googleapis.com over IPv6 on dual-stack machines.
+            # On Indian ISP connections the IPv6 path drops large responses
+            # mid-stream (wsarecv: connection forcibly closed). Passing an httpx
+            # client configured with local_address='0.0.0.0' forces IPv4 binding
+            # which uses the stable IPv4 Google API endpoint instead.
+            try:
+                import httpx as _httpx
+                _ipv4_transport = _httpx.HTTPTransport(local_address="0.0.0.0")
+                _ipv4_http_client = _httpx.Client(transport=_ipv4_transport)
+                _gemini_client = _google_genai.Client(
+                    api_key=_gkey,
+                    http_client=_ipv4_http_client,
+                )
+                print(f"[QAnim] Gemini ready (google-genai + IPv4-forced, model={GEMINI_MODEL})")
+            except Exception:
+                # httpx not available or http_client kwarg not supported — fall back to default
+                _gemini_client = _google_genai.Client(api_key=_gkey)
+                print(f"[QAnim] Gemini ready (google-genai, model={GEMINI_MODEL})")
         except Exception as e:
             _GEMINI_DISABLED_REASON = repr(e)
 else:
     _GEMINI_DISABLED_REASON = "No Gemini SDK installed"
 
-MAX_TOKENS_SOLUTION  = 4000
-MAX_TOKENS_SCENE     = 8000
-# ── Reduced from 28000 to 18000 ──────────────────────────────────────────────
-# Root cause of TCP stream kills: requesting 28k tokens streams ~120KB over IPv6
-# which gets killed mid-stream by the network (wsarecv: connection forcibly closed).
-# 18000 tokens is sufficient for a well-formed 6-step SVG animation JSON and
-# produces ~60-70KB streams which are much more stable on Indian ISP connections.
-MAX_TOKENS_HTML      = 18000
+MAX_TOKENS_SOLUTION  = 5000
+MAX_TOKENS_SCENE     = 10000
+# ── Reduced from 18000 to 12000 ──────────────────────────────────────────────
+# Root cause of TCP stream kills: large token responses stream ~120KB over IPv6
+# which gets killed mid-stream by wsarecv on Indian ISP connections.
+# 12000 tokens is sufficient for a well-formed 6-step SVG animation JSON and
+# produces ~40-50KB streams that complete reliably even on unstable IPv6 paths.
+# The primary fix is forcing IPv4 on the API client (see _gemini_client init below).
+MAX_TOKENS_HTML      = 12000
 TIMEOUT_SOLUTION     = 120.0
 TIMEOUT_SCENE        = 150.0
 # ── Increased from 300s to 480s ───────────────────────────────────────────────
@@ -973,8 +992,152 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
                 # Network-level errors are already retried inside _call_gemini.
                 import time as _t
                 _t.sleep(10 * attempt)
-                
-    return {"svg_defs": "", "svg_layers": "", "steps_data_js": "var stepsData=[];", "apply_step_js": "function applyStep(idx){window.currentStep=idx;}", "raf_js": ""}
+
+    # ── All Gemini attempts exhausted: build a scene-based fallback ──────────
+    # Instead of returning empty stepsData (which shows a completely blank
+    # animation), rebuild stepsData from the already-computed scene dict so the
+    # user still sees the 6-step concept walkthrough with correct titles/badges.
+    Log.warn("SVGBuilder", "All attempts failed — using scene-dict fallback (no SVG art)")
+    return _build_scene_fallback_svg(scene)
+
+
+def _build_scene_fallback_svg(scene: dict) -> dict:
+    """
+    Build a minimal but *working* svg_data dict from the scene script alone.
+
+    Called when all 4 Gemini SVG-generation attempts fail (e.g. wsarecv TCP
+    stream kill).  Produces:
+      • A simple placeholder SVG with the title + one text label per layer
+      • Correct stepsData rebuilt from scene["steps"] so all 6 steps render
+      • A working applyStep() that shows/hides layers and updates the info panel
+    The Customize panel, Scenes 7-9, and all Python-injected HTML are unaffected.
+    """
+    steps   = scene.get("steps") or []
+    title   = scene.get("title", "Physics Problem")[:80]
+    layers  = list((scene.get("svg_layers") or {}).keys())
+
+    # ── Build SVG defs + background ──────────────────────────────────────────
+    svg_defs = """
+<pattern id="qanim-fb-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#cbd5e1" stroke-width="0.5"/>
+</pattern>"""
+
+    # One <g> per layer with a simple label
+    layer_groups = []
+    for i, lid in enumerate(layers):
+        linfo = (scene.get("svg_layers") or {}).get(lid, {})
+        ldesc = str(linfo.get("description", lid))[:60]
+        lcolor = str(linfo.get("color", "#0891b2"))
+        y_pos = 80 + i * 56
+        vis = "1" if i == 0 else "0"
+        layer_groups.append(
+            f'<g id="{lid}" style="opacity:{vis}">\n'
+            f'  <rect x="40" y="{y_pos}" width="770" height="44" rx="8" '
+            f'fill="{lcolor}" fill-opacity="0.12" stroke="{lcolor}" stroke-width="1.5"/>\n'
+            f'  <text x="60" y="{y_pos + 27}" font-family="Inter,sans-serif" '
+            f'font-size="15" fill="{lcolor}" font-weight="600">{_he(ldesc)}</text>\n'
+            f'</g>'
+        )
+
+    svg_layers = (
+        f'<g id="layer-canvas-bg">'
+        f'<rect width="850" height="478" fill="#f8fafc"/>'
+        f'<rect width="850" height="478" fill="url(#qanim-fb-grid)"/>'
+        f'</g>\n'
+        f'<text x="425" y="48" font-family="Inter,sans-serif" font-size="19" '
+        f'font-weight="700" fill="#1e293b" text-anchor="middle">{_he(title)}</text>\n'
+        + "\n".join(layer_groups)
+    )
+
+    # ── Build stepsData from scene["steps"] ──────────────────────────────────
+    BADGE_COLOR_MAP = {"cyan": "badge-cyan", "green": "badge-green",
+                       "orange": "badge-orange", "red": "badge-red",
+                       "purple": "badge-purple", "blue": "badge-cyan"}
+
+    steps_list = []
+    all_layer_ids = [s.get("layer_new") for s in steps if s.get("layer_new")]
+    # accumulate layers visible list per step (same logic as assemble_html)
+    for s in steps:
+        step_num = s.get("step_number", 1)
+        blur_op  = 0.0 if s.get("blur") is False else 0.38
+
+        # Build layerOpacities: show layers_visible for this step
+        visible_set = set(s.get("layers_visible") or [])
+        layer_ops = {}
+        for lid in layers:
+            layer_ops[lid] = 1 if lid in visible_set else 0
+
+        # Build badge HTML strings
+        raw_badges = s.get("badges") or []
+        badge_htmls = []
+        for b in raw_badges:
+            btext = _he(str(b.get("text", "") if isinstance(b, dict) else b))
+            btype = (b.get("type", "cyan") if isinstance(b, dict) else "cyan")
+            cls   = BADGE_COLOR_MAP.get(btype, "badge-cyan")
+            badge_htmls.append(f"<span class='badge {cls}'>{btext}</span>")
+
+        steps_list.append({
+            "title":         s.get("title", f"Step {step_num}"),
+            "desc":          s.get("description", ""),
+            "badges":        badge_htmls,
+            "blurOp":        blur_op,
+            "layerOpacities": layer_ops,
+            "overlays":      [],
+        })
+
+    steps_data_js = "var stepsData = " + json.dumps(steps_list, ensure_ascii=False) + ";"
+
+    # ── applyStep JS ─────────────────────────────────────────────────────────
+    apply_step_js = r"""
+function applyStep(index) {
+  if (!window.stepsData || index < 0 || index >= window.stepsData.length) return;
+  window.currentStep = index;
+  var s = window.stepsData[index];
+  var total = window.CONCEPT_STEP_COUNT || 6;
+  // Progress bar
+  var bar = document.getElementById('step-bar');
+  if (bar) bar.style.width = ((index + 1) / 9 * 100) + '%';
+  var lbl = document.getElementById('step-label');
+  if (lbl) lbl.textContent = 'Step ' + (index + 1) + ' of 9';
+  // Info panel
+  var ti = document.getElementById('info-title');
+  if (ti) ti.textContent = s.title || '';
+  var di = document.getElementById('info-desc');
+  if (di) di.textContent = s.desc || '';
+  var bi = document.getElementById('info-badges');
+  if (bi) bi.innerHTML = (s.badges || []).join('');
+  // Layer opacities
+  var ops = s.layerOpacities || {};
+  Object.keys(ops).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.opacity = ops[id];
+  });
+  // Dots
+  for (var i = 0; i < total; i++) {
+    var d = document.getElementById('dot-step' + (i + 1));
+    if (!d) continue;
+    d.classList.remove('active', 'done');
+    if (i === index) d.classList.add('active');
+    else if (i < index) d.classList.add('done');
+  }
+  // Buttons
+  var bp = document.getElementById('btn-prev');
+  var bn = document.getElementById('btn-next');
+  if (bp) bp.disabled = (index === 0);
+  if (bn) bn.disabled = (index === total - 1);
+}
+"""
+
+    return {
+        "svg_defs":      svg_defs,
+        "svg_layers":    svg_layers,
+        "steps_data_js": steps_data_js,
+        "apply_step_js": apply_step_js,
+        "raf_js":        "",
+        "_scene":        scene,
+        "_fallback":     True,
+    }
+
 
 
 def _sanitize_svg_data(data: dict) -> dict:
@@ -3544,16 +3707,36 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     )
     units_js = f"{{ {units_entries} }}"
 
-    # ── RC#2 FIX: Wrap the entire f-string in try/except ─────────────────────
-    # The panel_html f-string injects multiple Gemini-sourced variables
-    # (compute_js_body, defaults_js, read_lines, given_entries_js, units_js,
-    # question_tmpl_js).  If any of those contain a bare {word} pattern that
-    # Python's f-string parser treats as a format specifier, Python raises
-    # KeyError or ValueError.  Since _build_customize_html() previously had no
-    # try/except, that exception propagated all the way up to
-    # generate_animation_html_sync() which then returned _fallback_html() —
-    # a page with no Customize panel at all — with no visible log message.
+    # ── RC#2 ROOT-CAUSE FIX: pre-escape braces in ALL Gemini-sourced JS ──────
+    # Any { or } that Gemini put into compute_js_body, read_lines, given_entries_js,
+    # units_js, or question_tmpl_js would be interpreted by Python's f-string
+    # engine as a format specifier → KeyError / ValueError → entire Customize
+    # panel silently falls back to "could not be generated".
+    #
+    # The f-string uses {{ }} for literal braces everywhere EXCEPT the six
+    # interpolation slots:
+    #   {defaults_js}  {compute_js_body}  {read_lines}
+    #   {question_tmpl_js}  {units_js}  {given_entries_js}
+    #   {fields_html}  {preview_html}
+    #
+    # We replace every { → {{ and } → }} in the values that come from Gemini,
+    # so they pass through the f-string unchanged as literal JS braces.
+    # (fields_html and preview_html are built by Python from _he()-escaped data
+    # and never contain raw Gemini text, so they are safe without escaping.)
+    def _fstr_safe(s: str) -> str:
+        """Escape { and } so the string is safe inside a Python f-string."""
+        return s.replace("{", "{{").replace("}", "}}")
+
+    compute_js_body_fs   = _fstr_safe(compute_js_body)
+    read_lines_fs        = _fstr_safe(read_lines)
+    given_entries_js_fs  = _fstr_safe(given_entries_js)
+    units_js_fs          = _fstr_safe(units_js)
+    defaults_js_fs       = _fstr_safe(defaults_js)
+    question_tmpl_js_fs  = _fstr_safe(question_tmpl_js)
+
+    # ── try/except is now a genuine last-resort guard (not the primary fix) ───
     try:
+
         panel_html = f"""
 <!-- ╒═════════════════════════════════════════════════════════════
      CUSTOMIZE PANEL
@@ -3605,7 +3788,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
   if(window.__qanimCustomizeInit)return;
   window.__qanimCustomizeInit=true;
 
-  var DEFAULTS = {defaults_js};
+  var DEFAULTS = {defaults_js_fs};
   var CURRENT  = Object.assign({{}}, DEFAULTS);
 
   function _el(id){{ return document.getElementById(id); }}
@@ -3618,13 +3801,13 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
   }}
 
   function compute(vals){{
-    try {{ {compute_js_body} }}
+    try {{ {compute_js_body_fs} }}
     catch(e){{ console.warn('[QAnim Customize] compute error:', e); return null; }}
   }}
 
   function readInputs(){{
     var vals = {{}};
-    {read_lines}
+    {read_lines_fs}
     return vals;
   }}
 
@@ -3670,7 +3853,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     CURRENT = Object.assign({{}}, vals);
 
     // 1. Question banner text
-    var newQ = {question_tmpl_js};
+    var newQ = {question_tmpl_js_fs};
     if(newQ) document.querySelectorAll('.q-text').forEach(function(el){{ el.textContent = newQ; }});
 
     // 2. SVG layer text labels — match any text element whose content
@@ -3718,7 +3901,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     // 4. Step-6 To-Find badge — keep unchanged (shows unknown symbol, not values)
 
     // 5. Scene 6 (Step 7) variable boxes — update by field id
-    var UNITS = {units_js};
+    var UNITS = {units_js_fs};
     fieldIds.forEach(function(id){{
       var el = _el('s6v-' + id + '-val');
       if(el) el.textContent = _fmt(vals[id]) + (UNITS[id] ? ' ' + UNITS[id] : '');
@@ -3727,7 +3910,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     // 6. Scene 7/8 (Step 8) given list
     var s7given = _el('s7-given-list');
     if(s7given){{
-      var givenLines = {given_entries_js};
+      var givenLines = {given_entries_js_fs};
       s7given.innerHTML = givenLines.map(function(g){{
         return '<div class="s7-given-item">' + g + '</div>';
       }}).join('');
