@@ -311,6 +311,7 @@ Rules:
 - customize.compute_js: JS function body (not the function declaration) that receives vals (object keyed by field id) and _fmt(v) helper. Must return {answer, answer_unit, answer_label, derived:{label:value_str}}. ALWAYS include a guard for invalid inputs (e.g. zero height, negative fraction). For percentage fields, convert inside JS: var frac = 1 - vals.loss/100;
 - customize.question_template: question text with {id} placeholders for each field.
 - ALWAYS include the customize block. NEVER omit it, even for rolling/rotation/energy questions.
+- compute_js body: write plain JS braces { } — do NOT escape them. The host will not re-process them.
 - Pure JSON only.
 
 SECOND EXAMPLE — Rolling body with energy loss (ring on incline):
@@ -354,6 +355,49 @@ SECOND EXAMPLE — Rolling body with energy loss (ring on incline):
     ],
     "compute_js": "var frac = 1 - vals.loss / 100; if(frac < 0) frac = 0; if(vals.h <= 0 || vals.g <= 0) return {answer:'?', answer_unit:'m/s', answer_label:'v', derived:{}}; var v = Math.sqrt(frac * vals.g * vals.h); return {answer: _fmt(v), answer_unit: 'm/s', answer_label: 'v', derived: {'Speed v': _fmt(v) + ' m/s', 'Energy retained': _fmt(frac * 100) + ' %'}};",
     "question_template": "A ring rolls from height {h} m. {loss}% of mechanical energy lost to friction. g = {g} m/s2. Find speed at the bottom."
+  }
+}
+
+THIRD EXAMPLE — Rocket equation with logarithm (exhaust speed / liftoff condition):
+{
+  "steps": [
+    "Step 1: At liftoff, thrust must exceed weight: u*alpha >= m0*g",
+    "Step 2: Minimum exhaust speed: u_min = (m0 * g) / alpha",
+    "Step 3: Substitute: u_min = (1000 * 9.81) / 10 = 981 m/s"
+  ],
+  "final_answer": "u_min = 981 m/s",
+  "answer_value": "981",
+  "answer_unit": "m/s",
+  "key_insight": "The rocket lifts off only when thrust u*alpha exceeds gravitational force m0*g.",
+  "formula": "u_min = m0*g / alpha",
+  "formula_name": "Tsiolkovsky Liftoff Condition",
+  "variables": [
+    {"symbol": "u_min", "name": "Minimum exhaust speed", "value": "? (to find)", "unit": "m/s",  "color": "green"},
+    {"symbol": "m0",    "name": "Initial mass",          "value": "1000",         "unit": "kg",   "color": "blue"},
+    {"symbol": "alpha", "name": "Mass-loss rate",        "value": "10",           "unit": "kg/s", "color": "blue"},
+    {"symbol": "g",     "name": "Gravitational accel",   "value": "9.81",         "unit": "m/s2", "color": "blue"}
+  ],
+  "substitution_chain": [
+    {"num": 1, "eq": "u_min = m0 * g / alpha"},
+    {"num": 2, "eq": "u_min = 1000 * 9.81 / 10"},
+    {"num": 3, "eq": "u_min = 9810 / 10 = 981 m/s"}
+  ],
+  "given_list": ["m0 = 1000 kg (initial mass)", "alpha = 10 kg/s (mass-loss rate)", "g = 9.81 m/s2"],
+  "approach_steps": [
+    {"num": "8.1", "label": "Liftoff condition", "eq": "Thrust = u*alpha >= m0*g", "note": "Newton's 2nd law"},
+    {"num": "8.2", "label": "Solve for u_min",   "eq": "u_min = m0*g / alpha",     "note": "Rearrange"},
+    {"num": "8.3", "label": "Substitute",        "eq": "u_min = 1000*9.81/10 = 981 m/s", "note": "Final"}
+  ],
+  "system_title": "Rocket Liftoff",
+  "system_label2": "Minimum exhaust speed for vertical liftoff",
+  "customize": {
+    "fields": [
+      {"id": "m0",    "symbol": "m0",    "label": "Initial mass",        "default": 1000, "unit": "kg"},
+      {"id": "alpha", "symbol": "alpha", "label": "Mass-loss rate",      "default": 10,   "unit": "kg/s"},
+      {"id": "g",     "symbol": "g",     "label": "Gravitational accel", "default": 9.81, "unit": "m/s2"}
+    ],
+    "compute_js": "if(vals.alpha <= 0) return {answer:'?', answer_unit:'m/s', answer_label:'u_min', derived:{}}; var u = (vals.m0 * vals.g) / vals.alpha; return {answer: _fmt(u), answer_unit: 'm/s', answer_label: 'u_min', derived: {'Thrust needed': _fmt(vals.m0 * vals.g) + ' N', 'Thrust provided (at u)': _fmt(vals.alpha) + ' * u N'}};",
+    "question_template": "A rocket with initial mass {m0} kg is launched vertically. Mass-loss rate = {alpha} kg/s, g = {g} m/s2. Find the minimum exhaust speed u for liftoff."
   }
 }"""
 
@@ -3707,32 +3751,33 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     )
     units_js = f"{{ {units_entries} }}"
 
-    # ── RC#2 ROOT-CAUSE FIX: pre-escape braces in ALL Gemini-sourced JS ──────
-    # Any { or } that Gemini put into compute_js_body, read_lines, given_entries_js,
-    # units_js, or question_tmpl_js would be interpreted by Python's f-string
-    # engine as a format specifier → KeyError / ValueError → entire Customize
-    # panel silently falls back to "could not be generated".
+    # ── RC#3 ROOT-CAUSE FIX: only escape Gemini-sourced JS bodies ─────────────
+    # Python f-string substitution values are NEVER re-processed by the f-string
+    # engine — so { } inside a substituted string value is perfectly safe and
+    # will appear as literal { } in the output HTML/JS.
     #
-    # The f-string uses {{ }} for literal braces everywhere EXCEPT the six
-    # interpolation slots:
-    #   {defaults_js}  {compute_js_body}  {read_lines}
-    #   {question_tmpl_js}  {units_js}  {given_entries_js}
-    #   {fields_html}  {preview_html}
+    # The ONLY time _fstr_safe is needed is when Gemini returns a raw string
+    # that we embed as a TEMPLATE LITERAL in the f-string source itself (i.e.
+    # we use it where the f-string parser could mis-read {word} as a placeholder).
+    # That applies only to compute_js_body and question_tmpl_js.
     #
-    # We replace every { → {{ and } → }} in the values that come from Gemini,
-    # so they pass through the f-string unchanged as literal JS braces.
-    # (fields_html and preview_html are built by Python from _he()-escaped data
-    # and never contain raw Gemini text, so they are safe without escaping.)
+    # Applying _fstr_safe to Python-built strings (defaults_js, read_lines,
+    # given_entries_js, units_js) caused { } → {{ }} to appear literally in the
+    # output HTML, producing invalid JavaScript that silently killed the entire
+    # initCustomize() IIFE — the real root cause of the customize panel being
+    # broken for every question.
     def _fstr_safe(s: str) -> str:
-        """Escape { and } so the string is safe inside a Python f-string."""
+        """Escape { and } so the string is safe as a Python f-string TEMPLATE (not value)."""
         return s.replace("{", "{{").replace("}", "}}")
 
-    compute_js_body_fs   = _fstr_safe(compute_js_body)
-    read_lines_fs        = _fstr_safe(read_lines)
-    given_entries_js_fs  = _fstr_safe(given_entries_js)
-    units_js_fs          = _fstr_safe(units_js)
-    defaults_js_fs       = _fstr_safe(defaults_js)
-    question_tmpl_js_fs  = _fstr_safe(question_tmpl_js)
+    # Only Gemini-sourced bodies need escaping; Python-built strings do NOT.
+    compute_js_body_fs   = _fstr_safe(compute_js_body)    # Gemini JS body
+    question_tmpl_js_fs  = _fstr_safe(question_tmpl_js)   # Gemini template
+    # Python-built: pass through as-is (substitution values are never re-parsed)
+    read_lines_fs        = read_lines
+    given_entries_js_fs  = given_entries_js
+    units_js_fs          = units_js
+    defaults_js_fs       = defaults_js
 
     # ── try/except is now a genuine last-resort guard (not the primary fix) ───
     try:
