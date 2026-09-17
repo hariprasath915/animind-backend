@@ -4335,7 +4335,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     customize_html = _build_customize_html(sol, scene)
     customize_sep  = '<div class="qanim-ctrl-sep"></div>'
     customize_btn  = f"""  {customize_sep}
-  <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Change question values live">
+  <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Customize question values" style="position:relative;">
     <span>&#x2699;&#xFE0F;</span><span class="ctrl-label">Customize</span>
   </button>"""
 
