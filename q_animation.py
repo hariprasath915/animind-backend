@@ -3716,16 +3716,23 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
 
     # The JS question template — replace {id} placeholders with vals[id]
     if question_template:
-        # Build JS expression to reconstruct question string
-        # e.g. 'Find Q. h={h}' -> 'Find Q. h=' + vals.h + ''
-        import re as _re2
         # Escape backtick/backslash in question_template for JS template literal
         qt_js_safe = question_template.replace('\\', '\\\\').replace('`', "\\`")
-        # Replace {id} with ${vals.id} for JS template literals
+        # Replace {id} with ${_fmt(vals.id)} for JS template literals
         for f in fields:
             fid = f.get("id", "v")
-            qt_js_safe = qt_js_safe.replace(f'{{{fid}}}', f'${{_fmt(vals.{fid})}}')
-        question_tmpl_js = f'`{qt_js_safe}`'
+            qt_js_safe = qt_js_safe.replace('{' + fid + '}', '${_fmt(vals.' + fid + ')}')
+        # ── ROOT-CAUSE FIX ────────────────────────────────────────────────────
+        # Any remaining {word} patterns in qt_js_safe (e.g. {unit}, {formula})
+        # that weren't replaced by a field id would cause Python's f-string
+        # parser to raise KeyError if we used f'`{qt_js_safe}`'.
+        # FIX: use plain string concatenation — never an f-string — so Python
+        # never tries to evaluate the remaining { } chars in qt_js_safe.
+        # Also strip any leftover {word} patterns so the JS template literal
+        # does not contain dangling ${} expressions.
+        import re as _re_qt
+        qt_js_safe = _re_qt.sub(r'\{[^}]{1,40}\}', '', qt_js_safe)
+        question_tmpl_js = '`' + qt_js_safe + '`'  # NO f-string — safe concat
     else:
         question_tmpl_js = "null"
 
