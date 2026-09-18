@@ -3961,6 +3961,33 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
       }}).join('');
     }}
 
+    // 6b. Scene 7/8 (Step 8) approach steps — rebuild using derived values from compute
+    var s7approach = _el('s7-approach-list');
+    if(s7approach && c && c.derived && typeof c.derived === 'object'){{
+      var derivedKeys = Object.keys(c.derived);
+      if(derivedKeys.length > 0){{
+        var apHTML = '';
+        derivedKeys.forEach(function(dkey, di){{
+          apHTML += '<div class="s7-approach-step">' +
+            '<span class="s7-approach-step-num">' + (di + 1) + '</span>' +
+            '<span>' + dkey +
+              '<span class="s7-approach-step-eq">' + c.derived[dkey] + '</span>' +
+            '</span>' +
+          '</div>';
+        }});
+        // Final step: the main answer
+        if(c.answer !== undefined){{
+          apHTML += '<div class="s7-approach-step">' +
+            '<span class="s7-approach-step-num">' + (derivedKeys.length + 1) + '</span>' +
+            '<span>' + (c.answer_label || 'Answer') + ' = ' + c.answer + ' ' + (c.answer_unit || '') +
+              '<span style="display:block;font-size:11px;color:#64748b;margin-top:3px;">Final result</span>' +
+            '</span>' +
+          '</div>';
+        }}
+        s7approach.innerHTML = apHTML;
+      }}
+    }}
+
     // 7. Scene 9 (Step 9) substitution chain — update numeric values
     var s9chain = _el('s9-sub-chain');
     if(s9chain){{
