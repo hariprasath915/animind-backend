@@ -3751,38 +3751,19 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     )
     units_js = f"{{ {units_entries} }}"
 
-    # ── RC#3 ROOT-CAUSE FIX: only escape Gemini-sourced JS bodies ─────────────
-    # Python f-string substitution values are NEVER re-processed by the f-string
-    # engine — so { } inside a substituted string value is perfectly safe and
-    # will appear as literal { } in the output HTML/JS.
-    #
-    # The ONLY time _fstr_safe is needed is when Gemini returns a raw string
-    # that we embed as a TEMPLATE LITERAL in the f-string source itself (i.e.
-    # we use it where the f-string parser could mis-read {word} as a placeholder).
-    # That applies only to compute_js_body and question_tmpl_js.
-    #
-    # Applying _fstr_safe to Python-built strings (defaults_js, read_lines,
-    # given_entries_js, units_js) caused { } → {{ }} to appear literally in the
-    # output HTML, producing invalid JavaScript that silently killed the entire
-    # initCustomize() IIFE — the real root cause of the customize panel being
-    # broken for every question.
-    def _fstr_safe(s: str) -> str:
-        """Escape { and } so the string is safe as a Python f-string TEMPLATE (not value)."""
-        return s.replace("{", "{{").replace("}", "}}")
-
-    # Only Gemini-sourced bodies need escaping; Python-built strings do NOT.
-    compute_js_body_fs   = _fstr_safe(compute_js_body)    # Gemini JS body
-    question_tmpl_js_fs  = _fstr_safe(question_tmpl_js)   # Gemini template
-    # Python-built: pass through as-is (substitution values are never re-parsed)
-    read_lines_fs        = read_lines
-    given_entries_js_fs  = given_entries_js
-    units_js_fs          = units_js
-    defaults_js_fs       = defaults_js
+    # ── TRUE ROOT-CAUSE FIX ────────────────────────────────────────────────────
+    # f-string is UNSAFE for Gemini-sourced JS: if compute_js contains {word},
+    # Python's f-string parser raises KeyError. _fstr_safe ({ → {{) was the
+    # attempted workaround, but {{ in a substitution VALUE stays as {{ in output
+    # → produces {{answer:...}} in the JS → SyntaxError → panel never opens.
+    # SOLUTION: Use a plain string template with __PLACEHOLDER__ tokens and
+    # .replace() for each substitution. .replace() never re-parses the value,
+    # so Gemini JS with any { } content is always safe.
 
     # ── try/except is now a genuine last-resort guard (not the primary fix) ───
     try:
 
-        panel_html = f"""
+        _PANEL_TMPL = """
 <!-- ╒═════════════════════════════════════════════════════════════
      CUSTOMIZE PANEL
      ╙═════════════════════════════════════════════════════════════ -->
@@ -3799,14 +3780,14 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
   <div class="cust-body">
     <div class="cust-section-title">Given Parameters</div>
     <div class="cust-field-grid">
-{fields_html}
+__FIELDS_HTML__
     </div>
 
     <div class="cust-section-title">Live Preview</div>
     <div class="cust-preview-box">
       <div class="cust-preview-title">&#x1F4D0; Calculated Values</div>
       <div class="cust-preview-grid" id="cust-preview-grid">
-{preview_html}
+__PREVIEW_HTML__
         <div class="cust-preview-item"><span class="cpv-sym" id="cpv-answer-label">?</span><span class="cpv-arrow">&#x2192;</span><span id="cpv-answer">--</span></div>
       </div>
     </div>
@@ -3828,293 +3809,306 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
 </div>
 
 <script id="qanim-js-customize">
-(function initCustomize(){{
+(function initCustomize(){
   'use strict';
   if(window.__qanimCustomizeInit)return;
   window.__qanimCustomizeInit=true;
 
-  var DEFAULTS = {defaults_js_fs};
-  var CURRENT  = Object.assign({{}}, DEFAULTS);
+  var DEFAULTS = __DEFAULTS_JS__;
+  var CURRENT  = Object.assign({}, DEFAULTS);
 
-  function _el(id){{ return document.getElementById(id); }}
-  function _round(v, d){{ var m=Math.pow(10,d); return Math.round(v*m)/m; }}
-  function _fmt(v){{
+  function _el(id){ return document.getElementById(id); }
+  function _round(v, d){ var m=Math.pow(10,d); return Math.round(v*m)/m; }
+  function _fmt(v){
     if(typeof v !== 'number' || isNaN(v)) return '?';
     if(v === 0) return '0';
     if(Math.abs(v) < 0.001 || Math.abs(v) >= 1e6) return v.toExponential(3);
     return _round(v, 4) + '';
-  }}
+  }
 
-  function compute(vals){{
-    try {{ {compute_js_body_fs} }}
-    catch(e){{ console.warn('[QAnim Customize] compute error:', e); return null; }}
-  }}
+  function compute(vals){
+    try { __COMPUTE_JS_BODY__ }
+    catch(e){ console.warn('[QAnim Customize] compute error:', e); return null; }
+  }
 
-  function readInputs(){{
-    var vals = {{}};
-    {read_lines_fs}
+  function readInputs(){
+    var vals = {};
+    __READ_LINES__
     return vals;
-  }}
+  }
 
-  function validate(vals){{
+  function validate(vals){
     var keys = Object.keys(vals);
-    for(var i=0;i<keys.length;i++){{
+    for(var i=0;i<keys.length;i++){
       if(isNaN(vals[keys[i]])) return 'Please enter valid numbers in all fields.';
-    }}
+    }
     return null;
-  }}
+  }
 
-  function updatePreview(){{
+  function updatePreview(){
     var vals = readInputs();
     var err  = validate(vals);
     var errBar = _el('cust-error-bar'), errMsg = _el('cust-error-msg');
     var resBar = _el('cust-result-bar'), resVal = _el('cust-result-values');
 
-    if(err){{
+    if(err){
       if(errBar) errBar.classList.add('visible');
       if(errMsg) errMsg.textContent = err;
       if(resBar) resBar.classList.remove('visible');
       return;
-    }}
+    }
     if(errBar) errBar.classList.remove('visible');
 
     // Update per-field preview chips
     var fieldIds = Object.keys(DEFAULTS);
-    fieldIds.forEach(function(id){{
+    fieldIds.forEach(function(id){
       var el = _el('cpv-' + id);
       if(el) el.textContent = _fmt(vals[id]);
-    }});
+    });
 
     var c = compute(vals);
-    if(c && c.answer !== undefined){{
+    if(c && c.answer !== undefined){
       var ansEl    = _el('cpv-answer');       if(ansEl) ansEl.textContent = c.answer + (c.answer_unit ? ' ' + c.answer_unit : '');
       var ansLabel = _el('cpv-answer-label'); if(ansLabel) ansLabel.textContent = c.answer_label || 'Answer';
       if(resBar) resBar.classList.add('visible');
       if(resVal) resVal.textContent = (c.answer_label || '?') + ' = ' + c.answer + ' ' + (c.answer_unit || '');
-    }}
-  }}
+    }
+  }
 
-  function applyToAnimation(vals, c){{
-    CURRENT = Object.assign({{}}, vals);
+  function applyToAnimation(vals, c){
+    CURRENT = Object.assign({}, vals);
 
     // 1. Question banner text
-    var newQ = {question_tmpl_js_fs};
-    if(newQ) document.querySelectorAll('.q-text').forEach(function(el){{ el.textContent = newQ; }});
+    var newQ = __QUESTION_TMPL_JS__;
+    if(newQ) document.querySelectorAll('.q-text').forEach(function(el){ el.textContent = newQ; });
 
     // 2. SVG layer text labels — match any text element whose content
     //    contains a field symbol or value pattern, and update it
     var fieldIds = Object.keys(DEFAULTS);
-    fieldIds.forEach(function(id){{
+    fieldIds.forEach(function(id){
       var dflt = DEFAULTS[id];
       var newV = _fmt(vals[id]);
       // Attempt to update any SVG text containing the default value
-      document.querySelectorAll('svg text').forEach(function(t){{
-        if(t.textContent.indexOf(dflt) > -1) {{
+      document.querySelectorAll('svg text').forEach(function(t){
+        if(t.textContent.indexOf(dflt) > -1) {
           t.textContent = t.textContent.replace(String(dflt), newV);
-        }}
-      }});
-    }});
+        }
+      });
+    });
 
     // 3. stepsData badges & descriptions (Steps 3-6 concept animation)
-    if(window.stepsData && Array.isArray(window.stepsData)){{
+    if(window.stepsData && Array.isArray(window.stepsData)){
       // Update steps 2-5 (0-indexed) with new badge values if badges reference field values
-      window.stepsData.forEach(function(step, idx){{
+      window.stepsData.forEach(function(step, idx){
         if(!step) return;
         // Replace old numeric value strings in badges with new ones
-        var newBadges = (step.badges || []).map(function(b){{
+        var newBadges = (step.badges || []).map(function(b){
           var out = b;
-          fieldIds.forEach(function(id){{
+          fieldIds.forEach(function(id){
             // Replace occurrences of DEFAULTS[id] in the badge HTML text
-            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'), 'g');
             out = out.replace(re, _fmt(vals[id]));
-          }});
+          });
           return out;
-        }});
+        });
         step.badges = newBadges;
-        if(step.desc){{
+        if(step.desc){
           var newDesc = step.desc;
-          fieldIds.forEach(function(id){{
-            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+          fieldIds.forEach(function(id){
+            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'), 'g');
             newDesc = newDesc.replace(re, _fmt(vals[id]));
-          }});
+          });
           step.desc = newDesc;
-        }}
-      }});
+        }
+      });
       applyStep(window.currentStep || 0);
-    }}
+    }
 
     // 4. Step-6 To-Find badge — keep unchanged (shows unknown symbol, not values)
 
     // 5. Scene 6 (Step 7) variable boxes — update by field id
-    var UNITS = {units_js_fs};
-    fieldIds.forEach(function(id){{
+    var UNITS = __UNITS_JS__;
+    fieldIds.forEach(function(id){
       var el = _el('s6v-' + id + '-val');
       if(el) el.textContent = _fmt(vals[id]) + (UNITS[id] ? ' ' + UNITS[id] : '');
-    }});
+    });
 
     // 6. Scene 7/8 (Step 8) given list
     var s7given = _el('s7-given-list');
-    if(s7given){{
-      var givenLines = {given_entries_js_fs};
-      s7given.innerHTML = givenLines.map(function(g){{
+    if(s7given){
+      var givenLines = __GIVEN_ENTRIES_JS__;
+      s7given.innerHTML = givenLines.map(function(g){
         return '<div class="s7-given-item">' + g + '</div>';
-      }}).join('');
-    }}
+      }).join('');
+    }
 
     // 6b. Scene 7/8 (Step 8) approach steps — rebuild using derived values from compute
     var s7approach = _el('s7-approach-list');
-    if(s7approach && c && c.derived && typeof c.derived === 'object'){{
+    if(s7approach && c && c.derived && typeof c.derived === 'object'){
       var derivedKeys = Object.keys(c.derived);
-      if(derivedKeys.length > 0){{
+      if(derivedKeys.length > 0){
         var apHTML = '';
-        derivedKeys.forEach(function(dkey, di){{
+        derivedKeys.forEach(function(dkey, di){
           apHTML += '<div class="s7-approach-step">' +
             '<span class="s7-approach-step-num">' + (di + 1) + '</span>' +
             '<span>' + dkey +
               '<span class="s7-approach-step-eq">' + c.derived[dkey] + '</span>' +
             '</span>' +
           '</div>';
-        }});
+        });
         // Final step: the main answer
-        if(c.answer !== undefined){{
+        if(c.answer !== undefined){
           apHTML += '<div class="s7-approach-step">' +
             '<span class="s7-approach-step-num">' + (derivedKeys.length + 1) + '</span>' +
             '<span>' + (c.answer_label || 'Answer') + ' = ' + c.answer + ' ' + (c.answer_unit || '') +
               '<span style="display:block;font-size:11px;color:#64748b;margin-top:3px;">Final result</span>' +
             '</span>' +
           '</div>';
-        }}
+        }
         s7approach.innerHTML = apHTML;
-      }}
-    }}
+      }
+    }
 
     // 7. Scene 9 (Step 9) substitution chain — update numeric values
     var s9chain = _el('s9-sub-chain');
-    if(s9chain){{
+    if(s9chain){
       var rows = s9chain.querySelectorAll('.s9-sub-row');
-      rows.forEach(function(row){{
+      rows.forEach(function(row){
         var eq = row.querySelector('.s9-sub-eq');
         if(!eq) return;
         var text = eq.innerHTML;
-        fieldIds.forEach(function(id){{
-          var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${{}}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+        fieldIds.forEach(function(id){
+          var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'), 'g');
           text = text.replace(re, _fmt(vals[id]));
-        }});
+        });
         eq.innerHTML = text;
-      }});
-    }}
+      });
+    }
 
     // 8. Scene 9 final answer value
-    if(c && c.answer !== undefined){{
+    if(c && c.answer !== undefined){
       var fv = _el('s9-final-value');
-      if(fv){{
+      if(fv){
         var hl = fv.querySelector('.s9-highlight');
         if(hl) hl.textContent = c.answer;
-      }}
+      }
       var fu = _el('s9-final-unit');
       if(fu) fu.innerHTML = 'Units: <strong>' + (c.answer_unit || '') + '</strong>';
       var st = _el('s9-insight-text');
       if(st && c.answer_label) st.innerHTML = '<strong>Result:</strong> ' + c.answer_label + ' = ' + c.answer + ' ' + (c.answer_unit || '');
-    }}
+    }
 
     // 9. Answer Box — update live targets via the global hook
-    if(typeof window.__qanimSetAnswerTargets === 'function' && c && c.answer !== undefined){{
-      window.__qanimSetAnswerTargets([{{
+    if(typeof window.__qanimSetAnswerTargets === 'function' && c && c.answer !== undefined){
+      window.__qanimSetAnswerTargets([{
         label: c.answer_label || 'Final Answer',
         value: String(c.answer),
         unit:  c.answer_unit || '',
         insight: 'Calculated with updated values: ' + (c.answer_label || '') + ' = ' + c.answer + ' ' + (c.answer_unit || '') + '.'
-      }}]);
-    }}
+      }]);
+    }
     // Also update the legacy _answerTargets array if present
-    if(window._answerTargets && window._answerTargets[0] && c && c.answer !== undefined){{
+    if(window._answerTargets && window._answerTargets[0] && c && c.answer !== undefined){
       window._answerTargets[0].value = c.answer;
       window._answerTargets[0].unit  = c.answer_unit || '';
-    }}
+    }
 
     // 10. Close any open modal overlays and return to Step 1
-    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){{
+    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){
       var ov = _el(id); if(ov) ov.classList.remove('qanim-scene-visible');
-    }});
+    });
     var bd2 = _el('qanim-scene-modal-backdrop');
     if(bd2) bd2.classList.remove('qanim-scene-visible');
     var svgCont = document.querySelector('.svg-container');
     if(svgCont) svgCont.style.opacity = '1';
     if(typeof window.applyStep === 'function') window.applyStep(0);
-  }}
+  }
 
-  function openPanel(){{
+  function openPanel(){
     var bd = _el('customize-backdrop'), p = _el('customize-panel');
-    if(bd){{ bd.classList.add('open'); }}
-    if(p){{ p.classList.add('open'); p.setAttribute('aria-hidden','false'); }}
+    if(bd){ bd.classList.add('open'); }
+    if(p){ p.classList.add('open'); p.setAttribute('aria-hidden','false'); }
     updatePreview();
-  }}
+  }
 
-  function closePanel(){{
+  function closePanel(){
     var bd = _el('customize-backdrop'), p = _el('customize-panel');
-    if(bd){{ bd.classList.remove('open'); }}
-    if(p){{ p.classList.remove('open'); p.setAttribute('aria-hidden','true'); }}
-  }}
+    if(bd){ bd.classList.remove('open'); }
+    if(p){ p.classList.remove('open'); p.setAttribute('aria-hidden','true'); }
+  }
 
-  function onReady(fn){{
+  function onReady(fn){
     if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
     else setTimeout(fn, 0);
-  }}
+  }
 
-  onReady(function(){{
+  onReady(function(){
     // Wire close/backdrop
     var cb = _el('cust-close-btn'); if(cb) cb.addEventListener('click', closePanel);
     var bd = _el('customize-backdrop'); if(bd) bd.addEventListener('click', closePanel);
-    document.addEventListener('keydown', function(e){{ if(e.key === 'Escape') closePanel(); }});
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closePanel(); });
 
     // Wire open button
     var ob = _el('customize-ctrl-btn'); if(ob) ob.addEventListener('click', openPanel);
 
     // Wire input fields — live preview on every keystroke
-    Object.keys(DEFAULTS).forEach(function(id){{
+    Object.keys(DEFAULTS).forEach(function(id){
       var inp = _el('cust-field-' + id);
       if(inp) inp.addEventListener('input', updatePreview);
-    }});
+    });
 
     // Reset defaults
     var rb = _el('cust-btn-reset');
-    if(rb) rb.addEventListener('click', function(){{
-      Object.keys(DEFAULTS).forEach(function(id){{
+    if(rb) rb.addEventListener('click', function(){
+      Object.keys(DEFAULTS).forEach(function(id){
         var inp = _el('cust-field-' + id);
         if(inp) inp.value = DEFAULTS[id];
-      }});
+      });
       updatePreview();
-    }});
+    });
 
     // Apply & Update
     var ab = _el('cust-btn-apply');
-    if(ab) ab.addEventListener('click', function(){{
+    if(ab) ab.addEventListener('click', function(){
       var vals = readInputs();
       var err  = validate(vals);
-      if(err){{
+      if(err){
         var errBar = _el('cust-error-bar'), errMsg = _el('cust-error-msg');
         if(errBar) errBar.classList.add('visible');
         if(errMsg) errMsg.textContent = err;
         return;
-      }}
+      }
       var c = compute(vals);
       applyToAnimation(vals, c);
       closePanel();
       // Pulse the Customize button in the controls bar
       var custBtn = _el('customize-ctrl-btn');
-      if(custBtn){{
+      if(custBtn){
         custBtn.classList.remove('cust-applied-ring');
         void custBtn.offsetWidth; // force reflow to restart animation
         custBtn.classList.add('cust-applied-ring');
-        setTimeout(function(){{ custBtn.classList.remove('cust-applied-ring'); }}, 800);
-      }}
-    }});
+        setTimeout(function(){ custBtn.classList.remove('cust-applied-ring'); }, 800);
+      }
+    });
 
     updatePreview();
-  }});
-}})();
+  });
+})();
 </script>
 """
+        # ── Safe substitution via .replace() ────────────────────────────────
+        # Each .replace() treats its argument as a literal — Gemini JS is safe.
+        panel_html = (
+            _PANEL_TMPL
+            .replace("__FIELDS_HTML__",      fields_html)
+            .replace("__PREVIEW_HTML__",     preview_html)
+            .replace("__DEFAULTS_JS__",      defaults_js)
+            .replace("__COMPUTE_JS_BODY__",  compute_js_body)
+            .replace("__READ_LINES__",       read_lines)
+            .replace("__UNITS_JS__",         units_js)
+            .replace("__GIVEN_ENTRIES_JS__", given_entries_js)
+            .replace("__QUESTION_TMPL_JS__", question_tmpl_js)
+        )
         return _CUSTOMIZE_CSS + panel_html
 
     except (KeyError, ValueError, IndexError) as _fstr_err:
