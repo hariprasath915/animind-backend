@@ -2132,6 +2132,66 @@ def save_assessment(subject: str, payload: AssessmentSave, current_user: dict = 
 
 
 # ════════════════════════════════════════════════════════════════
+# STUDENT LEARN MODE TOPICS  —  GET /sync/student-topics/{subject}
+# ════════════════════════════════════════════════════════════════
+# Tables:
+#   students_science   — Science topics for Learn Mode
+#   students_maths     — Maths topics for Learn Mode
+#   students_social    — Social topics for Learn Mode
+#
+# Endpoints:
+#   GET /sync/student-topics/{subject}         — fetch all topics (JWT required)
+#   GET /sync/student-topics/{subject}/count   — fetch topic count (JWT required)
+#
+# Uses service-role client so RLS is bypassed — the Haezet JWT is used
+# only for platform auth, not as a Supabase Auth session.
+# ════════════════════════════════════════════════════════════════
+
+STUDENT_SUBJECT_TABLE_MAP = {
+    "science": "students_science",
+    "maths":   "students_maths",
+    "social":  "students_social",
+}
+
+
+@router.get("/student-topics/{subject}", status_code=200)
+def get_student_topics(subject: str, current_user: dict = Depends(get_current_user)):
+    """
+    Returns all rows from students_{subject} ordered by id.
+    Uses the service-role client (bypasses RLS) so the Haezet JWT
+    mismatch with Supabase Auth does not block the query.
+    """
+    table = STUDENT_SUBJECT_TABLE_MAP.get(subject)
+    if not table:
+        raise HTTPException(status_code=400, detail=f"Unknown subject '{subject}'. Must be science, maths, or social.")
+
+    try:
+        svc = _sb_admin()   # service-role — bypasses all RLS
+        res = svc.table(table).select("*").order("id", desc=False).execute()
+        return res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch {table}: {e}")
+
+
+@router.get("/student-topics/{subject}/count", status_code=200)
+def get_student_topics_count(subject: str, current_user: dict = Depends(get_current_user)):
+    """
+    Returns the row count for students_{subject}.
+    Used by the student dashboard chip badges.
+    """
+    table = STUDENT_SUBJECT_TABLE_MAP.get(subject)
+    if not table:
+        raise HTTPException(status_code=400, detail=f"Unknown subject '{subject}'. Must be science, maths, or social.")
+
+    try:
+        svc = _sb_admin()
+        res = svc.table(table).select("*", count="exact").execute()
+        return {"count": res.count or 0}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to count {table}: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
 # ASSESSMENT SHARE SESSIONS  —  Teacher PIN/URL generation
 # ════════════════════════════════════════════════════════════════
 # Tables:
