@@ -3728,10 +3728,11 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         # parser to raise KeyError if we used f'`{qt_js_safe}`'.
         # FIX: use plain string concatenation — never an f-string — so Python
         # never tries to evaluate the remaining { } chars in qt_js_safe.
-        # Also strip any leftover {word} patterns so the JS template literal
-        # does not contain dangling ${} expressions.
+        # Strip only BARE {word} patterns that are NOT part of ${...} JS
+        # template literal expressions (those are already correct and must stay).
+        # Use negative lookbehind (?<!\$) so ${_fmt(vals.x)} is preserved.
         import re as _re_qt
-        qt_js_safe = _re_qt.sub(r'\{[^}]{1,40}\}', '', qt_js_safe)
+        qt_js_safe = _re_qt.sub(r'(?<!\$)\{[^}]{1,40}\}', '', qt_js_safe)
         question_tmpl_js = '`' + qt_js_safe + '`'  # NO f-string — safe concat
     else:
         question_tmpl_js = "null"
@@ -3743,9 +3744,12 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         fsym    = _he(str(f.get("symbol", f.get("id", "v"))))
         fid_raw = f.get("id", "v")
         funit   = _he(str(f.get("unit", "")))
+        # ── Safe string concat — no f-string, so funit/fid_raw/fsym
+        # containing { or } never crash Python ────────────────────────────────
         piece = (
             "'<span class=" + _dq + "s6info-sym" + _dq + ">'"
-            f"+'{fsym}'+'</span> = '+_fmt(vals.{fid_raw})+' {funit}'"
+            + "+" + repr(str(fsym))
+            + "+'</span> = '+_fmt(vals." + str(fid_raw) + ")+' " + str(funit) + "'"
         )
         given_parts.append(piece)
     given_entries_js = "[" + ", ".join(given_parts) + "]"
