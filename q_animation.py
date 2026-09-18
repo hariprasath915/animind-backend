@@ -106,14 +106,13 @@ MAX_TOKENS_SCENE     = 10000
 # produces ~40-50KB streams that complete reliably even on unstable IPv6 paths.
 # The primary fix is forcing IPv4 on the API client (see _gemini_client init below).
 MAX_TOKENS_HTML      = 12000
-TIMEOUT_SOLUTION     = 120.0
-TIMEOUT_SCENE        = 150.0
-# ── Increased from 300s to 480s ───────────────────────────────────────────────
+TIMEOUT_SOLUTION     = 180.0   # ↑ increased from 120s — allows slower Gemini responses
+TIMEOUT_SCENE        = 210.0   # ↑ increased from 150s — SVG scene generation can be slow
+# ── Increased from 480s to 600s ───────────────────────────────────────────────
 # With MAX_RETRIES=4 and RETRY_DELAYS=[15,35,70], worst-case retry time is
-# 120s (generation) + 15+35+70=120s (sleeps) = 240s. The old 300s left only
-# 60s headroom. 480s gives 240s headroom even in worst-case retry scenarios.
-TIMEOUT_HTML         = 480.0
-PIPELINE_TIMEOUT     = 660.0
+# 180s (generation) + 15+35+70=120s (sleeps) = 300s. 600s gives 300s headroom.
+TIMEOUT_HTML         = 600.0   # ↑ increased from 480s
+PIPELINE_TIMEOUT     = 780.0   # ↑ increased from 660s
 
 
 # ===========================================================================
@@ -4398,10 +4397,9 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     # Solution: decouple the button from the panel content — the button is always
     # written into the DOM, and the JS opens whatever panel _build_customize_html
     # produced (full panel, fallback message, or a graceful empty state).
+    # ORDER: Customize is always FIRST in the controls bar (no leading separator).
     customize_html = _build_customize_html(sol, scene)
-    customize_sep  = '<div class="qanim-ctrl-sep"></div>'
-    customize_btn  = f"""  {customize_sep}
-  <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Customize question values" style="position:relative;">
+    customize_btn  = """  <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Customize question values" style="position:relative;">
     <span>&#x2699;&#xFE0F;</span><span class="ctrl-label">Customize</span>
   </button>"""
 
@@ -4814,9 +4812,11 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 </script>
 
 <div id="qanim-controls-bar" role="toolbar" aria-label="QAnim Controls">
+  {customize_btn}
+  <div class="qanim-ctrl-sep"></div>
   <button class="qanim-ctrl-btn" id="answerbox-ctrl-btn" title="Check your answer">
     <span>&#x270F;&#xFE0F;</span><span class="ctrl-label">Answer Box</span>
-  </button>{glossary_btn}{customize_btn}
+  </button>{glossary_btn}
 </div>
 
 </body>
