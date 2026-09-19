@@ -3941,11 +3941,11 @@ __PREVIEW_HTML__
   // (Python string → JS string → JS regex) made it impossible to write
   // the correct bytes without ambiguity. split/join requires NO regex at all.
   function _escRe(s){
-    var sp=['.','*','+','?','^','$','{','}','(',')','|','[',']','\\'];
+    var sp=['.','*','+','?','^','$','{','}','(',')','|','[',']','\\\\'];
     s=String(s);
-    // escape \ FIRST so we don't double-escape our own replacements
-    s=s.split('\\').join('\\\\');
-    for(var i=0;i<sp.length-1;i++)s=s.split(sp[i]).join('\\'+sp[i]);
+    // escape \\ FIRST so we don't double-escape our own replacements
+    s=s.split('\\\\').join('\\\\\\\\');
+    for(var i=0;i<sp.length-1;i++)s=s.split(sp[i]).join('\\\\'+sp[i]);
     return s;
   }
   function _fmt(v){
