@@ -1815,7 +1815,7 @@ def _build_scene6_html(sol: dict, scene: dict) -> str:
           <div class="s6-var-inner">
             <span class="s6-var-sym">{sym}</span>
             <span class="s6-var-name">{sym} &mdash; {name}</span>
-            <span class="s6-var-val">{val_disp}</span>
+            <span class="s6-var-val" id="s6v-{sym_raw}-val">{val_disp}</span>
           </div>
         </div>\n"""
 
@@ -3800,10 +3800,10 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     # .replace() for each substitution. .replace() never re-parses the value,
     # so Gemini JS with any { } content is always safe.
 
-    # ── try/except is now a genuine last-resort guard (not the primary fix) ───
-    try:
-
-        _PANEL_TMPL = """
+    # ── Bug 1 fix: _PANEL_TMPL defined BEFORE try so its construction never
+    # triggers the except clause and silently returns the empty fallback panel.
+    # The try/except now guards ONLY the .replace() substitution chain.
+    _PANEL_TMPL = """
 <!-- ╒═════════════════════════════════════════════════════════════
      CUSTOMIZE PANEL
      ╙═════════════════════════════════════════════════════════════ -->
@@ -3859,6 +3859,10 @@ __PREVIEW_HTML__
 
   function _el(id){ return document.getElementById(id); }
   function _round(v, d){ var m=Math.pow(10,d); return Math.round(v*m)/m; }
+  // Bug 2 fix: centralised regex-escape helper so the character class is correct.
+  // The old inline /[.*+?^${}()|[\\]\\\\]/g closed the class at the first \\],
+  // leaving a trailing \\] outside — either a SyntaxError or a 2-char match.
+  function _escRe(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
   function _fmt(v){
     if(typeof v !== 'number' || isNaN(v)) return '?';
     if(v === 0) return '0';
@@ -3946,7 +3950,7 @@ __PREVIEW_HTML__
           var out = b;
           fieldIds.forEach(function(id){
             // Replace occurrences of DEFAULTS[id] in the badge HTML text
-            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+            var re = new RegExp(_escRe(DEFAULTS[id]), 'g');
             out = out.replace(re, _fmt(vals[id]));
           });
           return out;
@@ -3955,13 +3959,15 @@ __PREVIEW_HTML__
         if(step.desc){
           var newDesc = step.desc;
           fieldIds.forEach(function(id){
-            var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+            var re = new RegExp(_escRe(DEFAULTS[id]), 'g');
             newDesc = newDesc.replace(re, _fmt(vals[id]));
           });
           step.desc = newDesc;
         }
       });
-      applyStep(window.currentStep || 0);
+      // Bug 3 fix: bare applyStep() throws ReferenceError inside an IIFE.
+      // Always qualify globals with window. when crossing script boundaries.
+      if(typeof window.applyStep === 'function') window.applyStep(window.currentStep || 0);
     }
 
     // 4. Step-6 To-Find badge — keep unchanged (shows unknown symbol, not values)
@@ -4018,7 +4024,7 @@ __PREVIEW_HTML__
         if(!eq) return;
         var text = eq.innerHTML;
         fieldIds.forEach(function(id){
-          var re = new RegExp(String(DEFAULTS[id]).replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&'), 'g');
+          var re = new RegExp(_escRe(DEFAULTS[id]), 'g');
           text = text.replace(re, _fmt(vals[id]));
         });
         eq.innerHTML = text;
@@ -4136,8 +4142,13 @@ __PREVIEW_HTML__
 })();
 </script>
 """
-        # ── Safe substitution via .replace() ────────────────────────────────
-        # Each .replace() treats its argument as a literal — Gemini JS is safe.
+
+    # ── Bug 1 fix: try ONLY wraps the .replace() substitution chain ─────────
+    # _PANEL_TMPL is defined above unconditionally, so its construction never
+    # triggers this except. Any encoding / type issue in the Gemini-sourced
+    # values (compute_js_body, given_entries_js, etc.) is caught here instead
+    # of silently producing the empty fallback panel.
+    try:
         panel_html = (
             _PANEL_TMPL
             .replace("__FIELDS_HTML__",      fields_html)
@@ -4151,7 +4162,7 @@ __PREVIEW_HTML__
         )
         return _CUSTOMIZE_CSS + panel_html
 
-    except (KeyError, ValueError, IndexError) as _fstr_err:
+    except Exception as _fstr_err:
         # RC#2: A bare {word} in Gemini-sourced content (compute_js_body,
         # defaults_js, read_lines, given_entries_js, units_js, or
         # question_tmpl_js) was interpreted as a Python format specifier and
