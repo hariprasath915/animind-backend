@@ -4145,14 +4145,10 @@ __PREVIEW_HTML__
     }
 
     // 10. Close any open modal overlays and return to Step 1
-    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){
-      var ov = _el(id); if(ov) ov.classList.remove('qanim-scene-visible');
-    });
-    var bd2 = _el('qanim-scene-modal-backdrop');
-    if(bd2) bd2.classList.remove('qanim-scene-visible');
-    var svgCont = document.querySelector('.svg-container');
-    if(svgCont) svgCont.style.opacity = '1';
-    if(typeof window.applyStep === 'function') window.applyStep(0);
+    // Do not hide overlays when customizing
+    if(typeof window.applyStep === 'function' && window.currentStep !== undefined) {
+      window.applyStep(window.currentStep);
+    }
   }
 
   function openPanel(){
