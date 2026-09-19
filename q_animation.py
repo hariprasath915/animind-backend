@@ -73,25 +73,47 @@ if _GEMINI_AVAILABLE:
     else:
         try:
             # ── Fix: Force IPv4 to prevent wsarecv TCP stream kills ──────────
-            # The google-genai SDK uses httpx internally. By default it resolves
-            # generativelanguage.googleapis.com over IPv6 on dual-stack machines.
-            # On Indian ISP connections the IPv6 path drops large responses
-            # mid-stream (wsarecv: connection forcibly closed). Passing an httpx
-            # client configured with local_address='0.0.0.0' forces IPv4 binding
-            # which uses the stable IPv4 Google API endpoint instead.
+            # Root cause: on dual-stack Windows machines (common on Indian ISPs)
+            # DNS resolves generativelanguage.googleapis.com to an IPv6 address.
+            # The IPv6 path drops large streaming responses mid-transfer
+            # (wsarecv: An established connection was aborted by the software in
+            # your host machine). Two-layer fix:
+            #   Layer 1 — socket.getaddrinfo monkey-patch: forces the OS DNS
+            #     resolver to return ONLY AF_INET (IPv4) results, so the httpx
+            #     connection pool never even sees the IPv6 address.
+            #   Layer 2 — httpx local_address + http2=False: binds the outgoing
+            #     socket to 0.0.0.0 (IPv4) and disables HTTP/2 (h2 stream
+            #     multiplexing can amplify the wsarecv kill on large responses).
+            try:
+                import socket as _socket_mod
+                _orig_getaddrinfo = _socket_mod.getaddrinfo
+                def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+                    """Return only AF_INET results to force IPv4 DNS resolution."""
+                    return _orig_getaddrinfo(host, port, _socket_mod.AF_INET, type, proto, flags)
+                _socket_mod.getaddrinfo = _ipv4_only_getaddrinfo
+                print("[QAnim] socket.getaddrinfo patched → IPv4-only DNS (wsarecv fix)")
+            except Exception as _sock_e:
+                print(f"[QAnim] socket patch skipped: {_sock_e}")
+
             try:
                 import httpx as _httpx
-                _ipv4_transport = _httpx.HTTPTransport(local_address="0.0.0.0")
-                _ipv4_http_client = _httpx.Client(transport=_ipv4_transport)
+                _ipv4_transport = _httpx.HTTPTransport(
+                    local_address="0.0.0.0",  # bind to IPv4 local address
+                )
+                _ipv4_http_client = _httpx.Client(
+                    transport=_ipv4_transport,
+                    http2=False,              # HTTP/1.1 only — avoids h2 stream kills
+                )
                 _gemini_client = _google_genai.Client(
                     api_key=_gkey,
                     http_client=_ipv4_http_client,
                 )
-                print(f"[QAnim] Gemini ready (google-genai + IPv4-forced, model={GEMINI_MODEL})")
+                print(f"[QAnim] Gemini ready (google-genai + IPv4-forced + HTTP/1.1, model={GEMINI_MODEL})")
             except Exception:
-                # httpx not available or http_client kwarg not supported — fall back to default
+                # httpx unavailable or http_client kwarg not supported — default client
+                # (socket patch above still protects against IPv6 DNS resolution)
                 _gemini_client = _google_genai.Client(api_key=_gkey)
-                print(f"[QAnim] Gemini ready (google-genai, model={GEMINI_MODEL})")
+                print(f"[QAnim] Gemini ready (google-genai + socket-IPv4, model={GEMINI_MODEL})")
         except Exception as e:
             _GEMINI_DISABLED_REASON = repr(e)
 else:
@@ -3333,6 +3355,9 @@ _ANSWERBOX_JS_TMPL = """
   function openAnswerBox(){_loadTargets();_currentIdx=0;var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');if(!bd||!pn)return;bd.classList.add('open');bd.setAttribute('aria-hidden','false');pn.classList.add('open');pn.setAttribute('aria-hidden','false');abOpen=true;_renderTarget(_currentIdx);setTimeout(function(){var inp=_el('ab-user-input');if(inp)inp.focus();},220);}
   function closeAnswerBox(){var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');if(bd){bd.classList.remove('open');bd.setAttribute('aria-hidden','true');}if(pn){pn.classList.remove('open');pn.setAttribute('aria-hidden','true');}abOpen=false;}
   window.openAnswerBox=openAnswerBox;window.closeAnswerBox=closeAnswerBox;
+  // Reset hook: called by __qanimSetAnswerTargets after Customize updates the JSON element.
+  // Clears the internal _loaded flag so the next openAnswerBox() re-reads _targets from DOM.
+  window.__qanimAnswerBoxReset=function(){_loaded=false;_targets=[];_currentIdx=0;};
   _onReady(function(){
     function wireCtrl(){var btn=_el('answerbox-ctrl-btn');if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();abOpen?closeAnswerBox():openAnswerBox();});}else{setTimeout(wireCtrl,100);}}
     wireCtrl();
@@ -3690,12 +3715,17 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         <span class="cust-unit">Unit: {unit}</span>
       </div>\n"""
 
-    # Build defaults JS object
+    # Build defaults JS object — guard against None/non-numeric defaults
+    def _safe_default(v):
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
     defaults_entries = ", ".join(
-        f"{f.get('id','v')}: {f.get('default', 0)}"
+        f"{f.get('id','v')}: {_safe_default(f.get('default'))}"
         for f in fields
     )
-    defaults_js = f"{{ {defaults_entries} }}"
+    defaults_js = "{ " + defaults_entries + " }"
 
     # Build readInputs JS — reads each field by id
     read_parts = []
@@ -3713,7 +3743,6 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         sym = _he(str(f.get("symbol", fid)))
         unit = _he(str(f.get("unit", "")))
         preview_html += f'      <div class="cust-preview-item"><span class="cpv-sym">{sym}</span><span class="cpv-arrow">\u2192</span><span id="cpv-{fid}">--</span></div>\n'
-
     # The JS question template — replace {id} placeholders with vals[id]
     if question_template:
         # Escape backtick/backslash in question_template for JS template literal
@@ -3755,11 +3784,12 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     given_entries_js = "[" + ", ".join(given_parts) + "]"
 
     # Build UNITS JS object — maps field id → unit string for Scene 6 var-box updates
+    # Escape single quotes in unit strings so they don't break the JS object literal
     units_entries = ", ".join(
-        f"'{f.get('id','v')}': '{_he(str(f.get('unit','')))}'"
+        "'" + f.get('id','v') + "': '" + _he(str(f.get('unit',''))).replace("'", "\\'") + "'"
         for f in fields
     )
-    units_js = f"{{ {units_entries} }}"
+    units_js = "{ " + units_entries + " }"
 
     # ── TRUE ROOT-CAUSE FIX ────────────────────────────────────────────────────
     # f-string is UNSAFE for Gemini-sourced JS: if compute_js contains {word},
@@ -4161,38 +4191,38 @@ __PREVIEW_HTML__
     <button class="cust-btn-reset" id="cust-btn-reset" onclick="
       var p=document.getElementById('customize-panel');
       var b=document.getElementById('customize-backdrop');
-      if(p){{p.classList.remove('open');p.setAttribute('aria-hidden','true');}}
+      if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
       if(b)b.classList.remove('open');
     ">Close</button>
   </div>
 </div>
 <script id="qanim-js-customize">
-(function initCustomize(){{
+(function initCustomize(){
   'use strict';
   if(window.__qanimCustomizeInit)return;
   window.__qanimCustomizeInit=true;
-  function _el(id){{return document.getElementById(id);}}
-  function openPanel(){{
+  function _el(id){return document.getElementById(id);}
+  function openPanel(){
     var bd=_el('customize-backdrop'),p=_el('customize-panel');
     if(bd)bd.classList.add('open');
-    if(p){{p.classList.add('open');p.setAttribute('aria-hidden','false');}}
-  }}
-  function closePanel(){{
+    if(p){p.classList.add('open');p.setAttribute('aria-hidden','false');}
+  }
+  function closePanel(){
     var bd=_el('customize-backdrop'),p=_el('customize-panel');
     if(bd)bd.classList.remove('open');
-    if(p){{p.classList.remove('open');p.setAttribute('aria-hidden','true');}}
-  }}
-  function onReady(fn){{
+    if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+  }
+  function onReady(fn){
     if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);
     else setTimeout(fn,0);
-  }}
-  onReady(function(){{
+  }
+  onReady(function(){
     var ob=_el('customize-ctrl-btn');if(ob)ob.addEventListener('click',openPanel);
     var cb=_el('cust-close-btn');if(cb)cb.addEventListener('click',closePanel);
     var bd=_el('customize-backdrop');if(bd)bd.addEventListener('click',closePanel);
-    document.addEventListener('keydown',function(e){{if(e.key==='Escape')closePanel();}});
-  }});
-}})();
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closePanel();});
+  });
+})();
 </script>
 """
         return _CUSTOMIZE_CSS + _fb_panel
@@ -4574,7 +4604,29 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     }}
     window.resetAnim = resetAnim;
 
-    // ── Safe DOMContentLoaded initialization (Fix J) ─────────────────────────
+    // ── window.__qanimSetAnswerTargets: hook for Customize panel answer updates ──
+    // Called by applyToAnimation() in the Customize JS after recomputing the answer
+    // with new field values. Updates the Answer Box targets so the student can check
+    // their answer against the freshly computed result.
+    window.__qanimSetAnswerTargets = function(targets) {{
+      try {{
+        var el = document.getElementById('__answer_targets__');
+        if (el) {{
+          var current = JSON.parse(el.textContent || '{{}}');
+          current.answer_targets = Array.isArray(targets) ? targets : [targets];
+          el.textContent = JSON.stringify(current);
+        }}
+        // If the AnswerBox JS has already initialised its _targets cache,
+        // reset it so the next openAnswerBox() call re-reads from the element.
+        if (typeof window.__qanimAnswerBoxReset === 'function') {{
+          window.__qanimAnswerBoxReset();
+        }}
+      }} catch(e) {{
+        console.warn('[QAnim] __qanimSetAnswerTargets error:', e);
+      }}
+    }};
+
+
     document.addEventListener('DOMContentLoaded', function () {{
       if (!Array.isArray(window.stepsData) || window.stepsData.length !== CONCEPT_STEP_COUNT) {{
         console.error(
