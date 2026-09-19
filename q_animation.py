@@ -3617,29 +3617,105 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         if fields and not question_template:
             question_template = sol.get("formula", "") or ""
 
-    # ── RC#1 FIX: Sanitize compute_js_body safely ────────────────────────────
-    # Strip outer `function compute(vals) { ... }` wrapper ONLY when the regex
-    # actually matched it.  The old endswith('}') approach fired on ANY body
-    # ending with } — e.g. `return {answer: _fmt(Q), derived: {}}` — silently
-    # truncating the last brace and producing a JS SyntaxError every time.
-    _wrapper_re = _re_cust.compile(
-        r'^\s*function\s+compute\s*\([^)]*\)\s*\{(.*)\}\s*$',
-        _re_cust.DOTALL
-    )
-    _wrapper_match = _wrapper_re.match(compute_js_body)
-    if _wrapper_match:
-        # Strip ONLY the matched outer wrapper braces — inner content is untouched
-        compute_js_body = _wrapper_match.group(1).strip()
+    # ── Bug 1 fix: Replace greedy regex wrapper strip with brace-depth counter ─
+    # Root cause: the greedy regex `(.*)\}\s*$` works most of the time, but
+    # when Gemini returns escaped strings (e.g. '{\"M0/Mf\": ...}'), the
+    # unescaped body can contain a `}` that the regex mistakes for the outer
+    # function closing brace, silently truncating the return value.
+    # Fix: use a proper brace-depth counter that skips string literals.
+    def _strip_compute_wrapper(body):
+        """Strip 'function compute(vals){...}' outer wrapper via brace depth counting."""
+        import re as _rw
+        m = _rw.match(r'^\s*function\s+compute\s*\([^)]*\)\s*\{', body, _rw.DOTALL)
+        if not m:
+            return body  # no wrapper — return as-is
+        start = m.end()  # position right after the opening '{'
+        depth = 1
+        i = start
+        while i < len(body) and depth > 0:
+            ch = body[i]
+            if ch == '{':
+                depth += 1
+                i += 1
+            elif ch == '}':
+                depth -= 1
+                i += 1
+            elif ch in ('"', "'", '`'):
+                # Skip string literal to avoid counting braces inside strings
+                q = ch
+                i += 1
+                while i < len(body):
+                    if body[i] == '\\':   # escape sequence — skip next char
+                        i += 2
+                        continue
+                    if body[i] == q:
+                        i += 1
+                        break
+                    i += 1
+            else:
+                i += 1
+        if depth == 0:
+            return body[start:i - 1].strip()  # i-1 skips the matched closing '}'
+        return body  # unbalanced braces — return original unchanged
+
+    stripped = _strip_compute_wrapper(compute_js_body)
+    if stripped != compute_js_body:
+        compute_js_body = stripped  # wrapper was found and stripped
     else:
-        # No outer wrapper — leave compute_js_body exactly as Gemini returned it
         compute_js_body = compute_js_body.strip()
     if not compute_js_body:
         compute_js_body = "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };"
+
+    # ── Bug 2 fix: second-pass synthesis from sol['given_list'] ──────────────
+    # When sol['variables'] is [] (Gemini failed to enumerate), the first
+    # synthesis pass produces nothing. Try parsing the plain-text given_list
+    # strings (format "symbol = value unit") as a fallback source of fields.
+    if not fields:
+        given_list = sol.get('given_list') or []
+        for g in given_list:
+            g_str = str(g).strip()
+            # Match: "symbol = value unit"  or "symbol: value unit"
+            import re as _re_gl
+            m_gl = _re_gl.match(
+                r'^([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*([\d.eE+\-]+)\s*(\S*)\s*$',
+                g_str
+            )
+            if not m_gl:
+                continue
+            raw_id_gl  = m_gl.group(1)
+            safe_id_gl = _re_cust.sub(r'[^a-zA-Z0-9_]', '_', raw_id_gl).strip('_') or 'v'
+            try:
+                default_gl = float(m_gl.group(2))
+            except ValueError:
+                default_gl = 1.0
+            unit_gl = m_gl.group(3)
+            if any(f.get('id') == safe_id_gl for f in fields):
+                continue
+            fields.append({
+                'id':      safe_id_gl,
+                'symbol':  raw_id_gl,
+                'label':   raw_id_gl,
+                'unit':    unit_gl,
+                'default': default_gl,
+            })
+        # Build a minimal compute if we now have fields but still a stub body
+        _stub = "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };"
+        if fields and compute_js_body == _stub:
+            compute_js_body = (
+                "var ans = parseFloat('"
+                + str(sol.get('answer_value', '0')).replace("'", '') + "');"
+                " return { answer: _fmt(ans), answer_unit: '"
+                + str(sol.get('answer_unit', '')).replace("'", '') + "',"
+                " answer_label: '"
+                + str(sol.get('formula', 'Answer')).replace("'", '')[:40] + "',"
+                " derived: {} };"
+            )
 
     if not fields:
         # No fields after all synthesis attempts — return CSS + a minimal panel
         # that shows a friendly message. The button always exists in the DOM, so
         # opening it must show something rather than nothing.
+
         _no_fields_panel = """
 <div id="customize-backdrop"></div>
 <div id="customize-panel" role="dialog" aria-label="Customize question values" aria-hidden="true">
@@ -3859,10 +3935,19 @@ __PREVIEW_HTML__
 
   function _el(id){ return document.getElementById(id); }
   function _round(v, d){ var m=Math.pow(10,d); return Math.round(v*m)/m; }
-  // Bug 2 fix: centralised regex-escape helper so the character class is correct.
-  // The old inline /[.*+?^${}()|[\\]\\\\]/g closed the class at the first \\],
-  // leaving a trailing \\] outside — either a SyntaxError or a 2-char match.
-  function _escRe(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+  // Bug 3 fix: _escRe uses split/join to escape regex special chars.
+  // All previous regex-based approaches broke because representing `]` inside
+  // a JS character class requires `\]`, but the Python string escaping layers
+  // (Python string → JS string → JS regex) made it impossible to write
+  // the correct bytes without ambiguity. split/join requires NO regex at all.
+  function _escRe(s){
+    var sp=['.','*','+','?','^','$','{','}','(',')','|','[',']','\\'];
+    s=String(s);
+    // escape \ FIRST so we don't double-escape our own replacements
+    s=s.split('\\').join('\\\\');
+    for(var i=0;i<sp.length-1;i++)s=s.split(sp[i]).join('\\'+sp[i]);
+    return s;
+  }
   function _fmt(v){
     if(typeof v !== 'number' || isNaN(v)) return '?';
     if(v === 0) return '0';
