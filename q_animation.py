@@ -3655,7 +3655,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
             else:
                 i += 1
         if depth == 0:
-            return body[start:i - 1].strip()  # i-1 skips the matched closing '}'
+            return body[start:i].strip()  # i is the index of the matched closing '}', so [start:i] excludes it
         return body  # unbalanced braces — return original unchanged
 
     stripped = _strip_compute_wrapper(compute_js_body)
