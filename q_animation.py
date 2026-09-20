@@ -470,6 +470,30 @@ animation scene script in JSON for a 6-step SVG concept animation.
 Steps 1–6 build a visual explanation of the physical setup, one element at a time.
 No formulas, no calculations, no solution steps in the scene descriptions.
 
+============================================================
+OBJECT NAMING RULE — CRITICAL
+============================================================
+
+Every step title and description MUST:
+  - Name the SPECIFIC physical object introduced in that step by its real name
+    (e.g. "Rocket", "Exhaust Gas", "Metal Wire", "Charged Sphere", "Satellite").
+  - State its symbol/notation explicitly in brackets, e.g. "u (exhaust speed)",
+    "α (mass-loss rate)", "L (wire length)", "m₀ (initial mass)".
+  - Use the EXACT variable names from the problem statement — never invent new ones.
+  - The student reading the description must immediately know WHAT object it is
+    and WHAT quantity or notation belongs to it.
+
+Example of GOOD step title:   "Step 3: Exhaust Gas — Speed u (exhaust speed)"
+Example of BAD  step title:   "Step 3: First Given Value"
+
+Example of GOOD description:  "The rocket (mass m₀) is launched vertically upward.
+                                Gravity pulls it downward with force m₀g."
+Example of BAD  description:  "The main object is introduced."
+
+============================================================
+EXAMPLE 1 — Stretched Wire (electrical resistance)
+============================================================
+
 Return ONLY valid JSON:
 {
   "title": "Resistance of a Stretched Wire",
@@ -477,9 +501,9 @@ Return ONLY valid JSON:
   "steps": [
     {
       "step_number": 1,
-      "label": "Grid",
-      "title": "Step 1: Establishing the Measurement Scale",
-      "description": "We begin with a reference grid to measure the wire dimensions.",
+      "label": "Environment",
+      "title": "Step 1: The Problem Environment — Reference Scale",
+      "description": "We set up a reference grid so we can clearly measure the dimensions of the metal wire in this experiment.",
       "badges": [{"text": "Reference scale", "type": "cyan"}],
       "layers_visible": ["layer-frame"],
       "layer_new": "layer-frame",
@@ -488,9 +512,9 @@ Return ONLY valid JSON:
     {
       "step_number": 2,
       "label": "Wire",
-      "title": "Step 2: The Initial Metal Wire",
-      "description": "Here is our original metal wire with length L and cross-section A.",
-      "badges": [{"text": "Length = L", "type": "cyan"}, {"text": "Area = A", "type": "cyan"}],
+      "title": "Step 2: The Metal Wire — Length L, Cross-section A",
+      "description": "The main object is a metal wire of initial length L and cross-sectional area A. This is the wire whose resistance we will track.",
+      "badges": [{"text": "Wire: length L", "type": "cyan"}, {"text": "Area: A", "type": "cyan"}],
       "layers_visible": ["layer-frame", "layer-object"],
       "layer_new": "layer-object",
       "blur": true
@@ -498,29 +522,29 @@ Return ONLY valid JSON:
     {
       "step_number": 3,
       "label": "R₁",
-      "title": "Step 3: Measuring Initial Resistance",
-      "description": "We connect an ohmmeter and measure the initial resistance R₁ = 10 Ω.",
-      "badges": [{"text": "R₁ = 10 Ω", "type": "green"}],
+      "title": "Step 3: Initial Resistance — R₁ = 10 Ω (given)",
+      "description": "An ohmmeter is connected to the metal wire and measures the initial resistance R₁ = 10 Ω. This is our first given quantity.",
+      "badges": [{"text": "R₁ = 10 Ω (given)", "type": "green"}],
       "layers_visible": ["layer-frame", "layer-object", "layer-param1"],
       "layer_new": "layer-param1",
       "blur": true
     },
     {
       "step_number": 4,
-      "label": "Force",
-      "title": "Step 4: Applying Tension",
-      "description": "Mechanical forces are applied to both ends of the wire.",
-      "badges": [{"text": "Force applied", "type": "orange"}],
+      "label": "Force F",
+      "title": "Step 4: Applied Tension — Force F on the Wire",
+      "description": "A mechanical tension force F is applied to both ends of the metal wire, causing it to stretch. The force direction is shown by arrows.",
+      "badges": [{"text": "Force F applied", "type": "orange"}, {"text": "Wire stretching", "type": "cyan"}],
       "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2"],
       "layer_new": "layer-param2",
       "blur": true
     },
     {
       "step_number": 5,
-      "label": "Stretch",
-      "title": "Step 5: Doubling the Length",
-      "description": "The wire stretches to twice its original length. Volume stays constant.",
-      "badges": [{"text": "L₂ = 2L", "type": "cyan"}, {"text": "Volume = constant", "type": "orange"}],
+      "label": "New L₂",
+      "title": "Step 5: Stretched Wire — New Length L₂ = 2L",
+      "description": "After stretching, the metal wire now has double its original length: L₂ = 2L. Because volume is conserved, the cross-sectional area A decreases accordingly.",
+      "badges": [{"text": "L₂ = 2L (new length)", "type": "cyan"}, {"text": "Volume = constant", "type": "orange"}],
       "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived"],
       "layer_new": "layer-derived",
       "blur": true
@@ -528,9 +552,9 @@ Return ONLY valid JSON:
     {
       "step_number": 6,
       "label": "Setup",
-      "title": "Step 6: Complete Setup — Ready to Solve",
-      "description": "All given data is in place. The new resistance R₂ = ? is what we must find.",
-      "badges": [{"text": "R₁ = 10 Ω", "type": "cyan"}, {"text": "L₂ = 2L", "type": "cyan"}, {"text": "V = const", "type": "orange"}, {"text": "R₂ = ?", "type": "green"}],
+      "title": "Step 6: Complete Setup — Find New Resistance R₂ = ?",
+      "description": "All given data is assembled. The metal wire (original L, area A, resistance R₁ = 10 Ω) is now stretched to L₂ = 2L at constant volume. We must find the new resistance R₂.",
+      "badges": [{"text": "R₁ = 10 Ω (given)", "type": "cyan"}, {"text": "L₂ = 2L (given)", "type": "cyan"}, {"text": "Volume = const", "type": "orange"}, {"text": "R₂ = ? (to find)", "type": "green"}],
       "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived", "layer-summary"],
       "layer_new": "layer-summary",
       "blur": false
@@ -538,37 +562,147 @@ Return ONLY valid JSON:
   ],
   "svg_layers": {
     "layer-frame": {"description": "Background grid and reference frame", "color": "#4a6a8a"},
-    "layer-object": {"description": "The main physical object (wire, plate, projectile, etc.)", "color": "#0891b2"},
-    "layer-param1": {"description": "Primary given parameter visualization", "color": "#16a34a"},
-    "layer-param2": {"description": "Second given parameter or force", "color": "#d97706"},
-    "layer-derived": {"description": "Derived or changed quantity", "color": "#0891b2"},
-    "layer-summary": {"description": "Setup summary callout boxes", "color": "#7c3aed"}
+    "layer-object": {"description": "The metal wire (main physical object)", "color": "#0891b2"},
+    "layer-param1": {"description": "Initial resistance R₁ measurement", "color": "#16a34a"},
+    "layer-param2": {"description": "Applied tension force F and stretching arrows", "color": "#d97706"},
+    "layer-derived": {"description": "Stretched wire — new length L₂ = 2L", "color": "#0891b2"},
+    "layer-summary": {"description": "Setup summary — all given values and R₂ = ?", "color": "#7c3aed"}
   },
-  "to_find": ["Its new resistance"],
+  "to_find": ["New resistance R₂ of the stretched wire"],
   "color_legend": [
-    {"label": "Grid", "color": "#0ea5e9"},
-    {"label": "Object", "color": "#10b981"},
-    {"label": "Param 1", "color": "#f59e0b"},
-    {"label": "Param 2", "color": "#6366f1"},
-    {"label": "Derived", "color": "#f43f5e"},
+    {"label": "Environment", "color": "#0ea5e9"},
+    {"label": "Wire", "color": "#10b981"},
+    {"label": "R₁ (given)", "color": "#f59e0b"},
+    {"label": "Force F", "color": "#6366f1"},
+    {"label": "New L₂", "color": "#f43f5e"},
     {"label": "Setup", "color": "#22c55e"}
   ],
   "glossary": [
     {"term": "resistance", "meaning": "How much a material opposes the flow of electric current."},
-    {"term": "volume", "meaning": "The amount of 3D space an object occupies."}
+    {"term": "cross-sectional area", "meaning": "The area of a slice cut perpendicular to the length of the wire."},
+    {"term": "volume conservation", "meaning": "When the wire stretches, its total volume stays the same, so area must shrink."}
   ]
 }
 
-STRICT RULES:
+============================================================
+EXAMPLE 2 — Rocket Liftoff (exhaust speed / mass-loss rate)
+============================================================
+
+{
+  "title": "Rocket Vertical Launch — Minimum Exhaust Speed",
+  "topic": "PHYSICS",
+  "steps": [
+    {
+      "step_number": 1,
+      "label": "Environment",
+      "title": "Step 1: The Problem Environment — Vertical Launch Setting",
+      "description": "We establish the vertical launch environment: the ground, the upward direction, and the gravitational field g acting downward on all objects in this problem.",
+      "badges": [{"text": "Vertical direction ↑", "type": "cyan"}, {"text": "Gravity g ↓", "type": "orange"}],
+      "layers_visible": ["layer-frame"],
+      "layer_new": "layer-frame",
+      "blur": false
+    },
+    {
+      "step_number": 2,
+      "label": "Rocket",
+      "title": "Step 2: The Rocket — Initial Mass m₀",
+      "description": "The rocket sits on the launch pad. Its initial total mass is m₀ (rocket body + unburned fuel). The rocket will be launched vertically upward.",
+      "badges": [{"text": "Rocket: mass m₀", "type": "cyan"}, {"text": "Direction: upward ↑", "type": "cyan"}],
+      "layers_visible": ["layer-frame", "layer-object"],
+      "layer_new": "layer-object",
+      "blur": true
+    },
+    {
+      "step_number": 3,
+      "label": "Exhaust u",
+      "title": "Step 3: Exhaust Gas — Speed u (exhaust speed, given)",
+      "description": "The rocket expels exhaust gas downward at speed u relative to the rocket. This exhaust speed u is the quantity we need to find the minimum value of. The exhaust jet is shown as a downward arrow labeled u.",
+      "badges": [{"text": "Exhaust gas ↓", "type": "orange"}, {"text": "Speed u (to find min)", "type": "green"}],
+      "layers_visible": ["layer-frame", "layer-object", "layer-param1"],
+      "layer_new": "layer-param1",
+      "blur": true
+    },
+    {
+      "step_number": 4,
+      "label": "Mass-loss α",
+      "title": "Step 4: Mass-Loss Rate — α (alpha, given)",
+      "description": "The rocket burns fuel and loses mass at a constant rate α (alpha) in kg/s. This is the mass-loss rate given in the problem. The rocket body becomes lighter as fuel is expelled.",
+      "badges": [{"text": "Mass-loss rate α (given)", "type": "cyan"}, {"text": "Units: kg/s", "type": "orange"}],
+      "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2"],
+      "layer_new": "layer-param2",
+      "blur": true
+    },
+    {
+      "step_number": 5,
+      "label": "Thrust",
+      "title": "Step 5: Rocket Thrust — Force = u × α (upward)",
+      "description": "The thrust force on the rocket acts upward and equals u × α (exhaust speed × mass-loss rate). For the rocket to accelerate upward at launch, this thrust must exceed the rocket's weight m₀ × g.",
+      "badges": [{"text": "Thrust = u·α ↑", "type": "cyan"}, {"text": "Weight = m₀g ↓", "type": "orange"}, {"text": "Condition: u·α > m₀g", "type": "orange"}],
+      "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived"],
+      "layer_new": "layer-derived",
+      "blur": true
+    },
+    {
+      "step_number": 6,
+      "label": "Setup",
+      "title": "Step 6: Complete Setup — Find Minimum Exhaust Speed u_min = ?",
+      "description": "All objects and quantities are in place. The rocket (mass m₀) is launched upward. Exhaust gas leaves at speed u (downward). Mass-loss rate is α. Gravity is g. We must find the minimum value of u so that the net force on the rocket is upward at launch.",
+      "badges": [{"text": "Rocket mass m₀", "type": "cyan"}, {"text": "Mass-loss rate α", "type": "cyan"}, {"text": "Gravity g ↓", "type": "cyan"}, {"text": "u_min = ? (to find)", "type": "green"}],
+      "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived", "layer-summary"],
+      "layer_new": "layer-summary",
+      "blur": false
+    }
+  ],
+  "svg_layers": {
+    "layer-frame": {"description": "Vertical launch environment — ground, sky, gravity direction", "color": "#4a6a8a"},
+    "layer-object": {"description": "The rocket — body with initial mass m₀ on launch pad", "color": "#0891b2"},
+    "layer-param1": {"description": "Exhaust gas jet — downward arrow labeled u (exhaust speed)", "color": "#d97706"},
+    "layer-param2": {"description": "Mass-loss rate α — annotation showing fuel consumption", "color": "#16a34a"},
+    "layer-derived": {"description": "Thrust force (u·α ↑) vs weight (m₀g ↓) force diagram", "color": "#7c3aed"},
+    "layer-summary": {"description": "Summary callout — all given values, u_min = ? highlighted", "color": "#dc2626"}
+  },
+  "to_find": ["Minimum exhaust speed u_min for upward acceleration at launch"],
+  "color_legend": [
+    {"label": "Environment", "color": "#0ea5e9"},
+    {"label": "Rocket (m₀)", "color": "#10b981"},
+    {"label": "Exhaust u", "color": "#f59e0b"},
+    {"label": "Mass-loss α", "color": "#6366f1"},
+    {"label": "Thrust vs Weight", "color": "#a855f7"},
+    {"label": "Setup", "color": "#22c55e"}
+  ],
+  "glossary": [
+    {"term": "exhaust speed u", "meaning": "The speed at which hot gas is expelled backward out of the rocket engine, relative to the rocket."},
+    {"term": "mass-loss rate α", "meaning": "The rate at which the rocket loses mass by burning and expelling fuel, measured in kg/s."},
+    {"term": "thrust", "meaning": "The forward (upward) push on the rocket caused by the reaction to expelling exhaust gas downward."},
+    {"term": "liftoff condition", "meaning": "The rocket lifts off only when the upward thrust exceeds the downward gravitational weight."}
+  ]
+}
+
+============================================================
+STRICT RULES
+============================================================
+
 1. EXACTLY 6 steps.
-2. Step 6: blur = false, all layers visible, badges summarise all given data + "Unknown = ?".
-3. Steps 2–5: blur = true.
-4. No formulas, no equations, no solution text in ANY step description.
-5. svg_layers must list every layer ID that appears in any step's layers_visible.
-6. to_find: list of 1–3 strings describing what the student must find.
-7. color_legend: one entry per SVG step, colours corresponding to the 6 steps.
-8. glossary: 2–5 genuinely difficult technical words with simple explanations.
-9. Return PURE JSON only."""
+2. Step 1 (label "Environment"): Introduce the physical environment / setting. No object yet — just
+   the background context (direction, field, scale, medium, ground, sky, etc.).
+3. Step 2 (label = object name): Introduce the MAIN physical object by its REAL NAME and symbol
+   (e.g. "Rocket", "Metal Wire", "Satellite", "Charged Sphere"). State its key property.
+4. Steps 3–5: Each step introduces ONE specific physical quantity, agent, or secondary object from
+   the problem. EVERY title MUST include:
+   a) The real name of the quantity/object (e.g. "Exhaust Gas", "Applied Force", "Gravitational Field")
+   b) Its symbol/notation in parentheses (e.g. "u (exhaust speed)", "α (mass-loss rate)", "F (tension)")
+   c) Whether it is given, derived, or unknown.
+5. Step 6 (blur = false, all layers visible): Title says "Complete Setup — Find [Unknown] = ?"
+   Description summarises ALL named objects and quantities already shown, then states what to find.
+   Badges list all given values (cyan) and the unknown (green).
+6. Steps 2–5: blur = true.
+7. No formulas, no equations, no solution text in ANY step description. Descriptions are plain English.
+8. svg_layers must list every layer ID that appears in any step's layers_visible.
+   Layer descriptions must name the specific object/quantity they represent, not generic placeholders.
+9. to_find: 1–3 strings describing what the student must find (use specific quantity names and symbols).
+10. color_legend: one entry per step, labels must be the real object/quantity names from the problem.
+11. glossary: 2–5 genuinely difficult technical words from THIS problem, with simple plain-English explanations.
+12. Return PURE JSON only."""
 
 
 def analyze_scene(question: str) -> dict:
@@ -577,29 +711,65 @@ def analyze_scene(question: str) -> dict:
         "title": question[:60],
         "topic": "PHYSICS",
         "steps": [
-            {"step_number": 1, "label": "Setup", "title": "Step 1: Setting the Scene", "description": "We establish the physical environment for this problem.", "badges": [{"text": "Given: see problem", "type": "cyan"}], "layers_visible": ["layer-frame"], "layer_new": "layer-frame", "blur": False},
-            {"step_number": 2, "label": "Object", "title": "Step 2: The Main System", "description": "The primary object or system is introduced.", "badges": [{"text": "System: defined", "type": "cyan"}], "layers_visible": ["layer-frame", "layer-object"], "layer_new": "layer-object", "blur": True},
-            {"step_number": 3, "label": "Param 1", "title": "Step 3: First Given Value", "description": "The first given parameter is identified.", "badges": [{"text": "Given: value 1", "type": "cyan"}], "layers_visible": ["layer-frame", "layer-object", "layer-param1"], "layer_new": "layer-param1", "blur": True},
-            {"step_number": 4, "label": "Param 2", "title": "Step 4: Second Given Value", "description": "The second given parameter is added.", "badges": [{"text": "Given: value 2", "type": "cyan"}], "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2"], "layer_new": "layer-param2", "blur": True},
-            {"step_number": 5, "label": "Derived", "title": "Step 5: Derived Quantity", "description": "An intermediate quantity is derived from the given data.", "badges": [{"text": "Derived value", "type": "orange"}], "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived"], "layer_new": "layer-derived", "blur": True},
-            {"step_number": 6, "label": "Summary", "title": "Step 6: Complete Setup — Ready to Solve", "description": "All given data is assembled. The unknown quantity is identified.", "badges": [{"text": "All given", "type": "cyan"}, {"text": "Unknown = ?", "type": "green"}], "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived", "layer-summary"], "layer_new": "layer-summary", "blur": False},
+            {
+                "step_number": 1, "label": "Environment",
+                "title": "Step 1: The Problem Environment — Physical Setting",
+                "description": "We establish the physical environment for this problem: the setting, direction, and any background conditions such as gravity or the medium.",
+                "badges": [{"text": "Environment: set up", "type": "cyan"}],
+                "layers_visible": ["layer-frame"], "layer_new": "layer-frame", "blur": False
+            },
+            {
+                "step_number": 2, "label": "Main Object",
+                "title": "Step 2: The Main Physical Object — Identified",
+                "description": "The primary object of this problem is introduced with its key property and the symbol used to represent it in the solution.",
+                "badges": [{"text": "Main object: identified", "type": "cyan"}],
+                "layers_visible": ["layer-frame", "layer-object"], "layer_new": "layer-object", "blur": True
+            },
+            {
+                "step_number": 3, "label": "Given Quantity 1",
+                "title": "Step 3: First Given Quantity — Symbol and Value",
+                "description": "The first physical quantity given in the problem is named and labeled with its symbol and units. This quantity will be used directly in the governing equation.",
+                "badges": [{"text": "Given quantity 1: labeled", "type": "cyan"}],
+                "layers_visible": ["layer-frame", "layer-object", "layer-param1"], "layer_new": "layer-param1", "blur": True
+            },
+            {
+                "step_number": 4, "label": "Given Quantity 2",
+                "title": "Step 4: Second Given Quantity — Symbol and Value",
+                "description": "The second physical quantity given in the problem is named and added to the diagram with its symbol, value, and direction or units as appropriate.",
+                "badges": [{"text": "Given quantity 2: labeled", "type": "cyan"}],
+                "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2"], "layer_new": "layer-param2", "blur": True
+            },
+            {
+                "step_number": 5, "label": "Key Condition",
+                "title": "Step 5: Key Physical Condition or Derived Quantity",
+                "description": "An important condition, constraint, or intermediate quantity relevant to this problem is highlighted. This bridges the given data to what we need to find.",
+                "badges": [{"text": "Key condition: shown", "type": "orange"}],
+                "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived"], "layer_new": "layer-derived", "blur": True
+            },
+            {
+                "step_number": 6, "label": "Complete Setup",
+                "title": "Step 6: Complete Setup — All Objects and Quantities Identified",
+                "description": "All named objects and given quantities from the problem are now assembled in the diagram. The unknown quantity to be found is clearly marked.",
+                "badges": [{"text": "All given: assembled", "type": "cyan"}, {"text": "Unknown = ? (to find)", "type": "green"}],
+                "layers_visible": ["layer-frame", "layer-object", "layer-param1", "layer-param2", "layer-derived", "layer-summary"], "layer_new": "layer-summary", "blur": False
+            },
         ],
         "svg_layers": {
-            "layer-frame": {"description": "Background grid and environment", "color": "#4a6a8a"},
-            "layer-object": {"description": "Main physical object", "color": "#0891b2"},
-            "layer-param1": {"description": "First parameter", "color": "#16a34a"},
-            "layer-param2": {"description": "Second parameter", "color": "#d97706"},
-            "layer-derived": {"description": "Derived quantity", "color": "#7c3aed"},
-            "layer-summary": {"description": "Summary overlay", "color": "#0891b2"},
+            "layer-frame": {"description": "Physical environment — background, direction, gravity", "color": "#4a6a8a"},
+            "layer-object": {"description": "Main physical object of the problem", "color": "#0891b2"},
+            "layer-param1": {"description": "First given quantity — named, labeled, with units", "color": "#16a34a"},
+            "layer-param2": {"description": "Second given quantity — named, labeled, with units", "color": "#d97706"},
+            "layer-derived": {"description": "Key physical condition or derived quantity", "color": "#7c3aed"},
+            "layer-summary": {"description": "Summary overlay — all given values and unknown highlighted", "color": "#0891b2"},
         },
-        "to_find": ["The unknown quantity"],
+        "to_find": ["The unknown quantity — see problem statement"],
         "color_legend": [
-            {"label": "Setup", "color": "#0ea5e9"},
-            {"label": "Object", "color": "#10b981"},
-            {"label": "Param 1", "color": "#f59e0b"},
-            {"label": "Param 2", "color": "#6366f1"},
-            {"label": "Derived", "color": "#f43f5e"},
-            {"label": "Summary", "color": "#22c55e"},
+            {"label": "Environment", "color": "#0ea5e9"},
+            {"label": "Main Object", "color": "#10b981"},
+            {"label": "Given 1", "color": "#f59e0b"},
+            {"label": "Given 2", "color": "#6366f1"},
+            {"label": "Condition", "color": "#f43f5e"},
+            {"label": "Setup", "color": "#22c55e"},
         ],
         "glossary": [],
         "_fallback": True,
