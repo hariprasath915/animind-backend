@@ -4124,7 +4124,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     ">Close</button>
   </div>
 </div>
-<script id="qanim-js-customize">
+<script id="qanim-js-customize-nf">
 (function initCustomize(){
   'use strict';
   if(window.__qanimCustomizeInit)return;
@@ -4666,7 +4666,7 @@ __PREVIEW_HTML__
     ">Close</button>
   </div>
 </div>
-<script id="qanim-js-customize">
+<script id="qanim-js-customize-fb">
 (function initCustomize(){
   'use strict';
   if(window.__qanimCustomizeInit)return;
@@ -5146,37 +5146,22 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   <style id="qanim-controls-styles">
 {_CONTROLS_CSS}
   </style>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script>
-  // ── KaTeX math renderer ────────────────────────────────────────────────────
-  // Scans any element with [data-formula] and renders its value with KaTeX.
-  // Falls back to showing the raw formula text if KaTeX is unavailable.
+  // ── Plain-text formula renderer (replaces KaTeX) ──────────────────────────
+  // After _clean_latex() runs server-side, formulas are already plain Unicode.
+  // This function just copies data-formula → textContent so the element shows
+  // the clean text instead of any stale placeholder. No CDN dependency.
   window.qanimRenderMath = function(scope) {{
     var root = scope || document;
     var els = root.querySelectorAll('[data-formula]:not([data-math-ok])');
-    if (!els.length) return;
-    if (typeof katex === 'undefined') {{
-      // KaTeX not yet loaded — retry once after a short delay
-      setTimeout(function(){{window.qanimRenderMath(scope);}}, 300);
-      return;
-    }}
     els.forEach(function(el) {{
       var f = el.getAttribute('data-formula');
       if (!f) return;
-      try {{
-        katex.render(f, el, {{
-          throwOnError: false,
-          displayMode: el.classList.contains('s6-formula-main'),
-          output: 'html',
-          trust: true
-        }});
-        el.setAttribute('data-math-ok', '1');
-      }} catch(e) {{
-        // Keep the plain text fallback; mark as attempted to avoid retry loop
-        el.setAttribute('data-math-ok', 'err');
-        console.warn('[QAnim] KaTeX render failed:', e.message, f);
+      // Only overwrite if the element is empty or still shows a placeholder
+      if (!el.textContent.trim() || el.textContent === f) {{
+        el.textContent = f;
       }}
+      el.setAttribute('data-math-ok', '1');
     }});
   }};
   </script>
