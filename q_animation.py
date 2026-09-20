@@ -225,6 +225,89 @@ def _call_gemini(user_prompt: str, system_prompt: str, max_tokens: int = 4000) -
     raise RuntimeError("All retry attempts exhausted")
 
 
+def _clean_latex(text: str) -> str:
+    """Convert LaTeX-style math notation to plain professional text.
+
+    Gemini sometimes returns formulas like:
+      r \\frac{d^2\\omega}{dt^2} + \\left(\\frac{1}{C} + ...\\right) = 0
+    This function strips/replaces all such LaTeX commands with readable equivalents.
+    """
+    if not isinstance(text, str):
+        return str(text) if text is not None else ""
+    t = text
+
+    # ── 1. Strip outer \\ backslash escaping (JSON double-escape) ────────────
+    # JSON strings from Gemini often have \\frac instead of \frac
+    t = t.replace('\\\\', '\x00BSLASH\x00')  # temporarily protect \\
+
+    # ── 2. Replace \frac{num}{den} → (num)/(den) ────────────────────────────
+    import re as _re_lt
+    # Handle up to 3 levels of nesting via repeated passes
+    for _ in range(4):
+        t = _re_lt.sub(
+            r'\\frac\{([^{}]*)\}\{([^{}]*)\}',
+            lambda m: '(' + m.group(1) + ')/(' + m.group(2) + ')',
+            t
+        )
+
+    # ── 3. Superscripts: ^{expr} → ^expr, x^2 → x² (common cases) ──────────
+    SUPER = {'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵',
+              '6':'⁶','7':'⁷','8':'⁸','9':'⁹','+':'+','-':'\u207b','n':'ⁿ'}
+    def _sup(m):
+        inner = m.group(1)
+        if len(inner) == 1 and inner in SUPER:
+            return SUPER[inner]
+        return '^' + inner
+    t = _re_lt.sub(r'\^\{([^}]{1,12})\}', _sup, t)
+    # bare ^n for single digit/char
+    t = _re_lt.sub(r'\^([0-9])', lambda m: SUPER.get(m.group(1), '^'+m.group(1)), t)
+
+    # ── 4. Subscripts: _{expr} → keep as _expr (plain text) ─────────────────
+    t = _re_lt.sub(r'_\{([^}]{1,12})\}', r'_\1', t)
+
+    # ── 5. Remove \left, \right, \big, \Big, \bigg delimiters ───────────────
+    for cmd in [r'\left', r'\right', r'\Big', r'\bigg', r'\big']:
+        t = t.replace(cmd + '(', '(').replace(cmd + ')', ')')
+        t = t.replace(cmd + '[', '[').replace(cmd + ']', ']')
+        t = t.replace(cmd + '\\{', '{').replace(cmd + '\\}', '}')
+        t = t.replace(cmd, '')
+
+    # ── 6. Replace common LaTeX Greek / math commands ────────────────────────
+    GREEK = {
+        r'\alpha': 'α', r'\beta': 'β', r'\gamma': 'γ', r'\delta': 'δ',
+        r'\epsilon': 'ε', r'\varepsilon': 'ε', r'\zeta': 'ζ', r'\eta': 'η',
+        r'\theta': 'θ', r'\iota': 'ι', r'\kappa': 'κ', r'\lambda': 'λ',
+        r'\mu': 'μ', r'\nu': 'ν', r'\xi': 'ξ', r'\pi': 'π', r'\rho': 'ρ',
+        r'\sigma': 'σ', r'\tau': 'τ', r'\upsilon': 'υ', r'\phi': 'φ',
+        r'\varphi': 'φ', r'\chi': 'χ', r'\psi': 'ψ', r'\omega': 'ω',
+        r'\Gamma': 'Γ', r'\Delta': 'Δ', r'\Theta': 'Θ', r'\Lambda': 'Λ',
+        r'\Xi': 'Ξ', r'\Pi': 'Π', r'\Sigma': 'Σ', r'\Phi': 'Φ',
+        r'\Psi': 'Ψ', r'\Omega': 'Ω',
+        r'\sqrt': '√', r'\infty': '∞', r'\cdot': '·', r'\times': '×',
+        r'\pm': '±', r'\leq': '≤', r'\geq': '≥', r'\neq': '≠',
+        r'\approx': '≈', r'\propto': '∝', r'\partial': '∂', r'\nabla': '∇',
+        r'\int': '∫', r'\sum': 'Σ', r'\prod': 'Π',
+        r'\mathrm': '', r'\mathbf': '', r'\mathit': '', r'\text': '',
+        r'\dot': '', r'\ddot': '', r'\hat': '', r'\bar': '', r'\vec': '',
+        r'\tilde': '', r'\overline': '',
+    }
+    for latex_cmd, replacement in GREEK.items():
+        t = t.replace(latex_cmd + ' ', replacement + ' ')
+        t = t.replace(latex_cmd + '{', replacement + '{')
+        t = t.replace(latex_cmd, replacement)
+
+    # ── 7. Strip remaining \command patterns ─────────────────────────────────
+    t = _re_lt.sub(r'\\[a-zA-Z]+', '', t)
+
+    # ── 8. Strip bare { } braces left over from \frac etc. ───────────────────
+    t = _re_lt.sub(r'(?<!\$)\{([^}]*)\}', r'\1', t)
+
+    # ── 9. Restore protected backslash then clean up whitespace ──────────────
+    t = t.replace('\x00BSLASH\x00', '')
+    t = _re_lt.sub(r'[ \t]+', ' ', t).strip()
+    return t
+
+
 def _sanitize_json(raw: str) -> str:
     """Strip markdown fences and extract the first JSON object."""
     raw = raw.lstrip('\ufeff').strip()
@@ -334,6 +417,11 @@ Rules:
 - ALWAYS include the customize block. NEVER omit it, even for rolling/rotation/energy questions.
 - compute_js body: write plain JS braces { } — do NOT escape them. The host will not re-process them.
 - Pure JSON only.
+- CRITICAL — NEVER USE LaTeX NOTATION. All formulas, equations, and expressions MUST be
+  written in plain text / Unicode only. Use: ×, ·, /, √, ^, Greek letters (α, β, ω, etc.),
+  superscripts (², ³), subscripts (_0, _min), fractions as (a)/(b). NEVER use \\frac, \\left,
+  \\right, \\omega, \\alpha, \\sqrt, \\cdot, or ANY LaTeX backslash command.
+  Example CORRECT: "u_min = m0*g / alpha"  Example WRONG: "u_{min} = \\frac{m_0 g}{\\alpha}"
 
 SECOND EXAMPLE — Rolling body with energy loss (ring on incline):
 {
@@ -454,6 +542,24 @@ def generate_solution(question: str) -> dict:
             )
             data = json.loads(_sanitize_json(raw))
             if data.get("steps") and data.get("final_answer"):
+                # ── LaTeX sanitization: clean all formula/equation fields ──
+                for _fkey in ("formula", "formula_name", "final_answer", "key_insight"):
+                    if _fkey in data:
+                        data[_fkey] = _clean_latex(str(data[_fkey]))
+                for _step in data.get("steps", []):
+                    if isinstance(_step, str):
+                        data["steps"][data["steps"].index(_step)] = _clean_latex(_step)
+                for _sc in data.get("substitution_chain", []):
+                    if isinstance(_sc, dict) and "eq" in _sc:
+                        _sc["eq"] = _clean_latex(_sc["eq"])
+                for _ap in data.get("approach_steps", []):
+                    if isinstance(_ap, dict):
+                        if "eq"    in _ap: _ap["eq"]    = _clean_latex(_ap["eq"])
+                        if "label" in _ap: _ap["label"] = _clean_latex(_ap["label"])
+                for _var in data.get("variables", []):
+                    if isinstance(_var, dict):
+                        for _vk in ("name", "value"):
+                            if _vk in _var: _var[_vk] = _clean_latex(_var[_vk])
                 Log.ok("Solution", f"Got solution: {data.get('final_answer', '')[:60]}")
                 return data
         except Exception as e:
@@ -702,7 +808,9 @@ STRICT RULES
 9. to_find: 1–3 strings describing what the student must find (use specific quantity names and symbols).
 10. color_legend: one entry per step, labels must be the real object/quantity names from the problem.
 11. glossary: 2–5 genuinely difficult technical words from THIS problem, with simple plain-English explanations.
-12. Return PURE JSON only."""
+12. Return PURE JSON only.
+13. NEVER use LaTeX notation anywhere in step titles, descriptions, or badges. All text must be plain
+    readable Unicode (e.g. use α, ω, m₀, u_min, × — never \\alpha, \\omega, \\frac, \\left, etc.)."""
 
 
 def analyze_scene(question: str) -> dict:
@@ -1034,6 +1142,12 @@ Always use correct mathematical symbols and notation:
 - Keep labels short, readable, and never overlapping.
 - Use high-contrast text (white or light on dark backgrounds, dark on light).
 - Do not invent values. Match the verified solution exactly.
+- OBJECT NAMING IN SVG LABELS: Every SVG label that annotates a physical object or quantity MUST
+  use the REAL NAME and EXACT SYMBOL from the problem (e.g. "Rocket", "u (exhaust speed)", "α kg/s",
+  "m₀ = initial mass"). Never use generic placeholder labels like "object", "param", "value".
+- NEVER USE LaTeX NOTATION in any SVG text element. All math must be plain Unicode SVG text:
+  Use α, ω, ², ·, ×, √, ∞ — NEVER \\alpha, \\omega, \\frac{}{}, \\left, \\right, $...$, etc.
+  LaTeX in SVG renders as raw text and breaks the visualization.
 
 ============================================================
 REALISM BY EXAMPLE (ADAPT TO QUESTION)
@@ -1958,10 +2072,11 @@ if (!window.__qanimRAFStarted) {
 
 def _build_scene6_html(sol: dict, scene: dict) -> str:
     """Build Scene 7 (Main Formula) HTML — matches reference exactly."""
-    formula_raw    = sol.get("formula", "Governing Formula")
+    # Apply LaTeX → plain text cleanup before any HTML escaping
+    formula_raw    = _clean_latex(str(sol.get("formula", "Governing Formula")))
     formula_text   = _he(formula_raw)
     formula_attr   = html_module.escape(formula_raw, quote=True)
-    formula_name   = _he(sol.get("formula_name", "Formula"))
+    formula_name   = _he(_clean_latex(str(sol.get("formula_name", "Formula"))))
 
     variables = sol.get("variables", [])
     var_boxes = ""
@@ -1989,7 +2104,7 @@ def _build_scene6_html(sol: dict, scene: dict) -> str:
           </div>
         </div>\n"""
 
-    note_text = _he(sol.get("note", ""))
+    note_text = _he(_clean_latex(str(sol.get("note", "")))) if sol.get("note") else ""
     note_bar = ""
     if note_text:
         note_bar = f"""<div class="s6-note-bar" id="s6-note-bar">
@@ -2026,25 +2141,26 @@ def _build_scene6_html(sol: dict, scene: dict) -> str:
 
 def _build_scene7_html(sol: dict, scene: dict) -> str:
     """Build Scene 8 (Substitution) HTML — matches reference exactly."""
-    system_title = _he(sol.get("system_title", "Physical System"))
-    system_label2 = _he(sol.get("system_label2", "Substituting given values"))
-    formula_result = _he(sol.get("formula", "Formula"))
-    final_answer = _he(sol.get("final_answer", "See calculation"))
+    # Apply LaTeX → plain text cleanup before HTML escaping
+    system_title  = _he(_clean_latex(str(sol.get("system_title",  "Physical System"))))
+    system_label2 = _he(_clean_latex(str(sol.get("system_label2", "Substituting given values"))))
+    formula_result = _he(_clean_latex(str(sol.get("formula", "Formula"))))
+    final_answer   = _he(_clean_latex(str(sol.get("final_answer", "See calculation"))))
 
     given_list = sol.get("given_list", [])
     given_html = "".join(
-        f'<div class="s7-given-item"><strong>{_he(g.split("=")[0].strip() if "=" in g else "")}</strong>'
-        f'{(" = " + _he(g.split("=",1)[1].strip())) if "=" in g else _he(g)}</div>\n'
+        f'<div class="s7-given-item"><strong>{_he(_clean_latex(g.split("=")[0].strip()) if "=" in g else "")}</strong>'
+        f'{(" = " + _he(_clean_latex(g.split("=",1)[1].strip()))) if "=" in g else _he(_clean_latex(str(g)))}</div>\n'
         for g in given_list
     )
 
     approach_steps = sol.get("approach_steps", [])
     approach_html = ""
     for ap in approach_steps:
-        num = _he(str(ap.get("num", "")))
-        label = _he(ap.get("label", ""))
-        eq = _he(ap.get("eq", ""))
-        note = _he(ap.get("note", ""))
+        num   = _he(str(ap.get("num", "")))
+        label = _he(_clean_latex(str(ap.get("label", ""))))
+        eq    = _he(_clean_latex(str(ap.get("eq", ""))))
+        note  = _he(_clean_latex(str(ap.get("note", ""))))
         approach_html += f"""<div class="s7-approach-step">
           <span class="s7-approach-step-num">{num}</span>
           <span>{label}
@@ -3874,8 +3990,58 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         compute_js_body = stripped  # wrapper was found and stripped
     else:
         compute_js_body = compute_js_body.strip()
+
+    # ── Customize panel root-cause fix: sanitize LaTeX in compute_js ─────────
+    # Root cause: Gemini sometimes emits compute_js containing LaTeX-style math
+    # (e.g. `\frac{m_0 \cdot g}{\alpha}`) which is valid LaTeX but breaks JS
+    # with a SyntaxError on the backslash character.  The panel script is then
+    # never executed, so the Customize panel opens but the Apply button does
+    # nothing (or the script block itself fails to load, leaving a blank panel).
+    # Fix: apply a JS-safe LaTeX scrubber that converts common patterns to
+    # plain arithmetic JS so the compute function always runs correctly.
+    def _clean_js_latex(js: str) -> str:
+        import re as _re_jl
+        # Replace \\frac{num}{den} → (num)/(den) (handles double-escaped JSON)
+        for _ in range(4):
+            js = _re_jl.sub(
+                r'\\\\?frac\{([^{}]*)\}\{([^{}]*)\}',
+                lambda m: '(' + m.group(1) + ')/(' + m.group(2) + ')',
+                js
+            )
+        # Greek letter commands → JS variable names (commonly used in physics)
+        JS_GREEK = {
+            r'\alpha': 'alpha', r'\\alpha': 'alpha',
+            r'\beta': 'beta',   r'\\beta': 'beta',
+            r'\gamma': 'gamma', r'\\gamma': 'gamma',
+            r'\omega': 'omega', r'\\omega': 'omega',
+            r'\Omega': 'Omega', r'\\Omega': 'Omega',
+            r'\mu': 'mu',       r'\\mu': 'mu',
+            r'\rho': 'rho',     r'\\rho': 'rho',
+            r'\lambda': 'lambda_', r'\\lambda': 'lambda_',
+            r'\sigma': 'sigma', r'\\sigma': 'sigma',
+            r'\theta': 'theta', r'\\theta': 'theta',
+            r'\phi': 'phi',     r'\\phi': 'phi',
+            r'\pi': 'Math.PI',  r'\\pi': 'Math.PI',
+            r'\cdot': '*',      r'\\cdot': '*',
+            r'\times': '*',     r'\\times': '*',
+            r'\sqrt': 'Math.sqrt', r'\\sqrt': 'Math.sqrt',
+            r'\infty': 'Infinity', r'\\infty': 'Infinity',
+        }
+        for latex_cmd, js_equiv in JS_GREEK.items():
+            js = js.replace(latex_cmd + '{', js_equiv + '(').replace(latex_cmd + ' ', js_equiv + ' ').replace(latex_cmd, js_equiv)
+        # Strip remaining \command patterns (backslash + letters)
+        js = _re_jl.sub(r'\\\\?[a-zA-Z]+', '', js)
+        # Strip stray { } that came from \frac{} leftovers (but NOT JS object braces)
+        # Only strip { } that appear INSIDE string literals (between quotes)
+        # Safe approach: just remove lone { or } that are NOT part of valid JS syntax
+        return js
+
+    if compute_js_body:
+        compute_js_body = _clean_js_latex(compute_js_body)
+
     if not compute_js_body:
         compute_js_body = "return { answer: '?', answer_unit: '', answer_label: '?', derived: {} };"
+
 
     # ── Bug 2 fix: second-pass synthesis from sol['given_list'] ──────────────
     # When sol['variables'] is [] (Gemini failed to enumerate), the first
