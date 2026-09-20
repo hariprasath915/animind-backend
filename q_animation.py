@@ -3570,10 +3570,31 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     """
     import re as _re_cust
 
-    cust = sol.get("customize") or {}
-    fields = cust.get("fields") or []
-    compute_js_body = cust.get("compute_js", "") or ""
-    question_template = cust.get("question_template", "") or ""
+    # Robust parsing of customize block (Gemini sometimes returns a string, list, or omits it)
+    cust_raw = sol.get("customize")
+    if isinstance(cust_raw, str):
+        try:
+            import json as _json
+            cust = _json.loads(cust_raw)
+        except Exception:
+            cust = {}
+    elif isinstance(cust_raw, (dict, list)):
+        cust = cust_raw
+    else:
+        cust = {}
+
+    if isinstance(cust, list):
+        fields = cust
+        compute_js_body = ""
+        question_template = ""
+    else:
+        fields = cust.get("fields") or []
+        if isinstance(fields, dict):
+            fields = [fields] # Just in case it returns a single field object
+        elif not isinstance(fields, list):
+            fields = []
+        compute_js_body = cust.get("compute_js", "") or ""
+        question_template = cust.get("question_template", "") or ""
 
     # ── Bug 1 fix: auto-synthesise customize from variables when Gemini omits it ─
     # Root cause: Gemini sometimes returns a solution without the "customize" key
@@ -3583,18 +3604,37 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     # We accept ALL variables that are NOT explicitly marked as unknown/answer
     # (color "green" or value containing "?") as editable given fields.
     if not fields:
-        variables = sol.get("variables") or []
+        variables_raw = sol.get("variables") or []
+        variables = []
+        if isinstance(variables_raw, list):
+            variables = variables_raw
+        elif isinstance(variables_raw, dict):
+            # Sometimes Gemini returns {"m": "10", "v": "5"}
+            for k, v in variables_raw.items():
+                if isinstance(v, dict):
+                    variables.append(v)
+                else:
+                    variables.append({"symbol": k, "value": str(v), "color": "blue"})
+
         for v in variables:
+            if not isinstance(v, dict):
+                continue
             color = str(v.get("color", "blue")).lower()
             val_str = str(v.get("value") or v.get("val") or "")
             # Skip the unknown/answer variable
-            if color in ("green",) or "?" in val_str or "to find" in val_str.lower():
+            if color in ("green",) or "?" in val_str or "to find" in val_str.lower() or "unknown" in val_str.lower():
                 continue
             raw_id = str(v.get("symbol") or v.get("sym") or "v")
             # make a safe JS identifier
             safe_id = _re_cust.sub(r'[^a-zA-Z0-9_]', '_', raw_id).strip('_') or "v"
             try:
-                default_val = float(val_str.replace("?", "").split()[0])
+                # Handle things like "10 kg", extract just the number
+                import re as _num_re
+                num_match = _num_re.search(r'[\d.eE+\-]+', val_str.replace("?", ""))
+                if num_match:
+                    default_val = float(num_match.group(0))
+                else:
+                    default_val = 1.0
             except (ValueError, IndexError):
                 # Symbolic value (e.g. "M", "R", "h") — keep as 1.0 placeholder
                 default_val = 1.0
@@ -3609,13 +3649,14 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
             # Build a generic compute that returns the answer_value as a number
             compute_js_body = (
                 "var ans = parseFloat('" + str(sol.get("answer_value", "0")).replace("'", "") + "');"
-                " return { answer: _fmt(ans), answer_unit: '" +
+                " if(isNaN(ans)) { ans = '" + str(sol.get("answer_value", "?")).replace("'", "") + "'; }"
+                " return { answer: (typeof ans === 'number' ? _fmt(ans) : ans), answer_unit: '" +
                 str(sol.get("answer_unit", "")).replace("'", "") + "',"
                 " answer_label: '" + str(sol.get("formula", "Answer")).replace("'", "")[:40] + "',"
                 " derived: {} };"
             )
         if fields and not question_template:
-            question_template = sol.get("formula", "") or ""
+            question_template = str(sol.get("formula", "")) or ""
 
     # ── Bug 1 fix: Replace greedy regex wrapper strip with brace-depth counter ─
     # Root cause: the greedy regex `(.*)\}\s*$` works most of the time, but
@@ -3674,10 +3715,10 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         given_list = sol.get('given_list') or []
         for g in given_list:
             g_str = str(g).strip()
-            # Match: "symbol = value unit"  or "symbol: value unit"
+            # Match: "symbol = value unit"  or "symbol: value unit (extra info)"
             import re as _re_gl
             m_gl = _re_gl.match(
-                r'^([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*([\d.eE+\-]+)\s*(\S*)\s*$',
+                r'^([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*([\d.eE+\-]+)\s*(.*)$',
                 g_str
             )
             if not m_gl:
@@ -3688,7 +3729,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
                 default_gl = float(m_gl.group(2))
             except ValueError:
                 default_gl = 1.0
-            unit_gl = m_gl.group(3)
+            unit_gl = m_gl.group(3).strip()
             if any(f.get('id') == safe_id_gl for f in fields):
                 continue
             fields.append({
@@ -3704,7 +3745,8 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
             compute_js_body = (
                 "var ans = parseFloat('"
                 + str(sol.get('answer_value', '0')).replace("'", '') + "');"
-                " return { answer: _fmt(ans), answer_unit: '"
+                " if(isNaN(ans)) { ans = '" + str(sol.get('answer_value', '?')).replace("'", '') + "'; }"
+                " return { answer: (typeof ans === 'number' ? _fmt(ans) : ans), answer_unit: '"
                 + str(sol.get('answer_unit', '')).replace("'", '') + "',"
                 " answer_label: '"
                 + str(sol.get('formula', 'Answer')).replace("'", '')[:40] + "',"
