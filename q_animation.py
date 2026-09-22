@@ -4313,19 +4313,10 @@ __PREVIEW_HTML__
 
   function _el(id){ return document.getElementById(id); }
   function _round(v, d){ var m=Math.pow(10,d); return Math.round(v*m)/m; }
-  // Bug 3 fix: _escRe uses split/join to escape regex special chars.
-  // All previous regex-based approaches broke because representing `]` inside
-  // a JS character class requires `\]`, but the Python string escaping layers
-  // (Python string → JS string → JS regex) made it impossible to write
-  // the correct bytes without ambiguity. split/join requires NO regex at all.
-  function _escRe(s){
-    var sp=['.','*','+','?','^','$','{','}','(',')','|','[',']','\\\\'];
-    s=String(s);
-    // escape \\ FIRST so we don't double-escape our own replacements
-    s=s.split('\\\\').join('\\\\\\\\');
-    for(var i=0;i<sp.length-1;i++)s=s.split(sp[i]).join('\\\\'+sp[i]);
-    return s;
-  }
+  // Standard regex-special-char escape: uses a single /regex/.replace() call.
+  // This is the well-known MDN-documented pattern; it needs no nested backslash
+  // layers and is unambiguous across Python-string → HTML → JS escape levels.
+  function _escRe(s){ return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'); }
   function _fmt(v){
     if(typeof v !== 'number' || isNaN(v)) return '?';
     if(v === 0) return '0';
@@ -4619,7 +4610,79 @@ __PREVIEW_HTML__
             .replace("__GIVEN_ENTRIES_JS__", given_entries_js)
             .replace("__QUESTION_TMPL_JS__", question_tmpl_js)
         )
+
+        # ── Automated JS syntax guard (Bug 3 prevention) ─────────────────────
+        # Extract the qanim-js-customize script block and validate it with
+        # `node --check` so a broken script never ships silently.
+        def _validate_customize_js(html: str) -> None:
+            import re as _re_v, logging as _log_v, subprocess as _sp_v
+            import tempfile as _tmp_v, os as _os_v
+
+            m = _re_v.search(
+                r'<script id="qanim-js-customize">(.*?)</script>',
+                html, _re_v.DOTALL
+            )
+            if not m:
+                return  # no script block to validate
+
+            js_block = m.group(1)
+
+            # ── Fast Python-side sanity check: look for the canonical
+            # broken-backslash pattern that triggered Bug 3 (an odd number of
+            # backslashes immediately before a closing quote/bracket inside a JS
+            # string or array literal that is NOT preceded by an even run of \\).
+            odd_bs = _re_v.search(r"(?<!\\)(\\{1,})'(?!\s*\+)", js_block)
+            if odd_bs:
+                n = len(odd_bs.group(1))
+                if n % 2 == 1:
+                    _log_v.getLogger(__name__).error(
+                        '[_build_customize_html] qanim-js-customize contains '
+                        'likely broken backslash sequence (%d backslashes before '
+                        "quote) — Customize button will be broken.", n
+                    )
+
+            # ── Node.js check (authoritative) ────────────────────────────────
+            node_bins = ['node', r'C:\Program Files\nodejs\node.exe']
+            for node_bin in node_bins:
+                try:
+                    with _tmp_v.NamedTemporaryFile(
+                        mode='w', suffix='.js', delete=False, encoding='utf-8'
+                    ) as tf:
+                        tf.write(js_block)
+                        tf_path = tf.name
+
+                    result = _sp_v.run(
+                        [node_bin, '--check', tf_path],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    _os_v.unlink(tf_path)
+
+                    if result.returncode != 0:
+                        _log_v.getLogger(__name__).error(
+                            '[_build_customize_html] qanim-js-customize FAILED '
+                            'node --check — Customize button will be broken!\n'
+                            'node stderr: %s', result.stderr.strip()
+                        )
+                    else:
+                        _log_v.getLogger(__name__).debug(
+                            '[_build_customize_html] qanim-js-customize passed '
+                            'node --check OK'
+                        )
+                    return  # node check done
+
+                except FileNotFoundError:
+                    continue   # try next node_bin
+                except Exception as _ve:
+                    _log_v.getLogger(__name__).debug(
+                        '[_build_customize_html] JS validation skipped (%s)', _ve
+                    )
+                    return
+
+        _validate_customize_js(panel_html)
+        # ── End of JS syntax guard ────────────────────────────────────────────
+
         return _CUSTOMIZE_CSS + panel_html
+
 
     except Exception as _fstr_err:
         # RC#2: A bare {word} in Gemini-sourced content (compute_js_body,
