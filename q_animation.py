@@ -3846,6 +3846,66 @@ _CUSTOMIZE_CSS = """
 """
 
 
+def _selfcheck_customize_js(customize_html: str) -> None:
+    """Guard rail against the class of bug that has twice silently disabled
+    the Customize button: a malformed backslash escape inside a template
+    string throwing a JS SyntaxError that kills the whole <script> block,
+    with no visible error anywhere in the app UI — the button just does
+    nothing. This extracts every <script> block from the generated
+    Customize panel HTML and parses it with a real JS engine (Node) before
+    the build is allowed to proceed. If Node finds a syntax error, this
+    raises loudly so a broken build can never silently ship again — no
+    matter who edits _build_customize_html next, human or AI agent.
+    If Node isn't available in this environment, this degrades to a
+    warning rather than a hard failure, since Node is not otherwise a
+    dependency of this pipeline.
+    """
+    import subprocess
+    import tempfile
+
+    scripts = re.findall(r"<script[^>]*>(.*?)</script>", customize_html, re.S)
+    if not scripts:
+        return
+    combined = "\n\n".join(scripts)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write(combined)
+            tmp_path = tf.name
+        result = subprocess.run(
+            ["node", "--check", tmp_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            print(
+                "[QAnim]  X [customize] Generated Customize panel JS failed a syntax "
+                f"check — the Customize button would silently stop working. Details:\n"
+                f"{result.stderr}"
+            )
+            raise RuntimeError(
+                "Customize panel JS failed `node --check` — refusing to ship a build "
+                "with a broken Customize button. See the [QAnim] X [customize] log "
+                "line above for the exact syntax error and line number."
+            )
+        print("[QAnim] OK [customize] Customize panel JS passed syntax check")
+    except FileNotFoundError:
+        print(
+            "[QAnim]  ! [customize] Node.js not found in this environment — skipped "
+            "the Customize panel JS syntax self-check (best-effort only, not a hard "
+            "dependency of this pipeline)"
+        )
+    except subprocess.TimeoutExpired:
+        print("[QAnim]  ! [customize] Customize panel JS syntax check timed out — skipped")
+    finally:
+        if tmp_path:
+            try:
+                _os.remove(tmp_path)
+            except OSError:
+                pass
+
+
 def _build_customize_html(sol: dict, scene: dict) -> str:
     """Build the Customize panel HTML + JS for live value editing.
 
@@ -4313,18 +4373,24 @@ __PREVIEW_HTML__
 
   function _el(id){ return document.getElementById(id); }
   function _round(v, d){ var m=Math.pow(10,d); return Math.round(v*m)/m; }
-  // Bug 3 fix (v14): _escRe previously used a hand-rolled split/join loop
-  // whose backslash-escaped string literals had to pass through multiple
-  // layers of escaping (Python source -> Python string value -> JS source),
-  // which repeatedly produced malformed/unterminated JS string literals
-  // (e.g. a bare `'\'` before a closing quote). That silently threw a
-  // SyntaxError in this <script> block, which killed the onReady() call
-  // at the bottom of this same script and left the Customize button with
-  // no click handler at all. Replaced with the standard one-line regex
-  // escape, which needs far fewer backslash layers and has been verified
-  // (via `node --check`) to render as syntactically valid JS.
+  // Bug 3 fix (v15): every previous version of _escRe (split/join loop,
+  // then a hand-escaped /regex/ literal) needed literal backslash
+  // characters typed inside this Python triple-quoted template. Those
+  // pass through Python's own string-escape parsing before landing in
+  // the HTML, so the correct backslash COUNT depends on exactly how many
+  // are typed in the Python source -- get it wrong by even one and the
+  // emitted JS string/regex literal never terminates, which throws a
+  // SyntaxError that silently kills this entire <script> block (and with
+  // it the onReady() handler at the bottom that wires up the Customize
+  // button). That happened twice with two different backslash counts.
+  // Fix: build the backslash character at JS RUNTIME instead of typing
+  // it in the source, so there is no backslash for Python's template
+  // parsing to mis-transcribe -- this bug class cannot recur here.
   function _escRe(s){
-    return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+    var BS = String.fromCharCode(92);
+    var specials = ['.','*','+','?','^','$','{','}','(',')','|','[',']',BS];
+    var re = new RegExp('[' + specials.map(function(c){ return BS + c; }).join('') + ']', 'g');
+    return String(s).replace(re, function(m){ return BS + m; });
   }
   function _fmt(v){
     if(typeof v !== 'number' || isNaN(v)) return '?';
@@ -4910,6 +4976,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     # produced (full panel, fallback message, or a graceful empty state).
     # ORDER: Customize is always FIRST in the controls bar (no leading separator).
     customize_html = _build_customize_html(sol, scene)
+    _selfcheck_customize_js(customize_html)
     customize_btn  = """  <button class="qanim-ctrl-btn" id="customize-ctrl-btn" title="Customize question values" style="position:relative;">
     <span>&#x2699;&#xFE0F;</span><span class="ctrl-label">Customize</span>
   </button>"""
