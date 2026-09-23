@@ -309,6 +309,10 @@ async def health(request: Request):
                 "legacy_courses": "GET|PUT /sync/courses               [LEGACY]",
                 "legacy_vault":   "GET|PUT /sync/vault                 [LEGACY]",
             },
+            "assessment": {
+                "submit_score":     "POST /assessment/submit-score      → update test_students.result (public)",
+                "student_results":  "GET  /assessment/student-results?pin_code=XXX → teacher results view (JWT)",
+            },
             "ai": {
                 "animation":          "POST /generate-animation",
                 "question_animation": "POST /generate-question-animation",
@@ -353,6 +357,127 @@ class PasskeyVerifyRequest(BaseModel):
 
 class PasskeyGrantRequest(BaseModel):
     passkey: str   # the passkey that was verified (stored in passkey_access)
+
+
+class AssessmentScoreRequest(BaseModel):
+    """Payload sent by the frontend postMessage listener after the HTML quiz fires."""
+    student_row_id: str   # UUID — the test_students.id row that was created at registration
+    score:          int   # number of correct answers
+    total:          int   # total questions in the quiz
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ASSESSMENT SCORE ENDPOINTS  (public — no JWT required)
+#
+# Flow:
+#   1. Teacher shares assessment link → frontend inserts test_students row
+#      (result='Pending') and gets back the UUID.
+#   2. Frontend builds iframe src:  <storage_url>/trigonometry.html?studentRowId=<uuid>
+#   3. Student completes quiz → HTML fires postMessage({ type:'QUIZ_SCORE', ... })
+#   4. Frontend listener receives message → calls POST /assessment/submit-score
+#   5. Backend PATCHes test_students.result = '18/25 (72%)'
+#   6. Teacher calls GET /assessment/student-results?pin_code=XXX to see all scores.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.post("/assessment/submit-score", tags=["Assessment"])
+async def submit_assessment_score(body: AssessmentScoreRequest):
+    """
+    Update test_students.result for a student who just finished an HTML quiz.
+
+    Called by the frontend's window.addEventListener('message', ...) handler
+    immediately after the HTML iframe fires a postMessage with the quiz score.
+
+    No authentication required — the student_row_id (UUID) acts as the
+    single-use credential.  The service-role client bypasses RLS so the
+    PATCH always succeeds regardless of the anon policy.
+
+    Body  : { student_row_id: str, score: int, total: int }
+    Returns: { ok: bool, result: str }
+    """
+    from auth_utils import get_supabase  # pyrefly: ignore [missing-import]
+
+    row_id = (body.student_row_id or "").strip()
+    if not row_id:
+        raise HTTPException(status_code=400, detail="student_row_id is required.")
+
+    # Basic UUID format guard
+    if len(row_id) < 32:
+        raise HTTPException(status_code=400, detail="student_row_id must be a valid UUID.")
+
+    score = max(0, int(body.score))
+    total = max(1, int(body.total))
+    pct   = round(score / total * 100)
+    result_str = f"{score}/{total} ({pct}%)"
+
+    try:
+        db = get_supabase()   # service-role — bypasses RLS
+        resp = (
+            db.table("test_students")
+            .update({"result": result_str})
+            .eq("id", row_id)
+            .execute()
+        )
+        updated = resp.data or []
+        if not updated:
+            # Row not found — could be wrong UUID or already deleted
+            print(f"[ASSESSMENT] ⚠ submit-score: no row found for id={row_id[:8]}…")
+            raise HTTPException(
+                status_code=404,
+                detail="Student record not found. The row may have been deleted.",
+            )
+        print(f"[ASSESSMENT] ✅ Score saved: id={row_id[:8]}… result='{result_str}'")
+        return {"ok": True, "result": result_str}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[ASSESSMENT] ❌ submit-score error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to save score: {exc}")
+
+
+@app.get("/assessment/student-results", tags=["Assessment"])
+async def get_student_results(pin_code: str, request: Request):
+    """
+    Return all student rows for a given teacher PIN code.
+    Used by the teacher dashboard to display the results table.
+
+    Requires a valid Supabase JWT (teacher must be logged in).
+
+    Query param: pin_code=<teacher-pin>
+    Returns: { students: [ { id, student_name, roll_number, result, timestamp, ... } ] }
+    """
+    from auth_utils import get_supabase  # pyrefly: ignore [missing-import]
+
+    # ── Auth: teacher must be logged in ──────────────────────────────────
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    token = auth_header.split(" ", 1)[1].strip()
+
+    pin = (pin_code or "").strip()
+    if not pin:
+        raise HTTPException(status_code=400, detail="pin_code query param is required.")
+
+    try:
+        db = get_supabase()   # service-role — can read despite RLS SELECT policy
+        resp = (
+            db.table("test_students")
+            .select(
+                "id, student_name, roll_number, user_id, subject, topic, "
+                "assessment_number, result, timestamp, pin_code"
+            )
+            .eq("pin_code", pin)
+            .order("timestamp", desc=False)
+            .execute()
+        )
+        students = resp.data or []
+        print(f"[ASSESSMENT] ✅ Results fetched: pin={pin}, rows={len(students)}")
+        return {"ok": True, "pin_code": pin, "students": students}
+
+    except Exception as exc:
+        print(f"[ASSESSMENT] ❌ student-results error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch results: {exc}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
