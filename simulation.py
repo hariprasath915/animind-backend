@@ -261,12 +261,62 @@ class HtmlSanitizer:
         html = re.sub(r'@import\s+["\'][^"\']*["\']\s*;?', '', html, flags=re.IGNORECASE)
         html = re.sub(r'document\.write\s*\([^)]*\)\s*;?', '', html, flags=re.IGNORECASE)
         html = cls._strip_network_calls(html)
+        html = cls._fix_playback_state_tdz(html)
         html = cls._fix_unescaped_string_newlines(html)
         html = cls._wrap_scripts_in_error_boundary(html)
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
         html = html.replace('\x00', '')
         SimLogger.ok("Sanitizer", "HTML sanitized")
         return html
+
+    @classmethod
+    def _fix_playback_state_tdz(cls, html):
+        """
+        Safety net for a known, recurring failure mode: generated JS declares
+        its playback state (`let ... playing ...`) AFTER bindSlider() calls
+        whose onChange callbacks read `playing` (e.g. "if (!playing) reinit()").
+        bindSlider()'s update() invokes onChange synchronously the instant
+        bindSlider() is called, so if `playing` is still in its temporal dead
+        zone at that point, this throws "Cannot access 'playing' before
+        initialization" -- which, once the script is wrapped in the error
+        boundary, silently aborts every line after it (Play, Reset, keyboard
+        shortcuts, and the tutorial system all fail to wire up).
+
+        This is a best-effort, regex-based repair (not a real JS parse): if a
+        `let ...playing...;` declaration line appears in a <script> block
+        AFTER that block's first `bindSlider(` call, hoist the declaration to
+        immediately before that first call. No-op if the ordering is already
+        correct, or if the pattern isn't present.
+        """
+        decl_re = re.compile(r'^[ \t]*let\s+[^;\n]*\bplaying\b[^;\n]*;[ \t]*$', re.MULTILINE)
+        # Matches actual bindSlider('id', ...) invocations (always called with a
+        # quoted first argument in this codebase) -- deliberately NOT a bare
+        # substring search, so a comment merely mentioning "bindSlider()" in
+        # prose can't be mistaken for a real call site.
+        call_re = re.compile(r'\bbindSlider\s*\(\s*[\'"]')
+
+        def process_script(m):
+            tag, body, close = m.group(1), m.group(2), m.group(3)
+            call_match = call_re.search(body)
+            if not call_match:
+                return m.group(0)
+            bind_pos = call_match.start()
+            decl_match = next((dm for dm in decl_re.finditer(body) if dm.start() > bind_pos), None)
+            if not decl_match:
+                return m.group(0)
+            decl_line = decl_match.group(0).strip()
+            new_body = body[:decl_match.start()] + body[decl_match.end():]
+            new_bind_pos = new_body.find('bindSlider(')
+            line_start = new_body.rfind('\n', 0, new_bind_pos) + 1
+            new_body = new_body[:line_start] + decl_line + '\n' + new_body[line_start:]
+            SimLogger.warn(
+                "Sanitizer",
+                "Hoisted a 'playing' state declaration above bindSlider() calls "
+                "to prevent a temporal-dead-zone crash"
+            )
+            return f"{tag}{new_body}{close}"
+
+        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
 
     @classmethod
     def _strip_network_calls(cls, html):
@@ -733,8 +783,28 @@ DPR-AWARE SETUP (required):
 ════════════════════════════════════════════════════════
   INTERACTION WIRING PATTERN
 ════════════════════════════════════════════════════════
+CRITICAL ORDERING RULE: declare ANY state variable that a control's onChange
+callback reads (e.g. a `playing` play/pause flag, a `mode` select, an
+`rafId` handle) with `let`/`const` BEFORE you call bindSlider()/bindSelect()
+for any control whose callback reads it. bindSlider()'s update() function
+runs its onChange callback IMMEDIATELY and SYNCHRONOUSLY the moment you call
+bindSlider(...) (to paint the initial value) -- it does not wait for a user
+interaction. If that callback reads a `let`/`const` variable that is declared
+further down the file, JavaScript throws "Cannot access '<name>' before
+initialization" (a temporal-dead-zone ReferenceError) right then, which -- if
+the script is wrapped in a try/catch error boundary -- gets swallowed
+silently and aborts every line after it: Play, Reset, keyboard shortcuts,
+and the tutorial system will all fail to wire up, and the canvas will never
+get its first draw. This is a common and easy mistake -- avoid it by always
+declaring playback/UI state FIRST, before any bindSlider() calls:
+
 function gv(id) { return parseFloat(document.getElementById(id)?.value ?? 0); }
 function gb(id) { return document.getElementById(id)?.checked ?? false; }
+
+// Playback / UI state MUST be declared here, before bindSlider() calls below,
+// because their onChange callbacks may read `playing` (e.g. "if (!playing)
+// reinitialize()") the instant bindSlider() runs.
+let rafId = null, playing = false;
 
 function bindSlider(id, displayId, fmt, onChange) {
   const el = document.getElementById(id);
@@ -761,12 +831,6 @@ function setMetrics(items) {
     </div>`).join('');
 }
 
-window.addEventListener('keydown', e => {
-  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-  if (e.code === 'KeyR')  { resetSim(); }
-});
-
-let rafId = null, playing = false;
 function togglePlay() {
   playing = !playing;
   if (playing) {
@@ -777,10 +841,22 @@ function togglePlay() {
     }
     rafId = requestAnimationFrame(loop);
   } else {
-    cancelAnimationFrame(rafId); rafId = null;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
   }
   document.getElementById('btnPlay').textContent = playing ? '⏸ Pause' : '▶ Play';
 }
+
+function resetSim() {
+  if (playing) togglePlay();
+  // re-run your initialization function here (rebuild state from current
+  // slider values) then draw() so Reset always leaves a valid, visible frame
+}
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'KeyR')  { resetSim(); }
+});
 
 ════════════════════════════════════════════════════════
   ONBOARDING / TUTORIAL SYSTEM  (REQUIRED -- every simulation)
@@ -1111,6 +1187,11 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
         "- Every control MUST visibly affect canvas AND/OR a metric.",
         "- All computed values MUST follow the real governing equations.",
         "- Include a Play/Animate button + requestAnimationFrame loop if the topic involves motion.",
+        "- If any control's onChange callback reads a playback/UI state variable "
+        "(e.g. `playing`), declare that variable with let/const BEFORE the bindSlider() "
+        "call for that control -- bindSlider() invokes onChange immediately, so declaring "
+        "it later throws a temporal-dead-zone ReferenceError that silently breaks the "
+        "whole script.",
         "- Mobile-responsive down to 380px viewport width.",
         "- REQUIRED: include the onboarding/tutorial system (#tut-root, #tut-help, spotlight, "
         "welcome/step/done cards) with TUT_STEPS containing one entry for EVERY control, "
