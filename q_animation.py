@@ -536,7 +536,13 @@ def generate_solution(question: str) -> dict:
     for attempt in range(1, 4):
         try:
             raw = _call_gemini(
-                f"Solve step by step:\n\n{question[:1500]}",
+                (
+                    "Solve this problem step by step with DETAILED, NUMBERED solution steps "
+                    "(Step 1, Step 2, …). Each step must state what is being done and show "
+                    "the intermediate calculation. Use plain Unicode for all math — no LaTeX. "
+                    "Return ONLY valid JSON as specified.\n\n"
+                    + question[:1500]
+                ),
                 _SOLUTION_SYSTEM,
                 max_tokens=MAX_TOKENS_SOLUTION,
             )
@@ -570,31 +576,49 @@ def generate_solution(question: str) -> dict:
 # ===========================================================================
 # Stage 2: Scene Script Analyzer
 # ===========================================================================
-_SCENE_SYSTEM = """You are QAnim Scene Analyzer. Given a student question, produce a structured
-animation scene script in JSON for a 6-step SVG concept animation.
+_SCENE_SYSTEM = """You are QAnim Scene Analyzer — a world-class physics educator and visual storyteller.
+Given a student question, produce a richly detailed, structured animation scene script in JSON
+for a 6-step SVG concept animation that tells the complete physical story of the problem.
+
+Your scene script must read like a professional science documentary:
+  - Every step builds on the previous one, adding ONE specific element.
+  - Descriptions are vivid, accurate, and genuinely helpful for a student who is seeing
+    this concept for the first time.
+  - Every physical quantity must be named, labeled with its symbol, given its units,
+    and explained in plain English — never assume prior knowledge.
+  - Use directional language (upward ↑, downward ↓, leftward ←, rightward →) wherever applicable.
+  - If the problem involves forces, clearly state each force's direction and magnitude.
+  - If the problem involves motion, describe the trajectory, speed, and direction of motion.
+  - If the problem involves heat, describe the source, sink, and direction of transfer.
 
 Steps 1–6 build a visual explanation of the physical setup, one element at a time.
-No formulas, no calculations, no solution steps in the scene descriptions.
+NO formulas, NO calculations, NO solution steps in ANY step description.
 
 ============================================================
 OBJECT NAMING RULE — CRITICAL
 ============================================================
 
 Every step title and description MUST:
-  - Name the SPECIFIC physical object introduced in that step by its real name
-    (e.g. "Rocket", "Exhaust Gas", "Metal Wire", "Charged Sphere", "Satellite").
+  - Name the SPECIFIC physical object introduced in that step by its REAL NAME
+    (e.g. "Rocket", "Exhaust Gas", "Metal Wire", "Charged Sphere", "Satellite",
+     "Connecting Rod", "Slider-Crank Mechanism", "Flat Plate", "Fluid Stream").
   - State its symbol/notation explicitly in brackets, e.g. "u (exhaust speed)",
-    "α (mass-loss rate)", "L (wire length)", "m₀ (initial mass)".
+    "α (mass-loss rate)", "L (wire length)", "m₀ (initial mass)", "θ (crank angle)".
   - Use the EXACT variable names from the problem statement — never invent new ones.
-  - The student reading the description must immediately know WHAT object it is
-    and WHAT quantity or notation belongs to it.
+  - The student reading the description must immediately know WHAT object it is,
+    WHAT quantity belongs to it, its VALUE (if given), and its DIRECTION (if applicable).
+  - Badges must list the specific quantity name, symbol, value (if given), and unit.
 
-Example of GOOD step title:   "Step 3: Exhaust Gas — Speed u (exhaust speed)"
+Example of GOOD step title:   "Step 3: Exhaust Gas — Downward Jet at Speed u (exhaust speed)"
 Example of BAD  step title:   "Step 3: First Given Value"
 
-Example of GOOD description:  "The rocket (mass m₀) is launched vertically upward.
-                                Gravity pulls it downward with force m₀g."
+Example of GOOD description:  "The rocket body (mass m₀ = 1000 kg) sits on the launch pad,
+                                pointing vertically upward. Earth's gravity pulls it downward
+                                with weight force W = m₀ × g acting at the centre of mass."
 Example of BAD  description:  "The main object is introduced."
+
+Example of GOOD badge:        {"text": "m₀ = 1000 kg (initial mass)", "type": "cyan"}
+Example of BAD  badge:        {"text": "Given 1", "type": "cyan"}
 
 ============================================================
 EXAMPLE 1 — Stretched Wire (electrical resistance)
@@ -788,29 +812,39 @@ EXAMPLE 2 — Rocket Liftoff (exhaust speed / mass-loss rate)
 STRICT RULES
 ============================================================
 
-1. EXACTLY 6 steps.
-2. Step 1 (label "Environment"): Introduce the physical environment / setting. No object yet — just
-   the background context (direction, field, scale, medium, ground, sky, etc.).
-3. Step 2 (label = object name): Introduce the MAIN physical object by its REAL NAME and symbol
-   (e.g. "Rocket", "Metal Wire", "Satellite", "Charged Sphere"). State its key property.
-4. Steps 3–5: Each step introduces ONE specific physical quantity, agent, or secondary object from
-   the problem. EVERY title MUST include:
-   a) The real name of the quantity/object (e.g. "Exhaust Gas", "Applied Force", "Gravitational Field")
-   b) Its symbol/notation in parentheses (e.g. "u (exhaust speed)", "α (mass-loss rate)", "F (tension)")
-   c) Whether it is given, derived, or unknown.
-5. Step 6 (blur = false, all layers visible): Title says "Complete Setup — Find [Unknown] = ?"
-   Description summarises ALL named objects and quantities already shown, then states what to find.
-   Badges list all given values (cyan) and the unknown (green).
-6. Steps 2–5: blur = true.
-7. No formulas, no equations, no solution text in ANY step description. Descriptions are plain English.
-8. svg_layers must list every layer ID that appears in any step's layers_visible.
-   Layer descriptions must name the specific object/quantity they represent, not generic placeholders.
-9. to_find: 1–3 strings describing what the student must find (use specific quantity names and symbols).
+1. EXACTLY 6 steps. No more, no less.
+2. Step 1 (label "Environment"): Introduce the physical environment and setting ONLY.
+   - Describe the physical world: ground, sky, fluid medium, gravitational field, temperature field,
+     electric field, coordinate axes — whatever frames this specific problem.
+   - Add directional indicators: gravity arrow pointing ↓, coordinate origin, scale reference.
+   - NO physical objects introduced yet — environment only.
+   - Badges: describe the environment type (e.g. "Gravitational field: g = 9.81 m/s² ↓").
+3. Step 2 (label = real object name): Introduce the MAIN physical object.
+   - Name it explicitly (e.g. "Rocket Body", "Flat Metal Plate", "Slider-Crank Mechanism").
+   - Give its key physical property and symbol (mass m₀, length L, radius R, etc.).
+   - Describe its shape, orientation, and position in the physical environment.
+4. Steps 3–5: Each step introduces exactly ONE specific physical quantity, agent, or secondary object.
+   EVERY title MUST include:
+   a) The REAL NAME of the quantity/object (e.g. "Exhaust Gas Jet", "Applied Tension", "Thermal Gradient")
+   b) Its symbol/notation and units (e.g. "u (exhaust speed) [m/s]", "F (tension) [N]", "ΔT [K]")
+   c) Whether it is GIVEN, DERIVED, or the UNKNOWN to find.
+   d) Its direction, value (if given), and physical meaning in one sentence.
+5. Step 6 (blur = false, all layers visible): Title says "Complete Setup — Find [Unknown Symbol] = ?"
+   - Summarise ALL named objects and quantities already shown in the description.
+   - State what to find and why it is the goal.
+   - Badges: ALL given values (cyan), ALL derived quantities (orange), the unknown (green).
+   - Description must mention every quantity from steps 1–5 by name and symbol.
+6. Steps 2–5: blur = true (to focus attention on the newly introduced element).
+7. NEVER include formulas, equations, or solution steps in ANY description. All text is plain English.
+8. svg_layers must list every layer ID used in any step's layers_visible.
+   Layer descriptions must use the SPECIFIC object/quantity name, not generic placeholders.
+9. to_find: 1–3 strings describing what the student must find — use specific quantity names and symbols.
 10. color_legend: one entry per step, labels must be the real object/quantity names from the problem.
-11. glossary: 2–5 genuinely difficult technical words from THIS problem, with simple plain-English explanations.
-12. Return PURE JSON only.
+11. glossary: 2–5 genuinely difficult technical terms from THIS problem only, with simple plain-English
+    explanations that a high-school student can understand.
+12. Return PURE JSON only — no markdown, no fences, no extra text.
 13. NEVER use LaTeX notation anywhere in step titles, descriptions, or badges. All text must be plain
-    readable Unicode (e.g. use α, ω, m₀, u_min, × — never \\alpha, \\omega, \\frac, \\left, etc.)."""
+    readable Unicode (e.g. use α, ω, m₀, u_min, ×, ·, √, ² — never \\alpha, \\omega, \\frac, etc.)."""
 
 
 def analyze_scene(question: str) -> dict:
@@ -908,7 +942,16 @@ def analyze_scene(question: str) -> dict:
     for attempt in range(1, 4):
         try:
             raw = _call_gemini(
-                f"Produce scene script for:\n\n{question[:1500]}",
+                (
+                    "Produce a DETAILED, RICHLY DESCRIBED 6-step scene script for the following "
+                    "student question. Each step must name the specific physical object or quantity "
+                    "introduced, give its symbol and units, describe its physical role clearly, "
+                    "and use directional language where applicable (↑ ↓ → ←). "
+                    "Write descriptions as if narrating a professional science documentary. "
+                    "Do NOT use generic placeholders like 'Given 1' or 'Main object'. "
+                    "Return PURE JSON only.\n\n"
+                    + question[:1500]
+                ),
                 _SCENE_SYSTEM,
                 max_tokens=MAX_TOKENS_SCENE,
             )
@@ -930,16 +973,21 @@ def analyze_scene(question: str) -> dict:
 # Stage 3: SVG + stepsData HTML Generator
 # ===========================================================================
 _SVG_BUILDER_SYSTEM = r"""
-You are QAnim Studio, an expert SVG artist and motion designer.
+You are QAnim Studio — a world-class SVG artist, physics visualizer, and educational motion designer.
 
-Your task: for ANY physics/math question, generate a realistic, well-structured,
-6-step SVG concept animation with perfect layout and premium design.
+Your task: for ANY physics/math/engineering question, generate a stunning, accurate, richly detailed
+6-step SVG concept animation. This animation is the FIRST thing a student sees — it must immediately
+clarify the physical setup before any formulas appear. Think of it as a professional science museum
+exhibit brought to life in SVG.
+
+EVERY element — objects, labels, arrows, annotations, callouts — must be SPECIFIC to the question.
+NEVER use generic placeholder text. ALWAYS use the real object names, symbols, and values from the problem.
 
 ============================================================
 OUTPUT FORMAT
 ============================================================
 
-Return ONLY valid JSON with these fields:
+Return ONLY valid JSON with exactly these five fields:
 
 {
   "svg_defs": "...",
@@ -949,79 +997,138 @@ Return ONLY valid JSON with these fields:
   "raf_js": "..."
 }
 
-No Markdown. No extra text. Only JSON.
+No Markdown fences. No extra text. Only the JSON object.
 
 ============================================================
-VISUAL GOAL
+VISUAL GOAL — HIGH-QUALITY SCIENTIFIC ILLUSTRATION
 ============================================================
 
-Create a PREMIUM, PHOTOREALISTIC scientific visualization tailored to the question.
-The animation must look like it belongs in a professional science textbook or museum exhibit.
-Make every element polished: gradients, shadows, highlights, glows, and smooth motion.
+Create a PREMIUM, PHOTOREALISTIC scientific visualization perfectly tailored to the question.
+The animation must look like it belongs in a professional science textbook, research paper,
+or interactive museum exhibit. Every frame must be publication-quality.
 
-Requirements:
-
-1. Realistic objects:
-   - Draw the main physical objects realistically:
-     - Earth, satellite, planet, star, atom, wire, plate, projectile, circuit, etc.
-   - Use gradients, shading, and subtle highlights to suggest 3D form.
-   - Avoid cartoonish or overly abstract shapes.
-
-2. Perfect layout:
-   - Use viewBox="0 0 850 478".
-   - Center the main system and keep clear margins.
-   - Important content must stay inside x=24..826 and y=24..454.
-   - Labels must not overlap objects.
-   - Composition must look balanced on desktop, tablet, and mobile.
-
-3. Structure:
-   - Use exactly these layers (or those given by the scene script):
-     <g id="layer-frame">...</g>
-     <g id="layer-object">...</g>
-     <g id="layer-param1">...</g>
-     <g id="layer-param2">...</g>
-     <g id="layer-derived">...</g>
-     <g id="layer-summary">...</g>
-   - layer-frame starts visible (opacity="1").
-   - All other layers start hidden (opacity="0").
-   - Each layer must have a clear visual purpose.
-
-3b. PREMIUM QUALITY REQUIREMENTS (mandatory for every output):
-   - Every main object MUST use at least one linearGradient or radialGradient for 3-D depth.
-   - Every main object MUST have a <filter> drop-shadow (feDropShadow or feMerge) for lift.
-   - Use stroke-linecap="round" and stroke-linejoin="round" on all mechanical parts.
-   - Important labels must have a subtle pill background (a <rect> behind the text, rx≥5, fill white/light, opacity 0.85).
-   - Annotation arrows must use <marker> arrowheads (not just bare lines).
-   - Color palette must be vivid and harmonious — pick 3–5 coordinated accent colors, never plain red/blue/green.
-   - All layer reveal transitions must use opacity 0→1 plus a subtle scale or translateY transform (done via JS in applyStep).
-   - The layer-summary (Step 6) must show a polished "callout" box with rounded corners, gradient background, and a glowing border for the "? unknown" label.
-
-4. Design style:
-   - LIGHT, CLEAN, PROFESSIONAL background — always use white or very light grey/blue (#f8fafc, #eef5ff, #f0f6ff).
-   - NEVER use dark navy, charcoal, black, or dark space backgrounds.
-   - HIGH-CONTRAST main objects using vivid, saturated colors (cyan #0891b2, blue #2563eb, green #16a34a, orange #d97706, violet #7c3aed) on the light background.
-   - Mechanism parts (cranks, rods, sliders, gears, links, pistons, wheels): draw them clearly with thick strokes (2–4px), gradient fills, and subtle drop shadows.
-   - Text labels: dark (#1e293b, #0f172a) on the light background — always readable.
-   - Soft gradients on objects only, NOT on the background.
-   - Subtle grid lines (#cbd5e1 at 0.25 opacity) for scale reference.
-   - No clutter. Every element must help understanding.
+Core quality targets:
+  - Objects look like real physical entities — not icons or clip art.
+  - Lighting, shading, and gradients suggest 3-dimensional form.
+  - Every label is mathematically precise with correct symbols and units.
+  - Every arrow conveys real physical information (force, velocity, heat flow, field direction).
+  - Each step clearly adds ONE new insight — the student should say "I see it now!" at each step.
+  - Smooth, physics-accurate animation makes the concept intuitive, not just decorative.
 
 ============================================================
-SVG DEFS
+DRAWING REQUIREMENTS
 ============================================================
 
-Create a <defs> section with only what you use:
+1. REALISTIC, SPECIFIC PHYSICAL OBJECTS:
+   - Draw the ACTUAL physical entities from the problem — not generic boxes or circles.
+   - Examples:
+       • Rocket: streamlined fuselage body + nozzle + exhaust flame + stabiliser fins
+       • Metal wire: cylindrical rod with end connectors + texture suggesting metal
+       • Satellite: hexagonal body + solar panels + antenna dish + orbital path glow
+       • Slider-crank: crank disc + connecting rod + piston in guide rail + ground pivot
+       • Hot plate: solid rectangle with heat glow gradient + convection arrows rising
+       • Projectile: ball/shell with velocity arrow + parabolic trajectory dashes
+       • Charged sphere: metallic sphere with field lines radiating outward
+       • Pendulum: rigid rod + bob + angular arc + pivot pin with ground hatch
+   - Use gradients, shading, and highlights to convey 3-D solidity.
+   - Every mechanical joint: add a small filled circle (pivot pin).
+   - Every fixed support: add a ground hatch symbol (diagonal hatching below a baseline).
+   - Avoid cartoonish, icon-like, or overly abstract shapes.
 
-- Gradients for main objects (NOT for the background — background must stay light).
-- Drop shadows / subtle glow filters for important elements (use low opacity, e.g. flood-opacity="0.18").
-- Arrow markers for forces, motion, fields, or dimensions.
-- A subtle light grid pattern: <pattern id="bg-grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#cbd5e1" stroke-width="0.4"/></pattern>
+2. PERFECT, BALANCED LAYOUT:
+   - Use viewBox="0 0 850 478" (landscape, 16:9-ish).
+   - Centre the main physical system horizontally and vertically.
+   - Maintain clear margins: all important content stays inside x=30..820, y=30..448.
+   - Labels MUST NOT overlap each other or overlap the main object.
+   - Use leader lines (thin lines from label to object) when labels cannot be placed directly adjacent.
+   - For multi-component systems, lay out components left-to-right or bottom-to-top in reading order.
+   - Composition must look balanced and uncluttered on a 1024×576 screen.
 
-Recommended gradient IDs:
-  grad-crank, grad-rod, grad-slider, grad-plate, grad-wire, grad-object — all vivid colors on top of light fills.
-  Do NOT create dark background gradients.
+3. LAYER STRUCTURE:
+   - Use exactly the layer IDs provided by the scene script (typically):
+       <g id="layer-frame" style="opacity:1">...</g>   ← VISIBLE from the start
+       <g id="layer-object" style="opacity:0">...</g>  ← hidden until Step 2
+       <g id="layer-param1" style="opacity:0">...</g>  ← hidden until Step 3
+       <g id="layer-param2" style="opacity:0">...</g>  ← hidden until Step 4
+       <g id="layer-derived" style="opacity:0">...</g> ← hidden until Step 5
+       <g id="layer-summary" style="opacity:0">...</g> ← hidden until Step 6
+   - layer-frame: background environment (grid, axes, ground, sky, field lines, gravity arrow).
+   - layer-object: the main physical object, drawn fully and realistically.
+   - layer-param1 through layer-param4: one specific quantity/force/component each.
+   - layer-summary: Step 6 summary callout listing all given values and the unknown.
+   - Each layer must have a SINGLE, CLEAR visual purpose. No mixing of concepts.
 
-Do not use external images, fonts, or URLs.
+4. MANDATORY PREMIUM QUALITY (every output MUST include ALL of these):
+   a) GRADIENTS: Every main object MUST use at least one linearGradient or radialGradient
+      to give it 3-D depth and material realism (metal, glass, glowing plasma, painted surface).
+   b) DROP SHADOWS: Every main object MUST have a <filter> drop-shadow
+      (feDropShadow stdDeviation="3" flood-color="#1e293b" flood-opacity="0.18") for visual lift.
+   c) ROUND ENDS: stroke-linecap="round" and stroke-linejoin="round" on ALL mechanical parts.
+   d) LABEL BACKGROUNDS: All text labels that float over the diagram MUST have a pill-shaped
+      background <rect> behind them (rx≥6, fill="white" or fill="#f8fafc", opacity="0.88",
+      slightly larger than the text bounding box) for readability.
+   e) ARROWHEAD MARKERS: All annotation arrows (force vectors, velocity, heat flow, field,
+      dimension lines) MUST use a <marker> arrowhead defined in <defs>. Never use bare lines.
+   f) COLOUR HARMONY: Use a curated 4-colour accent palette (e.g. #0891b2 cyan, #2563eb blue,
+      #d97706 amber, #7c3aed violet). NEVER use flat plain red, blue, or green.
+   g) LAYER TRANSITIONS: Every layer reveal (in the RAF or applyStep) MUST include both
+      opacity 0→1 AND a subtle transform: translateY(14px→0) or scale(0.93→1) for a
+      smooth "pop in" feeling. Transitions: 700 ms, cubic-bezier(0.34,1.56,0.64,1).
+   h) STEP 6 CALLOUT BOX: layer-summary MUST contain a polished summary callout:
+      - Rounded rectangle (rx=14) with gradient fill (white→#f0f6ff) and a subtle coloured border.
+      - A glowing label for the unknown: <rect> with filter glow + text "Unknown = ?".
+      - List all given values as small pill badges inside the callout.
+      - A "Find →" arrow pointing to the unknown label.
+
+5. DESIGN LANGUAGE — LIGHT, PROFESSIONAL, HIGH-CONTRAST:
+   - Background: ALWAYS white or very light (#f8fafc, #eef5ff, #f0f6ff). NO dark backgrounds.
+   - Main objects: vivid, saturated accent colours on the light background.
+   - Text: dark (#1e293b, #0f172a) — always readable against the light background.
+   - Gradients ONLY on objects, never on the background.
+   - Grid overlay: <pattern> with light grey lines (#cbd5e1, stroke-width="0.35", opacity 0.28).
+   - Every element exists for a reason — no decorative clutter.
+
+============================================================
+SVG DEFS — MANDATORY CONTENTS
+============================================================
+
+Your <defs> section MUST contain at least all of the following (define only what you use):
+
+a) BACKGROUND GRID PATTERN (always include):
+   <pattern id="bg-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+     <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#cbd5e1" stroke-width="0.35"/>
+   </pattern>
+
+b) OBJECT GRADIENTS (at least 2; name them descriptively):
+   Example IDs: grad-object, grad-rod, grad-crank, grad-plate, grad-wire, grad-piston,
+   grad-rocket, grad-sphere, grad-fluid, grad-coil, grad-satellite, grad-highlight.
+   Use vivid-to-dark stops for metal, glass, or glowing materials.
+   Do NOT create dark background gradients — background stays white/light.
+
+c) DROP-SHADOW FILTER (at least 1):
+   <filter id="dropshadow" x="-15%" y="-15%" width="130%" height="130%">
+     <feDropShadow dx="2" dy="3" stdDeviation="3"
+       flood-color="#1e293b" flood-opacity="0.18"/>
+   </filter>
+   Additional glow filter for the unknown label in layer-summary:
+   <filter id="glow-unknown">
+     <feGaussianBlur stdDeviation="3" result="blur"/>
+     <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+   </filter>
+
+d) ARROWHEAD MARKERS (at least 2 sizes/colours):
+   <marker id="arrow-dark" markerWidth="10" markerHeight="7"
+     refX="10" refY="3.5" orient="auto">
+     <polygon points="0 0, 10 3.5, 0 7" fill="#1e293b"/>
+   </marker>
+   <marker id="arrow-accent" markerWidth="10" markerHeight="7"
+     refX="10" refY="3.5" orient="auto">
+     <polygon points="0 0, 10 3.5, 0 7" fill="#d97706"/>
+   </marker>
+   Add additional markers in other accent colours as needed (blue, cyan, violet, green).
+
+Do NOT use external images, external fonts, or data: URLs.
+Do NOT embed raster images. All artwork must be pure SVG geometry.
 
 ============================================================
 ANIMATION — SMOOTH & REALISTIC
@@ -1036,38 +1143,69 @@ ANIMATION — SMOOTH & REALISTIC
 - applyStep must set layer opacity via element.style.opacity (NOT setAttribute). It may also toggle
   a CSS class (e.g. 'layer-shown') that drives a CSS transition for scale/translate if desired.
 
-SMOOTH PHYSICS MOTION (mandatory if the concept involves dynamics):
-- Projectile / ballistic: animate along a true parabolic arc using requestAnimationFrame.
-  Use parametric equations: x = x₀ + v₀ₓ·t, y = y₀ + v₀ᵧ·t − ½g·t².
-  Show the trajectory trail as a dashed path that appears incrementally.
-  Show velocity components (horizontal arrow constant length, vertical arrow shrinks then grows).
-- Orbit / circular motion: use sin/cos for perfectly smooth orbit.
-  Add a faint elliptical orbit path; planet/satellite casts a moving shadow.
-- Wave / oscillation: render sinusoidal wave with requestAnimationFrame, phase-shifting each frame.
-- Wire / elastic: animate length change with a smooth stretch transform.
-- Heat / diffusion: animate a stop-color or fill interpolation smoothly from hot (#ef4444) to cold (#3b82f6).
-- Fluid flow: animate streamlines or particle movement along defined SVG paths.
-- Rotating machinery: use requestAnimationFrame with sin/cos kinematics; show angle arcs and velocity arrows.
+SMOOTH PHYSICS MOTION (mandatory for ANY problem involving dynamics, motion, or processes):
 
-If continuous animation is needed, define:
-  window.qanimStartRAF = function(){{
-    if (window.qanimRafId) cancelAnimationFrame(window.qanimRafId);
-    window.qanimRafId = requestAnimationFrame(drawFrame);
-  }};
+- Projectile / ballistic:
+    • Animate along a TRUE parabolic arc: x = x₀ + v₀cosθ·t, y = y₀ + v₀sinθ·t − ½g·t².
+    • Show the trajectory trail as an incrementally growing dashed path (add one point per frame).
+    • Show velocity components: horizontal arrow (constant length) + vertical arrow (shrinks then grows).
+    • Show the peak height with a horizontal dashed line and label.
+    • Display the time counter and current speed as animated text.
 
-If no continuous animation is needed, return:
-  "raf_js": ""
+- Orbit / circular motion:
+    • Orbit body with sin/cos for perfectly smooth, continuous orbital motion.
+    • Show the faint elliptical orbit path as a dashed ellipse.
+    • Planet/satellite casts a moving oval shadow below it.
+    • Show the radial distance r as an animated line from centre to body.
+    • Display the orbital speed v label near the body.
 
-If continuous animation is needed, define:
+- Wave / oscillation / pendulum / SHM:
+    • Render sinusoidal wave or pendulum with requestAnimationFrame, phase-shifting each frame.
+    • Show the amplitude A, period T, and equilibrium position as labeled annotations.
+    • For pendulum: show the angle θ arc and the restoring force arrow.
+
+- Wire / elastic stretching:
+    • Animate length change with a smooth scaleX or translate transform.
+    • Show a dimension arrow (double-headed) that grows with the wire.
+    • Label the new length L₂ appearing after the stretch.
+
+- Heat / diffusion / conduction:
+    • Animate a colour gradient that sweeps from hot (red #ef4444) to cold (blue #3b82f6) over time.
+    • Show animated heat-flow arrows pointing from hot to cold region.
+    • Label temperatures T₁ and T₂ at the boundaries.
+
+- Fluid flow / convection:
+    • Animate streamlines or particles along smooth curved SVG paths.
+    • Show flow velocity arrows along the streamlines.
+    • Animate particle opacity (appear, travel, disappear) for a continuous flow illusion.
+
+- Rotating machinery (slider-crank, gears, cam-follower):
+    • Use requestAnimationFrame with sin/cos kinematics for ALL moving parts simultaneously.
+    • Draw crank as a rotating line with endpoint tracing an arc.
+    • Draw connecting rod between crank pin and slider.
+    • Slide the piston/slider left-right in the guide rail.
+    • Show the crank angle θ as an animated arc with label near the pivot.
+    • Show angular velocity ω and piston velocity v as animated arrows.
+
+- Rocket / thrust:
+    • Animate the rocket rising with a smooth translateY.
+    • Animate the exhaust flame (animating multiple blobs/flames downward).
+    • Show the thrust force arrow (↑ growing) and weight arrow (↓) as the rocket rises.
+
+- Electrical circuits:
+    • Animate current flow as moving dots along wire paths.
+    • Show voltage labels appearing at nodes.
+    • If a charging/discharging capacitor: animate fill level rising or falling.
+
+RAF STRUCTURE (always use this exact pattern if animation is needed):
 
 window.qanimStartRAF = function(){
   if (window.qanimRafId) cancelAnimationFrame(window.qanimRafId);
   window.qanimRafId = requestAnimationFrame(drawFrame);
 };
 
-If no continuous animation is needed, return:
-
-"raf_js": ""
+If truly no continuous animation is needed (static label-only problem), return:
+  "raf_js": ""
 
 ============================================================
 STEPS DATA
@@ -1094,34 +1232,51 @@ var stepsData = [
 ];
 
 Rules:
-- badges must be an array of HTML strings.
-- blurOp = 0.0 for steps 1 and 6; 0.38 for steps 2–5.
-- layerOpacities must include all layers.
-- Step 6 shows all layers. DO NOT include "? unknown" or "= ?" badges in step 6.
-  Step 6 is the "Complete Setup" — show only the given parameters as badges (cyan/orange/green).
-  The unknown is revealed only in Steps 7-9 (the formula/solution overlay scenes).
+- badges: array of HTML strings. Each badge MUST use the real object name, symbol, value, and unit.
+  Example: '<span class="badge badge-cyan">m₀ = 1000 kg (initial mass)</span>'
+  NEVER use generic text like "Given 1" or "Quantity" in badges.
+- blurOp = 0.0 for steps 1 and 6 (full clarity); 0.38 for steps 2–5 (focus on new element).
+- layerOpacities must include ALL layer IDs (set to 0 or 1 per the scene script).
+- Step 6 shows ALL layers simultaneously. Do NOT include "= ?" or "unknown" badges in step 6.
+  Step 6 is the "Complete Setup" — show all GIVEN values as cyan badges, derived as orange,
+  the unknown to find as a green badge. The unknown value is revealed in Steps 7-9.
+- titles: use the real physical object/quantity name, not a generic placeholder.
+- desc: write 2-3 clear sentences explaining what the student is seeing and why it matters.
 
 ============================================================
 APPLY STEP JAVASCRIPT
 ============================================================
 
-Return the body of applyStep(idx):
+Return the body of applyStep(idx). This function is called every time the user
+navigates to a new step. It MUST:
 
-- Set window.currentStep = idx.
-- Update progress bar: ((idx + 1) / 9 * 100) + '%'.
-- Update label: 'Step ' + (idx + 1) + ' of 9'.
-- Update step dots (active/done).
-- Set info-title and info-desc text.
-- Render badges:
-  document.getElementById('info-badges').innerHTML =
-    (stepsData[idx].badges || []).join('');
-- Set layer opacity with:
-  element.style.opacity = value;
-- Set blur-shield opacity.
-- Disable/enable navigation buttons correctly.
+1. Set window.currentStep = idx  (the RAF loop reads this to drive step-specific motion).
+2. Update progress bar:  document.getElementById('step-bar').style.width = ((idx+1)/9*100)+'%';
+3. Update label:         document.getElementById('step-label').textContent = 'Step '+(idx+1)+' of 9';
+4. Update step dots: loop i=0..CONCEPT_STEP_COUNT-1, set class 'active'/'done'/''/.
+5. Set info panel text using textContent (NEVER innerHTML for user text):
+     document.getElementById('info-title').textContent = stepsData[idx].title || '';
+     document.getElementById('info-desc').textContent  = stepsData[idx].desc  || '';
+6. Render badges (innerHTML is safe here — badges are HTML strings generated by Python):
+     document.getElementById('info-badges').innerHTML = (stepsData[idx].badges || []).join('');
+7. Set EACH layer's opacity using style.opacity (NEVER setAttribute):
+     var ops = stepsData[idx].layerOpacities || {};
+     Object.keys(ops).forEach(function(id){
+       var el = document.getElementById(id);
+       if (el) el.style.opacity = ops[id];
+     });
+8. Disable/enable prev/next buttons:
+     var bp = document.getElementById('btn-prev');
+     var bn = document.getElementById('btn-next');
+     var total = window.CONCEPT_STEP_COUNT || 6;
+     if (bp) bp.disabled = (idx === 0);
+     if (bn) bn.disabled = (idx === total - 1);
 
-Do not use setAttribute('opacity', value).
-Do not use innerHTML for user text.
+CRITICAL RULES for applyStep:
+- ALWAYS use element.style.opacity — NEVER el.setAttribute('opacity', value).
+- ALWAYS use textContent for user-visible text — NEVER innerHTML for title/desc.
+- NEVER put per-step motion code inside applyStep — ALL motion lives in the RAF loop.
+- Progress bar divides by 9 (total scenes), not by 6 (concept steps only).
 
 ============================================================
 NOTATION AND LABELS — MATHEMATICAL PRECISION
@@ -1150,53 +1305,122 @@ Always use correct mathematical symbols and notation:
   LaTeX in SVG renders as raw text and breaks the visualization.
 
 ============================================================
-REALISM BY EXAMPLE (ADAPT TO QUESTION)
+REALISM BY SUBJECT — DETAILED DRAWING GUIDE
 ============================================================
 
-Adapt realism to the topic. ALWAYS use a LIGHT BACKGROUND (#f8fafc, #eef5ff, or #f0f6ff):
+ALWAYS use a LIGHT BACKGROUND (#f8fafc, #eef5ff, or #f0f6ff). NEVER dark backgrounds.
+Adapt all details below to the EXACT objects and quantities in the question.
 
-- Mechanisms (slider-crank, four-bar linkage, cam-follower, gear trains, etc.):
-  - Crank: thick circular/elliptical arc or line, gradient-filled (e.g. steel blue #2563eb→#1d4ed8), pivot pin circle.
-  - Connecting rod: thick line with end circles at pin joints, labeled with its length.
-  - Slider: a filled rectangle (piston) on a horizontal guide rail with clear end-stops.
-  - Guide rail: a double horizontal line (I-beam), light grey fill, with tick marks.
-  - Fixed pivot: a triangle with hatch lines beneath it (ground symbol).
-  - Show the crank angle θ as an arc with label near the pivot.
-  - Show the slider path as a dashed horizontal line.
-  - Velocity arrows: vivid orange arrows with labels (v⃗, ω, r, l).
-  - All components labeled: crank (r), rod (l), slider, fixed point O, pin A, slider B.
+■ SLIDER-CRANK / FOUR-BAR LINKAGE / CAM-FOLLOWER MECHANISMS:
+  - Crank: a thick rounded-end bar (stroke-width=5, stroke-linecap=round) rotating about a fixed pivot.
+    Fill with steel-blue gradient (e.g. #2563eb → #1d4ed8). Show pivot as a solid filled circle (r=7).
+  - Connecting rod: thick rounded bar between crank pin and slider pin.
+    Fill with grey gradient (#64748b → #475569). Show pin joints as solid filled circles (r=5).
+  - Slider/Piston: a filled rounded rectangle (rx=4) on a horizontal guide rail.
+    Rail: two parallel lines with end stops; tick marks every 20px for scale.
+  - Fixed pivot: equilateral triangle below the crank centre + diagonal hatching lines beneath it.
+  - Crank angle θ: a curved arc from the 3 o'clock position to the crank arm, label "θ" at arc centre.
+  - Slider displacement x: a dimension arrow (double-headed) from BDC to current slider position.
+  - Velocity diagram: orange arrows (marker arrowhead) labeled ω (crank), v (slider), v_A (pin A).
+  - All points labeled: O (fixed pivot), A (crank pin), B (slider pin), plus crank radius r, rod length l.
 
-- Space / gravity:
-  - Planet: spherical, gradient shading, atmosphere glow on LIGHT background.
-  - Satellite / spacecraft: body + panels + antenna, slight shadow.
-  - Orbit: smooth circular/elliptical path with subtle glow.
-  - Background: very light blue (#eef5ff) with faint dots for stars.
+■ ROCKET / THRUST / PROPULSION:
+  - Rocket body: a tall rounded pentagon (or use a <path> for a classic rocket silhouette) with:
+    • Body gradient (white/silver top → grey bottom), a nose cone, and 2-4 stabiliser fins.
+    • A circular viewport window near the top.
+    • Engine nozzle at the bottom (flared trumpet shape).
+  - Exhaust flame: animated multi-layer shapes below the nozzle — inner (white/yellow), mid (orange #f97316),
+    outer (translucent red #ef4444). Animate with scaling + opacity pulse.
+  - Forces:
+    • Thrust arrow: thick cyan arrow pointing ↑ from nozzle, label "F_thrust = u·α ↑".
+    • Weight arrow: thick orange arrow pointing ↓ from centre of mass, label "W = m₀g ↓".
+  - Ground: a thick horizontal line with hatch below, launch pad rectangle.
+  - Smoke trail: faint grey dashes trailing upward as rocket rises.
 
-- Mechanics:
-  - Blocks, ramps, pulleys: clean 3D-like shading, clear edges on light background.
-  - Forces: well-sized arrows with labels (F, mg, N, T).
-  - Motion: path lines or velocity arrows.
+■ WIRE / RESISTANCE / ELECTRICAL PROPERTIES:
+  - Wire: a cylindrical bar (use a linearGradient from bright metal top to dark shadow bottom).
+    End connectors: small rectangles in copper colour (#b45309).
+  - Ohmmeter / Voltmeter: draw a simple instrument circle with a meter needle.
+  - Stretching: show the wire elongating with a horizontal scale transform; dimension arrows show L and L₂.
+  - Cross-section: a small circle at the wire end showing area A reducing as length increases.
+  - Resistivity annotation: a hatched texture inside the wire body to suggest material.
 
-- Electricity / circuits:
-  - Wires: clean paths with consistent stroke (#1e293b) on white/light background.
-  - Components (R, C, L, battery): clear symbols, vivid color coding.
-  - Current direction: small arrows along wires.
+■ PROJECTILE / BALLISTIC MOTION:
+  - Projectile: a solid sphere or shell (gradient-filled, drop shadow).
+  - Launch platform: a ramp or cannon at the left, angled at θ degrees, labeled with v₀ and θ.
+  - Trajectory: a smooth dashed parabolic arc from launch to landing. Incrementally reveal the trail.
+  - Velocity arrows at multiple points along the arc:
+    • vₓ (horizontal, constant length, pointing right)
+    • vᵧ (vertical, shrinking to 0 at peak, then growing downward)
+  - Peak height label: horizontal dashed line at maximum height H with label "H_max".
+  - Range label: horizontal dimension arrow at ground level showing R.
+  - Time counter: animated text near the top showing t = x.xx s.
 
-- Heat / fluids:
-  - Plates, fins, pipes: smooth gradients for temperature/flow on light background.
-  - Arrows for heat flow or fluid direction.
-  - Color coding for hot (red/orange) / cold (blue/cyan) regions.
+■ SATELLITE / ORBITAL MECHANICS:
+  - Planet: a large gradient-filled circle (blue-green for Earth, brown for other).
+    Add a subtle atmosphere ring (radial gradient, translucent blue/cyan around the edge).
+  - Satellite: hexagonal body with 2 rectangular solar panels + small antenna dish.
+    Add a gradient to convey metallic surface.
+  - Orbit path: a dashed ellipse (or circle) with subtle glow (filter: feGaussianBlur).
+  - Radial vector r: animated line from planet centre to satellite, labeled "r".
+  - Velocity arrow v: tangent to the orbit path, vivid accent colour, labeled "v".
+  - Gravity arrow: from satellite toward planet centre, labeled "g" or "F_g".
+  - Background: very light sky (#eef5ff) with 8-12 tiny star circles (r=1.5, fill=#94a3b8).
 
-- Waves / optics:
-  - Rays, wavefronts, lenses, mirrors: precise geometry on light background.
-  - Smooth sinusoidal waves or ray paths.
-  - Clear labels for angles, focal points, etc.
+■ HEAT TRANSFER / THERMODYNAMICS:
+  - Hot surface: a solid rectangle with a red-orange gradient (top: #ef4444, bottom: #b91c1c).
+    Add a faint heat shimmer effect (wavy lines above the surface).
+  - Cold fluid / ambient: a blue-tinted region (fill: #e0f2fe → #bae6fd) with flowing arrows.
+  - Heat flow arrows: curved arrows (marker arrowhead) from hot to cold, coloured orange → blue gradient.
+  - Temperature labels: T_s at hot surface, T_∞ at ambient edge, ΔT dimension bracket.
+  - Convection arrows: rising curved arrows above the hot surface (animated upward drift).
+  - Conduction gradient: a horizontal gradient bar showing temperature profile T(x).
 
-Always:
-- Light background (#f8fafc, #eef5ff, or #f0f6ff) — mandatory.
-- Make the main object look like a real physical system with high visual fidelity.
-- Use gradients and shading on objects to suggest depth (NOT on the background).
-- Keep labels and arrows clean, dark (#1e293b), and unambiguous.
+■ PENDULUM / SHM / OSCILLATION:
+  - Pivot: a horizontal bar fixed to the top (ceiling symbol with hatching).
+  - Rod: a thick line (rounded ends) from pivot to bob.
+  - Bob: a large gradient-filled circle (steel blue or copper) with drop shadow.
+  - Arc path: a light dashed arc showing the range of motion.
+  - Angle θ: curved arc from vertical equilibrium to current rod position, label "θ".
+  - Restoring force: orange arrow tangent to arc pointing toward equilibrium, label "F = -mg sinθ".
+  - Equilibrium line: vertical dashed line from pivot to rest position.
+  - Animated: bob swings smoothly left-right; angle arc updates continuously.
+
+■ BLOCKS / RAMPS / INCLINED PLANES:
+  - Incline: a right-triangle ramp with gradient fill (light grey #f1f5f9 → #cbd5e1).
+    Label the angle θ at the base.
+  - Block: a gradient-filled rectangle on the incline with visible corners and drop shadow.
+  - Forces (all labeled, all with arrowhead markers):
+    • Weight W = mg: vertical arrow pointing straight down from block centre.
+    • Normal N: perpendicular to incline surface, pointing away from surface.
+    • Friction f: along incline, opposing motion.
+    • Applied force F (if any): along incline, in direction of motion.
+  - Motion arrow: a large velocity arrow v above the block.
+  - Coordinate axes: x-axis along incline, y-axis perpendicular.
+
+■ ELECTRIC CIRCUITS:
+  - Wires: clean horizontal and vertical paths (stroke #1e293b, stroke-width=2).
+  - Resistor: standard IEC symbol (rectangle) or zigzag (ANSI), colour-coded.
+  - Capacitor: two parallel lines.
+  - Inductor: a series of semicircular arcs.
+  - Battery/Source: long-short line pair with ± labels.
+  - Voltage labels: small pill badges at each node.
+  - Current arrows: small filled arrowheads along wire paths with label "I".
+  - Animated: current dots moving along the wire path.
+
+■ FLUID MECHANICS:
+  - Pipe / duct: two parallel lines (rectangular cross-section) with gradient interior.
+  - Fluid: semi-transparent fill inside the pipe.
+  - Streamlines: smooth curved paths with arrowheads, coloured by velocity magnitude.
+  - Pressure labels: arrows pointing radially inward/outward at a cross-section.
+  - Velocity profile: a set of horizontal arrows of varying length showing the velocity gradient.
+
+ALWAYS:
+  - Light background (#f8fafc, #eef5ff, or #f0f6ff) — absolutely mandatory.
+  - All objects: real physical form with gradients + drop shadows.
+  - All labels: specific (real name + symbol + value + unit), never generic.
+  - All arrows: arrowhead markers, correct direction, vivid colour, legible label.
+  - All text: dark (#1e293b) on light background — readable at 12px minimum.
 
 ============================================================
 VALIDATION BEFORE OUTPUT
@@ -1323,9 +1547,32 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
     # {variable_name} text (e.g. {note_text} in a formula or note field).
     # Python f-string interpolation would try to evaluate those as Python
     # expressions, raising NameError: name 'note_text' is not defined.
-    prompt = ("Question:\n" + question + "\n\nScene Script:\n" + scene_str
-              + "\n\nSolution:\n" + sol_str
-              + "\n\nGenerate the 6-step SVG concept animation as JSON.")
+    prompt = (
+        "You are generating a HIGH-QUALITY, REALISTIC, VISUALLY RICH 6-step SVG animation "
+        "for a student physics/engineering/math question. "
+        "The animation must include:\n"
+        "  • A CLEAR, WELL-ORGANISED LAYOUT with all elements properly positioned.\n"
+        "  • A PROFESSIONAL, ATTRACTIVE DESIGN with gradients, shadows, arrowheads, and vivid colours.\n"
+        "  • STEP-BY-STEP visual explanation from Step 1 (environment) to Step 6 (complete setup).\n"
+        "  • A CLEAR SETUP of the problem: label every object by its real name, symbol, value, and unit.\n"
+        "  • ACCURATE ANIMATIONS for the physical concept: "
+              "mechanical motion, heat transfer, orbital mechanics, elastic deformation, "
+              "fluid flow, oscillation, electrical circuits — as appropriate.\n"
+        "  • SMOOTH TRANSITIONS between each step (opacity fade-in + translateY or scale spring easing).\n"
+        "  • CORRECT LABELS, ARROWS, DIMENSION LINES, and force vectors on every relevant element.\n"
+        "  • REALISTIC MOVEMENT with proper physics-based kinematics in the RAF loop.\n"
+        "  • EASY-TO-UNDERSTAND PRESENTATION: each step should make one concept click for the student.\n"
+        "\n"
+        "Follow the scene script and solution EXACTLY — match every object name, symbol, and value.\n"
+        "Return ONLY valid JSON (no markdown, no fences).\n"
+        "\n"
+        "Question:\n" + question
+        + "\n\nScene Script (follow this exactly for step titles, descriptions, badges, and layer structure):\n"
+        + scene_str
+        + "\n\nVerified Solution (use these exact values for all labels and annotations):\n"
+        + sol_str
+        + "\n\nGenerate the complete 6-step SVG concept animation JSON now."
+    )
 
     for attempt in range(1, 5):   # 4 attempts total
         try:
