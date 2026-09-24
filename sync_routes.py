@@ -1,6 +1,6 @@
-# sync_routes.py  —  GenZet / Animind  v6.1
+# sync_routes.py  —  GenZet / Animind  v6.0
 # ============================================================
-# v6.1 — file_mode table replaces subject_units + unit_lessons
+# v6.0 — Full normalized schema
 #   NEW endpoints (all require JWT):
 #     GET  /sync/all                      → full data pull on login
 #     POST /sync/items                    → save generated item
@@ -22,11 +22,6 @@
 #     DELETE /sync/vault/entries/{id}     → delete entry + storage file
 #     POST /sync/files/upload             → upload to Supabase Storage
 #     DELETE /sync/files/delete           → delete from Supabase Storage
-#     GET  /sync/file-mode                → list file_mode records (user's)
-#     POST /sync/file-mode                → create file_mode record
-#     PUT  /sync/file-mode/{id}           → update file_mode record
-#     DELETE /sync/file-mode/{id}         → soft-delete file_mode record
-#     GET  /sync/file-mode/subject/{sid}  → records for a specific subject
 #
 #   LEGACY endpoints (kept for backward compat — remove in v7.0):
 #     GET/POST/DELETE /sync/animations
@@ -266,43 +261,62 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
             print(f"[SYNC] /all — video_vault query failed: {vault_err}")
             vault = []
 
-        # ── 4. File Mode records (replaces subject_units + unit_lessons) ──
+        # ── 4. Subject Units (File Mode — Unit/Lesson containers) ────
         try:
-            fm_res = (
-                supabase.table("file_mode")
-                .select(
-                    "id, subject_id, subject, unit, unit_number, unit_type, "
-                    "topics, contents, title, item_type, prompt, sort_order, "
-                    "created_at, updated_at"
-                )
+            units_res = (
+                supabase.table("subject_units")
+                .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
                 .eq("user_id", user_id)
-                .is_("deleted_at", "null")
                 .order("sort_order")
                 .execute()
             )
-            file_mode_records = fm_res.data or []
-        except Exception as fm_err:
-            print(f"[SYNC] /all — file_mode query failed: {fm_err}")
-            file_mode_records = []
+            subject_units = units_res.data or []
+        except Exception as units_err:
+            print(f"[SYNC] /all — subject_units query failed: {units_err}")
+            subject_units = []
+            
+        unit_ids = [u["id"] for u in subject_units]
 
-        # Build file_mode_by_subject map and attach to subjects tree
-        fm_by_subject: dict = {}
-        for rec in file_mode_records:
-            sid = rec.get("subject_id")
-            if sid:
-                fm_by_subject.setdefault(sid, []).append(rec)
+        # ── 5. Unit Lessons (library lesson IDs per unit) ─────────────
+        unit_lesson_rows = []
+        if unit_ids:
+            try:
+                ul_res = (
+                    supabase.table("unit_lessons")
+                    .select("unit_id, lesson_id, sort_order")
+                    .eq("user_id", user_id)
+                    .in_("unit_id", unit_ids)
+                    .order("sort_order")
+                    .execute()
+                )
+                unit_lesson_rows = ul_res.data or []
+            except Exception as ul_err:
+                print(f"[SYNC] /all — unit_lessons query failed: {ul_err}")
+                unit_lesson_rows = []
 
+        # Build lessons_by_unit map  { unit_id → [lesson_id, …] }
+        lessons_by_unit: dict = {}
+        for row in unit_lesson_rows:
+            lessons_by_unit.setdefault(row["unit_id"], []).append(row["lesson_id"])
+
+        # Attach lessons list to each unit row
+        for u in subject_units:
+            u["lesson_ids"] = lessons_by_unit.get(u["id"], [])
+
+        # Build units_by_subject map  { subject_id → [unit, …] }
+        units_by_subject: dict = {}
+        for u in subject_units:
+            units_by_subject.setdefault(u["subject_id"], []).append(u)
+
+        # Attach units to the subjects tree (new field: s["units"])
         for s in subjects_tree:
-            s["file_mode_records"] = fm_by_subject.get(s["id"], [])
-            # Keep legacy units field as empty list so old frontend code doesn't crash
-            s["units"] = []
+            s["units"] = units_by_subject.get(s["id"], [])
 
-        print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(file_mode_records)} file_mode, {len(vault)} vault — user={current_user['email']!r}")
+        print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(subject_units)} units, {len(vault)} vault — user={current_user['email']!r}")
         return {
-            "items":     items,
-            "subjects":  subjects_tree,
-            "vault":     vault,
-            "file_mode": file_mode_records,
+            "items":    items,
+            "subjects": subjects_tree,
+            "vault":    vault,
         }
 
     except HTTPException:
@@ -701,170 +715,281 @@ def delete_co(
 
 
 # ════════════════════════════════════════════════════════════════
-# FILE MODE  —  Flat records: subject + unit + topics[] + contents
-# Replaces the old subject_units + unit_lessons normalized tables.
-# Each row stores one complete AI-generated file-mode entry.
+# SUBJECT UNITS  —  Unit/Lesson containers inside a Subject Folder
 # ════════════════════════════════════════════════════════════════
 
-class FileModeCreate(BaseModel):
-    subject_id:  Optional[str]  = None
-    subject:     str             = Field(..., min_length=1, max_length=200)
-    unit:        str             = Field(..., min_length=1, max_length=100)
-    unit_number: int             = Field(default=1, ge=1)
-    unit_type:   str             = Field(default="unit")
-    topics:      List[str]       = Field(default=[])
-    contents:    str             = Field(default="")
-    item_type:   str             = Field(default="ai_creator")
-    prompt:      str             = Field(default="")
-    title:       str             = Field(default="Untitled", max_length=500)
-    sort_order:  int             = Field(default=0)
+class UnitCreate(BaseModel):
+    subject_id:  str
+    unit_type:   str = Field(default="unit", pattern="^(unit|lesson)$")
+    unit_number: int = Field(default=1, ge=1)
+    name:        str = Field(..., min_length=1, max_length=100)
+    sort_order:  int = Field(default=0)
 
 
-class FileModeUpdate(BaseModel):
-    unit:        Optional[str]       = None
-    unit_number: Optional[int]       = None
-    unit_type:   Optional[str]       = None
-    topics:      Optional[List[str]] = None
-    contents:    Optional[str]       = None
-    title:       Optional[str]       = None
-    prompt:      Optional[str]       = None
-    sort_order:  Optional[int]       = None
+class UnitUpdate(BaseModel):
+    name:        Optional[str] = None
+    unit_type:   Optional[str] = None
+    unit_number: Optional[int] = None
+    sort_order:  Optional[int] = None
 
 
-@router.get("/file-mode", status_code=200)
-def list_file_mode(
-    subject_id:   Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
-):
-    """List all file_mode records for the current user, optionally filtered by subject_id."""
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-
-    q = (
-        supabase.table("file_mode")
-        .select(
-            "id, subject_id, subject, unit, unit_number, unit_type, "
-            "topics, contents, title, item_type, prompt, sort_order, "
-            "created_at, updated_at"
-        )
-        .eq("user_id", user_id)
-        .is_("deleted_at", "null")
-        .order("sort_order")
-    )
-    if subject_id:
-        q = q.eq("subject_id", subject_id)
-
-    res     = q.execute()
-    records = res.data or []
-    print(f"[SYNC] ↓ {len(records)} file_mode records (subject_id={subject_id}) user={current_user['email']!r}")
-    return {"count": len(records), "records": records}
-
-
-@router.get("/file-mode/subject/{subject_id}", status_code=200)
-def list_file_mode_by_subject(
+@router.get("/units", status_code=200)
+def get_units(
     subject_id:   str,
     current_user: dict = Depends(get_current_user),
 ):
-    """List all file_mode records for a specific subject."""
+    """List all units for a given subject_id, ordered by sort_order."""
     supabase = _sb(current_user)
-    user_id  = current_user["id"]
-
     res = (
-        supabase.table("file_mode")
-        .select(
-            "id, subject_id, subject, unit, unit_number, unit_type, "
-            "topics, contents, title, item_type, prompt, sort_order, "
-            "created_at, updated_at"
-        )
-        .eq("user_id",    user_id)
+        supabase.table("subject_units")
+        .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
         .eq("subject_id", subject_id)
-        .is_("deleted_at", "null")
+        .eq("user_id", current_user["id"])
         .order("sort_order")
         .execute()
     )
-    records = res.data or []
-    print(f"[SYNC] ↓ {len(records)} file_mode records for subject={subject_id} user={current_user['email']!r}")
-    return {"count": len(records), "records": records, "subject_id": subject_id}
+    units = res.data or []
+    return {"units": units}
 
 
-@router.post("/file-mode", status_code=201)
-def create_file_mode(
-    body:         FileModeCreate,
+@router.post("/units", status_code=201)
+def create_unit(
+    body:         UnitCreate,
     current_user: dict = Depends(get_current_user),
 ):
-    """Create a new file_mode record (subject + unit + topics + AI content)."""
+    """Create a Unit or Lesson container inside a Subject Folder."""
+    _ensure_user_row(current_user)
+    supabase = _sb(current_user)
+    row = {
+        "subject_id":  body.subject_id,
+        "user_id":     current_user["id"],
+        "unit_type":   body.unit_type,
+        "unit_number": body.unit_number,
+        "name":        body.name.strip(),
+        "sort_order":  body.sort_order,
+    }
+    res  = supabase.table("subject_units").insert(row).execute()
+    unit = res.data[0] if res.data else {}
+    print(f"[SYNC] ✅ Unit created: {body.name!r} subject={body.subject_id!r} user={current_user['email']!r}")
+    return {"success": True, "unit": unit}
+
+
+@router.put("/units/{unit_id}", status_code=200)
+def update_unit(
+    unit_id:      str,
+    body:         UnitUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = _sb(current_user)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        return {"success": True}
+    res = (
+        supabase.table("subject_units")
+        .update(patch)
+        .eq("id", unit_id)
+        .eq("user_id", current_user["id"])
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Unit not found.")
+    return {"success": True, "unit": res.data[0]}
+
+
+@router.delete("/units/{unit_id}", status_code=200)
+def delete_unit(
+    unit_id:      str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete unit. unit_lessons rows cascade-delete automatically."""
+    supabase = _sb(current_user)
+    supabase.table("subject_units").delete().eq("id", unit_id).eq("user_id", current_user["id"]).execute()
+    print(f"[SYNC] 🗑 Unit deleted: {unit_id} user={current_user['email']!r}")
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════
+# UNIT LESSONS  —  library lesson IDs linked to a Unit
+# ════════════════════════════════════════════════════════════════
+
+class UnitLessonsSave(BaseModel):
+    unit_id:    str
+    lesson_ids: List[str]   # full replacement: old links not in list are removed
+
+
+@router.get("/unit-lessons/{unit_id}", status_code=200)
+def get_unit_lessons(
+    unit_id:      str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Return all lesson IDs saved to a given unit."""
+    supabase = _sb(current_user)
+    res = (
+        supabase.table("unit_lessons")
+        .select("id, lesson_id, sort_order")
+        .eq("unit_id", unit_id)
+        .eq("user_id", current_user["id"])
+        .order("sort_order")
+        .execute()
+    )
+    rows = res.data or []
+    return {"unit_id": unit_id, "lesson_ids": [r["lesson_id"] for r in rows], "rows": rows}
+
+
+@router.post("/unit-lessons", status_code=200)
+def save_unit_lessons(
+    body:         UnitLessonsSave,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Replace all lesson links for a unit with the supplied lesson_ids list.
+    Deletes rows not in the list, inserts missing ones (upsert-by-replace).
+    """
+    _ensure_user_row(current_user)
+    supabase  = _sb(current_user)
+    user_id   = current_user["id"]
+    unit_id   = body.unit_id
+    lesson_ids = body.lesson_ids
+
+    # 1. Fetch current links
+    current_res = (
+        supabase.table("unit_lessons")
+        .select("id, lesson_id")
+        .eq("unit_id", unit_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    current_rows = current_res.data or []
+    current_ids  = {r["lesson_id"] for r in current_rows}
+    new_ids      = set(lesson_ids)
+
+    # 2. Delete removed lessons
+    to_delete = current_ids - new_ids
+    if to_delete:
+        supabase.table("unit_lessons").delete()\
+            .eq("unit_id", unit_id)\
+            .eq("user_id", user_id)\
+            .in_("lesson_id", list(to_delete))\
+            .execute()
+
+    # 3. Insert new lessons
+    to_insert = new_ids - current_ids
+    if to_insert:
+        rows = [
+            {"unit_id": unit_id, "lesson_id": lid, "user_id": user_id, "sort_order": lesson_ids.index(lid)}
+            for lid in to_insert
+        ]
+        supabase.table("unit_lessons").insert(rows).execute()
+
+    print(f"[SYNC] ✅ Unit lessons saved: unit={unit_id} count={len(new_ids)} user={current_user['email']!r}")
+    return {"success": True, "unit_id": unit_id, "count": len(new_ids)}
+
+
+# ════════════════════════════════════════════════════════════════
+# SAVE TO UNIT  —  "Save in File" from Creator with AI
+# ════════════════════════════════════════════════════════════════
+
+class SaveToUnitRequest(BaseModel):
+    unit_id:      str
+    subject_id:   str
+    title:        str   = Field(default="Untitled", max_length=500)
+    html:         str   = Field(default="")
+    prompt:       str   = Field(default="")
+    explanation:  str   = Field(default="")
+    content_type: str   = Field(default="animation")  # 'animation' | 'notes' | 'simulation'
+
+
+@router.post("/save-to-unit", status_code=201)
+def save_to_unit(
+    body:         SaveToUnitRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Save an AI-generated output (animation / notes / simulation) directly
+    into a File-Mode unit.
+
+    Steps:
+      1. Insert a row into `generated_items` with unit_id set.
+      2. Insert a row into `unit_lessons` linking that item to the unit.
+      3. Return the new item's id, title, and unit_id.
+    """
     _ensure_user_row(current_user)
     supabase = _sb(current_user)
     user_id  = current_user["id"]
 
+    # Map content_type → item_type used by generated_items table
+    type_map = {
+        "animation":  "ai_creator",
+        "notes":      "ai_creator",
+        "simulation": "ai_creator",
+    }
+    item_type = type_map.get(body.content_type, "ai_creator")
+
+    # 1. Insert into generated_items (with unit_id)
     row = {
         "user_id":     user_id,
-        "user_email":  current_user.get("email", ""),
-        "user_name":   current_user.get("name",  ""),
-        "subject_id":  body.subject_id,
-        "subject":     body.subject.strip(),
-        "unit":        body.unit.strip(),
-        "unit_number": body.unit_number,
-        "unit_type":   body.unit_type,
-        "topics":      body.topics,
-        "contents":    body.contents,
-        "item_type":   body.item_type,
-        "prompt":      body.prompt,
+        "item_type":   item_type,
         "title":       (body.title or "Untitled").strip(),
-        "sort_order":  body.sort_order,
+        "prompt":      body.prompt or "",
+        "explanation": body.explanation or "",
+        "html_code":   body.html or "",
+        "playlist":    "__file_unit__",   # sentinel so Library hides it
+        "is_saved":    True,
+        "unit_id":     body.unit_id,
+        "created_at":  _now(),
     }
-    res    = supabase.table("file_mode").insert(row).execute()
-    record = res.data[0] if res.data else {}
+    res     = supabase.table("generated_items").insert(row).execute()
+    item_id = res.data[0]["id"] if res.data else None
+
+    if not item_id:
+        raise HTTPException(status_code=500, detail="Failed to save item to database.")
+
+    # 2. Insert into unit_lessons to link the item to the unit
+    ul_row = {
+        "unit_id":    body.unit_id,
+        "lesson_id":  item_id,
+        "user_id":    user_id,
+        "sort_order": 0,
+    }
+    supabase.table("unit_lessons").insert(ul_row).execute()
+
     print(
-        f"[SYNC] ✅ file_mode created: subject={body.subject!r} unit={body.unit!r} "
-        f"topics={len(body.topics)} user={current_user['email']!r}"
+        f"[SYNC] ✅ Saved to unit: item={item_id} unit={body.unit_id} "
+        f"type={body.content_type} title={body.title!r} user={current_user['email']!r}"
     )
-    return {"success": True, "record": record}
+    return {
+        "success":  True,
+        "id":       item_id,
+        "title":    body.title,
+        "unit_id":  body.unit_id,
+        "item_type": item_type,
+    }
 
 
-@router.put("/file-mode/{record_id}", status_code=200)
-def update_file_mode(
-    record_id:    str,
-    body:         FileModeUpdate,
+@router.get("/unit-ai-items/{unit_id}", status_code=200)
+def get_unit_ai_items(
+    unit_id:      str,
     current_user: dict = Depends(get_current_user),
 ):
-    """Update a file_mode record (topics, contents, title, prompt, etc.)."""
+    """
+    Return all AI-generated items (generated_items) that are saved
+    to a specific File-Mode unit, ordered by creation date descending.
+    """
     supabase = _sb(current_user)
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not patch:
-        return {"success": True, "message": "Nothing to update."}
+    user_id  = current_user["id"]
 
     res = (
-        supabase.table("file_mode")
-        .update(patch)
-        .eq("id", record_id)
-        .eq("user_id", current_user["id"])
+        supabase.table("generated_items")
+        .select("id, item_type, title, prompt, explanation, html_code, playlist, created_at, unit_id")
+        .eq("user_id",  user_id)
+        .eq("unit_id",  unit_id)
+        .eq("is_saved", True)
+        .is_("deleted_at", "null")
+        .order("created_at", desc=True)
         .execute()
     )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="file_mode record not found.")
-    print(f"[SYNC] ✅ file_mode updated: {record_id} user={current_user['email']!r}")
-    return {"success": True, "record": res.data[0]}
-
-
-@router.delete("/file-mode/{record_id}", status_code=200)
-def delete_file_mode(
-    record_id:    str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Soft-delete a file_mode record (sets deleted_at). Data is preserved in Supabase."""
-    supabase = _sb(current_user)
-    res = (
-        supabase.table("file_mode")
-        .update({"deleted_at": _now()})
-        .eq("id", record_id)
-        .eq("user_id", current_user["id"])
-        .execute()
-    )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="file_mode record not found.")
-    print(f"[SYNC] 🗑 file_mode soft-deleted: {record_id} user={current_user['email']!r}")
-    return {"success": True, "id": record_id}
+    items = res.data or []
+    return {"unit_id": unit_id, "items": items, "count": len(items)}
 
 
 # ════════════════════════════════════════════════════════════════
