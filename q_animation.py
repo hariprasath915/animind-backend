@@ -843,8 +843,17 @@ STRICT RULES
 11. glossary: 2–5 genuinely difficult technical terms from THIS problem only, with simple plain-English
     explanations that a high-school student can understand.
 12. Return PURE JSON only — no markdown, no fences, no extra text.
-13. NEVER use LaTeX notation anywhere in step titles, descriptions, or badges. All text must be plain
-    readable Unicode (e.g. use α, ω, m₀, u_min, ×, ·, √, ² — never \\alpha, \\omega, \\frac, etc.)."""
+13. NOTATION STYLE — ACADEMIC / FORMAL (CRITICAL):
+    All symbols in step titles, descriptions, and badges MUST follow academic/print-textbook style:
+    • Greek letters: use Unicode directly — α β γ δ ε η θ κ λ μ ν ξ π ρ σ τ φ χ ψ ω Δ Ω
+      e.g. write η (efficiency), μ (friction coefficient), ρ (density), ω (angular velocity)
+    • Subscripts: use Unicode subscript digits/letters where available — v₀ T₁ R₂ m₀ a_n Fₜ
+    • Superscripts: use Unicode superscript characters — m² m³ v² s⁻¹ rad²
+    • Fractions: write as (numerator)/(denominator) with slash, e.g. (m₀×g)/α, or use ÷ sign
+    • Operators: × (multiply), ÷ (divide), · (dot product), √ (square root), ∑ (sum), ∫ (integral)
+    • Relations: ≥ ≤ ≈ ≠ ∝ ⇒ → ↔ ≠
+    • Style: formal and compact, like a printed LaTeX derivation — no casual abbreviations
+    NEVER use \\alpha, \\omega, \\frac, \\sqrt, $...$, or any LaTeX backslash command."""
 
 
 def analyze_scene(question: str) -> dict:
@@ -1279,30 +1288,83 @@ CRITICAL RULES for applyStep:
 - Progress bar divides by 9 (total scenes), not by 6 (concept steps only).
 
 ============================================================
-NOTATION AND LABELS — MATHEMATICAL PRECISION
+NOTATION AND LABELS — ACADEMIC / FORMAL TYPESETTING
 ============================================================
 
-Always use correct mathematical symbols and notation:
-- Greek letters: Δ (delta), θ (theta), μ (mu), ρ (rho), Ω (omega), α (alpha), β (beta), φ (phi), λ (lambda), ω (angular velocity), π
-- Special: ∞, °, ×, ·, ≈, ≠, ≤, ≥, ∝, √, ∫
-- Subscripts using SVG <tspan baseline-shift="sub" font-size="75%">: v₀, aₓ, T₁, R₂, Fₙ
-- Superscripts using SVG <tspan baseline-shift="super" font-size="75%">: m², m³, v², s⁻¹
-- Units always in roman (non-italic): m, m/s, m/s², kg, N, W, J, Ω, K, °C, Pa, m²
-- Vector notation: add an arrow or bold label, e.g. F⃗, v⃗
-- Example label styles:
-    "v₀ = 20 m/s" not "v0 = 20 m/s"
-    "a = 9.8 m/s²" not "a = 9.8 m/s^2"
-    "ΔT = 120 K" not "DeltaT = 120 K"
-    "R₂ = ?" not "R2 = ?"
-- Keep labels short, readable, and never overlapping.
-- Use high-contrast text (white or light on dark backgrounds, dark on light).
-- Do not invent values. Match the verified solution exactly.
-- OBJECT NAMING IN SVG LABELS: Every SVG label that annotates a physical object or quantity MUST
-  use the REAL NAME and EXACT SYMBOL from the problem (e.g. "Rocket", "u (exhaust speed)", "α kg/s",
-  "m₀ = initial mass"). Never use generic placeholder labels like "object", "param", "value".
-- NEVER USE LaTeX NOTATION in any SVG text element. All math must be plain Unicode SVG text:
+All SVG text labels for mathematical quantities MUST follow academic print-textbook style,
+replicating the look of LaTeX-rendered derivations (Times-like serif feel in content,
+even though SVG uses its own font stack):
+
+FONT FAMILY — Serif / LaTeX-style:
+  - All formula labels and equation text: font-family="'Times New Roman', Georgia, serif"
+  - All annotation labels (object names, units): font-family="'Times New Roman', Georgia, serif"
+  - Variable names in italic feel: use font-style="italic" for single-letter variables (v, F, x, t)
+  - Multi-letter identifiers and units: font-style="normal" (roman), e.g. "sin", "cos", "kg", "m/s"
+  - Operator symbols (×, ·, =, +, −, /, ≥, ≤): font-style="normal", same serif font
+
+NOTATION — Proper math symbols:
+  - Greek letters (full set, use Unicode directly):
+      α (alpha) β (beta) γ (gamma) δ (delta) ε (epsilon) η (eta) θ (theta)
+      κ (kappa) λ (lambda) μ (mu) ν (nu) ξ (xi) π (pi) ρ (rho) σ (sigma)
+      τ (tau) φ (phi) χ (chi) ψ (psi) ω (omega)
+      Δ (Delta) Θ (Theta) Λ (Lambda) Σ (Sigma) Φ (Phi) Ω (Omega)
+  - Subscripts via SVG tspan (preferred for clarity):
+      <tspan baseline-shift="sub" font-size="72%">0</tspan> for v₀, m₀, T₀
+      <tspan baseline-shift="sub" font-size="72%">1</tspan> for T₁, R₁, P₁
+      <tspan baseline-shift="sub" font-size="72%">n</tspan> for F_n, a_n
+      Also acceptable: Unicode subscript digits v₀ m₀ T₁ R₂ where rendering is reliable.
+  - Superscripts via SVG tspan:
+      <tspan baseline-shift="super" font-size="72%">2</tspan> for v², m², r³
+      Also acceptable: Unicode superscripts v² m³ s⁻¹
+  - Fraction bars — STACKED layout (numerator OVER denominator):
+      For important formula labels, render fractions as two-line SVG text:
+        Line 1 (numerator): e.g. "m₀ × g"
+        Line 2 (fraction bar): a <line> element horizontally spanning the label width
+        Line 3 (denominator): e.g. "α"
+      This gives the true printed fraction-bar style, like:
+          m₀g
+          ———   ← horizontal line as fraction bar
+           α
+      For inline labels where stacking is impractical: use (m₀×g)/α
+  - Special operators: × · ÷ √ ∑ ∫ ∂ ∇ ∞ ± ≥ ≤ ≠ ≈ ∝ ⇒
+  - Units in roman (non-italic): kg, m, s, N, W, J, Pa, K, °C, m/s, m/s², Ω, rad
+  - Vector notation: F⃗ v⃗ or bold with stroke, e.g. font-weight="bold"
+
+COLOUR — Black ink on white (high contrast):
+  - ALL formula/equation text: fill="#0f172a" (near-black, like printer ink)
+  - Formula background panels: fill="#ffffff" or fill="#fafafa", stroke="#e2e8f0"
+  - NEVER use coloured text for formula symbols themselves (colour only for arrows/highlights)
+  - Quantity value labels (e.g. "= 981 m/s"): fill="#1e293b"
+  - Units: fill="#334155" (slightly lighter than symbol, still dark)
+
+LAYOUT — Print textbook style:
+  - Equations left-aligned or centred in a white panel with subtle border.
+  - Fraction-bar fractions centred with numerator, bar line, and denominator stacked vertically.
+  - Operator spacing: leave 4–6px gap around ×, =, +, −, ≥.
+  - Do not crowd labels — use leader lines (thin <line> from label to object) when needed.
+  - Important formula panels: a rounded <rect> (rx=8, fill white, stroke #cbd5e1, shadow filter)
+    with the equation rendered inside in serif font — looks like a textbook equation box.
+
+EXAMPLE label styles (CORRECT vs WRONG):
+  CORRECT: font-family="'Times New Roman', serif", font-style="italic" for “v₀ = 20 m/s”
+  WRONG:   font-family="Arial", plain upright text
+  CORRECT: “v₀ = 20 m/s” (Unicode subscript)
+  WRONG:   “v0 = 20 m/s” (plain digit)
+  CORRECT: “ΔT = 120 K”
+  WRONG:   “DeltaT = 120 K”
+  CORRECT: “R₂ = ?”
+  WRONG:   “R2 = ?”
+  CORRECT: fraction bar rendered as stacked SVG with <line> separator
+  WRONG:   a/b written as a single flat text string (when a panel is available)
+
+- Keep labels concise and never overlapping.
+- Do not invent values — match the verified solution exactly.
+- OBJECT NAMING: Every SVG label MUST use the REAL NAME and EXACT SYMBOL from the problem
+  (e.g. "Rocket", "u (exhaust speed)", "α kg/s", "m₀ = initial mass").
+  NEVER use generic placeholder labels like "object", "param", "value".
+- NEVER USE LaTeX backslash commands in any SVG text element:
   Use α, ω, ², ·, ×, √, ∞ — NEVER \\alpha, \\omega, \\frac{}{}, \\left, \\right, $...$, etc.
-  LaTeX in SVG renders as raw text and breaks the visualization.
+  LaTeX in SVG renders as raw broken text — it completely breaks the visualization.
 
 ============================================================
 REALISM BY SUBJECT — DETAILED DRAWING GUIDE
@@ -4093,140 +4155,6 @@ _CUSTOMIZE_CSS = """
 """
 
 
-# ---------------------------------------------------------------------------
-# Customize CORE (open / close) -- static, generated-content-free
-# ---------------------------------------------------------------------------
-# ROOT-CAUSE FIX (architecture).  The Customize button used to be wired inside
-# the SAME <script> as Gemini-generated code (compute_js, question template,
-# given-list ...).  A JS *parse* error anywhere in that block -- e.g. the
-# malformed _escRe regex that shipped in earlier builds -- rejects the whole
-# script, so no listener is ever attached and the button silently dies.
-#
-# This core script contains NO interpolated content and NO backslashes, so it
-# cannot be broken by model output or by Python/HTML/JS escape-level mistakes.
-# It:
-#   * registers ONE delegated, capture-phase click handler on `document`
-#     synchronously at parse time  -> no DOMContentLoaded/timing dependency,
-#     survives the button being re-rendered, and cannot be starved by another
-#     handler calling stopPropagation() on the button or its ancestors;
-#   * owns open/close/Escape/backdrop/close-button behaviour (single owner ->
-#     no duplicate listeners);
-#   * exposes window.qanimCustomize.{open,close,isOpen} and fires
-#     'qanim:customize-open' / 'qanim:customize-close' so the (isolated)
-#     logic script can refresh its preview without owning the open path.
-_CUSTOMIZE_CORE_JS = """
-(function(){
-  'use strict';
-  if(window.qanimCustomize) return;
-  var OPEN = 'open';
-  function byId(id){ return document.getElementById(id); }
-  function fire(name){
-    try { document.dispatchEvent(new CustomEvent(name)); } catch(e) {}
-  }
-  function isOpen(){
-    var p = byId('customize-panel');
-    return !!(p && p.classList.contains(OPEN));
-  }
-  function open(){
-    var p = byId('customize-panel'), bd = byId('customize-backdrop');
-    if(!p) return false;
-    if(bd) bd.classList.add(OPEN);
-    p.classList.add(OPEN);
-    p.setAttribute('aria-hidden', 'false');
-    fire('qanim:customize-open');
-    return true;
-  }
-  function close(){
-    var p = byId('customize-panel'), bd = byId('customize-backdrop');
-    if(bd) bd.classList.remove(OPEN);
-    if(p){
-      p.classList.remove(OPEN);
-      p.setAttribute('aria-hidden', 'true');
-    }
-    fire('qanim:customize-close');
-  }
-  window.qanimCustomize = { open: open, close: close, isOpen: isOpen };
-  document.addEventListener('click', function(e){
-    var t = e.target;
-    if(!t || typeof t.closest !== 'function') return;
-    if(t.closest('#customize-ctrl-btn')){ open(); return; }
-    if(t.closest('#cust-close-btn') || t.closest('[data-cust-close]') || t.id === 'customize-backdrop'){
-      close();
-    }
-  }, true);
-  document.addEventListener('keydown', function(e){
-    if((e.key === 'Escape' || e.key === 'Esc') && isOpen()) close();
-  });
-})();
-"""
-_CUSTOMIZE_CORE_SCRIPT = '<script id="qanim-js-customize-core">' + _CUSTOMIZE_CORE_JS + '</script>\n'
-
-
-def _js_parses(code: str):
-    """Return True/False if Node can/cannot parse `code`; None if Node is unavailable."""
-    import subprocess
-    import tempfile
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".js", delete=False, encoding="utf-8"
-        ) as tf:
-            tf.write(code)
-            tmp_path = tf.name
-        r = subprocess.run(["node", "--check", tmp_path],
-                           capture_output=True, text=True, timeout=10)
-        return r.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    finally:
-        if tmp_path:
-            try:
-                _os.remove(tmp_path)
-            except OSError:
-                pass
-
-
-def _normalise_customize_fields(fields):
-    """Make every Customize field safe to emit into HTML ids and JS identifiers.
-
-    Returns (clean_fields, id_map) where id_map maps each ORIGINAL id/symbol to
-    the final id.  Guarantees, for every field: id matches [A-Za-z_][A-Za-z0-9_]*,
-    ids are unique (=> no duplicate DOM ids / object keys), default is a finite
-    float, and non-dict entries are dropped instead of crashing the build.
-    """
-    import math
-    clean, seen, id_map = [], set(), {}
-    for f in (fields if isinstance(fields, list) else []):
-        if not isinstance(f, dict):
-            continue
-        raw_id = str(f.get("id") or f.get("symbol") or "v")
-        fid = re.sub(r"[^A-Za-z0-9_]", "_", raw_id).strip("_") or "v"
-        if fid[0].isdigit():
-            fid = "v_" + fid
-        base, n = fid, 2
-        while fid in seen:
-            fid = f"{base}_{n}"
-            n += 1
-        seen.add(fid)
-        try:
-            d = float(f.get("default"))
-        except (TypeError, ValueError):
-            d = 0.0
-        if not math.isfinite(d):
-            d = 0.0
-        nf = dict(f)
-        nf["id"] = fid
-        nf["default"] = d
-        id_map.setdefault(raw_id, fid)
-        clean.append(nf)
-    return clean, id_map
-
-
-def _num_str(d: float) -> str:
-    """Render a float default for an <input value=...> ('1.0' -> '1', 0.5 -> '0.5')."""
-    return str(int(d)) if float(d).is_integer() and abs(d) < 1e15 else repr(float(d))
-
-
 def _selfcheck_customize_js(customize_html: str) -> None:
     """Guard rail against the class of bug that has twice silently disabled
     the Customize button: a malformed backslash escape inside a template
@@ -4244,43 +4172,33 @@ def _selfcheck_customize_js(customize_html: str) -> None:
     import subprocess
     import tempfile
 
-    # Each <script> is checked ON ITS OWN (the browser parses them independently,
-    # so this mirrors real behaviour and names the exact offending block).
-    blocks = re.findall(r"<script([^>]*)>(.*?)</script>", customize_html, re.S)
-    if not blocks:
+    scripts = re.findall(r"<script[^>]*>(.*?)</script>", customize_html, re.S)
+    if not scripts:
         return
-    if "qanim-js-customize-core" not in customize_html:
-        raise RuntimeError(
-            "Customize core script missing from generated panel -- the Customize "
-            "button would have no click handler."
-        )
+    combined = "\n\n".join(scripts)
     tmp_path = None
     try:
-        for attrs, body in blocks:
-            m_id = re.search(r'id="([^"]+)"', attrs)
-            sid = m_id.group(1) if m_id else "(anonymous)"
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".js", delete=False, encoding="utf-8"
-            ) as tf:
-                tf.write(body)
-                tmp_path = tf.name
-            result = subprocess.run(
-                ["node", "--check", tmp_path],
-                capture_output=True, text=True, timeout=10,
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write(combined)
+            tmp_path = tf.name
+        result = subprocess.run(
+            ["node", "--check", tmp_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            print(
+                "[QAnim]  X [customize] Generated Customize panel JS failed a syntax "
+                f"check — the Customize button would silently stop working. Details:\n"
+                f"{result.stderr}"
             )
-            _os.remove(tmp_path)
-            tmp_path = None
-            if result.returncode != 0:
-                print(
-                    f"[QAnim]  X [customize] <script id={sid!r}> failed a syntax check "
-                    f"-- Details:\n{result.stderr}"
-                )
-                raise RuntimeError(
-                    f"Customize script {sid!r} failed `node --check`. "
-                    "See the [QAnim] X [customize] log line above for the exact "
-                    "syntax error and line number."
-                )
-        print("[QAnim] OK [customize] All Customize scripts passed syntax check")
+            raise RuntimeError(
+                "Customize panel JS failed `node --check` — refusing to ship a build "
+                "with a broken Customize button. See the [QAnim] X [customize] log "
+                "line above for the exact syntax error and line number."
+            )
+        print("[QAnim] OK [customize] Customize panel JS passed syntax check")
     except FileNotFoundError:
         print(
             "[QAnim]  ! [customize] Node.js not found in this environment — skipped "
@@ -4540,11 +4458,6 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
                 " derived: {} };"
             )
 
-    # ── Sanitize/dedupe field ids, force finite defaults, drop junk entries ──
-    # (primary Gemini path previously used raw ids -> invalid JS identifiers,
-    # duplicate DOM ids, or 'nan'/'inf' literals in the generated script).
-    fields, _id_map = _normalise_customize_fields(fields)
-
     if not fields:
         # No fields after all synthesis attempts — return CSS + a minimal panel
         # that shows a friendly message. The button always exists in the DOM, so
@@ -4572,25 +4485,44 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     </div>
   </div>
   <div class="cust-footer" style="justify-content:center;">
-    <button class="cust-btn-reset" id="cust-btn-reset" data-cust-close>Close</button>
+    <button class="cust-btn-reset" id="cust-btn-reset" onclick="
+      var p=document.getElementById('customize-panel');
+      var b=document.getElementById('customize-backdrop');
+      if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+      if(b)b.classList.remove('open');
+    ">Close</button>
   </div>
 </div>
+<script id="qanim-js-customize-nf">
+(function initCustomize(){
+  'use strict';
+  if(window.__qanimCustomizeInit)return;
+  window.__qanimCustomizeInit=true;
+  function _el(id){return document.getElementById(id);}
+  function openPanel(){
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.add('open');
+    if(p){p.classList.add('open');p.setAttribute('aria-hidden','false');}
+  }
+  function closePanel(){
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.remove('open');
+    if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+  }
+  function onReady(fn){
+    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);
+    else setTimeout(fn,0);
+  }
+  onReady(function(){
+    var ob=_el('customize-ctrl-btn');if(ob)ob.addEventListener('click',openPanel);
+    var cb=_el('cust-close-btn');if(cb)cb.addEventListener('click',closePanel);
+    var bd=_el('customize-backdrop');if(bd)bd.addEventListener('click',closePanel);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closePanel();});
+  });
+})();
+</script>
 """
-        return _CUSTOMIZE_CSS + _CUSTOMIZE_CORE_SCRIPT + _no_fields_panel
-
-    # ── Isolate the model-written compute body ────────────────────────────────
-    # The body is emitted in its OWN <script> so a syntax error in it can only
-    # disable live answer preview/Apply -- never the Customize open path.  When
-    # Node is available we also pre-validate it here and degrade to a safe stub.
-    alias_lines = ""
-    for _raw, _new in _id_map.items():
-        if _raw != _new:
-            _lit = json.dumps(_raw).replace("</", "<\\/")
-            alias_lines += "vals[" + _lit + "] = vals." + _new + ";\n  "
-    if _js_parses("(function(vals,_fmt,_round){\n" + alias_lines + compute_js_body + "\n});") is False:
-        print("[QAnim]  ! [customize] compute_js failed a syntax check -- "
-              "using a null-compute stub; Customize will still open and edit values.")
-        compute_js_body = "return null;"
+        return _CUSTOMIZE_CSS + _no_fields_panel
 
     # Build field inputs HTML
     fields_html = ""
@@ -4599,7 +4531,7 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
         sym   = _he(str(f.get("symbol", fid)))
         label = _he(str(f.get("label", sym)))
         unit  = _he(str(f.get("unit",  "")))
-        default_val = _num_str(f.get("default", 0.0))
+        default_val = f.get("default", 0)
         fields_html += f"""      <div class="cust-field">
         <label><span class="cust-sym">{sym}</span> {label}</label>
         <input type="number" id="cust-field-{fid}" value="{default_val}" step="any">
@@ -4638,11 +4570,6 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     if question_template:
         # Escape backtick/backslash in question_template for JS template literal
         qt_js_safe = question_template.replace('\\', '\\\\').replace('`', "\\`")
-        # Placeholders written with an ORIGINAL id that was renamed by
-        # _normalise_customize_fields -> point them at the final id first.
-        for _raw, _new in _id_map.items():
-            if _raw != _new:
-                qt_js_safe = qt_js_safe.replace('{' + _raw + '}', '{' + _new + '}')
         # Replace {id} with ${_fmt(vals.id)} for JS template literals
         for f in fields:
             fid = f.get("id", "v")
@@ -4744,13 +4671,6 @@ __PREVIEW_HTML__
   </div>
 </div>
 
-<script id="qanim-js-customize-compute">
-window.__qanimCustomizeCompute = function(vals, _fmt, _round){
-  __ALIAS_LINES__
-  __COMPUTE_JS_BODY__
-};
-</script>
-
 <script id="qanim-js-customize">
 (function initCustomize(){
   'use strict';
@@ -4788,14 +4708,8 @@ window.__qanimCustomizeCompute = function(vals, _fmt, _round){
     return _round(v, 4) + '';
   }
 
-  // The model-written body lives in its own <script> (qanim-js-customize-compute)
-  // so a syntax error there cannot prevent this script -- or, more importantly,
-  // the Customize open handler in qanim-js-customize-core -- from running.
   function compute(vals){
-    try {
-      if(typeof window.__qanimCustomizeCompute !== 'function') return null;
-      return window.__qanimCustomizeCompute(vals, _fmt, _round);
-    }
+    try { __COMPUTE_JS_BODY__ }
     catch(e){ console.warn('[QAnim Customize] compute error:', e); return null; }
   }
 
@@ -4990,13 +4904,18 @@ window.__qanimCustomizeCompute = function(vals, _fmt, _round){
     }
   }
 
-  // Open/close is owned by qanim-js-customize-core (single owner, delegated
-  // listener).  This script only reacts to it, so there is exactly one
-  // open handler and no duplicate listeners.
-  function closePanel(){
-    if(window.qanimCustomize) window.qanimCustomize.close();
+  function openPanel(){
+    var bd = _el('customize-backdrop'), p = _el('customize-panel');
+    if(bd){ bd.classList.add('open'); }
+    if(p){ p.classList.add('open'); p.setAttribute('aria-hidden','false'); }
+    updatePreview();
   }
-  document.addEventListener('qanim:customize-open', updatePreview);
+
+  function closePanel(){
+    var bd = _el('customize-backdrop'), p = _el('customize-panel');
+    if(bd){ bd.classList.remove('open'); }
+    if(p){ p.classList.remove('open'); p.setAttribute('aria-hidden','true'); }
+  }
 
   function onReady(fn){
     if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
@@ -5004,7 +4923,13 @@ window.__qanimCustomizeCompute = function(vals, _fmt, _round){
   }
 
   onReady(function(){
-    // (open / close / backdrop / Escape are handled by qanim-js-customize-core)
+    // Wire close/backdrop
+    var cb = _el('cust-close-btn'); if(cb) cb.addEventListener('click', closePanel);
+    var bd = _el('customize-backdrop'); if(bd) bd.addEventListener('click', closePanel);
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closePanel(); });
+
+    // Wire open button
+    var ob = _el('customize-ctrl-btn'); if(ob) ob.addEventListener('click', openPanel);
 
     // Wire input fields — live preview on every keystroke
     Object.keys(DEFAULTS).forEach(function(id){
@@ -5063,14 +4988,13 @@ window.__qanimCustomizeCompute = function(vals, _fmt, _round){
             .replace("__FIELDS_HTML__",      fields_html)
             .replace("__PREVIEW_HTML__",     preview_html)
             .replace("__DEFAULTS_JS__",      defaults_js)
-            .replace("__ALIAS_LINES__",      alias_lines)
             .replace("__COMPUTE_JS_BODY__",  compute_js_body)
             .replace("__READ_LINES__",       read_lines)
             .replace("__UNITS_JS__",         units_js)
             .replace("__GIVEN_ENTRIES_JS__", given_entries_js)
             .replace("__QUESTION_TMPL_JS__", question_tmpl_js)
         )
-        return _CUSTOMIZE_CSS + _CUSTOMIZE_CORE_SCRIPT + panel_html
+        return _CUSTOMIZE_CSS + panel_html
 
     except Exception as _fstr_err:
         # RC#2: A bare {word} in Gemini-sourced content (compute_js_body,
@@ -5109,11 +5033,44 @@ window.__qanimCustomizeCompute = function(vals, _fmt, _round){
     </div>
   </div>
   <div class="cust-footer" style="justify-content:center;">
-    <button class="cust-btn-reset" id="cust-btn-reset" data-cust-close>Close</button>
+    <button class="cust-btn-reset" id="cust-btn-reset" onclick="
+      var p=document.getElementById('customize-panel');
+      var b=document.getElementById('customize-backdrop');
+      if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+      if(b)b.classList.remove('open');
+    ">Close</button>
   </div>
 </div>
+<script id="qanim-js-customize-fb">
+(function initCustomize(){
+  'use strict';
+  if(window.__qanimCustomizeInit)return;
+  window.__qanimCustomizeInit=true;
+  function _el(id){return document.getElementById(id);}
+  function openPanel(){
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.add('open');
+    if(p){p.classList.add('open');p.setAttribute('aria-hidden','false');}
+  }
+  function closePanel(){
+    var bd=_el('customize-backdrop'),p=_el('customize-panel');
+    if(bd)bd.classList.remove('open');
+    if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+  }
+  function onReady(fn){
+    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);
+    else setTimeout(fn,0);
+  }
+  onReady(function(){
+    var ob=_el('customize-ctrl-btn');if(ob)ob.addEventListener('click',openPanel);
+    var cb=_el('cust-close-btn');if(cb)cb.addEventListener('click',closePanel);
+    var bd=_el('customize-backdrop');if(bd)bd.addEventListener('click',closePanel);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closePanel();});
+  });
+})();
+</script>
 """
-        return _CUSTOMIZE_CSS + _CUSTOMIZE_CORE_SCRIPT + _fb_panel
+        return _CUSTOMIZE_CSS + _fb_panel
 
 
 # ===========================================================================
@@ -5198,12 +5155,6 @@ def validate_final_html(html: str) -> None:
         "step-label",
         "step-bar",
         "btn-prev",
-        # Customize chain: button -> core handler -> panel -> backdrop -> close
-        "customize-ctrl-btn",
-        "customize-panel",
-        "customize-backdrop",
-        "cust-close-btn",
-        "qanim-js-customize-core",
     ]
     required_strings = [
         "Step 7",
@@ -5215,7 +5166,6 @@ def validate_final_html(html: str) -> None:
         "qanim_showScene7",
         "qanim_showScene9",
         "qanim_goToPrevScene",
-        "window.qanimCustomize",
     ]
     missing = []
     for rid in required_ids:
@@ -5224,13 +5174,6 @@ def validate_final_html(html: str) -> None:
     for rs in required_strings:
         if rs not in html:
             missing.append(f'Missing string: {rs!r}')
-    # Duplicate-ID guard for the Customize chain: a second element with the same
-    # id would make getElementById()/closest() target the wrong node.
-    for cid in ("customize-ctrl-btn", "customize-panel", "customize-backdrop",
-                "cust-close-btn", "qanim-js-customize-core"):
-        n = html.count(f'id="{cid}"')
-        if n > 1:
-            missing.append(f'Duplicate id="{cid}" ({n} occurrences)')
     if missing:
         raise ValueError("Final HTML validation failed:\n  " + "\n  ".join(missing))
 
