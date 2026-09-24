@@ -19,6 +19,18 @@ PURPOSE
       model understands real instrument / diagram aesthetics before
       generating the simulation
 
+ROOT CAUSE FIX (v2.1.7) -- dead Play button + dead tutorial:
+  Generated scripts called bindSlider() (which fires onChange synchronously) before
+  `const ctx` was declared, so draw() threw a temporal-dead-zone ReferenceError.  The
+  v2.1 try/catch "error boundary" then (a) swallowed the error -- its fallback element never
+  existed -- and (b) turned every declaration into block scope, so togglePlay() and all
+  later listener wiring (Play, Reset, tutorial, "?" button, launch timer) never ran.
+  Fixes: no more try{} wrapper (legacy wrappers are stripped); a real JS lexer finds and
+  hoists TDZ hazards for ANY variable (not just `playing`); a visible non-swallowing error
+  banner; a canvas shim resolving var(--x) colours; the tutorial engine is now injected by
+  Python (deterministic, independent of the model's script); the prompt teaches an
+  A/B/init()/bootstrap script architecture, addEventListener-only wiring and setTransform().
+
 ROOT CAUSE FIX (v2.1.6):
   Google's own API error message confirmed:
   'This model models/gemini-2.5-pro is no longer available to new users.
@@ -205,6 +217,24 @@ class GenerationValidator:
         return h
 
     @classmethod
+    def lint(cls, html):
+        """Non-fatal structural warnings about patterns that historically broke interactivity."""
+        out = []
+        if re.search(r'<[a-z][^>]*\son(?:click|input|change|keydown|pointerdown|mousedown)\s*=', html, re.IGNORECASE):
+            out.append("Inline on*= handler attributes found -- handlers should use addEventListener inside init()")
+        for m in HtmlSanitizer._SCRIPT_RE.finditer(html):
+            if not HtmlSanitizer._is_model_js(m.group(1)):
+                continue
+            body = m.group(2)
+            if JsToolkit.has_tdz_hazard(body):
+                out.append("Unresolved temporal-dead-zone hazard remains in a script")
+            if re.search(r'^\s*try\s*\{', body):
+                out.append("Whole script is wrapped in try{} -- declarations become block-scoped")
+        if re.search(r'\.scale\(\s*dpr\s*,\s*dpr\s*\)', html):
+            out.append("ctx.scale(dpr, dpr) found -- use setTransform")
+        return out
+
+    @classmethod
     def validate(cls, html, require_svg=False, require_canvas=False):
         if not html or not html.strip():
             raise ValidationError("simulation_code is empty")
@@ -229,10 +259,11 @@ class GenerationValidator:
         for pattern, reason in cls.DANGEROUS_PATTERNS:
             if re.search(pattern, html, re.IGNORECASE):
                 SimLogger.warn("Validator", f"Dangerous pattern: {reason}")
-        if "tut-root" not in html or "TUT_STEPS" not in html:
-            SimLogger.warn("Validator", "Onboarding tutorial system missing or incomplete "
-                                         "(no #tut-root / TUT_STEPS found) -- generation did "
-                                         "not follow the required onboarding design pattern")
+        if "tut-root" not in html:
+            SimLogger.warn("Validator", "Onboarding tutorial missing (no #tut-root) -- "
+                                         "TutorialEngine.inject() did not run or was skipped")
+        for w in cls.lint(html):
+            SimLogger.warn("Validator", w)
         open_scripts  = len(re.findall(r'<script(?:\s[^>]*)?>',  html, re.IGNORECASE))
         close_scripts = len(re.findall(r'</script>',              html, re.IGNORECASE))
         if open_scripts != close_scripts:
@@ -242,9 +273,910 @@ class GenerationValidator:
 
 
 # ===========================================================================
+#  MODULE 2b -- JsToolkit  (tiny JS lexer + top-level statement analysis)
+# ===========================================================================
+# Not a JS parser.  It understands exactly enough of the language to:
+#   * tell code apart from comments / strings / template literals / regex
+#     literals (so a stray apostrophe in a comment can never corrupt code)
+#   * split a script into TOP-LEVEL statements
+#   * find and repair temporal-dead-zone (TDZ) hazards: a top-level statement
+#     that (directly or through function bodies) touches a let/const/class
+#     which is declared LATER in the file.
+# Every entry point fails SAFE: if anything looks unfamiliar it returns the
+# input unchanged instead of guessing.
+# ===========================================================================
+class JsToolkit:
+    _PUNCT = sorted([
+        '>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??=',
+        '=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '+=', '-=',
+        '*=', '/=', '%=', '&=', '|=', '^=', '**', '<<', '>>'], key=len, reverse=True)
+    _ID_RE  = re.compile(r'[A-Za-z_$][\w$]*')
+    _NUM_RE = re.compile(r'(?:0[xXbBoO][0-9a-fA-F_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?)n?')
+    _REGEX_AFTER_KW = {'return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw',
+                       'new', 'else', 'do', 'instanceof', 'yield', 'await'}
+    # tokens after which a NEWLINE does not end a statement
+    _CONT_PREV = {'=', '+', '-', '*', '/', '%', '**', '&', '|', '^', '&&', '||', '??', '!', '~',
+                  '<', '>', '<=', '>=', '==', '!=', '===', '!==', '?', ':', ',', '.', '?.', '=>',
+                  '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**=', '<<=', '>>=', '>>>=',
+                  '&&=', '||=', '??=', '<<', '>>', '>>>', '...',
+                  'const', 'let', 'var', 'new', 'typeof', 'in', 'of', 'instanceof', 'delete',
+                  'void', 'await', 'yield', 'else', 'do', 'case', 'extends'}
+    # tokens that, at the start of the next line, continue the previous statement
+    _CONT_NEXT = {'.', '?.', ',', '(', '[', '=', '+', '-', '*', '/', '%', '**', '&', '|', '^',
+                  '&&', '||', '??', '?', ':', '<', '>', '<=', '>=', '==', '!=', '===', '!==',
+                  '=>', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', 'in', 'instanceof', 'of'}
+
+    # ------------------------------------------------------------------ lexer
+    @classmethod
+    def _scan_string(cls, s, i, n, max_raw_nl):
+        q, j, raw = s[i], i + 1, 0
+        while j < n:
+            c = s[j]
+            if c == '\\':
+                j += 2
+                continue
+            if c == q:
+                return j + 1
+            if c == '\n':
+                raw += 1
+                if raw > max_raw_nl:
+                    return None
+            j += 1
+        return None
+
+    @classmethod
+    def _scan_regex(cls, s, i, n):
+        j, in_cls = i + 1, False
+        while j < n:
+            c = s[j]
+            if c == '\n':
+                return None
+            if c == '\\':
+                j += 2
+                continue
+            if in_cls:
+                if c == ']':
+                    in_cls = False
+            elif c == '[':
+                in_cls = True
+            elif c == '/':
+                j += 1
+                while j < n and s[j].isalpha():
+                    j += 1
+                return j
+            j += 1
+        return None
+
+    @classmethod
+    def lex(cls, s, i=0, stop_at_close_brace=False, max_raw_nl=3):
+        """
+        Returns (tokens, end_index).  token = (kind, start, end, inner)
+        kinds: ws nl comment str tpl regex id num punct.  `inner` is only used
+        by 'tpl' (tokens found inside ${...}) and by comments containing a
+        newline (kind 'comment_nl').
+        """
+        n, toks, prev, depth = len(s), [], None, 0
+
+        def regex_ok(p):
+            if p is None:
+                return True
+            k, t = p
+            if k == 'id':
+                return t in cls._REGEX_AFTER_KW
+            if k in ('num', 'str', 'tpl', 'regex'):
+                return False
+            return t not in (')', ']', '}', '++', '--')
+
+        while i < n:
+            c = s[i]
+            if c == '\n':
+                toks.append(('nl', i, i + 1, None)); i += 1; continue
+            if c.isspace():
+                j = i + 1
+                while j < n and s[j].isspace() and s[j] != '\n':
+                    j += 1
+                toks.append(('ws', i, j, None)); i = j; continue
+            if c == '/' and i + 1 < n and s[i + 1] == '/':
+                j = s.find('\n', i)
+                j = n if j == -1 else j
+                toks.append(('comment', i, j, None)); i = j; continue
+            if c == '/' and i + 1 < n and s[i + 1] == '*':
+                j = s.find('*/', i + 2)
+                j = n if j == -1 else j + 2
+                toks.append(('comment_nl' if '\n' in s[i:j] else 'comment', i, j, None)); i = j; continue
+            if c in '\'"':
+                j = cls._scan_string(s, i, n, max_raw_nl)
+                if j is not None:
+                    toks.append(('str', i, j, None)); prev = ('str', s[i:j]); i = j; continue
+                toks.append(('punct', i, i + 1, None)); prev = ('punct', c); i += 1; continue
+            if c == '`':
+                j, inner, ok = i + 1, [], True
+                while j < n:
+                    d = s[j]
+                    if d == '\\':
+                        j += 2; continue
+                    if d == '`':
+                        break
+                    if d == '$' and j + 1 < n and s[j + 1] == '{':
+                        sub, k = cls.lex(s, j + 2, True, max_raw_nl)
+                        inner.extend(sub); j = k + 1; continue
+                    j += 1
+                else:
+                    ok = False
+                if ok:
+                    toks.append(('tpl', i, j + 1, inner)); prev = ('tpl', ''); i = j + 1; continue
+                toks.append(('punct', i, i + 1, None)); prev = ('punct', c); i += 1; continue
+            if c == '/' and regex_ok(prev):
+                j = cls._scan_regex(s, i, n)
+                if j is not None:
+                    toks.append(('regex', i, j, None)); prev = ('regex', ''); i = j; continue
+            m = cls._ID_RE.match(s, i)
+            if m:
+                toks.append(('id', i, m.end(), None)); prev = ('id', m.group()); i = m.end(); continue
+            m = cls._NUM_RE.match(s, i) if (c.isdigit() or (c == '.' and i + 1 < n and s[i + 1].isdigit())) else None
+            if m and m.end() > i:
+                toks.append(('num', i, m.end(), None)); prev = ('num', ''); i = m.end(); continue
+            op = next((p for p in cls._PUNCT if s.startswith(p, i)), c)
+            if stop_at_close_brace:
+                if op == '{':
+                    depth += 1
+                elif op == '}':
+                    if depth == 0:
+                        return toks, i
+                    depth -= 1
+            toks.append(('punct', i, i + len(op), None)); prev = ('punct', op); i += len(op)
+        return toks, i
+
+    # ------------------------------------------------- newline-in-string fix
+    @classmethod
+    def fix_raw_newlines_in_strings(cls, s):
+        """Escape raw newlines/tabs that sit inside '...' / "..." literals (code only)."""
+        toks, _ = cls.lex(s)
+        out, last, changed = [], 0, False
+
+        def walk(tl):
+            for k, a, b, inner in tl:
+                if k == 'str':
+                    body = s[a:b]
+                    if '\n' in body or '\t' in body:
+                        fixed = body.replace('\\\n', '\x00').replace('\n', '\\n').replace('\t', '\\t').replace('\x00', '\\\n')
+                        yield a, b, fixed
+                elif k == 'tpl' and inner:
+                    yield from walk(inner)
+
+        for a, b, fixed in sorted(walk(toks)):
+            out.append(s[last:a]); out.append(fixed); last = b; changed = True
+        out.append(s[last:])
+        return ''.join(out), changed
+
+    # ------------------------------------------------- statement splitting
+    _CONTROL = {'if', 'for', 'while', 'switch', 'try', 'do', 'with'}
+
+    @classmethod
+    def _flatten_ids(cls, tl, s):
+        """identifier names used (not property names) in a token list, incl. template ${}."""
+        out, prev = set(), None
+        for k, a, b, inner in tl:
+            if k in ('ws', 'nl', 'comment', 'comment_nl'):
+                continue
+            if k == 'id' and not (prev and prev[0] == 'punct' and prev[1] in ('.', '?.')):
+                out.add(s[a:b])
+            elif k == 'tpl' and inner:
+                out |= cls._flatten_ids(inner, s)
+            prev = (k, s[a:b] if k == 'punct' else '')
+        return out
+
+    @classmethod
+    def split_statements(cls, s, toks):
+        """
+        -> list of dicts {start,end,kind,names,ids,first} or None (bail out).
+        kind: FUNC | CLASS | DECL | EXEC
+        """
+        sig, nl_flag, pending_nl = [], [], False
+        for t in toks:
+            if t[0] in ('ws', 'comment'):
+                continue
+            if t[0] in ('nl', 'comment_nl'):
+                pending_nl = True
+                continue
+            sig.append(t); nl_flag.append(pending_nl); pending_nl = False
+        n, stmts, i = len(sig), [], 0
+        text = lambda t: s[t[1]:t[2]]
+
+        while i < n:
+            first = text(sig[i]) if sig[i][0] in ('id', 'punct') else ''
+            second = text(sig[i + 1]) if i + 1 < n else ''
+            if first in ('import', 'export') or (sig[i][0] == 'id' and second == ':' and first not in ('default',)):
+                return None
+            if sig[i][0] == 'punct' and first in (')', ']', '}', ',', '.', '=', '?', ':'):
+                return None
+            is_async_fn = first == 'async' and second == 'function'
+            control = first in cls._CONTROL
+            block_style = control or first in ('function', 'class', '{') or is_async_fn
+            j, depth, need_brace, prev_kw = i, 0, False, ""
+            end = None
+            while j < n:
+                k = sig[j][0]; t = text(sig[j]) if k in ('id', 'punct') else ''
+                if depth == 0 and j > i and nl_flag[j] and not block_style:
+                    p = sig[j - 1]; pt = text(p) if p[0] in ('id', 'punct') else ''
+                    nxt_cont = (t in cls._CONT_NEXT and k in ('punct', 'id')) or k == 'tpl'
+                    if pt not in cls._CONT_PREV and not nxt_cont and t not in ('else', 'catch', 'finally'):
+                        end = j; break
+                if need_brace and depth == 0:
+                    if t == '{':
+                        need_brace = False
+                    elif t == 'if' and prev_kw == 'else':
+                        need_brace = False
+                    else:
+                        return None            # un-braced control-flow body: don't touch
+                if k == 'punct' and t in ('(', '[', '{'):
+                    depth += 1
+                elif k == 'punct' and t in (')', ']', '}'):
+                    depth -= 1
+                    if depth < 0:
+                        return None
+                    if depth == 0:
+                        if t == ')' and control:
+                            need_brace = True
+                        if t == '}' and block_style:
+                            nxt = text(sig[j + 1]) if j + 1 < n else ''
+                            cont = (first == 'if' and nxt == 'else') or (first == 'try' and nxt in ('catch', 'finally')) \
+                                   or (first == 'do' and nxt == 'while')
+                            # `else`/`catch`/`finally` chains of an if/try that started earlier in this statement
+                            if not cont and control and nxt in ('else', 'catch', 'finally') and first in ('if', 'try'):
+                                cont = True
+                            if not cont:
+                                end = j + 1; break
+                            if first == 'do' and nxt == 'while':
+                                block_style = False; first = 'do-tail'
+                elif k == 'punct' and t == ';' and depth == 0:
+                    end = j + 1; break
+                prev_kw = t if k == 'id' else ''
+                if depth == 0 and k == 'id' and t in ('else', 'try', 'finally', 'do') and control:
+                    need_brace = True
+                    if t == 'else':
+                        prev_kw = 'else'
+                j += 1
+            if end is None:
+                end = j
+            if need_brace and end >= n and control:
+                return None
+            toks_stmt = sig[i:end]
+            st = {'start': toks_stmt[0][1], 'end': toks_stmt[-1][2], 'first': first,
+                  'kind': 'EXEC', 'names': set(), 'ids': set(), 'has_init': True}
+            st['ids'] = cls._flatten_ids(toks_stmt, s)
+            if first == 'function' or is_async_fn:
+                st['kind'] = 'FUNC'
+                idx = 1 if first == 'function' else 2
+                if idx < len(toks_stmt) and text(toks_stmt[idx]) == '*':
+                    idx += 1
+                if idx < len(toks_stmt) and toks_stmt[idx][0] == 'id':
+                    st['names'] = {text(toks_stmt[idx])}
+            elif first == 'class':
+                st['kind'] = 'CLASS'
+                if len(toks_stmt) > 1 and toks_stmt[1][0] == 'id':
+                    st['names'] = {text(toks_stmt[1])}
+            elif first in ('let', 'const', 'var') and sig[i][0] == 'id':
+                st['kind'] = 'DECL'
+                st['names'], st['has_init'] = cls._decl_names(s, toks_stmt)
+                st['decl_kw'] = first
+            stmts.append(st)
+            i = end
+        return stmts
+
+    @classmethod
+    def _decl_names(cls, s, tl):
+        """names bound by a let/const/var statement, and whether any declarator has an initializer."""
+        names, has_init, depth, expect_target, in_pat = set(), False, 0, True, False
+        pat_depth = 0
+        for idx in range(1, len(tl)):
+            k, a, b, _ = tl[idx]
+            t = s[a:b] if k in ('id', 'punct') else ''
+            if k == 'punct' and t in ('(', '[', '{'):
+                if expect_target and depth == 0 and t in ('[', '{'):
+                    in_pat = True
+                depth += 1; continue
+            if k == 'punct' and t in (')', ']', '}'):
+                depth -= 1
+                if depth == 0:
+                    in_pat = False
+                    expect_target = False
+                continue
+            if depth == 0 and k == 'punct' and t == ',':
+                expect_target = True; continue
+            if depth == 0 and k == 'punct' and t == '=':
+                has_init = True; expect_target = False; continue
+            if depth == 0 and expect_target and k == 'id':
+                names.add(t); expect_target = False; continue
+            if in_pat and k == 'id':
+                nxt = s[tl[idx + 1][1]:tl[idx + 1][2]] if idx + 1 < len(tl) else ''
+                if nxt != ':':
+                    names.add(t)
+        return names, has_init
+
+    # ------------------------------------------------------- TDZ hoisting
+    @classmethod
+    def _find_hazard(cls, stmts):
+        funcs = {}
+        for st in stmts:
+            if st['kind'] == 'FUNC':
+                for nm in st['names']:
+                    funcs[nm] = st['ids']
+        decl_idx = {}
+        for i, st in enumerate(stmts):
+            if st['kind'] == 'CLASS' or (st['kind'] == 'DECL' and (st['decl_kw'] != 'var' or st['has_init'])):
+                for nm in st['names']:
+                    decl_idx.setdefault(nm, i)
+
+        def reach(ids, at):
+            seen, work, hz = set(), list(ids), set()
+            while work:
+                nm = work.pop()
+                if nm in seen:
+                    continue
+                seen.add(nm)
+                if nm in funcs:
+                    work.extend(funcs[nm])
+                di = decl_idx.get(nm)
+                if di is not None:
+                    if di > at:
+                        hz.add(nm)
+                    elif di < at:
+                        work.extend(stmts[di]['ids'])
+            return hz
+
+        for i, st in enumerate(stmts):
+            if st['kind'] == 'FUNC':
+                continue
+            hz = reach(st['ids'] - (st['names'] if st['kind'] in ('DECL', 'CLASS') else set()), i)
+            if not hz:
+                continue
+            move = {decl_idx[h] for h in hz}
+            queue = list(move)
+            while queue:
+                d = queue.pop()
+                for h in reach(stmts[d]['ids'] - stmts[d]['names'], i):
+                    di = decl_idx[h]
+                    if di not in move:
+                        move.add(di); queue.append(di)
+            return i, sorted(move), sorted(hz)
+        return None
+
+    @classmethod
+    def hoist_tdz_declarations(cls, s, max_rounds=10):
+        """
+        Returns (new_source, moved_names).  Moves let/const/class declarations that are
+        referenced (directly or via function bodies) by an EARLIER top-level statement up to
+        just before that statement, so nothing runs against an uninitialised binding.
+        """
+        moved_all = []
+        for _ in range(max_rounds):
+            toks, _end = cls.lex(s)
+            stmts = cls.split_statements(s, toks)
+            if stmts is None:
+                return s, moved_all
+            hz = cls._find_hazard(stmts)
+            if hz is None:
+                return s, moved_all
+            at, move, names = hz
+            e = stmts[at]
+            line_start = s.rfind('\n', 0, e['start']) + 1
+            indent = re.match(r'[ \t]*', s[line_start:e['start']]).group() if s[line_start:e['start']].strip() == '' else ''
+            block = []
+            for mi in move:
+                m = stmts[mi]
+                txt = s[m['start']:m['end']].rstrip()
+                if not txt.endswith(';'):
+                    txt += ';'
+                block.append(indent + txt)
+            insert = (indent + '/* SimEngine: declarations hoisted above first use (avoids temporal-dead-zone errors) */\n'
+                      + '\n'.join(block) + '\n')
+            for mi in sorted(move, reverse=True):
+                m = stmts[mi]
+                a, b = m['start'], m['end']
+                ls = s.rfind('\n', 0, a) + 1
+                if s[ls:a].strip() == '':
+                    a = ls
+                    rest = b
+                    while rest < len(s) and s[rest] in ' \t':
+                        rest += 1
+                    if rest < len(s) and s[rest] == '\n':
+                        b = rest + 1
+                s = s[:a] + s[b:]
+                if a < line_start:
+                    line_start -= (b - a)
+            s = s[:line_start] + insert + s[line_start:]
+            for mi in move:
+                moved_all.extend(sorted(stmts[mi]['names']))
+        return s, moved_all
+
+    @classmethod
+    def has_tdz_hazard(cls, s):
+        toks, _ = cls.lex(s)
+        stmts = cls.split_statements(s, toks)
+        return bool(stmts) and cls._find_hazard(stmts) is not None
+
+
+# ===========================================================================
+#  MODULE 3b -- RuntimeGuard + TutorialEngine  (platform-owned, deterministic)
+# ===========================================================================
+class RuntimeGuard:
+    """
+    Tiny <head> script injected BEFORE the generated code.
+      1. Visible error banner.  It never swallows anything: window 'error' /
+         'unhandledrejection' still reach the console; the banner only makes the
+         failure visible instead of leaving a dead-looking page.
+      2. Canvas colour shim.  Canvas 2D cannot resolve CSS variables, so
+         `ctx.fillStyle = 'var(--red)'` is silently ignored (draws black).  The shim
+         resolves var(--x[, fallback]) at assignment time.
+    """
+    MARK = 'sim-runtime-guard'
+    JS = r"""
+(function () {
+  'use strict';
+  if (window.__simRuntimeGuard) return;
+  window.__simRuntimeGuard = true;
+
+  /* ---------- 1. visible (non-swallowing) error banner ---------- */
+  var box = null, list = null, queue = [];
+  function build() {
+    if (box || !document.body) return;
+    box = document.createElement('div');
+    box.id = 'sim-error-banner';
+    box.setAttribute('role', 'alert');
+    box.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:2147483000;max-height:40vh;overflow:auto;' +
+      'background:#3d0000;border:1px solid #ff5f57;color:#ffd7d4;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;' +
+      'padding:10px 36px 10px 12px;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5);white-space:pre-wrap;display:none';
+    var head = document.createElement('div');
+    head.style.cssText = 'font-weight:700;margin-bottom:4px';
+    head.textContent = 'Simulation error (details also in the browser console)';
+    list = document.createElement('div');
+    var x = document.createElement('button');
+    x.type = 'button'; x.textContent = '\u00d7'; x.setAttribute('aria-label', 'Dismiss error');
+    x.style.cssText = 'position:absolute;top:6px;right:8px;background:none;border:0;color:#ffd7d4;font-size:18px;cursor:pointer';
+    x.addEventListener('click', function () { box.style.display = 'none'; });
+    box.appendChild(head); box.appendChild(list); box.appendChild(x);
+    document.body.appendChild(box);
+    queue.splice(0).forEach(add);
+  }
+  function add(line) {
+    if (!list) { queue.push(line); return; }
+    if (list.childNodes.length >= 5) return;
+    box.style.display = 'block';
+    var d = document.createElement('div'); d.textContent = line; list.appendChild(d);
+  }
+  function report(msg, where) {
+    var line = String(msg) + (where ? '  (' + where + ')' : '');
+    if (!box) { queue.push(line); build(); } else add(line);
+  }
+  window.addEventListener('error', function (e) {
+    var m = (e && e.message) || '';
+    if (/ResizeObserver loop/i.test(m)) return;
+    report(m || 'Script error', e && e.filename ? (e.filename.split('/').pop() || 'inline') + ':' + e.lineno + ':' + e.colno : '');
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason; report('Unhandled promise rejection: ' + (r && r.message ? r.message : r));
+  });
+  /* the banner is only ever built after a real error; until then nothing is added to the page */
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { if (queue.length) build(); }, { once: true });
+
+  /* ---------- 2. canvas: resolve CSS custom properties in colours ---------- */
+  var VAR_RE = /var\(\s*(--[\w-]+)\s*(?:,\s*([^)]*))?\)/g;
+  function resolve(v) {
+    if (typeof v !== 'string' || v.indexOf('var(') === -1) return v;
+    var cs = getComputedStyle(document.documentElement);
+    return v.replace(VAR_RE, function (m, name, fb) {
+      var val = cs.getPropertyValue(name).trim();
+      return val || (fb ? fb.trim() : m);
+    });
+  }
+  try {
+    var P = window.CanvasRenderingContext2D && window.CanvasRenderingContext2D.prototype;
+    if (P) ['fillStyle', 'strokeStyle', 'shadowColor'].forEach(function (p) {
+      var d = Object.getOwnPropertyDescriptor(P, p);
+      if (!d || !d.get || !d.set) return;
+      Object.defineProperty(P, p, { configurable: true, enumerable: d.enumerable, get: d.get,
+        set: function (v) { d.set.call(this, resolve(v)); } });
+    });
+    var G = window.CanvasGradient && window.CanvasGradient.prototype;
+    if (G && G.addColorStop) {
+      var orig = G.addColorStop;
+      G.addColorStop = function (o, c) { return orig.call(this, o, resolve(c)); };
+    }
+  } catch (err) { /* shim is best-effort */ }
+})();
+"""
+
+    @classmethod
+    def html(cls):
+        return f'<script id="{cls.MARK}">{cls.JS}</script>'
+
+
+class TutorialEngine:
+    """
+    The onboarding tutorial is owned by the platform, NOT by the language model.
+    The model only supplies a JSON step list (<script type="application/json" id="tut-config">).
+    Markup, CSS and JS below are fixed, tested code that:
+      * runs in its own <script>, so it works even if the simulation script fails
+      * uses addEventListener only, guarded so it can never bind twice
+      * is a real modal: page content is made `inert` while open (no z-index tricks),
+        Esc / arrows / Tab-trap work, focus is restored on close
+      * pauses a running simulation while open and resumes it afterwards
+      * never leaves an overlay behind (hidden = display:none + no pointer events)
+    """
+    MARK = 'sim-tutorial-engine'
+    CSS_MARK = 'sim-tutorial-css'
+
+    CSS = r"""
+#tut-help{position:fixed;right:16px;bottom:16px;z-index:9000;width:32px;height:32px;padding:0;border-radius:50%;
+  background:var(--surface2,#1a1f2b);border:1px solid var(--border2,#3a4560);color:var(--text2,#8892a4);
+  font:700 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s,color .15s}
+#tut-help:hover,#tut-help:focus-visible{background:var(--accent-dim,#002244);color:var(--accent,#4a9eff)}
+#tut-root{position:fixed;inset:0;z-index:10000;transition:background .25s}
+#tut-root.tut-hidden{display:none!important;visibility:hidden;pointer-events:none}
+#tut-root.tut-dim{background:rgba(4,6,10,.78)}
+#tut-spot{position:fixed;z-index:10001;border-radius:12px;box-shadow:0 0 0 9999px rgba(4,6,10,.78);pointer-events:none;
+  transition:top .3s cubic-bezier(.4,0,.2,1),left .3s cubic-bezier(.4,0,.2,1),width .3s cubic-bezier(.4,0,.2,1),height .3s cubic-bezier(.4,0,.2,1),opacity .2s}
+#tut-spot.tut-none{opacity:0;box-shadow:none}
+.tut-card{position:fixed;z-index:10002;box-sizing:border-box;width:min(320px,calc(100vw - 20px));
+  background:var(--surface2,#1a1f2b);border:1px solid var(--border2,#3a4560);border-radius:14px;
+  box-shadow:0 12px 40px rgba(0,0,0,.5);padding:20px 22px;color:var(--text,#e8eaf0);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  opacity:0;visibility:hidden;pointer-events:none;transition:opacity .2s,visibility 0s linear .2s}
+.tut-card.tut-visible{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .2s}
+.tut-modal{left:50%;top:50%;transform:translate(-50%,-50%);width:min(380px,calc(100vw - 20px))}
+.tut-eyebrow{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent,#4a9eff);font-weight:700;margin-bottom:6px}
+.tut-step-count{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3,#556070);margin-bottom:6px}
+.tut-card h2{font-size:19px;font-weight:700;color:var(--text,#e8eaf0);margin:0 0 8px}
+.tut-card h3{font-size:14px;font-weight:700;color:var(--text,#e8eaf0);margin:0 0 6px}
+.tut-card p{font-size:12.5px;line-height:1.55;color:var(--text2,#8892a4);margin:0}
+.tut-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+.tut-tip .tut-actions{justify-content:space-between}
+.tut-dots{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap}
+.tut-dot{width:5px;height:5px;border-radius:50%;background:var(--border2,#3a4560)}
+.tut-dot.tut-dot-active{background:var(--accent,#4a9eff);width:14px;border-radius:3px}
+.tut-btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border2,#3a4560);background:var(--surface3,#222837);
+  color:var(--text,#e8eaf0);font:600 13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;cursor:pointer}
+.tut-btn:hover{background:var(--surface,#12151c)}
+.tut-btn:disabled{opacity:.4;cursor:not-allowed}
+.tut-btn.tut-primary{background:var(--accent-dim,#002244);color:var(--accent,#4a9eff);border-color:var(--accent,#4a9eff)}
+.tut-btn.tut-primary:hover{background:var(--accent,#4a9eff);color:#000}
+.tut-btn:focus-visible,#tut-help:focus-visible{outline:2px solid var(--accent,#4a9eff);outline-offset:2px}
+"""
+
+    MARKUP = r"""
+<button type="button" id="tut-help" title="Replay tutorial" aria-label="Replay tutorial">?</button>
+<div id="tut-root" class="tut-hidden" aria-hidden="true">
+  <div id="tut-spot" class="tut-none"></div>
+  <div id="tut-welcome" class="tut-card tut-modal" role="dialog" aria-modal="true" aria-labelledby="tut-w-title">
+    <div class="tut-eyebrow">Welcome to</div>
+    <h2 id="tut-w-title"></h2>
+    <p id="tut-w-body"></p>
+    <div class="tut-actions">
+      <button type="button" id="tut-skip-w" class="tut-btn">Skip</button>
+      <button type="button" id="tut-start" class="tut-btn tut-primary">Start Tour</button>
+    </div>
+  </div>
+  <div id="tut-tooltip" class="tut-card tut-tip" role="dialog" aria-modal="true" aria-labelledby="tut-t-title">
+    <div class="tut-dots" id="tut-dots"></div>
+    <div class="tut-step-count" id="tut-count"></div>
+    <h3 id="tut-t-title"></h3>
+    <p id="tut-t-body"></p>
+    <div class="tut-actions">
+      <button type="button" id="tut-prev" class="tut-btn">Previous</button>
+      <button type="button" id="tut-skip" class="tut-btn">Skip</button>
+      <button type="button" id="tut-next" class="tut-btn tut-primary">Next</button>
+    </div>
+  </div>
+  <div id="tut-done" class="tut-card tut-modal" role="dialog" aria-modal="true" aria-labelledby="tut-d-title">
+    <div class="tut-eyebrow">You're ready!</div>
+    <h2 id="tut-d-title">Now experiment for yourself</h2>
+    <p>Have fun exploring &mdash; adjust anything, anytime. Press <b>?</b> to replay this tour.</p>
+    <div class="tut-actions">
+      <button type="button" id="tut-finish" class="tut-btn tut-primary">Start</button>
+    </div>
+  </div>
+</div>
+"""
+
+    JS = r"""
+(function () {
+  'use strict';
+  if (window.__simTutorialLoaded) return;          /* never bind twice */
+  window.__simTutorialLoaded = true;
+
+  function boot() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $('tut-root'), spot = $('tut-spot'), help = $('tut-help');
+    var cards = { welcome: $('tut-welcome'), step: $('tut-tooltip'), done: $('tut-done') };
+    if (!root || !spot || !help || !cards.welcome || !cards.step || !cards.done) {
+      console.error('[SimTutorial] markup missing - tutorial disabled'); return;
+    }
+
+    /* ---------------- config ---------------- */
+    var cfg = {};
+    try { var node = $('tut-config'); if (node) cfg = JSON.parse(node.textContent || '{}') || {}; }
+    catch (e) { console.warn('[SimTutorial] invalid #tut-config JSON - using auto-generated steps', e); }
+
+    function pageTitle() {
+      if (cfg.title) return String(cfg.title);
+      var h = document.querySelector('#lab-title h1');
+      return (h && h.textContent.trim()) || document.title || 'this simulation';
+    }
+    $('tut-w-title').textContent = pageTitle();
+    $('tut-w-body').textContent = cfg.intro ? String(cfg.intro)
+      : 'Take a quick tour of the controls, then experiment on your own.';
+
+    function labelOf(el) {
+      var row = el.closest && el.closest('.ctrl-row, .toggle-row');
+      var nm = row && row.querySelector('.ctrl-name');
+      var src = nm || (el.tagName === 'BUTTON' ? el : null);
+      if (src) { var c = src.cloneNode(true); [].forEach.call(c.querySelectorAll('span'), function (s) { s.remove(); });
+        var t = c.textContent.trim(); if (t) return t; }
+      return el.getAttribute('aria-label') || el.title || (el.textContent || '').trim() || el.id || 'Control';
+    }
+    function autoSteps() {
+      var out = [], seen = [];
+      function add(el, title, body) { if (!el || seen.indexOf(el) > -1) return; seen.push(el); out.push({ el: el, title: title, body: body }); }
+      add(document.querySelector('#exp-list'), 'Experiments', 'Pick which experiment to explore.');
+      [].forEach.call(document.querySelectorAll('#controls-panel select, #controls-panel input, #controls-panel button'), function (el) {
+        if (el.type === 'hidden') return;
+        var kind = el.tagName === 'BUTTON' ? 'Click to use this control.' : el.tagName === 'SELECT' ? 'Choose an option and watch the simulation respond.' : 'Adjust this and watch the simulation respond.';
+        add(el, labelOf(el), kind);
+      });
+      [].forEach.call(document.querySelectorAll('.ov-btn'), function (el) { add(el, labelOf(el), 'Click to toggle this view option.'); });
+      add(document.querySelector('#info-panel'), 'Live Metrics', 'These values are recomputed continuously from the governing equations.');
+      return out.slice(0, 12);
+    }
+    function resolveEl(s) {
+      if (s.el && document.contains(s.el)) return s.el;
+      try { return s.selector ? document.querySelector(s.selector) : null; } catch (e) { return null; }
+    }
+    function buildSteps() {
+      var list = [];
+      (Array.isArray(cfg.steps) ? cfg.steps : []).forEach(function (s) {
+        if (!s || typeof s !== 'object') return;
+        var el = null; try { el = s.selector ? document.querySelector(s.selector) : null; } catch (e) {}
+        if (!el) return;                                  /* skip steps whose target does not exist */
+        list.push({ el: el, selector: s.selector, title: String(s.title || labelOf(el)), body: String(s.body || '') });
+      });
+      return list.length ? list : autoSteps();
+    }
+
+    /* ---------------- simulation adapter (all best-effort) ---------------- */
+    function simPlaying() {
+      try { if (window.SimAPI && typeof window.SimAPI.isPlaying === 'function') return !!window.SimAPI.isPlaying(); } catch (e) {}
+      try { if (typeof playing !== 'undefined') return !!playing; } catch (e) {}
+      var b = $('btnPlay'); return !!(b && /pause|\u23F8/i.test(b.textContent || ''));
+    }
+    function simSet(want) {
+      try {
+        if (simPlaying() === want) return;
+        var api = window.SimAPI;
+        if (api && want && typeof api.play === 'function') return api.play();
+        if (api && !want && typeof api.pause === 'function') return api.pause();
+        if (typeof togglePlay === 'function') return togglePlay();
+        var b = $('btnPlay'); if (b) b.click();
+      } catch (e) { console.warn('[SimTutorial] could not change play state', e); }
+    }
+
+    /* ---------------- state ---------------- */
+    var open = false, mode = null, steps = [], idx = -1, wasPlaying = false, prevFocus = null;
+    var locked = [], layoutRaf = 0, startTimer = 0;
+
+    function lockPage() {
+      [].forEach.call(document.body.children, function (el) {
+        if (el === root || /^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(el.tagName) || el.inert) return;
+        el.inert = true; el.setAttribute('inert', ''); locked.push(el);
+      });
+    }
+    function unlockPage() {
+      locked.splice(0).forEach(function (el) { el.inert = false; el.removeAttribute('inert'); });
+    }
+    function showCard(which) {
+      Object.keys(cards).forEach(function (k) { cards[k].classList.toggle('tut-visible', k === which); });
+      mode = which;
+    }
+    function begin() {
+      if (open) return;
+      open = true; prevFocus = document.activeElement;
+      wasPlaying = simPlaying(); if (wasPlaying) simSet(false);   /* pause BEFORE locking the page */
+      lockPage();
+      root.classList.remove('tut-hidden'); root.setAttribute('aria-hidden', 'false');
+    }
+    function focusFirst(card) {
+      var b = card.querySelector('.tut-primary:not(:disabled)') || card.querySelector('button:not(:disabled)');
+      if (b) b.focus({ preventScroll: true });
+    }
+
+    function openWelcome() {
+      begin(); idx = -1;
+      root.classList.add('tut-dim'); spot.classList.add('tut-none');
+      showCard('welcome'); focusFirst(cards.welcome);
+    }
+    function showDone() {
+      begin(); root.classList.add('tut-dim'); spot.classList.add('tut-none');
+      showCard('done'); focusFirst(cards.done);
+    }
+    function place(rect) {
+      var card = cards.step, vw = window.innerWidth, vh = window.innerHeight, m = 14, pad = 10;
+      var cw = card.offsetWidth, ch = card.offsetHeight;
+      var clampX = function (x) { return Math.max(pad, Math.min(x, vw - cw - pad)); };
+      var clampY = function (y) { return Math.max(pad, Math.min(y, vh - ch - pad)); };
+      var fits = function (x, y) { return x >= pad && y >= pad && x + cw <= vw - pad && y + ch <= vh - pad; };
+      var tries = [
+        [rect.right + m, clampY(rect.top)], [rect.left - cw - m, clampY(rect.top)],
+        [clampX(rect.left), rect.bottom + m], [clampX(rect.left), rect.top - ch - m]
+      ];
+      var pick = null;
+      for (var i = 0; i < tries.length; i++) if (fits(tries[i][0], tries[i][1])) { pick = tries[i]; break; }
+      if (!pick) {                                     /* nothing fits cleanly: use the roomier vertical side */
+        var below = vh - rect.bottom, above = rect.top;
+        pick = [clampX(rect.left), below >= above ? clampY(rect.bottom + m) : clampY(rect.top - ch - m)];
+      }
+      card.style.left = pick[0] + 'px'; card.style.top = pick[1] + 'px';
+    }
+    function layout() {
+      if (!open || mode !== 'step') return;
+      var s = steps[idx], el = s && resolveEl(s), r = el ? el.getBoundingClientRect() : null;
+      if (r && r.width === 0 && r.height === 0) r = null;
+      if (!r) {                                        /* no visible target: centre the card, dim the page */
+        spot.classList.add('tut-none'); root.classList.add('tut-dim');
+        var c = cards.step; c.style.left = Math.max(10, (window.innerWidth - c.offsetWidth) / 2) + 'px';
+        c.style.top = Math.max(10, (window.innerHeight - c.offsetHeight) / 2) + 'px'; return;
+      }
+      var p = 6;
+      root.classList.remove('tut-dim'); spot.classList.remove('tut-none');
+      spot.style.top = (r.top - p) + 'px'; spot.style.left = (r.left - p) + 'px';
+      spot.style.width = (r.width + p * 2) + 'px'; spot.style.height = (r.height + p * 2) + 'px';
+      place(r);
+    }
+    function scheduleLayout() {
+      if (layoutRaf) return;
+      layoutRaf = requestAnimationFrame(function () { layoutRaf = 0; layout(); });
+    }
+    function showStep(i) {
+      if (!steps.length) return showDone();
+      idx = Math.max(0, Math.min(i, steps.length - 1));
+      var s = steps[idx], el = resolveEl(s);
+      if (el && el.scrollIntoView) { try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {} }
+      $('tut-t-title').textContent = s.title; $('tut-t-body').textContent = s.body;
+      $('tut-count').textContent = 'Step ' + (idx + 1) + ' of ' + steps.length;
+      var dots = $('tut-dots'); dots.textContent = '';
+      steps.forEach(function (_, n) { var d = document.createElement('span'); d.className = 'tut-dot' + (n === idx ? ' tut-dot-active' : ''); dots.appendChild(d); });
+      $('tut-prev').disabled = idx === 0;
+      $('tut-next').textContent = idx === steps.length - 1 ? 'Finish' : 'Next';
+      showCard('step'); layout(); focusFirst(cards.step);
+    }
+    function start() { begin(); steps = buildSteps(); showStep(0); }
+    function next() { if (mode !== 'step') return; if (idx >= steps.length - 1) showDone(); else showStep(idx + 1); }
+    function prev() { if (mode === 'step' && idx > 0) showStep(idx - 1); }
+    function end(resume) {
+      if (!open) return;
+      open = false; mode = null; idx = -1;
+      Object.keys(cards).forEach(function (k) { cards[k].classList.remove('tut-visible'); });
+      spot.classList.add('tut-none'); root.classList.remove('tut-dim');
+      root.classList.add('tut-hidden'); root.setAttribute('aria-hidden', 'true');
+      unlockPage();                                    /* page is interactive again BEFORE we resume */
+      var f = prevFocus && document.contains(prevFocus) ? prevFocus : help;
+      try { f.focus({ preventScroll: true }); } catch (e) {}
+      if (resume && wasPlaying) simSet(true);
+      wasPlaying = false;
+    }
+
+    /* ---------------- listeners (each bound exactly once) ---------------- */
+    function on(id, fn) { var el = $(id); if (el) el.addEventListener('click', fn); else console.warn('[SimTutorial] missing #' + id); }
+    on('tut-help', openWelcome);
+    on('tut-start', start);
+    on('tut-skip-w', function () { end(true); });
+    on('tut-skip', function () { end(true); });
+    on('tut-finish', function () { end(true); });
+    on('tut-next', next);
+    on('tut-prev', prev);
+
+    /* capture phase: while the tutorial is open the simulation must not see keystrokes (Space, R ...) */
+    window.addEventListener('keydown', function (e) {
+      if (!open) return;
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); end(true); }
+      else if (e.key === 'ArrowRight' && mode === 'step') { e.preventDefault(); next(); }
+      else if (e.key === 'ArrowLeft' && mode === 'step') { e.preventDefault(); prev(); }
+      else if (e.key === 'Tab') {                      /* keep focus inside the visible card */
+        var card = cards[mode]; if (!card) return;
+        var f = [].filter.call(card.querySelectorAll('button'), function (b) { return !b.disabled; });
+        if (!f.length) return;
+        var i = f.indexOf(document.activeElement);
+        if (i === -1 || (!e.shiftKey && i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+        else if (e.shiftKey && i === 0) { e.preventDefault(); f[f.length - 1].focus(); }
+      }
+    }, true);
+    window.addEventListener('keyup', function (e) { if (open) e.stopPropagation(); }, true);
+    window.addEventListener('resize', scheduleLayout);
+    window.addEventListener('scroll', scheduleLayout, true);
+
+    window.SimTutorial = { open: openWelcome, start: start, next: next, prev: prev, end: end,
+      isOpen: function () { return open; }, mode: function () { return mode; } };
+
+    /* deterministic first-run launch: exactly once per page load */
+    startTimer = setTimeout(function () { startTimer = 0; if (!open) openWelcome(); }, 300);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+  else boot();
+})();
+"""
+
+    _CFG_RE = re.compile(r'<script\b[^>]*\bid\s*=\s*["\']tut-config["\'][^>]*>(.*?)</script>', re.DOTALL | re.IGNORECASE)
+
+    @classmethod
+    def has_legacy(cls, html):
+        return bool(re.search(r'id\s*=\s*["\']tut-root["\']', html)) and cls.MARK not in html
+
+    @classmethod
+    def _clean_config(cls, html):
+        """Parse + normalise the model-supplied config.  Returns dict (possibly empty)."""
+        m = cls._CFG_RE.search(html)
+        if not m:
+            return {}
+        try:
+            raw = json.loads(m.group(1).strip())
+        except Exception as e:
+            SimLogger.warn("Tutorial", f"#tut-config is not valid JSON ({e}) -- using auto-generated steps")
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        clip = lambda v, n: str(v).strip()[:n]
+        cfg = {}
+        if raw.get("title"):
+            cfg["title"] = clip(raw["title"], 80)
+        if raw.get("intro"):
+            cfg["intro"] = clip(raw["intro"], 240)
+        steps = []
+        for s in (raw.get("steps") or [])[:12]:
+            if not isinstance(s, dict) or not s.get("selector"):
+                continue
+            sel = clip(s["selector"], 120)
+            idm = re.fullmatch(r'#([\w-]+)', sel)
+            if idm and not re.search(r'\bid\s*=\s*["\']%s["\']' % re.escape(idm.group(1)), html):
+                SimLogger.warn("Tutorial", f"step selector {sel} matches no element id -- dropped")
+                continue
+            steps.append({"selector": sel, "title": clip(s.get("title", ""), 60), "body": clip(s.get("body", ""), 220)})
+        if steps:
+            cfg["steps"] = steps
+        return cfg
+
+    @classmethod
+    def inject(cls, html):
+        if cls.MARK in html:
+            return html                                   # idempotent
+        if cls.has_legacy(html):
+            SimLogger.warn("Tutorial", "Model emitted its own tutorial markup (#tut-root); leaving it in place. "
+                                       "The platform tutorial engine was NOT injected to avoid duplicate ids.")
+            return html
+        cfg = cls._clean_config(html)
+        html = cls._CFG_RE.sub('', html)
+        cfg_json = json.dumps(cfg, ensure_ascii=False).replace('</', '<\\/')
+        css = f'<style id="{cls.CSS_MARK}">{cls.CSS}</style>'
+        body = (f'\n<!-- platform tutorial (injected) -->{cls.MARKUP}'
+                f'<script type="application/json" id="tut-config">{cfg_json}</script>\n'
+                f'<script id="{cls.MARK}">{cls.JS}</script>\n')
+        if re.search(r'</head>', html, re.IGNORECASE):
+            html = re.sub(r'</head>', lambda m: css + '\n</head>', html, count=1, flags=re.IGNORECASE)
+        else:
+            body = css + body
+        idx = html.lower().rfind('</body>')
+        if idx == -1:
+            return html + body
+        return html[:idx] + body + html[idx:]
+
+
+# ===========================================================================
 #  MODULE 3 -- HtmlSanitizer
 # ===========================================================================
 class HtmlSanitizer:
+    _SCRIPT_RE = re.compile(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', re.DOTALL | re.IGNORECASE)
+
     @classmethod
     def sanitize(cls, html):
         html = html.replace('\ufeff', '').replace('\r\n', '\n').replace('\r', '\n')
@@ -261,62 +1193,84 @@ class HtmlSanitizer:
         html = re.sub(r'@import\s+["\'][^"\']*["\']\s*;?', '', html, flags=re.IGNORECASE)
         html = re.sub(r'document\.write\s*\([^)]*\)\s*;?', '', html, flags=re.IGNORECASE)
         html = cls._strip_network_calls(html)
-        html = cls._fix_playback_state_tdz(html)
-        html = cls._fix_unescaped_string_newlines(html)
-        html = cls._wrap_scripts_in_error_boundary(html)
+        # --- repairs on the model's own scripts (order matters) ---
+        html = cls._unwrap_legacy_error_boundary(html)   # remove the scope-breaking try{} wrapper
+        html = cls._repair_scripts(html)                 # string newlines, TDZ hoisting, canvas DPR
+        # --- platform-owned runtime layer (deterministic, model cannot break it) ---
+        html = cls._inject_runtime_guard(html)
+        html = TutorialEngine.inject(html)
         html = re.sub(r'<svg(?![^>]*xmlns)', '<svg xmlns="http://www.w3.org/2000/svg"', html, flags=re.IGNORECASE)
         html = html.replace('\x00', '')
         SimLogger.ok("Sanitizer", "HTML sanitized")
         return html
 
+    # ---- helpers -----------------------------------------------------
     @classmethod
-    def _fix_playback_state_tdz(cls, html):
-        """
-        Safety net for a known, recurring failure mode: generated JS declares
-        its playback state (`let ... playing ...`) AFTER bindSlider() calls
-        whose onChange callbacks read `playing` (e.g. "if (!playing) reinit()").
-        bindSlider()'s update() invokes onChange synchronously the instant
-        bindSlider() is called, so if `playing` is still in its temporal dead
-        zone at that point, this throws "Cannot access 'playing' before
-        initialization" -- which, once the script is wrapped in the error
-        boundary, silently aborts every line after it (Play, Reset, keyboard
-        shortcuts, and the tutorial system all fail to wire up).
+    def _is_model_js(cls, tag):
+        """True for classic scripts written by the model (skip JSON data blocks, modules, platform scripts)."""
+        if re.search(r'type\s*=\s*["\']?(?:application/|module|text/template)', tag, re.IGNORECASE):
+            return False
+        if re.search(r'id\s*=\s*["\'](?:%s|%s)["\']' % (RuntimeGuard.MARK, TutorialEngine.MARK), tag):
+            return False
+        return True
 
-        This is a best-effort, regex-based repair (not a real JS parse): if a
-        `let ...playing...;` declaration line appears in a <script> block
-        AFTER that block's first `bindSlider(` call, hoist the declaration to
-        immediately before that first call. No-op if the ordering is already
-        correct, or if the pattern isn't present.
+    @classmethod
+    def _unwrap_legacy_error_boundary(cls, html):
         """
-        decl_re = re.compile(r'^[ \t]*let\s+[^;\n]*\bplaying\b[^;\n]*;[ \t]*$', re.MULTILINE)
-        # Matches actual bindSlider('id', ...) invocations (always called with a
-        # quoted first argument in this codebase) -- deliberately NOT a bare
-        # substring search, so a comment merely mentioning "bindSlider()" in
-        # prose can't be mistaken for a real call site.
-        call_re = re.compile(r'\bbindSlider\s*\(\s*[\'"]')
+        v2.1 wrapped every script in `try { ... } catch (_sim_err) {...}`.  That was the root cause
+        of the dead Play button / tutorial: (1) let/const/function declared inside a try block are
+        BLOCK-scoped, so inline handlers such as onclick="togglePlay()" could not see them if the
+        block aborted early; (2) the catch swallowed the real error (its fallback element never
+        existed) and silently skipped every statement after the failing line.
+        Removes our own wrapper (identified by its marker comment) so old stored output is repaired too.
+        """
+        head_re = re.compile(r'\s*/\*\s*-+\s*SimEngine Error Boundary\s*-+\s*\*/\s*try\s*\{\n?')
+        tail_re = re.compile(r'\}\s*catch\s*\(\s*_sim_err\s*\)\s*\{[\s\S]*?\n\}\s*$')
 
-        def process_script(m):
+        def fix(m):
             tag, body, close = m.group(1), m.group(2), m.group(3)
-            call_match = call_re.search(body)
-            if not call_match:
+            if not cls._is_model_js(tag) or not head_re.match(body) or not tail_re.search(body):
                 return m.group(0)
-            bind_pos = call_match.start()
-            decl_match = next((dm for dm in decl_re.finditer(body) if dm.start() > bind_pos), None)
-            if not decl_match:
-                return m.group(0)
-            decl_line = decl_match.group(0).strip()
-            new_body = body[:decl_match.start()] + body[decl_match.end():]
-            new_bind_pos = new_body.find('bindSlider(')
-            line_start = new_body.rfind('\n', 0, new_bind_pos) + 1
-            new_body = new_body[:line_start] + decl_line + '\n' + new_body[line_start:]
-            SimLogger.warn(
-                "Sanitizer",
-                "Hoisted a 'playing' state declaration above bindSlider() calls "
-                "to prevent a temporal-dead-zone crash"
-            )
-            return f"{tag}{new_body}{close}"
+            body = tail_re.sub('', head_re.sub('\n', body, count=1)).rstrip() + '\n'
+            SimLogger.warn("Sanitizer", "Removed legacy try/catch error boundary from script")
+            return f"{tag}{body}{close}"
+        return cls._SCRIPT_RE.sub(fix, html)
 
-        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
+    @classmethod
+    def _repair_scripts(cls, html):
+        def fix(m):
+            tag, body, close = m.group(1), m.group(2), m.group(3)
+            if not cls._is_model_js(tag) or len(body.strip()) < 20:
+                return m.group(0)
+            body, nl_changed = JsToolkit.fix_raw_newlines_in_strings(body)
+            if nl_changed:
+                SimLogger.warn("Sanitizer", "Raw newline/tab inside a JS string literal -- escaped")
+            try:
+                body, moved = JsToolkit.hoist_tdz_declarations(body)
+            except Exception as e:                       # analysis must never break a good page
+                SimLogger.warn("Sanitizer", f"TDZ analysis skipped ({e})")
+                moved = []
+            if moved:
+                SimLogger.warn("Sanitizer", "Hoisted declarations above first use to prevent a "
+                                            f"temporal-dead-zone crash: {', '.join(dict.fromkeys(moved))}")
+            # scale() ACCUMULATES on repeated resizes unless the transform is reset; setTransform() is absolute.
+            body, k = re.subn(r'(\b[A-Za-z_$][\w$]*)\.scale\(\s*(dpr|pixelRatio|ratio)\s*,\s*\2\s*\)',
+                              r'\1.setTransform(\2, 0, 0, \2, 0, 0)', body)
+            if k:
+                SimLogger.warn("Sanitizer", "Replaced ctx.scale(dpr, dpr) with setTransform() (no accumulation on resize)")
+            return f"{tag}{body}{close}"
+        return cls._SCRIPT_RE.sub(fix, html)
+
+    @classmethod
+    def _inject_runtime_guard(cls, html):
+        if RuntimeGuard.MARK in html:
+            return html
+        tag = RuntimeGuard.html()
+        m = re.search(r'<head[^>]*>', html, re.IGNORECASE)
+        if m:
+            return html[:m.end()] + '\n' + tag + html[m.end():]
+        m = re.search(r'<(?:style|script|body)\b', html, re.IGNORECASE)
+        return (html[:m.start()] + tag + '\n' + html[m.start():]) if m else tag + html
 
     @classmethod
     def _strip_network_calls(cls, html):
@@ -329,53 +1283,7 @@ class HtmlSanitizer:
             if new_body != body:
                 SimLogger.warn("Sanitizer", "Removed a network call (fetch/XHR) from generated JS")
             return f"{tag}{new_body}{close}"
-        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
-    @classmethod
-    def _fix_unescaped_string_newlines(cls, html):
-        STRING_RE = re.compile(r'(["\'])((?:\\.|(?!\1).)*)\1', re.DOTALL)
-
-        def fix_str(sm):
-            quote, inner = sm.group(1), sm.group(2)
-            fixed = (inner.replace('\r\n', '\\n')
-                           .replace('\n', '\\n')
-                           .replace('\r', '\\n')
-                           .replace('\t', '\\t'))
-            return quote + fixed + quote
-
-        def process_script(m):
-            tag, body, close = m.group(1), m.group(2), m.group(3)
-            fixed_body = STRING_RE.sub(fix_str, body)
-            if fixed_body != body:
-                SimLogger.warn("Sanitizer", "Raw newline/tab inside a JS string literal -- escaped")
-            return f"{tag}{fixed_body}{close}"
-
-        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', process_script, html, flags=re.DOTALL | re.IGNORECASE)
-
-    @classmethod
-    def _wrap_scripts_in_error_boundary(cls, html):
-        def wrap_script(match):
-            tag, body, close = match.group(1), match.group(2), match.group(3)
-            if re.search(r'type\s*=\s*["\']application/', tag, re.IGNORECASE):
-                return match.group(0)
-            stripped = body.strip()
-            if stripped.startswith('try {') or stripped.startswith('try{'):
-                return match.group(0)
-            if len(stripped) < 20:
-                return match.group(0)
-            wrapped = (
-                "\n/* -- SimEngine Error Boundary -- */\ntry {\n" + body +
-                "\n} catch (_sim_err) {\n"
-                "  console.error('[SimEngine ErrorBoundary]', _sim_err);\n"
-                "  (function() {\n"
-                "    var fb = document.getElementById('sim-error-fallback');\n"
-                "    if (!fb) return;\n"
-                "    fb.style.display = 'flex';\n"
-                "    var msg = fb.querySelector('.sim-err-msg');\n"
-                "    if (msg) msg.textContent = String(_sim_err);\n"
-                "  })();\n}\n")
-            return f"{tag}{wrapped}{close}"
-        return re.sub(r'(<script(?:\s[^>]*)?>)(.*?)(</script>)', wrap_script, html, flags=re.DOTALL | re.IGNORECASE)
+        return cls._SCRIPT_RE.sub(process_script, html)
 
 
 # ===========================================================================
@@ -766,278 +1674,185 @@ select {
 ════════════════════════════════════════════════════════
   CANVAS DRAWING TECHNIQUES
 ════════════════════════════════════════════════════════
-DPR-AWARE SETUP (required):
+════════════════════════════════════════════════════════
+  SCRIPT ARCHITECTURE CONTRACT  (MANDATORY -- breaking it kills Play / Reset / every control)
+════════════════════════════════════════════════════════
+Use ONE classic <script> at the END of <body>. No type="module", no try/catch
+wrapped around the whole program, no inline on*="..." attributes.
+Structure that script in EXACTLY this order:
+
+  A. STATE      every top-level let/const the program needs: rafId, playing, lastTs,
+                simTime, view/pan/zoom values, cvs, ctx, W, H, DOM references ...
+  B. FUNCTIONS  physics, draw(), updateMetrics(), helpers, bindSlider(), play/pause ...
+  C. function init() { ... }   EVERYTHING that has side effects: bindSlider() calls,
+                addEventListener() calls, canvas sizing, initial state, first draw().
+  D. bootstrap  the LAST statement of the script, nothing after it:
+       if (document.readyState === 'loading') {
+         document.addEventListener('DOMContentLoaded', init, { once: true });
+       } else { init(); }
+
+HARD RULES
+ 1. At top level ONLY declarations (A, B) and the bootstrap (D) may exist. NEVER call
+    bindSlider(), draw(), resizeCanvas(), resetSim() or addEventListener() at top level.
+    bindSlider() runs its onChange callback synchronously; if that callback (or draw())
+    touches a let/const declared lower in the file, JavaScript throws a temporal-dead-zone
+    ReferenceError ("Cannot access 'ctx' before initialization") and every later line of the
+    script never runs. Doing all work inside init() makes this impossible.
+ 2. Attach EVERY handler with element.addEventListener(...) inside init(). Never onclick="...".
+ 3. Canvas colours must be real colour strings. Canvas IGNORES CSS variables, so never write
+    ctx.fillStyle = 'var(--red)'. Resolve once:
+      const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+      const COLORS = { a: cssVar('--red'), b: cssVar('--green'), c: cssVar('--accent') };
+    (declare COLORS inside init() or fill it there, since it needs the DOM styles).
+ 4. Never hide errors with empty catch blocks. Real errors must reach the console.
+ 5. IDs starting with "tut-" are reserved by the platform. Do not use z-index above 900.
+
+════════════════════════════════════════════════════════
+  CANVAS SETUP  (DPR-safe, resize-safe)
+════════════════════════════════════════════════════════
+  // state (section A)
   const cvs = document.getElementById('cvs');
   const ctx = cvs.getContext('2d');
+  let W = 0, H = 0;
+
+  // function (section B)
   function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     const r = cvs.getBoundingClientRect();
-    cvs.width  = r.width  * dpr;
-    cvs.height = r.height * dpr;
-    ctx.scale(dpr, dpr);
+    if (r.width < 1 || r.height < 1) return;
+    const oldW = W, oldH = H;
+    cvs.width  = Math.round(r.width  * dpr);
+    cvs.height = Math.round(r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // ABSOLUTE transform: never ctx.scale() (it accumulates)
     W = r.width; H = r.height;
+    // keep any pan offset relative to the canvas centre so the view survives a resize:
+    //   if (oldW) { offsetX += (W - oldW) / 2; offsetY += (H - oldH) / 2; } else { offsetX = W / 2; offsetY = H / 2; }
     draw();
   }
-  window.addEventListener('resize', resizeCanvas);
+  // inside init():
+  if (window.ResizeObserver) new ResizeObserver(resizeCanvas).observe(document.getElementById('canvas-area'));
+  else window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+Dragging / panning: use pointer events (pointerdown / pointermove / pointerup with
+setPointerCapture) and CSS  touch-action:none  on the canvas so mouse AND touch work.
+Wheel zoom: addEventListener('wheel', handler, { passive: false }) and call preventDefault().
 
 ════════════════════════════════════════════════════════
   INTERACTION WIRING PATTERN
 ════════════════════════════════════════════════════════
-CRITICAL ORDERING RULE: declare ANY state variable that a control's onChange
-callback reads (e.g. a `playing` play/pause flag, a `mode` select, an
-`rafId` handle) with `let`/`const` BEFORE you call bindSlider()/bindSelect()
-for any control whose callback reads it. bindSlider()'s update() function
-runs its onChange callback IMMEDIATELY and SYNCHRONOUSLY the moment you call
-bindSlider(...) (to paint the initial value) -- it does not wait for a user
-interaction. If that callback reads a `let`/`const` variable that is declared
-further down the file, JavaScript throws "Cannot access '<name>' before
-initialization" (a temporal-dead-zone ReferenceError) right then, which -- if
-the script is wrapped in a try/catch error boundary -- gets swallowed
-silently and aborts every line after it: Play, Reset, keyboard shortcuts,
-and the tutorial system will all fail to wire up, and the canvas will never
-get its first draw. This is a common and easy mistake -- avoid it by always
-declaring playback/UI state FIRST, before any bindSlider() calls:
+  // section B
+  function gv(id) { return parseFloat(document.getElementById(id)?.value ?? 0); }
+  function gb(id) { return document.getElementById(id)?.checked ?? false; }
 
-function gv(id) { return parseFloat(document.getElementById(id)?.value ?? 0); }
-function gb(id) { return document.getElementById(id)?.checked ?? false; }
-
-// Playback / UI state MUST be declared here, before bindSlider() calls below,
-// because their onChange callbacks may read `playing` (e.g. "if (!playing)
-// reinitialize()") the instant bindSlider() runs.
-let rafId = null, playing = false;
-
-function bindSlider(id, displayId, fmt, onChange) {
-  const el = document.getElementById(id);
-  const dv = document.getElementById(displayId);
-  function update() {
-    const v = parseFloat(el.value);
-    if (dv) dv.textContent = fmt(v);
-    const pct = 100 * (v - parseFloat(el.min)) / (parseFloat(el.max) - parseFloat(el.min));
-    el.style.setProperty('--pct', pct.toFixed(1));
-    onChange(v);
-  }
-  el.addEventListener('input', update);
-  update();
-}
-
-function setMetrics(items) {
-  const panel = document.getElementById('info-panel');
-  panel.innerHTML = items.map(m => `
-    <div class="metric">
-      <div class="metric-label">${m.label}</div>
-      <div class="metric-value">${m.value}</div>
-      ${m.sub  ? `<div class="metric-sub">${m.sub}</div>` : ''}
-      ${m.badge ? `<div class="metric-badge ${m.badgeClass||'badge-amber'}">${m.badge}</div>` : ''}
-    </div>`).join('');
-}
-
-function togglePlay() {
-  playing = !playing;
-  if (playing) {
-    function loop(ts) {
-      if (!playing) return;
-      stepSim(ts); draw();
-      rafId = requestAnimationFrame(loop);
+  function bindSlider(id, displayId, fmt, onChange) {
+    const el = document.getElementById(id);
+    const dv = document.getElementById(displayId);
+    function update() {
+      const v = parseFloat(el.value);
+      if (dv) dv.textContent = fmt(v);
+      const pct = 100 * (v - parseFloat(el.min)) / (parseFloat(el.max) - parseFloat(el.min));
+      el.style.setProperty('--pct', pct.toFixed(1));
+      onChange(v);
     }
-    rafId = requestAnimationFrame(loop);
-  } else {
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = null;
+    el.addEventListener('input', update);
+    update();          // safe ONLY because bindSlider() is called from inside init()
   }
-  document.getElementById('btnPlay').textContent = playing ? '⏸ Pause' : '▶ Play';
-}
 
-function resetSim() {
-  if (playing) togglePlay();
-  // re-run your initialization function here (rebuild state from current
-  // slider values) then draw() so Reset always leaves a valid, visible frame
-}
-
-window.addEventListener('keydown', e => {
-  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-  if (e.code === 'KeyR')  { resetSim(); }
-});
-
-════════════════════════════════════════════════════════
-  ONBOARDING / TUTORIAL SYSTEM  (REQUIRED -- every simulation)
-════════════════════════════════════════════════════════
-Every generated page must include a game-style, first-run interactive
-tutorial built from the actual controls generated for THIS simulation.
-
-MARKUP TO ADD (inside #app, after #main, as fixed-position layers):
-
-  <div id="tut-help" title="Replay tutorial" aria-label="Replay tutorial">?</div>
-
-  <div id="tut-root" class="tut-hidden" aria-hidden="true">
-    <div id="tut-spot"></div>
-    <div id="tut-welcome" class="tut-card tut-modal">
-      <div class="tut-eyebrow">Welcome to</div>
-      <h2 id="tut-w-title"></h2>
-      <p id="tut-w-body"></p>
-      <div class="tut-actions">
-        <button id="tut-skip-w" class="btn">Skip</button>
-        <button id="tut-start" class="btn primary">Start Tour</button>
-      </div>
-    </div>
-    <div id="tut-tooltip" class="tut-card tut-tip">
-      <div class="tut-dots" id="tut-dots"></div>
-      <div class="tut-step-count" id="tut-count"></div>
-      <h3 id="tut-t-title"></h3>
-      <p id="tut-t-body"></p>
-      <div class="tut-actions">
-        <button id="tut-prev" class="btn">Previous</button>
-        <button id="tut-skip" class="btn">Skip Tutorial</button>
-        <button id="tut-next" class="btn primary">Next</button>
-      </div>
-    </div>
-    <div id="tut-done" class="tut-card tut-modal">
-      <div class="tut-eyebrow">You're ready!</div>
-      <h2>Now experiment for yourself</h2>
-      <p>Have fun exploring -- adjust anything, anytime.</p>
-      <div class="tut-actions">
-        <button id="tut-finish" class="btn primary">Start Experiment</button>
-      </div>
-    </div>
-  </div>
-
-CSS PATTERNS:
-  #tut-root { position:fixed; inset:0; z-index:1000; }
-  #tut-root.tut-hidden { display:none; }
-  #tut-spot { position:fixed; z-index:1001; border-radius:12px;
-    box-shadow:0 0 0 9999px rgba(4,6,10,.78);
-    transition:top .35s cubic-bezier(.4,0,.2,1), left .35s cubic-bezier(.4,0,.2,1),
-               width .35s cubic-bezier(.4,0,.2,1), height .35s cubic-bezier(.4,0,.2,1),
-               opacity .25s; pointer-events:none; }
-  #tut-spot.tut-none { opacity:0; }
-  .tut-card { position:fixed; z-index:1002; background:var(--surface2);
-    border:1px solid var(--border2); border-radius:14px;
-    box-shadow:0 12px 40px rgba(0,0,0,.5); padding:20px 22px; max-width:300px;
-    opacity:0; transform:translateY(6px) scale(.98);
-    transition:opacity .25s, transform .25s; pointer-events:none; }
-  .tut-card.tut-visible { opacity:1; transform:translateY(0) scale(1); pointer-events:auto; }
-  .tut-modal { max-width:380px; left:50%; top:50%;
-    transform:translate(-50%,-46%) scale(.98); }
-  .tut-modal.tut-visible { transform:translate(-50%,-50%) scale(1); }
-  .tut-eyebrow { font-size:10px; letter-spacing:.12em; text-transform:uppercase;
-    color:var(--accent); font-weight:700; margin-bottom:6px; }
-  .tut-card h2 { font-size:19px; font-weight:700; color:var(--text); margin-bottom:8px; }
-  .tut-card h3 { font-size:14px; font-weight:700; color:var(--text); margin-bottom:6px; }
-  .tut-card p  { font-size:12.5px; line-height:1.55; color:var(--text2); }
-  .tut-actions { display:flex; gap:8px; margin-top:16px; justify-content:flex-end; }
-  .tut-tip .tut-actions { justify-content:space-between; }
-  .tut-dots { display:flex; gap:5px; margin-bottom:8px; }
-  .tut-dot { width:5px; height:5px; border-radius:50%; background:var(--border2); }
-  .tut-dot.tut-dot-active { background:var(--accent); width:14px; border-radius:3px; }
-  #tut-help { position:fixed; bottom:16px; right:16px; z-index:999;
-    width:32px; height:32px; border-radius:50%; background:var(--surface2);
-    border:1px solid var(--border2); color:var(--text2); font-size:13px;
-    font-weight:700; display:flex; align-items:center; justify-content:center;
-    cursor:pointer; transition:all .15s; }
-  #tut-help:hover { background:var(--accent-dim); color:var(--accent); }
-
-JS PATTERN -- DATA-DRIVEN from the exact controls you built:
-  const TUT_STEPS = [
-    { selector:'#lenSlider', title:'Pendulum Length',
-      body:'Controls the length of the pendulum arm. Longer pendulums swing slower.' },
-    // one entry per control, overlay button, and metric you generated
-  ];
-  (function autoFillTutorial() {
-    const covered = new Set(TUT_STEPS.map(s => s.selector).filter(Boolean));
-    document.querySelectorAll('#controls-panel [id], .ov-btn, #info-panel .metric')
-      .forEach(el => {
-        const sel = el.id ? '#' + el.id : null;
-        if (!sel || covered.has(sel)) return;
-        const label = el.closest('.ctrl-row')?.querySelector('.ctrl-name')?.textContent
-                    || el.textContent || 'This control';
-        TUT_STEPS.push({ selector: sel, title: label.trim(),
-          body: 'Adjust this to see how it changes the simulation.' });
-        covered.add(sel);
-      });
-  })();
-
-  let tutIdx = -1, tutWasPlaying = false;
-  function tutEl(id) { return document.getElementById(id); }
-  function tutPositionSpot(target) {
-    const spot = tutEl('tut-spot');
-    if (!target) { spot.classList.add('tut-none'); return; }
-    const r = target.getBoundingClientRect(), pad = 6;
-    spot.classList.remove('tut-none');
-    spot.style.top = (r.top - pad) + 'px'; spot.style.left = (r.left - pad) + 'px';
-    spot.style.width = (r.width + pad*2) + 'px'; spot.style.height = (r.height + pad*2) + 'px';
+  function setMetrics(items) {
+    const panel = document.getElementById('info-panel');
+    panel.innerHTML = items.map(m => `
+      <div class="metric">
+        <div class="metric-label">${m.label}</div>
+        <div class="metric-value">${m.value}</div>
+        ${m.sub  ? `<div class="metric-sub">${m.sub}</div>` : ''}
+        ${m.badge ? `<div class="metric-badge ${m.badgeClass||'badge-amber'}">${m.badge}</div>` : ''}
+      </div>`).join('');
   }
-  function tutPositionCard(target) {
-    const card = tutEl('tut-tooltip');
-    if (!target) { card.style.left='50%'; card.style.top='50%';
-      card.style.transform='translate(-50%,-50%)'; return; }
-    const r = target.getBoundingClientRect();
-    const cw = 300, ch = card.offsetHeight || 160, margin = 14;
-    let left = r.right + margin, top = r.top;
-    if (left + cw > window.innerWidth - 10) left = Math.max(10, r.left - cw - margin);
-    if (top + ch > window.innerHeight - 10) top = Math.max(10, window.innerHeight - ch - 10);
-    card.style.transform = 'none';
-    card.style.left = left + 'px'; card.style.top = top + 'px';
+
+PLAY / PAUSE / RESET  -- a strict state machine (use this exact shape when the topic animates):
+  // state (section A)
+  let rafId = null, playing = false, lastTs = null;
+
+  // functions (section B)
+  function updatePlayButton() {
+    const b = document.getElementById('btnPlay');
+    if (b) b.textContent = playing ? '⏸ Pause' : '▶ Play';
   }
-  function tutRenderDots() {
-    tutEl('tut-dots').innerHTML = TUT_STEPS.map((_, i) =>
-      `<span class="tut-dot${i===tutIdx?' tut-dot-active':''}"></span>`).join('');
-    tutEl('tut-count').textContent = `Step ${tutIdx+1} of ${TUT_STEPS.length}`;
+  function animationLoop(ts) {
+    if (!playing) return;
+    const frameSec = lastTs === null ? 1 / 60 : Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    stepSim(frameSec);          // advance the model by real elapsed time (frame-rate independent)
+    draw();
+    rafId = requestAnimationFrame(animationLoop);
   }
-  function tutShowStep(i) {
-    tutIdx = Math.max(0, Math.min(i, TUT_STEPS.length - 1));
-    const step = TUT_STEPS[tutIdx];
-    const target = step.selector ? document.querySelector(step.selector) : null;
-    tutEl('tut-t-title').textContent = step.title;
-    tutEl('tut-t-body').textContent = step.body;
-    tutPositionSpot(target); tutPositionCard(target); tutRenderDots();
-    tutEl('tut-prev').disabled = tutIdx === 0;
-    tutEl('tut-next').textContent = tutIdx === TUT_STEPS.length - 1 ? 'Finish' : 'Next';
-    tutEl('tut-tooltip').classList.add('tut-visible');
-    tutEl('tut-welcome').classList.remove('tut-visible');
-    tutEl('tut-done').classList.remove('tut-visible');
+  function startSimulation() {
+    if (playing) return;                    // never create a second loop
+    playing = true; lastTs = null;
+    updatePlayButton();
+    rafId = requestAnimationFrame(animationLoop);
   }
-  function tutStart() {
-    if (typeof playing !== 'undefined') { tutWasPlaying = playing; if (playing) togglePlay(); }
-    tutEl('tut-root').classList.remove('tut-hidden');
-    tutEl('tut-root').setAttribute('aria-hidden', 'false');
-    tutShowStep(0);
+  function stopSimulation() {
+    playing = false;
+    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+    updatePlayButton();
   }
-  function tutOpenWelcome() {
-    tutEl('tut-root').classList.remove('tut-hidden');
-    tutEl('tut-root').setAttribute('aria-hidden', 'false');
-    tutPositionSpot(null);
-    tutEl('tut-tooltip').classList.remove('tut-visible');
-    tutEl('tut-done').classList.remove('tut-visible');
-    tutEl('tut-welcome').classList.add('tut-visible');
+  function togglePlay() { if (playing) stopSimulation(); else startSimulation(); }
+  function resetSim() {
+    stopSimulation();                       // stops the loop even if it is running
+    /* rebuild the model from the CURRENT control values, clear trails/history, simTime = 0 */
+    draw(); updateMetrics();                // always leave a valid visible frame; button reads "▶ Play"
   }
-  function tutEnd(resume) {
-    tutEl('tut-root').classList.add('tut-hidden');
-    tutEl('tut-root').setAttribute('aria-hidden', 'true');
-    ['tut-welcome','tut-tooltip','tut-done'].forEach(id => tutEl(id).classList.remove('tut-visible'));
-    if (resume && tutWasPlaying && typeof togglePlay === 'function' && !playing) togglePlay();
-  }
-  function tutFinishSteps() {
-    tutEl('tut-tooltip').classList.remove('tut-visible');
-    tutEl('tut-done').classList.add('tut-visible');
-  }
-  tutEl('tut-help').addEventListener('click', tutOpenWelcome);
-  tutEl('tut-start').addEventListener('click', tutStart);
-  tutEl('tut-skip-w').addEventListener('click', () => tutEnd(true));
-  tutEl('tut-skip').addEventListener('click', () => tutEnd(true));
-  tutEl('tut-finish').addEventListener('click', () => tutEnd(true));
-  tutEl('tut-next').addEventListener('click', () => {
-    if (tutIdx >= TUT_STEPS.length - 1) tutFinishSteps(); else tutShowStep(tutIdx + 1);
-  });
-  tutEl('tut-prev').addEventListener('click', () => tutShowStep(tutIdx - 1));
+
+  // inside init():
+  document.getElementById('btnPlay').addEventListener('click', togglePlay);
+  document.getElementById('btnReset').addEventListener('click', resetSim);
+  window.SimAPI = { isPlaying: () => playing, play: startSimulation, pause: stopSimulation, reset: resetSim };
   window.addEventListener('keydown', e => {
-    if (tutEl('tut-root').classList.contains('tut-hidden')) return;
-    if (e.key === 'Escape') tutEnd(true);
-    if (e.key === 'ArrowRight' && tutEl('tut-tooltip').classList.contains('tut-visible')) tutEl('tut-next').click();
-    if (e.key === 'ArrowLeft') tutEl('tut-prev').click();
+    const t = e.target, tag = t && t.tagName;
+    if (tag === 'SELECT' || tag === 'TEXTAREA' || (tag === 'INPUT' && t.type !== 'range' && t.type !== 'checkbox')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) togglePlay(); }
+    else if (e.code === 'KeyR' && !e.repeat) resetSim();
   });
-  window.addEventListener('resize', () => {
-    if (tutIdx >= 0 && !tutEl('tut-root').classList.contains('tut-hidden')) tutShowStep(tutIdx);
-  });
-  window.addEventListener('load', () => setTimeout(tutOpenWelcome, 300));
+  // stop a focused <button> from ALSO firing a click when Space is released (would double-toggle)
+  window.addEventListener('keyup', e => { if (e.code === 'Space') e.preventDefault(); });
+
+For topics that do not animate, omit the play machinery but keep the same
+A / B / init() / bootstrap structure and still expose real-time control redraws.
+
+NUMERICAL SAFETY (physics topics)
+  - Soften on the SQUARED distance BEFORE dividing:  r2 = dx*dx + dy*dy; if (r2 < EPS2) r2 = EPS2;
+    use r2 in every division (force AND potential energy). Never clamp only the square root while
+    still dividing by the raw squared distance.
+  - Substep so one step never moves a body a large fraction of the smallest length scale.
+  - After each step verify Number.isFinite() on state; if not, stop the loop and restore the
+    initial state instead of drawing NaN.
+
+════════════════════════════════════════════════════════
+  ONBOARDING TUTORIAL  (platform-provided -- you only supply the step list)
+════════════════════════════════════════════════════════
+DO NOT write any tutorial markup, CSS or JavaScript. The platform injects the
+welcome card, spotlight, step tooltips, "?" replay button and all logic itself, and
+guarantees it works. You provide ONLY this data block, placed just before the main <script>:
+
+  <script type="application/json" id="tut-config">
+  {
+    "title": "Pendulum Lab",
+    "intro": "One friendly sentence about what the learner will explore.",
+    "steps": [
+      { "selector": "#lenSlider",  "title": "Pendulum Length", "body": "Longer arms swing more slowly." },
+      { "selector": "#btnPlay",    "title": "Playback",        "body": "Start or pause the motion." },
+      { "selector": "#info-panel", "title": "Live Metrics",    "body": "Values recomputed every frame." }
+    ]
+  }
+  </script>
+
+Rules: strictly valid JSON (double quotes, no comments, no trailing commas); 4 to 8 steps in
+visual order (sidebar top to bottom, then overlay buttons, then #info-panel); every "selector"
+must be "#some-id" of an element that exists in YOUR page (group several related controls
+by giving their wrapper an id); plain text only in title/body (no HTML).
 
 ════════════════════════════════════════════════════════
   WHAT TO OMIT
@@ -1048,7 +1863,8 @@ JS PATTERN -- DATA-DRIVEN from the exact controls you built:
 - No placeholder numbers disconnected from governing equations.
 - No controls that don't visibly change anything.
 - No more than 7 controls in the sidebar.
-- Do NOT skip the onboarding tutorial system -- it is required.
+- Do NOT write tutorial markup/CSS/JS (the platform injects it) -- but DO include the #tut-config JSON block.
+- No inline on*="..." attributes, no top-level side effects outside init(), no try/catch around the whole script.
 """
 
 SYSTEM = """You are SimEngine v2.1 -- an expert interactive-simulation engineer who builds
@@ -1092,7 +1908,7 @@ Return ONLY raw JSON (no markdown, no code fences, no commentary):
 - Metrics strip shows 3-5 of the MOST MEANINGFUL live-computed values.
 - Mobile-responsive down to 380px viewport.
 - Include keyboard shortcuts (Space = play/pause, R = reset) when applicable.
-- EVERY simulation includes the onboarding/tutorial system.
+- EVERY simulation includes a <script type="application/json" id="tut-config"> step list (tutorial UI is platform-provided).
 """
 
 STRATEGY_TEMPLATES = {
@@ -1187,15 +2003,16 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
         "- Every control MUST visibly affect canvas AND/OR a metric.",
         "- All computed values MUST follow the real governing equations.",
         "- Include a Play/Animate button + requestAnimationFrame loop if the topic involves motion.",
-        "- If any control's onChange callback reads a playback/UI state variable "
-        "(e.g. `playing`), declare that variable with let/const BEFORE the bindSlider() "
-        "call for that control -- bindSlider() invokes onChange immediately, so declaring "
-        "it later throws a temporal-dead-zone ReferenceError that silently breaks the "
-        "whole script.",
+        "- Follow the SCRIPT ARCHITECTURE CONTRACT exactly: state, then functions, then "
+        "init() containing ALL bindSlider()/addEventListener()/first-draw calls, then the "
+        "DOMContentLoaded-or-now bootstrap as the last statement. No top-level side effects, "
+        "no inline on*= handlers, no try/catch around the whole script.",
+        "- Canvas colours must be real colour strings (resolve CSS vars with getComputedStyle); "
+        "size the canvas with ctx.setTransform(dpr,0,0,dpr,0,0), never ctx.scale().",
         "- Mobile-responsive down to 380px viewport width.",
-        "- REQUIRED: include the onboarding/tutorial system (#tut-root, #tut-help, spotlight, "
-        "welcome/step/done cards) with TUT_STEPS containing one entry for EVERY control, "
-        "overlay button, and metric you generated for THIS topic.",
+        "- REQUIRED: include the <script type=\"application/json\" id=\"tut-config\"> block "
+        "(title, intro, 4-8 steps whose selectors are #ids that exist in your page). Do NOT write "
+        "any tutorial markup, CSS or JS -- the platform injects and owns the tutorial UI.",
         "\nReturn ONLY raw JSON. simulation_code must be a complete "
         "<!DOCTYPE html>...</html> document as a properly escaped JSON string.",
     ]
