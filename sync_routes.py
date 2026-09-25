@@ -105,8 +105,9 @@ def _sb_admin():
 @router.get("/all", status_code=200)
 def get_all_user_data(current_user: dict = Depends(get_current_user)):
     """
-    Returns saved items + subjects tree + vault entries in one round-trip.
-    Replaces the three separate pull calls that existed in v2.
+    Returns saved items + subjects tree + vault entries + file_mode rows
+    in one round-trip.  Replaces the three separate pull calls that existed in v2.
+    v6.1: added file_mode data (replaces subject_units / unit_lessons).
     """
     # Fix #5: Wrap all DB calls in try/except so a Supabase 401 / connection
     # error returns a clean 502 instead of propagating as an unhandled 500
@@ -261,62 +262,37 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
             print(f"[SYNC] /all — video_vault query failed: {vault_err}")
             vault = []
 
-        # ── 4. Subject Units (File Mode — Unit/Lesson containers) ────
+        # ── 4. File Mode rows (new consolidated table) ───────────────
+        # Wrapped in try/except: if file_mode table doesn't exist yet
+        # (migration not yet run), return [] instead of crashing the endpoint.
         try:
-            units_res = (
-                supabase.table("subject_units")
-                .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
+            fm_res = (
+                supabase.table("file_mode")
+                .select("id, user_id, user_email, user_name, subject, unit, topics, contents, created_at, updated_at")
                 .eq("user_id", user_id)
-                .order("sort_order")
+                .order("created_at", desc=True)
                 .execute()
             )
-            subject_units = units_res.data or []
-        except Exception as units_err:
-            print(f"[SYNC] /all — subject_units query failed: {units_err}")
-            subject_units = []
-            
-        unit_ids = [u["id"] for u in subject_units]
+            file_mode_rows = fm_res.data or []
+        except Exception as fm_err:
+            print(f"[SYNC] /all — file_mode query failed: {fm_err}")
+            file_mode_rows = []
 
-        # ── 5. Unit Lessons (library lesson IDs per unit) ─────────────
-        unit_lesson_rows = []
-        if unit_ids:
-            try:
-                ul_res = (
-                    supabase.table("unit_lessons")
-                    .select("unit_id, lesson_id, sort_order")
-                    .eq("user_id", user_id)
-                    .in_("unit_id", unit_ids)
-                    .order("sort_order")
-                    .execute()
-                )
-                unit_lesson_rows = ul_res.data or []
-            except Exception as ul_err:
-                print(f"[SYNC] /all — unit_lessons query failed: {ul_err}")
-                unit_lesson_rows = []
-
-        # Build lessons_by_unit map  { unit_id → [lesson_id, …] }
-        lessons_by_unit: dict = {}
-        for row in unit_lesson_rows:
-            lessons_by_unit.setdefault(row["unit_id"], []).append(row["lesson_id"])
-
-        # Attach lessons list to each unit row
-        for u in subject_units:
-            u["lesson_ids"] = lessons_by_unit.get(u["id"], [])
-
-        # Build units_by_subject map  { subject_id → [unit, …] }
-        units_by_subject: dict = {}
-        for u in subject_units:
-            units_by_subject.setdefault(u["subject_id"], []).append(u)
-
-        # Attach units to the subjects tree (new field: s["units"])
+        # For backward-compat: keep subjects_tree units as empty list
+        # (subject_units table has been dropped by migration)
         for s in subjects_tree:
-            s["units"] = units_by_subject.get(s["id"], [])
+            s.setdefault("units", [])
 
-        print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(subject_units)} units, {len(vault)} vault — user={current_user['email']!r}")
+        print(
+            f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, "
+            f"{len(file_mode_rows)} file_mode rows, {len(vault)} vault "
+            f"— user={current_user['email']!r}"
+        )
         return {
-            "items":    items,
-            "subjects": subjects_tree,
-            "vault":    vault,
+            "items":     items,
+            "subjects":  subjects_tree,
+            "vault":     vault,
+            "file_mode": file_mode_rows,
         }
 
     except HTTPException:
@@ -886,8 +862,159 @@ def save_unit_lessons(
 
 
 # ════════════════════════════════════════════════════════════════
+# FILE MODE  —  Consolidated Subject / Unit / Topics / Contents
+# ════════════════════════════════════════════════════════════════
+# One flat row per subject+unit owned by a user.
+# Replaces the old subject_units + unit_lessons two-table design.
+#
+# Endpoints:
+#   GET    /sync/file-mode                 → list all rows for current user
+#   POST   /sync/file-mode                 → create a new row
+#   PUT    /sync/file-mode/{id}            → update topics / contents / unit / subject
+#   DELETE /sync/file-mode/{id}            → hard-delete the row
+# ════════════════════════════════════════════════════════════════
+
+class FileModeCreate(BaseModel):
+    subject:  str         = Field(default="", max_length=300)
+    unit:     str         = Field(default="", max_length=300)
+    topics:   List[str]   = Field(default_factory=list)
+    contents: str         = Field(default="")
+
+
+class FileModeUpdate(BaseModel):
+    subject:  Optional[str]       = None
+    unit:     Optional[str]       = None
+    topics:   Optional[List[str]] = None
+    contents: Optional[str]       = None
+
+
+@router.get("/file-mode", status_code=200)
+def list_file_mode(current_user: dict = Depends(get_current_user)):
+    """
+    Return all file_mode rows for the authenticated user,
+    ordered newest first.  Called on login via /sync/all;
+    also callable individually for targeted refreshes.
+    """
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    try:
+        res = (
+            supabase.table("file_mode")
+            .select("id, user_id, user_email, user_name, subject, unit, topics, contents, created_at, updated_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        rows = res.data or []
+        print(f"[FILE_MODE] ↓ {len(rows)} rows user={current_user['email']!r}")
+        return {"count": len(rows), "file_mode": rows}
+    except Exception as e:
+        print(f"[FILE_MODE] GET ERROR: {e}")
+        raise HTTPException(status_code=502, detail=f"Could not load file_mode data: {e}")
+
+
+@router.post("/file-mode", status_code=201)
+def create_file_mode(
+    body:         FileModeCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Create a new file_mode row.
+    Stores subject, unit, topics (JSON array), and optional AI-generated contents.
+    user_id / user_email / user_name are filled from the verified JWT automatically.
+    """
+    _ensure_user_row(current_user)
+    supabase = _sb(current_user)
+
+    import json as _json
+    row = {
+        "user_id":    current_user["id"],
+        "user_email": current_user.get("email", ""),
+        "user_name":  current_user.get("name", ""),
+        "subject":    (body.subject or "").strip(),
+        "unit":       (body.unit or "").strip(),
+        "topics":     body.topics,          # Supabase SDK serialises list → jsonb
+        "contents":   body.contents or "",
+    }
+    try:
+        res = supabase.table("file_mode").insert(row).execute()
+        created = res.data[0] if res.data else {}
+        print(
+            f"[FILE_MODE] ✅ Created: subject={body.subject!r} unit={body.unit!r} "
+            f"topics={len(body.topics)} user={current_user['email']!r}"
+        )
+        return {"success": True, "file_mode": created}
+    except Exception as e:
+        print(f"[FILE_MODE] CREATE ERROR: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create file_mode row: {e}")
+
+
+@router.put("/file-mode/{record_id}", status_code=200)
+def update_file_mode(
+    record_id:    str,
+    body:         FileModeUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Update a file_mode row's subject, unit, topics, and/or contents.
+    Only the authenticated user's own rows can be updated (enforced by
+    the .eq('user_id', ...) filter AND the RLS policy).
+    """
+    supabase = _sb(current_user)
+    patch: dict = {}
+    if body.subject  is not None: patch["subject"]  = body.subject.strip()
+    if body.unit     is not None: patch["unit"]      = body.unit.strip()
+    if body.topics   is not None: patch["topics"]    = body.topics
+    if body.contents is not None: patch["contents"]  = body.contents
+
+    if not patch:
+        return {"success": True, "message": "Nothing to update."}
+
+    try:
+        res = (
+            supabase.table("file_mode")
+            .update(patch)
+            .eq("id", record_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not res.data:
+            raise HTTPException(status_code=404, detail="file_mode record not found or not owned by user.")
+        print(f"[FILE_MODE] ✅ Updated: id={record_id} fields={list(patch)} user={current_user['email']!r}")
+        return {"success": True, "file_mode": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[FILE_MODE] UPDATE ERROR id={record_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update file_mode row: {e}")
+
+
+@router.delete("/file-mode/{record_id}", status_code=200)
+def delete_file_mode(
+    record_id:    str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Hard-delete a file_mode row.
+    Only the authenticated user's own rows can be deleted.
+    """
+    supabase = _sb(current_user)
+    try:
+        supabase.table("file_mode").delete()\
+            .eq("id", record_id)\
+            .eq("user_id", current_user["id"])\
+            .execute()
+        print(f"[FILE_MODE] 🗑 Deleted: id={record_id} user={current_user['email']!r}")
+        return {"success": True, "id": record_id}
+    except Exception as e:
+        print(f"[FILE_MODE] DELETE ERROR id={record_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete file_mode row: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
 # SAVE TO UNIT  —  "Save in File" from Creator with AI
 # ════════════════════════════════════════════════════════════════
+
 
 class SaveToUnitRequest(BaseModel):
     unit_id:      str
