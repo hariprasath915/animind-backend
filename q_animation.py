@@ -23,6 +23,7 @@ REQUIRED ENV VAR:
   GEMINI_API_KEY=your-key
 """
 
+import hashlib
 import json
 import re
 import asyncio
@@ -2421,7 +2422,7 @@ def _build_scene6_html(sol: dict, scene: dict) -> str:
         <span class="s6-note-text" id="s6-note-text">{note_text}</span>
       </div>"""
 
-    return f"""<div id="qanim-scene6-overlay">
+    return f"""<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-labelledby="s6-card-title">
   <div class="s6-card">
     <div class="s6-title-bar">
       <h2 id="s6-card-title">Step 7 &mdash; Main Formula</h2>
@@ -2479,10 +2480,10 @@ def _build_scene7_html(sol: dict, scene: dict) -> str:
         </div>
 """
 
-    return f"""<div id="qanim-scene7-overlay">
+    return f"""<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">
   <div class="s7-card">
     <div class="s7-title-bar">
-      <h2>Step 8 &mdash; Step-by-Step Substitution</h2>
+      <h2 id="s8-card-title">Step 8 &mdash; Step-by-Step Substitution</h2>
     </div>
     <div class="s7-body-cols">
       <div class="s7-left-col">
@@ -2549,10 +2550,10 @@ def _build_scene9_html(sol: dict, to_find: list) -> str:
             f'</div>\n'
         )
 
-    return f"""<div id="qanim-scene9-overlay">
+    return f"""<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-labelledby="s9-card-title">
   <div class="s9-card">
     <div class="s9-title-bar">
-      <h2>&#x2705; Step 9 &mdash; Final Answer</h2>
+      <h2 id="s9-card-title">&#x2705; Step 9 &mdash; Final Answer</h2>
       <p>{to_find_label}</p>
     </div>
     <div class="s9-body">
@@ -2901,21 +2902,27 @@ button {
   transform: translateY(-1px);
 }
 :root {
-  --bg-color: #eef2f9;
-  --panel-bg: #ffffff;
-  --text-main: #1e293b;
-  --text-sub: #64748b;
-  --text-muted: #94a3b8;
-  --accent-cyan: #0891b2;
-  --accent-cyan-dim: #0e7490;
-  --accent-orange: #d97706;
-  --accent-green: #16a34a;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --border-radius: 16px;
-  --border-radius-sm: 10px;
-  --shadow-card: 0 1px 3px rgba(15,23,42,.06),0 8px 24px rgba(15,23,42,.08),0 24px 48px rgba(15,23,42,.04);
-  --transition-smooth: .45s cubic-bezier(.4,0,.2,1);
+  /* NOTE: these are ALIASES onto the topic-adaptive tokens defined in the
+     primary :root block above, not a second competing palette. Every
+     selector below that used to hard-pin its own cyan palette now tracks
+     whatever --c-primary* / --radius-* values a per-question <style>
+     override sets later in <head> (see the accent-color injection in
+     assemble_html). This is what makes different questions render with
+     different accent colors instead of every animation looking identical. */
+  /* text-main / text-sub / text-muted / border / border-strong / panel-bg /
+     shadow-card are intentionally NOT redeclared here — they already exist
+     with the same meaning in the primary :root above; redefining a custom
+     property in terms of itself (var(--text-main) inside --text-main:...)
+     is a circular reference and CSS would treat it as invalid, so we must
+     never do that. Only genuinely differently-named tokens are aliased: */
+  --bg-color: var(--bg-page, #eef2f9);
+  --accent-cyan: var(--c-primary-mid, #0891b2);
+  --accent-cyan-dim: var(--c-primary-dim, #0e7490);
+  --accent-orange: var(--c-orange, #d97706);
+  --accent-green: var(--c-green, #16a34a);
+  --border-radius: var(--radius-card, 16px);
+  --border-radius-sm: var(--radius-sm, 10px);
+  --transition-smooth: var(--transition, .45s cubic-bezier(.4,0,.2,1));
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
@@ -5222,11 +5229,71 @@ def _build_step6_panel_html(sol: dict, scene: dict) -> str:
 </div>"""
 
 
+# ── Topic-adaptive accent palette ───────────────────────────────────────────
+# A small, hand-picked set of accessible, professionally-balanced palettes.
+# Each entry supplies every token the CSS references via --c-primary* /
+# --c-accent* / --c-orange / --c-green / --c-purple, plus the raw "R,G,B"
+# triple used by rgba(var(--c-primary-rgb), alpha) throughout the stylesheet.
+_ACCENT_PALETTES = [
+    {"primary": "#0369a1", "mid": "#0891b2", "dim": "#0e7490", "rgb": "3,105,161",
+     "accent": "#38bdf8", "accent_soft": "rgba(56,189,248,.12)",
+     "orange": "#d97706", "green": "#16a34a", "purple": "#7c3aed"},
+    {"primary": "#6d28d9", "mid": "#7c3aed", "dim": "#5b21b6", "rgb": "109,40,217",
+     "accent": "#a78bfa", "accent_soft": "rgba(167,139,250,.14)",
+     "orange": "#d97706", "green": "#16a34a", "purple": "#c026d3"},
+    {"primary": "#0f766e", "mid": "#0d9488", "dim": "#115e59", "rgb": "15,118,110",
+     "accent": "#2dd4bf", "accent_soft": "rgba(45,212,191,.14)",
+     "orange": "#d97706", "green": "#65a30d", "purple": "#7c3aed"},
+    {"primary": "#b45309", "mid": "#d97706", "dim": "#92400e", "rgb": "180,83,9",
+     "accent": "#fbbf24", "accent_soft": "rgba(251,191,36,.15)",
+     "orange": "#dc2626", "green": "#16a34a", "purple": "#7c3aed"},
+    {"primary": "#be123c", "mid": "#e11d48", "dim": "#9f1239", "rgb": "190,18,60",
+     "accent": "#fb7185", "accent_soft": "rgba(251,113,133,.14)",
+     "orange": "#d97706", "green": "#16a34a", "purple": "#7c3aed"},
+    {"primary": "#4338ca", "mid": "#4f46e5", "dim": "#3730a3", "rgb": "67,56,202",
+     "accent": "#818cf8", "accent_soft": "rgba(129,140,248,.14)",
+     "orange": "#d97706", "green": "#16a34a", "purple": "#a21caf"},
+    {"primary": "#15803d", "mid": "#16a34a", "dim": "#166534", "rgb": "21,128,61",
+     "accent": "#4ade80", "accent_soft": "rgba(74,222,128,.14)",
+     "orange": "#d97706", "green": "#0d9488", "purple": "#7c3aed"},
+    {"primary": "#1e40af", "mid": "#2563eb", "dim": "#1e3a8a", "rgb": "30,64,175",
+     "accent": "#60a5fa", "accent_soft": "rgba(96,165,250,.14)",
+     "orange": "#d97706", "green": "#16a34a", "purple": "#7c3aed"},
+]
+
+
+def _topic_accent_style(question: str, title: str) -> str:
+    """
+    Build a small inline <style> that overrides the topic-adaptive CSS
+    variables declared in _BASE_CSS. Different questions/topics get a
+    different (but always accessible, pre-vetted) accent palette, purely
+    from a stable hash of the question text — no extra API call, no
+    randomness between runs of the *same* question.
+    """
+    seed = (title or question or "qanim").strip().lower()
+    idx = int(hashlib.sha256(seed.encode("utf-8")).hexdigest(), 16) % len(_ACCENT_PALETTES)
+    p = _ACCENT_PALETTES[idx]
+    return f"""  <style id="qanim-topic-accent">
+    :root {{
+      --c-primary: {p['primary']};
+      --c-primary-mid: {p['mid']};
+      --c-primary-dim: {p['dim']};
+      --c-primary-rgb: {p['rgb']};
+      --c-accent: {p['accent']};
+      --c-accent-soft: {p['accent_soft']};
+      --c-orange: {p['orange']};
+      --c-green: {p['green']};
+      --c-purple: {p['purple']};
+    }}
+  </style>"""
+
+
 def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     """Assemble the complete HTML file from all parts."""
 
     title = _he(scene.get("title", question[:60]))
     question_escaped = _he(question)
+    topic_accent_style = _topic_accent_style(question, scene.get("title", ""))
     steps = scene.get("steps", [])
     to_find = scene.get("to_find", ["The unknown quantity"])
     glossary = scene.get("glossary", [])
@@ -5390,7 +5457,18 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
       const s6panel = document.getElementById('step6-info-panel');
       if (s6panel) s6panel.style.display = 'none';
     }}
-    window.applyStep = applyStep;
+    // Wrap applyStep so the SVG's accessible name tracks the visible step
+    // heading, without depending on the internals of the Gemini-generated
+    // applyStep body (which varies per question).
+    var _qanimRawApplyStep = applyStep;
+    window.applyStep = function(idx) {{
+      _qanimRawApplyStep(idx);
+      var stage = document.getElementById('stage');
+      var heading = document.querySelector('.info-box h3');
+      if (stage && heading) {{
+        stage.setAttribute('aria-label', 'Interactive diagram: ' + heading.textContent.trim());
+      }}
+    }};
 
     // ── Deterministic navigation (Fix F) ──────────────────────────────────────
     // qanim_nextStep: concept steps 0-4 → next concept step;
@@ -5522,6 +5600,36 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   <style id="qanim-controls-styles">
 {_CONTROLS_CSS}
   </style>
+{topic_accent_style}
+  <style id="qanim-responsive-fixes">
+    /* These two mobile rules exist in the design reference but were missing
+       from the generator: without them, the formula/answer grids stay
+       multi-column and the step-dot row doesn't wrap on narrow screens. */
+    @media(max-width:600px){{
+      #qanim-scene6-overlay .lesson-formula-grid,
+      #qanim-scene9-overlay .lesson-answer-grid{{grid-template-columns:1fr;}}
+      #qanim-scene6-overlay .s6-body,
+      #qanim-scene9-overlay .s9-body{{padding:20px;}}
+      #qanim-scene7-overlay .s7-left-col{{min-width:0;}}
+      #qanim-scene7-overlay .s7-nav-row{{flex-wrap:wrap;}}
+    }}
+    @media(max-width:600px){{
+      .step-connector{{display:none;}}
+      .actions{{flex-wrap:wrap;}}
+      .step-dot{{font-size:11px;padding:6px 9px;}}
+      .s6-nav-row,.s7-nav-row,.s9-nav-row{{padding-left:20px;padding-right:20px;}}
+    }}
+  </style>
+  <style id="qanim-a11y-motion">
+    @media (prefers-reduced-motion: reduce) {{
+      *, *::before, *::after {{
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }}
+    }}
+  </style>
   <script>
   // ── Plain-text formula renderer (replaces KaTeX) ──────────────────────────
   // After _clean_latex() runs server-side, formulas are already plain Unicode.
@@ -5607,7 +5715,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   </div>
 
   <div class="svg-container">
-    <svg xmlns="http://www.w3.org/2000/svg" id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
+    <svg xmlns="http://www.w3.org/2000/svg" id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Interactive diagram: {title}">
       <defs>
         {svg_defs}
         <!-- Guaranteed light background pattern -->
