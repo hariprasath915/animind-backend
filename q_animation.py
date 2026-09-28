@@ -23,12 +23,10 @@ REQUIRED ENV VAR:
   GEMINI_API_KEY=your-key
 """
 
-import hashlib
 import json
 import re
 import asyncio
 import html as html_module
-from typing import Optional
 import os as _os
 
 def _he(text) -> str:
@@ -386,6 +384,24 @@ Solve the given problem and return ONLY valid JSON (no markdown, no fences):
   ],
   "system_title": "Hot Plate in Forced Airflow",
   "system_label2": "Forced convection over a hot surface",
+  "lesson_tasks": [
+    {
+      "id": "Q_task",
+      "name": "Heat Loss Rate Q",
+      "symbol": "Q",
+      "formula": "Q = h × A × (Ts − T∞)",
+      "why": "Find the rate of heat transfer from the hot plate to the surrounding air.",
+      "meaning": "h = convective coefficient, A = area, ΔT = temperature difference.",
+      "given": "h = 25 W/m²·K\nA = 2 m²\nTs = 150 °C, T∞ = 30 °C",
+      "work": [
+        {"label": "1. Compute temperature difference", "eq": "ΔT = 150 − 30 = 120 K"},
+        {"label": "2. Substitute into formula", "eq": "Q = 25 × 2 × 120 = 6000 W"}
+      ],
+      "value": "6000",
+      "unit": "W",
+      "note": "Heat loss from the hot plate"
+    }
+  ],
   "customize": {
     "fields": [
       {"id": "h",  "symbol": "h",   "label": "Convective coefficient", "default": 25,  "unit": "W/m²·K"},
@@ -412,10 +428,18 @@ Rules:
 - approach_steps: 2–4 numbered steps for Scene 8 right panel; each has num, label, eq, note.
 - system_title: short name of the physical system (for Scene 8 left panel).
 - system_label2: one-line description (for Scene 8 left panel).
+- lesson_tasks: CRITICAL — one entry per answer to find. If the problem asks for multiple answers
+  (e.g. IP, FP, IMEP, efficiency), create one task per answer. If only one answer required, make one task.
+  Each task has: id (JS identifier), name (full name), symbol, formula (plain text), why (one sentence
+  explaining what this finds), meaning (what each symbol in the formula means), given (multiline string
+  listing the values used, one per line as "symbol = value unit"), work (array of {label, eq} objects
+  showing 1–4 step-by-step calculation steps), value (numeric result as string), unit, note (brief
+  context note like "Power lost to friction").
 - customize.fields: one entry per GIVEN numeric value (not the unknown). id = valid JS identifier. default = original numeric value as a number. For percentage values (e.g. 25% loss) use the raw percentage number as default (e.g. 25, not 0.25).
 - customize.compute_js: JS function body (not the function declaration) that receives vals (object keyed by field id) and _fmt(v) helper. Must return {answer, answer_unit, answer_label, derived:{label:value_str}}. ALWAYS include a guard for invalid inputs (e.g. zero height, negative fraction). For percentage fields, convert inside JS: var frac = 1 - vals.loss/100;
 - customize.question_template: question text with {id} placeholders for each field.
 - ALWAYS include the customize block. NEVER omit it, even for rolling/rotation/energy questions.
+- ALWAYS include the lesson_tasks block. NEVER omit it.
 - compute_js body: write plain JS braces { } — do NOT escape them. The host will not re-process them.
 - Pure JSON only.
 - CRITICAL — NEVER USE LaTeX NOTATION. All formulas, equations, and expressions MUST be
@@ -528,6 +552,19 @@ def generate_solution(question: str) -> dict:
         "approach_steps": [{"num": "8.1", "label": "Identify formula", "eq": "Governing formula", "note": ""}, {"num": "8.2", "label": "Substitute", "eq": "Given values", "note": ""}, {"num": "8.3", "label": "Compute", "eq": "Result", "note": ""}],
         "system_title": "Physical System",
         "system_label2": "Applying the formula",
+        "lesson_tasks": [{
+            "id": "answer",
+            "name": "Final Answer",
+            "symbol": "?",
+            "formula": "Governing formula",
+            "why": "Find the unknown quantity using the governing formula.",
+            "meaning": "Apply the formula with the given values.",
+            "given": "Given values from the problem",
+            "work": [{"label": "Substitute values", "eq": "Apply formula with given data"}, {"label": "Compute result", "eq": "Final answer"}],
+            "value": "?",
+            "unit": "",
+            "note": "Apply the governing formula"
+        }],
         # Fallback customize — a minimal single-field panel so the button always works
         "customize": {"fields": [], "compute_js": "", "question_template": ""},
         "_fallback": True,
@@ -567,8 +604,38 @@ def generate_solution(question: str) -> dict:
                     if isinstance(_var, dict):
                         for _vk in ("name", "value"):
                             if _vk in _var: _var[_vk] = _clean_latex(_var[_vk])
+                # ── lesson_tasks cleanup ──────────────────────────────────────
+                for _lt in data.get("lesson_tasks", []):
+                    if not isinstance(_lt, dict):
+                        continue
+                    for _lk in ("formula", "why", "meaning", "note"):
+                        if _lk in _lt:
+                            _lt[_lk] = _clean_latex(str(_lt[_lk]))
+                    for _lw in _lt.get("work", []):
+                        if isinstance(_lw, dict):
+                            if "eq"    in _lw: _lw["eq"]    = _clean_latex(_lw["eq"])
+                            if "label" in _lw: _lw["label"] = _clean_latex(_lw["label"])
+                # ── Ensure lesson_tasks always exists ─────────────────────────
+                if not data.get("lesson_tasks"):
+                    data["lesson_tasks"] = [{
+                        "id": "answer",
+                        "name": data.get("formula_name", "Final Answer"),
+                        "symbol": str(data.get("answer_value", "?")),
+                        "formula": _clean_latex(str(data.get("formula", "Governing formula"))),
+                        "why": "Find the unknown quantity using the governing formula.",
+                        "meaning": "Apply the formula with the given values.",
+                        "given": "\n".join(data.get("given_list", ["Given values from the problem"])),
+                        "work": [
+                            {"label": ap.get("label", ""), "eq": ap.get("eq", "")}
+                            for ap in data.get("approach_steps", [])
+                        ] or [{"label": "Substitute and solve", "eq": data.get("final_answer", "See solution")}],
+                        "value": str(data.get("answer_value", "?")),
+                        "unit": str(data.get("answer_unit", "")),
+                        "note": data.get("key_insight", "Apply the governing formula.")[:80],
+                    }]
                 Log.ok("Solution", f"Got solution: {data.get('final_answer', '')[:60]}")
                 return data
+
         except Exception as e:
             Log.warn("Solution", f"Attempt {attempt} failed: {e}")
     return FALLBACK
@@ -1024,6 +1091,71 @@ Core quality targets:
   - Every arrow conveys real physical information (force, velocity, heat flow, field direction).
   - Each step clearly adds ONE new insight — the student should say "I see it now!" at each step.
   - Smooth, physics-accurate animation makes the concept intuitive, not just decorative.
+
+
+============================================================
+ULTRA-REALISM MANDATE — SCENES 1-6 (MANDATORY)
+============================================================
+
+You are creating a MUSEUM-GRADE science exhibit. Every element must look like it
+belongs in a professional physics textbook illustration or an award-winning science
+documentary. Follow these absolute requirements for scenes 1-6:
+
+A) ENVIRONMENT (Step 1 — layer-frame):
+   • Draw a FULL, RICH background environment — not just a grid.
+   • Include physically accurate context: launch pad with flame trench (rocket),
+     laboratory bench with measurement instruments (wire/circuit), orbital space
+     background with stars (satellite), laboratory furnace room (heat transfer), etc.
+   • Add dimension markers, coordinate axes (x, y) with arrowheads, a scale bar.
+   • Sky/ground boundary: ground is a thick hatched line with soil texture below,
+     sky/atmosphere gradient above. Include horizon glow if relevant.
+   • All environmental labels in 'Times New Roman' serif, italic for symbols.
+
+B) MAIN OBJECT (Step 2 — layer-object):
+   • Draw the MOST DETAILED version of the object you can produce in SVG.
+   • Every structural component visible: rivets, seams, panels, nozzle bell,
+     wing spars, water meniscus, crystal lattice, axle bore — whatever is real.
+   • Use 3-layer gradient shading (highlight: 80% lightness → base → shadow: 40%
+     lightness). The highlight is always top-left; shadow is always bottom-right.
+   • Add a subtle specular highlight (small white oval, 30% opacity) to every
+     rounded surface to convey 3-D solidity.
+   • Add micro-texture lines or patterns inside the object to suggest material
+     (metal grain = thin parallel lines; insulation = wavy fill; fluid = wavy
+     gradient; wood = curved grain lines; circuit board = green with traces).
+
+C) PHYSICAL QUANTITIES (Steps 3-5 — layer-param1/2/derived):
+   • EVERY force, velocity, and field quantity MUST be drawn as a PROFESSIONAL
+     VECTOR ARROW:
+       - Thick shaft (stroke-width ≥ 4) in a vivid accent colour
+       - Filled arrowhead marker (not a plain line)
+       - A white rounded-rect label background behind the text
+       - Label in 'Times New Roman' serif, italic for the symbol
+       - Proper sub/superscripts using SVG tspan baseline-shift
+   • Force diagrams: draw ALL forces simultaneously in step 5, with tails at the
+     object's centre of mass. Show the FREE-BODY DIAGRAM clearly.
+   • Dimension arrows: double-headed arrows with tick marks at both ends, measured
+     in SVG units proportional to the real physical value.
+   • Annotate EVERY quantity with: symbol (italic serif) + "=" + value + unit
+
+D) TYPOGRAPHY — TEXTBOOK STANDARD (ALL TEXT):
+   • ALL formula/equation text: font-family="'Times New Roman', Georgia, serif"
+     font-style="italic" for single-letter variables (v, F, x, t, α, ω, etc.)
+   • Multi-letter names and units: font-style="normal" (roman)
+   • Subscripts: <tspan baseline-shift="sub" font-size="72%">0</tspan>
+   • Superscripts: <tspan baseline-shift="super" font-size="72%">2</tspan>
+   • Fraction bars: stacked numerator / <line> / denominator in a white panel
+   • Greek letters: α β γ δ ε η θ κ λ μ ν ξ π ρ σ τ φ χ ψ ω Δ Θ Ω
+     (Unicode directly — NEVER \alpha, \omega, \frac, etc.)
+   • ALL text dark: fill="#0f172a" (black ink) on white/light background
+   • NEVER colour formula symbols themselves — colour only arrows and highlights
+
+E) STEP 6 SUMMARY (layer-summary):
+   • Render a FULL TEXTBOOK-STYLE data table listing ALL given values.
+     Each row: symbol (serif italic) | name | value | unit
+   • Highlight the unknown with a pulsing glow box (feGaussianBlur glow filter).
+   • Draw a "FIND → " arrow pointing to the unknown symbol.
+   • The summary box must have: rounded rect (rx=14), white fill, cyan border,
+     drop-shadow, and gradient header bar in the primary accent colour.
 
 ============================================================
 DRAWING REQUIREMENTS
@@ -1611,24 +1743,35 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
     # Python f-string interpolation would try to evaluate those as Python
     # expressions, raising NameError: name 'note_text' is not defined.
     prompt = (
-        "You are generating a HIGH-QUALITY, REALISTIC, VISUALLY RICH 6-step SVG animation "
-        "for a student physics/engineering/math question. "
-        "The animation must include:\n"
-        "  • A CLEAR, WELL-ORGANISED LAYOUT with all elements properly positioned.\n"
-        "  • A PROFESSIONAL, ATTRACTIVE DESIGN with gradients, shadows, arrowheads, and vivid colours.\n"
-        "  • STEP-BY-STEP visual explanation from Step 1 (environment) to Step 6 (complete setup).\n"
-        "  • A CLEAR SETUP of the problem: label every object by its real name, symbol, value, and unit.\n"
-        "  • ACCURATE ANIMATIONS for the physical concept: "
-              "mechanical motion, heat transfer, orbital mechanics, elastic deformation, "
-              "fluid flow, oscillation, electrical circuits — as appropriate.\n"
-        "  • SMOOTH TRANSITIONS between each step (opacity fade-in + translateY or scale spring easing).\n"
-        "  • CORRECT LABELS, ARROWS, DIMENSION LINES, and force vectors on every relevant element.\n"
-        "  • REALISTIC MOVEMENT with proper physics-based kinematics in the RAF loop.\n"
-        "  • EASY-TO-UNDERSTAND PRESENTATION: each step should make one concept click for the student.\n"
-        "\n"
-        "Follow the scene script and solution EXACTLY — match every object name, symbol, and value.\n"
-        "Return ONLY valid JSON (no markdown, no fences).\n"
-        "\n"
+        "You are generating a PREMIUM, PHOTOREALISTIC 6-step SVG animation for a student "
+        "physics/engineering/math question. QUALITY IS PARAMOUNT - this must look like a "
+        "professional science textbook or award-winning museum exhibit.\n\n"
+        "MANDATORY QUALITY REQUIREMENTS for Steps 1-6:\n"
+        "  * STEP 1 (Environment): Draw a RICH, CONTEXTUAL BACKGROUND - laboratory bench, "
+        "launch pad, mechanical workshop, physics lab, or real-world setting. Include "
+        "coordinate axes with arrowheads, a scale bar, gravity arrow (if applicable), "
+        "ground hatching with shadow, atmospheric gradient. NEVER just a plain grid.\n"
+        "  * STEP 2 (Main Object): Draw the ACTUAL PHYSICAL OBJECT in full detail - not a "
+        "generic box or circle. Use 3-layer gradient shading (highlight to base to shadow). "
+        "Add specular highlights (small white ovals at 30% opacity) for 3D solidity. "
+        "Add material texture (metal lines, fluid waviness, rubber texture, etc.).\n"
+        "  * STEPS 3-5 (Quantities): Every force/velocity/field must be a PROFESSIONAL VECTOR ARROW "
+        "(thick shaft stroke-width >= 4, filled arrowhead marker, white label background rect). "
+        "Every dimension line must be a double-headed arrow with tick marks. Labels must show: "
+        "symbol (italic serif) + = + exact value + unit.\n"
+        "  * STEP 6 (Summary): Draw a textbook-style data table listing ALL given values. "
+        "Highlight the unknown with a glowing box (feGaussianBlur). Add a FIND arrow.\n"
+        "  * ANIMATIONS: Use real physics kinematics - parabolic arcs, sinusoidal oscillation, "
+        "smooth slider-crank motion, orbital sin/cos, rocket rising with exhaust. "
+        "ALL motion must be smooth (1000-1500ms transitions with spring easing). "
+        "NEVER leave dynamic problems with empty raf_js.\n"
+        "  * TYPOGRAPHY: ALL formula symbols in Times New Roman serif italic. "
+        "All text dark (#0f172a) on white/light backgrounds. Never colour the text itself.\n"
+        "  * LAYOUT: Use viewBox=0 0 850 478. Keep all content inside x=30..820, y=30..448. "
+        "Centre the main object. NO overlapping labels - use leader lines when needed.\n"
+        "  * LIGHT BACKGROUND ALWAYS: #f8fafc, #eef5ff, or #f0f6ff. NEVER dark SVG backgrounds.\n\n"
+        "Follow the scene script and solution EXACTLY - match every object name, symbol, and value.\n"
+        "Return ONLY valid JSON (no markdown, no fences).\n\n"
         "Question:\n" + question
         + "\n\nScene Script (follow this exactly for step titles, descriptions, badges, and layer structure):\n"
         + scene_str
@@ -1714,7 +1857,7 @@ def _build_scene_fallback_svg(scene: dict) -> dict:
                        "purple": "badge-purple", "blue": "badge-cyan"}
 
     steps_list = []
-    all_layer_ids = [s.get("layer_new") for s in steps if s.get("layer_new")]
+    # (layer_new ids collected but not needed after rebuild; omitted to silence linter)
     # accumulate layers visible list per step (same logic as assemble_html)
     for s in steps:
         step_num = s.get("step_number", 1)
@@ -2381,1785 +2524,170 @@ if (!window.__qanimRAFStarted) {
     return data
 
 def _build_scene6_html(sol: dict, scene: dict) -> str:
-    """Build Scene 7 (Main Formula) HTML — matches reference exactly."""
-    # Apply LaTeX → plain text cleanup before any HTML escaping
-    formula_raw    = _clean_latex(str(sol.get("formula", "Governing Formula")))
-    formula_text   = _he(formula_raw)
-    formula_attr   = html_module.escape(formula_raw, quote=True)
-    formula_name   = _he(_clean_latex(str(sol.get("formula_name", "Formula"))))
+    """Build Scene 7 (Formula Grid) HTML -- lesson-based design matching reference HTML."""
+    lesson_tasks = sol.get('lesson_tasks', [])
+    if not lesson_tasks:
+        lesson_tasks = [{
+            'id': 'answer',
+            'name': sol.get('formula_name', 'Governing Formula'),
+            'symbol': sol.get('answer_value', '?'),
+            'formula': _clean_latex(str(sol.get('formula', 'Governing formula'))),
+            'why': 'Find the unknown quantity using the governing formula.',
+            'meaning': 'Apply the formula with the given values.',
+            'given': '\n'.join(sol.get('given_list', [])),
+            'work': [{'label': ap.get('label', ''), 'eq': ap.get('eq', '')} for ap in sol.get('approach_steps', [])],
+            'value': str(sol.get('answer_value', '?')),
+            'unit': str(sol.get('answer_unit', '')),
+            'note': sol.get('key_insight', '')[:80],
+        }]
 
-    variables = sol.get("variables", [])
-    var_boxes = ""
-    for v in variables:
-        # Support both Gemini key names: "symbol" (correct) and "sym" (legacy)
-        sym_raw  = v.get("symbol") or v.get("sym") or "?"
-        sym  = _he(sym_raw)
-        name = _he(v.get("name", "Variable"))
-        # Show value + unit together if available
-        val_raw  = v.get("value") or v.get("val") or ""
-        unit_raw = v.get("unit", "")
-        val_disp = _he((val_raw + (" " + unit_raw if unit_raw else "")).strip())
-        # Map color string to CSS variant class
-        color_map = {
-            "blue": "s6v-blue", "green": "s6v-green", "orange": "s6v-orange",
-            "red": "s6v-red", "purple": "s6v-purple", "teal": "s6v-teal",
-        }
-        color_cls = color_map.get(str(v.get("color", "blue")).lower(), "s6v-blue")
-        var_boxes += f"""<div class="s6-var-box {color_cls}">
-          <div class="s6-var-arrow"></div>
-          <div class="s6-var-inner">
-            <span class="s6-var-sym">{sym}</span>
-            <span class="s6-var-name">{sym} &mdash; {name}</span>
-            <span class="s6-var-val" id="s6v-{sym_raw}-val">{val_disp}</span>
-          </div>
-        </div>\n"""
+    formula_cards = ''
+    for i, task in enumerate(lesson_tasks):
+        name    = _he(str(task.get('name', 'Formula')))
+        formula = _he(_clean_latex(str(task.get('formula', ''))))
+        why     = _he(_clean_latex(str(task.get('why', ''))))
+        meaning = _he(_clean_latex(str(task.get('meaning', ''))))
+        badge_label = f'{i+1} \u00b7 {name}'  # e.g. "1 · Indicated Power"
+        formula_cards += (
+            '<article class="lesson-formula">\n'
+            '  <div class="s6-formula-badge">' + _he(badge_label) + '</div>\n'
+            '  <div class="lesson-formula-eq">' + formula + '</div>\n'
+            '  <p class="lesson-why">' + why + '</p>\n'
+            '  <p class="lesson-key">' + meaning + '</p>\n'
+            '</article>\n'
+        )
 
-    note_text = _he(_clean_latex(str(sol.get("note", "")))) if sol.get("note") else ""
-    note_bar = ""
-    if note_text:
-        note_bar = f"""<div class="s6-note-bar" id="s6-note-bar">
-        <span class="s6-note-icon">&#x26A1;</span>
-        <span class="s6-note-text" id="s6-note-text">{note_text}</span>
-      </div>"""
+    basis_note = _he(_clean_latex(str(sol.get('key_insight', ''))))
 
-    return f"""<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-labelledby="s6-card-title">
-  <div class="s6-card">
-    <div class="s6-title-bar">
-      <h2 id="s6-card-title">Step 7 &mdash; Main Formula</h2>
-    </div>
-    <div class="s6-body">
-      <div class="s6-phase-progress" id="s6-phase-progress">Step 1 of {len(variables) + 1} &mdash; The Formula</div>
-      <div class="s6-phase-caption" id="s6-phase-caption">This is the governing equation for this problem. Each symbol is explained below.</div>
-      <div class="s6-formula-box">
-        <div class="s6-formula-badge">Governing Equation</div>
-        <div class="s6-formula-main s6-math-formula" id="s6-formula-text"
-             data-formula="{formula_attr}">{formula_text}</div>
-        <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_name}</div>
-      </div>
-      <div class="s6-vars-row" id="s6-vars-row">
-        {var_boxes}
-      </div>
-      {note_bar}
-    </div>
-    <div class="s6-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back to Step 6</button>
-      <button class="btn-primary" onclick="qanim_s6Advance()" id="s6-next-btn">Next &#x25B6;</button>
-    </div>
-  </div>
-</div>"""
+    return (
+        '<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-labelledby="s6-card-title">\n'
+        ' <div class="s6-card">\n'
+        '  <div class="s6-title-bar"><h2 id="s6-card-title">Step 7 &mdash; Formulas to use</h2></div>\n'
+        '  <div class="s6-body">\n'
+        '   <div class="lesson-formula-grid" id="s7-formulas">\n'
+        + formula_cards +
+        '   </div>\n'
+        '   <p id="lesson-basis" style="font-size:12px;line-height:1.5;color:#92400e;margin-top:16px">\n'
+        '     &#x1F4A1; ' + basis_note + '\n'
+        '   </p>\n'
+        '  </div>\n'
+        '  <div class="s6-nav-row">\n'
+        '   <button class="btn-secondary" onclick="qanim_goToPrevScene()">&#x2190; Step 6</button>\n'
+        '   <button class="btn-primary" onclick="qanim_showScene7()">Step 8: Solve &#x25B6;</button>\n'
+        '  </div>\n'
+        ' </div>\n'
+        '</div>\n'
+    )
 
 
 def _build_scene7_html(sol: dict, scene: dict) -> str:
-    """Build Scene 8 (Substitution) HTML — matches reference exactly."""
-    # Apply LaTeX → plain text cleanup before HTML escaping
-    system_title  = _he(_clean_latex(str(sol.get("system_title",  "Physical System"))))
-    system_label2 = _he(_clean_latex(str(sol.get("system_label2", "Substituting given values"))))
-    formula_result = _he(_clean_latex(str(sol.get("formula", "Formula"))))
-    final_answer   = _he(_clean_latex(str(sol.get("final_answer", "See calculation"))))
+    """Build Scene 8 (Interactive Tabbed Solver) HTML -- lesson-based design matching reference HTML."""
+    lesson_tasks = sol.get('lesson_tasks', [])
+    if not lesson_tasks:
+        lesson_tasks = [{
+            'id': 'answer',
+            'name': sol.get('formula_name', 'Solve for Answer'),
+            'symbol': sol.get('answer_value', '?'),
+            'formula': _clean_latex(str(sol.get('formula', 'Governing formula'))),
+            'why': 'Find the unknown quantity.',
+            'meaning': 'Apply formula with given values.',
+            'given': '\n'.join(sol.get('given_list', [])),
+            'work': [{'label': ap.get('label', ''), 'eq': ap.get('eq', '')} for ap in sol.get('approach_steps', [])],
+            'value': str(sol.get('answer_value', '?')),
+            'unit': str(sol.get('answer_unit', '')),
+            'note': sol.get('key_insight', '')[:80],
+        }]
 
-    given_list = sol.get("given_list", [])
-    given_html = "".join(
-        f'<div class="s7-given-item"><strong>{_he(_clean_latex(g.split("=")[0].strip()) if "=" in g else "")}</strong>'
-        f'{(" = " + _he(_clean_latex(g.split("=",1)[1].strip()))) if "=" in g else _he(_clean_latex(str(g)))}</div>\n'
-        for g in given_list
+    task_tabs = ''
+    for i, task in enumerate(lesson_tasks):
+        name = _he(str(task.get('name', f'Answer {i+1}')))
+        active_cls = ' is-current' if i == 0 else ''
+        tid = _he(str(task.get('id', f't{i}')))
+        task_tabs += (
+            '<button class="lesson-target' + active_cls + '"'
+            ' data-task-idx="' + str(i) + '" id="s8-tab-' + tid + '"'
+            ' onclick="qanimS8SwitchTask(' + str(i) + ')">' + name + '</button>\n'
+        )
+
+    tasks_json = json.dumps(lesson_tasks, ensure_ascii=False)
+    first_title = _he(str(lesson_tasks[0].get('name', '') if lesson_tasks else ''))
+    n_tasks = len(lesson_tasks)
+
+    return (
+        '<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">\n'
+        ' <div class="s7-card">\n'
+        '  <div class="s7-title-bar"><h2 id="s8-card-title">Step 8 &mdash; Solve each answer</h2></div>\n'
+        '  <nav class="lesson-targets" id="s8-task-nav" aria-label="Answers to find">\n'
+        + task_tabs +
+        '  </nav>\n'
+        '  <div class="s7-body-cols">\n'
+        '   <div class="s7-left-col">\n'
+        '    <div class="s7-system-label" id="s8-progress">Answer 1 of ' + str(n_tasks) + '</div>\n'
+        '    <div class="s7-system-visual"><div class="s7-system-visual-title" id="s8-task-title">' + first_title + '</div></div>\n'
+        '    <div class="s7-given-section-title">Use these values</div>\n'
+        '    <div class="s7-given-list" id="s8-task-given" style="font-size:14px;line-height:1.9;color:#334155"></div>\n'
+        '    <div class="s7-formula-result-bar"><div class="s7-formula-result-text" id="s8-task-formula"></div></div>\n'
+        '   </div>\n'
+        '   <div class="s7-right-col" aria-live="polite">\n'
+        '    <div class="s7-approach-list" id="s8-task-work"></div>\n'
+        '    <div class="s7-formula-result-bar"><div class="s7-formula-result-text" id="s8-task-result"></div></div>\n'
+        '   </div>\n'
+        '  </div>\n'
+        '  <div class="s7-nav-row">\n'
+        '   <button class="btn-secondary" id="s8-back" onclick="qanimPreviousCondition()">&#x2190; Step 7</button>\n'
+        '   <button class="btn-primary" id="s8-next" onclick="qanimNextCondition()">Next answer &#x25B6;</button>\n'
+        '  </div>\n'
+        ' </div>\n'
+        '</div>\n'
+        '<script id="qanim-lesson-tasks-data" type="application/json">' + tasks_json + '</script>\n'
+        '<script type="application/json" id="__answer_targets__">{}</script>\n'
     )
-
-    approach_steps = sol.get("approach_steps", [])
-    approach_html = ""
-    for ap in approach_steps:
-        num   = _he(str(ap.get("num", "")))
-        label = _he(_clean_latex(str(ap.get("label", ""))))
-        eq    = _he(_clean_latex(str(ap.get("eq", ""))))
-        note  = _he(_clean_latex(str(ap.get("note", ""))))
-        approach_html += f"""<div class="s7-approach-step">
-          <span class="s7-approach-step-num">{num}</span>
-          <span>{label}
-            <span class="s7-approach-step-eq">{eq}</span>
-            {f'<span style="display:block;font-size:11px;color:#64748b;margin-top:3px;">{note}</span>' if note else ''}
-          </span>
-        </div>
-"""
-
-    return f"""<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">
-  <div class="s7-card">
-    <div class="s7-title-bar">
-      <h2 id="s8-card-title">Step 8 &mdash; Step-by-Step Substitution</h2>
-    </div>
-    <div class="s7-body-cols">
-      <div class="s7-left-col">
-        <div class="s7-system-label">System Diagram</div>
-        <div class="s7-system-visual">
-          <div class="s7-system-visual-title" id="s7-system-title">{system_title}</div>
-          <div class="s7-system-arrows">&#x2191; &#x2191; &#x2191;</div>
-          <div class="s7-system-label2" id="s7-system-label2">{system_label2}</div>
-        </div>
-        <div class="s7-formula-result-bar">
-          <div class="s7-formula-result-text" id="s7-formula-result">{formula_result}</div>
-          <div class="s7-formula-units" id="s7-units-hint">Units: check dimensional consistency</div>
-        </div>
-      </div>
-      <div class="s7-right-col">
-        <div>
-          <div class="s7-given-section-title">Given Parameters</div>
-          <div class="s7-given-list" id="s7-given-list">{given_html}</div>
-        </div>
-        <div>
-          <div class="s7-approach-section-title">Substituting Given Values into the Formula</div>
-          <div class="s7-approach-list" id="s7-approach-list">{approach_html}</div>
-        </div>
-        <div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fcd34d;border-radius:10px;padding:11px 15px;display:flex;align-items:center;gap:8px;">
-          <span style="font-size:16px;">&#x27A1;&#xFE0F;</span>
-          <span style="font-size:12.5px;font-weight:700;color:#92400e;">Proceed to <strong>Step 9</strong> to see the Final Answer with units and conclusion.</span>
-        </div>
-      </div>
-    </div>
-    <div class="s7-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Step 7</button>
-      <button class="btn-primary" onclick="if(typeof window.qanim_showScene9===&#39;function&#39;)window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>
-    </div>
-  </div>
-</div>"""
 
 
 def _build_scene9_html(sol: dict, to_find: list) -> str:
-    """Build Scene 9 (Final Answer) HTML — matches reference exactly."""
-    formula_raw    = sol.get("formula", "Governing Formula")
-    formula_recap  = _he(formula_raw)
-    formula_attr   = html_module.escape(formula_raw, quote=True)
-    chain = sol.get("substitution_chain", [])
-    answer_value = _he(sol.get("answer_value", "?"))
-    answer_unit = _he(sol.get("answer_unit", ""))
-    key_insight = sol.get("key_insight", "Apply the governing formula with the given data.")
-    to_find_label = _he(to_find[0] if to_find else "Final Answer")
-    final_answer = _he(sol.get("final_answer", "See calculation"))
+    """Build Scene 9 (Final Answer Grid) HTML -- lesson-based design matching reference HTML."""
+    lesson_tasks = sol.get('lesson_tasks', [])
+    if not lesson_tasks:
+        lesson_tasks = [{
+            'id': 'answer',
+            'name': to_find[0] if to_find else 'Final Answer',
+            'symbol': sol.get('answer_value', '?'),
+            'formula': _clean_latex(str(sol.get('formula', ''))),
+            'value': str(sol.get('answer_value', '?')),
+            'unit': str(sol.get('answer_unit', '')),
+            'note': sol.get('key_insight', '')[:80],
+        }]
 
-    chain_html = ""
-    for row in chain:
-        num = row.get("num", 1)
-        eq_raw  = row.get("eq", "")
-        eq_attr = html_module.escape(eq_raw, quote=True)
-        eq_text = _he(eq_raw)
-        # Add a descriptive step label if available
-        step_labels = ["Write formula", "Substitute values", "Simplify", "Compute result", "Final answer"]
-        step_label = step_labels[num - 1] if (num - 1) < len(step_labels) else f"Step {num}"
-        chain_html += (
-            f'<div class="s9-sub-row" data-s9-idx="{num-1}">'
-            f'<div class="s9-sub-num">{num}</div>'
-            f'<div class="s9-sub-eq s9-math-formula" data-formula="{eq_attr}">'
-            f'<span class="s9-step-lbl">{step_label}:</span> {eq_text}</div>'
-            f'</div>\n'
+    answer_cards = ''
+    for task in lesson_tasks:
+        name  = _he(str(task.get('name', 'Answer')))
+        value = _he(str(task.get('value', '?')))
+        unit  = _he(str(task.get('unit', '')))
+        note  = _he(_clean_latex(str(task.get('note', ''))))
+        answer_cards += (
+            '<div class="lesson-answer">\n'
+            '  <h3>' + name + '</h3>\n'
+            '  <div class="lesson-answer-number">' + value + '<span>' + unit + '</span></div>\n'
+            '  <p>' + note + '</p>\n'
+            '</div>\n'
         )
 
-    return f"""<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-labelledby="s9-card-title">
-  <div class="s9-card">
-    <div class="s9-title-bar">
-      <h2 id="s9-card-title">&#x2705; Step 9 &mdash; Final Answer</h2>
-      <p>{to_find_label}</p>
-    </div>
-    <div class="s9-body">
-      <div class="s9-formula-recap">
-        <div class="s9-formula-recap-label">&#x1F4D0; Governing Formula (from Step 7)</div>
-        <div class="s9-formula-recap-eq s9-math-formula" id="s9-formula-recap"
-             data-formula="{formula_attr}">{formula_recap}</div>
-      </div>
-      <div class="s9-sub-chain" id="s9-sub-chain">
-        {chain_html}
-      </div>
-      <div class="s9-final-box" id="s9-final-box">
-        <div class="s9-final-label">&#x2B50; Final Answer</div>
-        <div class="s9-final-value" id="s9-final-value"><span class="s9-highlight">{answer_value}</span> {answer_unit}</div>
-        <div class="s9-final-unit" id="s9-final-unit">Units: {answer_unit} &nbsp;|&nbsp; &#x2714; Dimensionally consistent</div>
-      </div>
-      <div class="s9-insight-bar" id="s9-insight-bar">
-        <span class="s9-insight-icon">&#x1F4A1;</span>
-        <div class="s9-insight-text" id="s9-insight-text"><strong>Key Insight:</strong> {_he(key_insight)}</div>
-      </div>
-    </div>
-    <div class="s9-nav-row">
-      <button class="btn-secondary" onclick="if(typeof window.qanim_goToScene7FromScene9===&#39;function&#39;)window.qanim_goToScene7FromScene9()">&#x2190; Back to Step 8</button>
-      <button class="btn-primary" onclick="if(typeof window.resetAnim===&#39;function&#39;)window.resetAnim()">&#x21BA; Restart Animation</button>
-    </div>
-  </div>
-</div>"""
-
-
-# ===========================================================================
-# CSS Templates (reference-exact)
-# ===========================================================================
-
-_BASE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fira+Code:wght@400;500;600;700&display=swap');
-
-/* ── Topic-adaptive CSS variables (overridden per-render by inline <style>) ── */
-:root {
-  /* Palette */
-  --c-primary:        #0369a1;
-  --c-primary-mid:    #0891b2;
-  --c-primary-dim:    #0e7490;
-  --c-accent:         #38bdf8;
-  --c-accent-soft:    rgba(56,189,248,.12);
-  --c-orange:         #d97706;
-  --c-green:          #16a34a;
-  --c-green-soft:     rgba(22,163,74,.10);
-  --c-purple:         #7c3aed;
-  /* Surfaces */
-  --bg-page:          #f0f5fc;
-  --bg-page-end:      #e8f0fe;
-  --panel-bg:         #ffffff;
-  --panel-bg-alt:     #f8fbff;
-  --border:           #e2e8f0;
-  --border-strong:    #cbd5e1;
-  --text-main:        #0f172a;
-  --text-sub:         #475569;
-  --text-muted:       #94a3b8;
-  /* Tokens */
-  --radius-card:      18px;
-  --radius-sm:        10px;
-  --radius-xs:        7px;
-  --shadow-card:      0 1px 2px rgba(15,23,42,.04), 0 4px 16px rgba(15,23,42,.07), 0 20px 48px rgba(15,23,42,.05);
-  --shadow-deep:      0 8px 32px rgba(15,23,42,.12), 0 2px 8px rgba(15,23,42,.07);
-  --ease-spring:      cubic-bezier(.34,1.56,.64,1);
-  --ease-smooth:      cubic-bezier(.4,0,.2,1);
-  --transition:       .4s var(--ease-smooth);
-}
-
-/* ── Reset ───────────────────────────────────────────────────────────────── */
-*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
-
-body {
-  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  background: linear-gradient(155deg, var(--bg-page) 0%, var(--bg-page-end) 55%, #eff6ff 100%);
-  background-attachment: fixed;
-  color: var(--text-main);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  min-height: 100vh;
-  padding: 32px 16px 160px;
-  letter-spacing: -.01em;
-}
-
-/* ── Page header ─────────────────────────────────────────────────────────── */
-.page-header {
-  width: 100%; max-width: 900px; margin-bottom: 18px;
-  display: flex; align-items: center; gap: 10px;
-}
-.page-chip {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 6px 14px; border-radius: 24px;
-  background: rgba(var(--c-primary-rgb, 3,105,161),.09);
-  border: 1px solid rgba(var(--c-primary-rgb, 3,105,161),.20);
-  font-size: 10.5px; font-weight: 800; color: var(--c-primary-dim);
-  text-transform: uppercase; letter-spacing: 1px;
-  backdrop-filter: blur(6px);
-}
-.page-chip-icon { font-size: 13px; line-height: 1; }
-.page-topic-badge {
-  margin-left: auto;
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 11px; border-radius: 20px;
-  background: var(--c-accent-soft);
-  border: 1px solid rgba(var(--c-primary-rgb,3,105,161),.18);
-  font-size: 10px; font-weight: 800; color: var(--c-primary-dim);
-  text-transform: uppercase; letter-spacing: .9px;
-}
-
-/* ── Fullscreen button ───────────────────────────────────────────────────── */
-#qanim-fullscreen-btn {
-  position: fixed; top: 14px; right: 16px; z-index: 9000;
-  display: flex; align-items: center; gap: 6px; padding: 8px 15px;
-  border-radius: 12px;
-  border: 1.5px solid rgba(var(--c-primary-rgb,3,105,161),.25);
-  background: rgba(255,255,255,.94); backdrop-filter: blur(14px);
-  color: var(--c-primary-dim); font-family: inherit; font-size: 12px; font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 4px 16px rgba(var(--c-primary-rgb,3,105,161),.14), 0 1px 4px rgba(0,0,0,.07);
-  transition: background .2s, border-color .2s, transform .22s var(--ease-spring), box-shadow .2s;
-}
-#qanim-fullscreen-btn:hover {
-  background: var(--c-accent-soft);
-  border-color: var(--c-primary-mid);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 22px rgba(var(--c-primary-rgb,3,105,161),.24);
-}
-#qanim-fullscreen-btn .fs-icon { font-size: 14px; line-height: 1; transition: transform .3s; }
-#qanim-fullscreen-btn.is-fullscreen { background: var(--c-accent-soft); border-color: var(--c-primary-mid); }
-#qanim-fullscreen-btn.is-fullscreen .fs-icon { transform: rotate(180deg); }
-
-/* Fullscreen tweaks */
-body.qanim-fullscreen { padding: 0 !important; background: var(--panel-bg) !important; }
-body.qanim-fullscreen .dashboard { max-width: 100% !important; border-radius: 0 !important; box-shadow: none !important; border: none !important; height: 100vh; display: flex; flex-direction: column; }
-body.qanim-fullscreen .page-header { display: none !important; }
-body.qanim-fullscreen .question-banner { display: none !important; }
-body.qanim-fullscreen .svg-container { flex: 1 1 auto; aspect-ratio: unset !important; }
-body.qanim-fullscreen .step-indicator { display: none !important; }
-body.qanim-fullscreen .step-color-legend { display: none !important; }
-body.qanim-fullscreen .step-progress-wrap { display: none !important; }
-body.qanim-fullscreen .step-label { display: none !important; }
-body.qanim-fullscreen #qanim-controls-bar { bottom: 10px; }
-body.qanim-fullscreen #qanim-fullscreen-btn { top: 10px; right: 12px; }
-body.qanim-fullscreen .control-panel { padding: 12px 20px 14px !important; flex-shrink: 0; }
-body.qanim-fullscreen .info-box { min-height: 70px !important; padding: 12px 16px !important; }
-body.qanim-fullscreen .actions { margin-top: 10px !important; }
-
-/* ── Dashboard card ──────────────────────────────────────────────────────── */
-
-.dashboard {
-  width: 100%; max-width: 900px; margin: 0 auto;
-  background: var(--panel-bg);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-  border: 1px solid var(--border);
-  position: relative;
-}
-.dashboard::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3.5px;
-  background: linear-gradient(90deg, var(--c-primary-dim) 0%, var(--c-purple) 50%, var(--c-orange) 100%);
-  border-radius: var(--radius-card) var(--radius-card) 0 0; z-index: 2;
-}
-
-/* ── Question banner ─────────────────────────────────────────────────────── */
-.question-banner {
-  padding: 22px 28px 18px;
-  background: linear-gradient(135deg, var(--panel-bg-alt) 0%, #f0f5ff 40%, var(--bg-page) 100%);
-  border-bottom: 1px solid var(--border);
-  display: flex; flex-direction: column; gap: 8px;
-  position: relative; overflow: hidden;
-}
-.question-banner::after {
-  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3.5px;
-  background: linear-gradient(to bottom, var(--c-primary-mid), var(--c-accent));
-  border-radius: 0 3px 3px 0;
-}
-.q-label {
-  font-size: 10px; font-weight: 800; color: var(--c-primary-dim);
-  text-transform: uppercase; letter-spacing: 2px;
-  display: flex; align-items: center; gap: 8px;
-}
-.q-label-dot {
-  display: inline-block; width: 16px; height: 16px; border-radius: 5px;
-  background: linear-gradient(135deg, var(--c-primary-dim), var(--c-primary-mid));
-  flex-shrink: 0;
-}
-.q-text {
-  font-size: 15px; color: var(--text-main); line-height: 1.65;
-  font-weight: 450; max-width: 820px;
-}
-
-/* ── SVG container ───────────────────────────────────────────────────────── */
-.svg-container {
-  width: 100%; aspect-ratio: 16/9;
-  position: relative; overflow: hidden;
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(145deg, #f8fafc 0%, #eef5ff 55%, #f0f6ff 100%);
-}
-svg { display: block; width: 100%; height: 100%; }
-.svg-layer { transition: opacity .55s var(--ease-smooth); }
-
-/* ── Control panel ───────────────────────────────────────────────────────── */
-.control-panel {
-  padding: 22px 28px 26px;
-  background: linear-gradient(180deg, #ffffff 0%, var(--panel-bg-alt) 100%);
-  border-top: 1px solid var(--border);
-}
-.step-color-legend {
-  display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
-}
-.step-legend-item {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 10px; color: var(--text-sub); font-weight: 600;
-  text-transform: uppercase; letter-spacing: .6px;
-}
-.step-legend-dot { width: 8px; height: 8px; border-radius: 50%; }
-
-/* ── Step indicator ──────────────────────────────────────────────────────── */
-.step-indicator {
-  display: flex; align-items: center; gap: 6px;
-  margin-bottom: 18px; flex-wrap: wrap;
-}
-.step-connector {
-  flex: 0 0 14px; height: 1.5px;
-  background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
-  border-radius: 2px;
-}
-.step-dot {
-  padding: 6px 13px; border-radius: 20px;
-  background: #f1f5f9; border: 1.5px solid #e2e8f0;
-  font-size: 11.5px; font-weight: 700; color: #94a3b8;
-  cursor: pointer; white-space: nowrap; user-select: none;
-  position: relative;
-  transition: background .28s, color .28s, border-color .28s,
-              box-shadow .28s, transform .22s var(--ease-spring);
-}
-.step-dot:hover:not(.active) {
-  background: var(--c-accent-soft);
-  border-color: rgba(var(--c-primary-rgb,3,105,161),.28);
-  color: var(--c-primary-dim);
-  transform: translateY(-2px);
-}
-.step-dot.active {
-  background: linear-gradient(135deg, var(--c-primary-dim) 0%, var(--c-primary-mid) 100%);
-  border-color: transparent; color: #fff;
-  box-shadow: 0 3px 12px rgba(var(--c-primary-rgb,3,105,161),.38),
-              0 1px 3px rgba(var(--c-primary-rgb,3,105,161),.22);
-  transform: scale(1.07);
-}
-.step-dot.done {
-  background: var(--c-green-soft);
-  border-color: rgba(22,163,74,.28);
-  color: #15803d;
-}
-.step-label {
-  font-size: 11px; color: var(--text-muted); font-weight: 600;
-  letter-spacing: .6px; text-transform: uppercase;
-  margin-left: 6px; flex: 1; min-width: 0;
-}
-.step-progress-wrap {
-  height: 3px; background: #f1f5f9; border-radius: 2px;
-  margin-bottom: 22px; overflow: hidden;
-}
-.step-progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, var(--c-primary-dim), var(--c-primary-mid), var(--c-accent));
-  border-radius: 2px;
-  transition: width .5s var(--ease-smooth);
-  width: 0%;
-}
-
-/* ── Info box ────────────────────────────────────────────────────────────── */
-.info-box {
-  background: linear-gradient(135deg, #f8fbff 0%, #f3f8ff 100%);
-  border: 1px solid #d8e8f8;
-  border-left: 4px solid var(--c-primary-mid);
-  border-radius: var(--radius-sm);
-  padding: 20px 22px;
-  min-height: 130px;
-  display: flex; flex-direction: column; gap: 11px;
-  position: relative; overflow: hidden;
-}
-.info-box::before {
-  content: ''; position: absolute; top: -30px; right: -30px;
-  width: 100px; height: 100px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(var(--c-primary-rgb,3,105,161),.06) 0%, transparent 70%);
-  pointer-events: none;
-}
-.info-box h3 {
-  color: var(--text-main); font-size: 16px; font-weight: 800;
-  display: flex; align-items: center; gap: 10px; line-height: 1.35;
-  letter-spacing: -.25px;
-}
-.info-box h3::before {
-  content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--c-primary-mid); flex-shrink: 0;
-  box-shadow: 0 0 0 3px rgba(var(--c-primary-rgb,3,105,161),.18);
-}
-
-/* ── Badges ──────────────────────────────────────────────────────────────── */
-.badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
-.badge {
-  padding: 4px 12px; border-radius: 20px;
-  font-size: 11.5px; font-weight: 700;
-  display: inline-flex; align-items: center; gap: 5px;
-  letter-spacing: .1px; font-family: 'Inter', system-ui, sans-serif;
-}
-.badge-cyan  { background: rgba(8,145,178,.09);  border: 1px solid rgba(8,145,178,.28);  color: #0e7490; }
-.badge-orange{ background: rgba(217,119,6,.09);  border: 1px solid rgba(217,119,6,.28);  color: #92400e; }
-.badge-green { background: rgba(22,163,74,.09);  border: 1px solid rgba(22,163,74,.28);  color: #15803d; }
-.info-desc { font-size: 14px; line-height: 1.72; color: var(--text-sub); font-weight: 400; }
-
-/* ── Action buttons ──────────────────────────────────────────────────────── */
-.actions {
-  display: flex; justify-content: flex-end; align-items: center;
-  gap: 10px; margin-top: 20px;
-}
-button {
-  padding: 11px 24px; border-radius: 10px;
-  font-size: 13.5px; font-weight: 700; font-family: inherit;
-  cursor: pointer; border: none; outline: none; letter-spacing: .05px;
-  transition: background .22s, box-shadow .22s, transform .2s var(--ease-spring), color .2s, border-color .2s;
-}
-.btn-primary {
-  background: linear-gradient(135deg, var(--c-primary-dim) 0%, var(--c-primary-mid) 100%);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(var(--c-primary-rgb,3,105,161),.30), 0 1px 3px rgba(var(--c-primary-rgb,3,105,161),.15);
-}
-.btn-primary:hover {
-  background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-dim) 100%);
-  box-shadow: 0 6px 22px rgba(var(--c-primary-rgb,3,105,161),.38);
-  transform: translateY(-2px);
-}
-.btn-secondary {
-  background: #fff; color: var(--text-sub);
-  border: 1.5px solid var(--border-strong);
-  box-shadow: 0 1px 3px rgba(15,23,42,.06);
-}
-.btn-secondary:hover {
-  background: var(--panel-bg-alt); color: var(--text-main);
-  border-color: #94a3b8;
-  box-shadow: 0 2px 8px rgba(15,23,42,.10);
-  transform: translateY(-1px);
-}
-:root {
-  /* NOTE: these are ALIASES onto the topic-adaptive tokens defined in the
-     primary :root block above, not a second competing palette. Every
-     selector below that used to hard-pin its own cyan palette now tracks
-     whatever --c-primary* / --radius-* values a per-question <style>
-     override sets later in <head> (see the accent-color injection in
-     assemble_html). This is what makes different questions render with
-     different accent colors instead of every animation looking identical. */
-  /* text-main / text-sub / text-muted / border / border-strong / panel-bg /
-     shadow-card are intentionally NOT redeclared here — they already exist
-     with the same meaning in the primary :root above; redefining a custom
-     property in terms of itself (var(--text-main) inside --text-main:...)
-     is a circular reference and CSS would treat it as invalid, so we must
-     never do that. Only genuinely differently-named tokens are aliased: */
-  --bg-color: var(--bg-page, #eef2f9);
-  --accent-cyan: var(--c-primary-mid, #0891b2);
-  --accent-cyan-dim: var(--c-primary-dim, #0e7490);
-  --accent-orange: var(--c-orange, #d97706);
-  --accent-green: var(--c-green, #16a34a);
-  --border-radius: var(--radius-card, 16px);
-  --border-radius-sm: var(--radius-sm, 10px);
-  --transition-smooth: var(--transition, .45s cubic-bezier(.4,0,.2,1));
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
-  background:linear-gradient(160deg,#eef2f9 0%,#e8f0fe 50%,#eff6ff 100%);background-attachment:fixed;
-  color:var(--text-main);display:flex;flex-direction:column;align-items:center;
-  justify-content:flex-start;min-height:100vh;padding:28px 16px 140px;}
-.page-header{width:100%;max-width:900px;margin-bottom:14px;display:flex;align-items:center;gap:10px;}
-.page-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;
-  background:rgba(8,145,178,.10);border:1px solid rgba(8,145,178,.22);font-size:11px;font-weight:700;
-  color:var(--accent-cyan-dim);text-transform:uppercase;letter-spacing:.8px;}
-.page-chip::before{content:'▶';font-size:8px;}
-/* ── Fullscreen button ─────────────────────────────────────────────── */
-#qanim-fullscreen-btn{position:fixed;top:14px;right:16px;z-index:9000;
-  display:flex;align-items:center;gap:6px;padding:8px 14px;
-  border-radius:12px;border:1.5px solid rgba(8,145,178,.30);
-  background:rgba(255,255,255,.92);backdrop-filter:blur(12px);
-  color:var(--accent-cyan-dim);font-family:inherit;font-size:12px;font-weight:700;
-  cursor:pointer;box-shadow:0 4px 16px rgba(8,145,178,.18),0 1px 4px rgba(0,0,0,.08);
-  transition:background .2s,border-color .2s,color .2s,transform .18s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;}
-#qanim-fullscreen-btn:hover{background:rgba(8,145,178,.10);border-color:var(--accent-cyan);
-  transform:translateY(-2px);box-shadow:0 6px 22px rgba(8,145,178,.28);}
-#qanim-fullscreen-btn .fs-icon{font-size:14px;line-height:1;transition:transform .3s;}
-#qanim-fullscreen-btn.is-fullscreen{background:rgba(8,145,178,.12);border-color:var(--accent-cyan);}
-#qanim-fullscreen-btn.is-fullscreen .fs-icon{transform:rotate(180deg);}
-/* Fullscreen mode tweaks */
-body.qanim-fullscreen{padding:0!important;background:var(--panel-bg)!important;}
-body.qanim-fullscreen .dashboard{max-width:100%!important;border-radius:0!important;
-  box-shadow:none!important;border:none!important;height:100vh;display:flex;flex-direction:column;}
-body.qanim-fullscreen .page-header{display:none!important;}
-body.qanim-fullscreen .question-banner{display:none!important;}
-body.qanim-fullscreen .svg-container{flex:1 1 auto;aspect-ratio:unset!important;}
-body.qanim-fullscreen .step-indicator{display:none!important;}
-body.qanim-fullscreen .step-color-legend{display:none!important;}
-body.qanim-fullscreen .step-progress-wrap{display:none!important;}
-body.qanim-fullscreen .step-label{display:none!important;}
-body.qanim-fullscreen #qanim-controls-bar{bottom:10px;}
-body.qanim-fullscreen #qanim-fullscreen-btn{top:10px;right:12px;}
-body.qanim-fullscreen .control-panel{
-  padding:12px 20px 14px!important;flex-shrink:0;}
-body.qanim-fullscreen .info-box{
-  min-height:70px!important;padding:12px 16px!important;}
-body.qanim-fullscreen .actions{
-  margin-top:10px!important;}
-.dashboard{width:100%;max-width:900px;margin:0 auto;background:var(--panel-bg);
-  border-radius:var(--border-radius);box-shadow:var(--shadow-card);overflow:hidden;
-  border:1px solid var(--border);position:relative;}
-.dashboard::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
-  background:linear-gradient(90deg,var(--accent-cyan-dim) 0%,#7c3aed 50%,var(--accent-orange) 100%);
-  border-radius:var(--border-radius) var(--border-radius) 0 0;z-index:2;}
-.question-banner{padding:22px 28px 18px;
-  background:linear-gradient(135deg,#f8faff 0%,#f0f5ff 40%,#eef2f9 100%);
-  border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden;}
-.q-label{font-size:10.5px;font-weight:800;color:var(--accent-cyan-dim);text-transform:uppercase;
-  letter-spacing:1.8px;display:flex;align-items:center;gap:8px;}
-.q-label::before{content:'';display:inline-block;width:16px;height:16px;border-radius:5px;
-  background:linear-gradient(135deg,var(--accent-cyan-dim),var(--accent-cyan));flex-shrink:0;}
-.q-text{font-size:15px;color:var(--text-main);line-height:1.6;font-weight:450;max-width:820px;}
-.svg-container{width:100%;aspect-ratio:16/9;
-  background:linear-gradient(145deg,#f8fafc 0%,#eef5ff 55%,#f0f6ff 100%);
-  position:relative;overflow:hidden;border-bottom:1px solid var(--border);}
-svg{display:block;width:100%;height:100%;}
-.svg-layer{transition:opacity .55s cubic-bezier(.4,0,.2,1);}
-.control-panel{padding:22px 28px 26px;background:linear-gradient(180deg,#ffffff 0%,#f9fbff 100%);border-top:1px solid var(--border);}
-.step-color-legend{display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;}
-.step-legend-item{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-sub);font-weight:600;text-transform:uppercase;}
-.step-legend-dot{width:8px;height:8px;border-radius:50%;}
-.step-indicator{display:flex;align-items:center;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
-.step-connector{flex:0 0 18px;height:1.5px;background:linear-gradient(90deg,#cbd5e1,#e2e8f0);border-radius:2px;}
-.step-dot{padding:6px 14px;border-radius:20px;background:#f1f5f9;border:1.5px solid #e2e8f0;
-  font-size:11.5px;font-weight:700;color:#94a3b8;cursor:pointer;
-  transition:background .3s,color .3s,border-color .3s,box-shadow .3s,transform .25s cubic-bezier(.34,1.56,.64,1);
-  white-space:nowrap;user-select:none;position:relative;}
-.step-dot:hover:not(.active){background:rgba(8,145,178,.07);border-color:rgba(8,145,178,.3);color:var(--accent-cyan-dim);}
-.step-dot.active{background:linear-gradient(135deg,#0e7490 0%,#0891b2 100%);border-color:transparent;color:#fff;
-  box-shadow:0 3px 12px rgba(8,145,178,.38),0 1px 3px rgba(8,145,178,.20);transform:scale(1.07);}
-.step-dot.done{background:rgba(22,163,74,.09);border-color:rgba(22,163,74,.28);color:#15803d;}
-.step-label{font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:.6px;
-  text-transform:uppercase;margin-left:6px;flex:1;min-width:0;}
-.step-progress-wrap{height:3px;background:#f1f5f9;border-radius:2px;margin-bottom:20px;overflow:hidden;}
-.step-progress-bar{height:100%;background:linear-gradient(90deg,#0e7490,#0891b2,#38bdf8);
-  border-radius:2px;transition:width .5s cubic-bezier(.4,0,.2,1);width:0%;}
-.info-box{background:linear-gradient(135deg,#f8fbff 0%,#f4f8ff 100%);border:1px solid #dde8f8;
-  border-left:4px solid var(--accent-cyan);border-radius:var(--border-radius-sm);
-  padding:20px 22px;min-height:130px;display:flex;flex-direction:column;gap:11px;position:relative;overflow:hidden;}
-.info-box h3{color:var(--text-main);font-size:16.5px;font-weight:800;display:flex;align-items:center;
-  gap:10px;line-height:1.3;letter-spacing:-.2px;}
-.info-box h3::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;
-  background:var(--accent-cyan);flex-shrink:0;box-shadow:0 0 0 3px rgba(8,145,178,.18);}
-.badges{display:flex;gap:7px;flex-wrap:wrap;align-items:center;}
-.badge{padding:4px 12px;border-radius:20px;font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;gap:5px;letter-spacing:.1px;}
-.badge-cyan{background:rgba(8,145,178,.09);border:1px solid rgba(8,145,178,.28);color:#0e7490;}
-.badge-orange{background:rgba(217,119,6,.09);border:1px solid rgba(217,119,6,.28);color:#92400e;}
-.badge-green{background:rgba(22,163,74,.09);border:1px solid rgba(22,163,74,.28);color:#15803d;}
-.info-desc{font-size:14px;line-height:1.7;color:var(--text-sub);font-weight:400;}
-.actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:20px;}
-button{padding:11px 24px;border-radius:10px;font-size:13.5px;font-weight:700;font-family:inherit;
-  cursor:pointer;transition:background .22s,box-shadow .22s,transform .18s cubic-bezier(.34,1.56,.64,1),color .2s,border-color .2s;border:none;outline:none;letter-spacing:.1px;}
-.btn-primary{background:linear-gradient(135deg,#0e7490 0%,#0891b2 100%);color:#fff;
-  box-shadow:0 4px 14px rgba(8,145,178,.30),0 1px 3px rgba(8,145,178,.15);}
-.btn-primary:hover{background:linear-gradient(135deg,#0c6680 0%,#0e7490 100%);
-  box-shadow:0 6px 22px rgba(8,145,178,.38);transform:translateY(-2px);}
-.btn-secondary{background:#fff;color:var(--text-sub);border:1.5px solid var(--border-strong);
-  box-shadow:0 1px 3px rgba(15,23,42,.06);}
-.btn-secondary:hover{background:#f8fafc;color:var(--text-main);border-color:#94a3b8;
-  box-shadow:0 2px 8px rgba(15,23,42,.10);transform:translateY(-1px);}
-"""
-
-_SCENE6_CSS = """
-/* ── Scene 7: Formula overlay ─────────────────────────────────────────── */
-#qanim-scene-modal-backdrop {
-  display: none; position: fixed; inset: 0; z-index: 7400;
-  background: rgba(10,18,40,.55); backdrop-filter: blur(8px);
-  opacity: 0; transition: opacity .28s ease;
-}
-#qanim-scene-modal-backdrop.qanim-scene-visible { display: block !important; opacity: 1; }
-#qanim-scene6-overlay {
-  display: none; position: fixed; top: 50%; left: 50%;
-  transform: translate(-50%,-50%) scale(.94);
-  z-index: 7500; width: min(880px,96vw); max-height: 92vh;
-  overflow-y: auto; box-sizing: border-box;
-  opacity: 0; pointer-events: none;
-  transition: opacity .32s ease, transform .38s var(--ease-spring);
-}
-#qanim-scene6-overlay.qanim-scene-visible {
-  display: block !important; opacity: 1; pointer-events: auto;
-  transform: translate(-50%,-50%) scale(1);
-}
-.s6-card {
-  background: var(--panel-bg); border-radius: 22px;
-  box-shadow: 0 12px 60px rgba(var(--c-primary-rgb,3,105,161),.16), 0 2px 10px rgba(0,0,0,.09);
-  border: 1px solid #dde8f8; overflow: hidden;
-  font-family: 'Inter', -apple-system, sans-serif;
-}
-.s6-title-bar {
-  text-align: center; padding: 24px 32px 20px;
-  background: linear-gradient(135deg, var(--panel-bg) 0%, var(--panel-bg-alt) 100%);
-  border-bottom: 1px solid var(--border);
-}
-.s6-title-bar h2 {
-  font-size: 20px; font-weight: 900; color: var(--text-main); letter-spacing: -.4px;
-}
-.s6-title-bar h2 .s6-step-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: var(--c-accent-soft); border: 1px solid rgba(var(--c-primary-rgb,3,105,161),.22);
-  color: var(--c-primary-dim); font-size: 11px; font-weight: 800;
-  padding: 3px 10px; border-radius: 12px; margin-right: 8px;
-  text-transform: uppercase; letter-spacing: .9px;
-  vertical-align: middle;
-}
-.s6-body {
-  padding: 28px 32px 24px;
-  background: linear-gradient(160deg, var(--bg-page) 0%, var(--bg-page-end) 60%, #eff6ff 100%);
-}
-.s6-phase-progress {
-  font-size: 10.5px; font-weight: 800; letter-spacing: 1.2px;
-  text-transform: uppercase; color: var(--c-primary-mid);
-  text-align: center; margin-bottom: 4px; min-height: 14px;
-}
-.s6-phase-caption {
-  font-size: 13px; font-weight: 500; color: #334155;
-  text-align: center; margin-bottom: 22px; line-height: 1.55;
-  min-height: 18px; transition: opacity .3s;
-}
-.s6-formula-box {
-  background: linear-gradient(135deg, #fff 0%, #f0f6ff 100%);
-  border: 2.5px solid rgba(59,130,246,.55); border-radius: 18px;
-  padding: 22px 32px 18px; text-align: center; margin-bottom: 12px;
-  position: relative; overflow: hidden;
-  box-shadow: 0 4px 28px rgba(59,130,246,.12), inset 0 1px 0 rgba(255,255,255,.9);
-}
-.s6-formula-box::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(135deg, rgba(59,130,246,.04) 0%, transparent 60%);
-  pointer-events: none;
-}
-.s6-formula-badge {
-  display: inline-block; padding: 3px 11px; border-radius: 20px;
-  background: rgba(59,130,246,.10); border: 1px solid rgba(59,130,246,.28);
-  font-size: 10px; font-weight: 800; color: #1d4ed8;
-  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px;
-}
-.s6-formula-main {
-  font-family: 'Cambria Math','STIX Two Math','Times New Roman', serif;
-  font-size: 30px; font-weight: 700; color: #1d4ed8;
-  letter-spacing: .5px; line-height: 1.5; word-break: break-word;
-  opacity: 0; transform: translateY(10px);
-  transition: opacity .5s var(--ease-smooth), transform .5s var(--ease-smooth);
-  font-style: italic;
-}
-.s6-formula-main.s6-shown { opacity: 1; transform: translateY(0); }
-.s6-formula-sublabel {
-  font-size: 11.5px; font-weight: 700; color: #6366f1;
-  margin-top: 9px; opacity: 0;
-  transition: opacity .4s ease .2s;
-  text-transform: uppercase; letter-spacing: 1.2px;
-}
-.s6-formula-sublabel.s6-shown { opacity: 1; }
-.s6-vars-row {
-  display: flex; align-items: flex-start; justify-content: center;
-  gap: 14px; flex-wrap: wrap; margin-top: 26px;
-}
-.s6-var-box {
-  display: flex; flex-direction: column; align-items: center; gap: 0;
-  min-width: 118px; max-width: 158px;
-  opacity: 0; transform: translateY(18px);
-  transition: opacity .45s var(--ease-smooth), transform .42s var(--ease-spring);
-}
-.s6-var-box.s6-shown { opacity: 1; transform: translateY(0); }
-.s6-var-arrow { width: 2px; height: 26px; position: relative; margin-bottom: 0; }
-.s6-var-arrow::before {
-  content: ''; position: absolute; left: 50%; transform: translateX(-50%);
-  top: 0; width: 2px; height: 20px; border-radius: 1px;
-}
-.s6-var-arrow::after {
-  content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
-  border-left: 6px solid transparent; border-right: 6px solid transparent;
-}
-/* Variable box colour variants */
-.s6-var-box.s6v-red    .s6-var-inner{border-color:#f43f5e;background:#fff1f2;} .s6-var-box.s6v-red    .s6-var-sym{color:#be123c;} .s6-var-box.s6v-red    .s6-var-arrow::before{background:#f43f5e;} .s6-var-box.s6v-red    .s6-var-arrow::after{border-top:8px solid #f43f5e;}
-.s6-var-box.s6v-orange .s6-var-inner{border-color:#f59e0b;background:#fff7ed;} .s6-var-box.s6v-orange .s6-var-sym{color:#d97706;} .s6-var-box.s6v-orange .s6-var-arrow::before{background:#f59e0b;} .s6-var-box.s6v-orange .s6-var-arrow::after{border-top:8px solid #f59e0b;}
-.s6-var-box.s6v-blue   .s6-var-inner{border-color:#3b82f6;background:#eff6ff;} .s6-var-box.s6v-blue   .s6-var-sym{color:#1d4ed8;} .s6-var-box.s6v-blue   .s6-var-arrow::before{background:#3b82f6;} .s6-var-box.s6v-blue   .s6-var-arrow::after{border-top:8px solid #3b82f6;}
-.s6-var-box.s6v-green  .s6-var-inner{border-color:#22c55e;background:#f0fdf4;} .s6-var-box.s6v-green  .s6-var-sym{color:#15803d;} .s6-var-box.s6v-green  .s6-var-arrow::before{background:#22c55e;} .s6-var-box.s6v-green  .s6-var-arrow::after{border-top:8px solid #22c55e;}
-.s6-var-box.s6v-purple .s6-var-inner{border-color:#a855f7;background:#faf5ff;} .s6-var-box.s6v-purple .s6-var-sym{color:#7c3aed;} .s6-var-box.s6v-purple .s6-var-arrow::before{background:#a855f7;} .s6-var-box.s6v-purple .s6-var-arrow::after{border-top:8px solid #a855f7;}
-.s6-var-box.s6v-teal   .s6-var-inner{border-color:#14b8a6;background:#f0fdfa;} .s6-var-box.s6v-teal   .s6-var-sym{color:#0f766e;} .s6-var-box.s6v-teal   .s6-var-arrow::before{background:#14b8a6;} .s6-var-box.s6v-teal   .s6-var-arrow::after{border-top:8px solid #14b8a6;}
-.s6-var-inner {
-  border: 2px solid; border-radius: 15px; padding: 15px 17px 13px;
-  text-align: center; width: 100%; box-sizing: border-box;
-  transition: box-shadow .28s var(--ease-spring), transform .28s var(--ease-spring);
-}
-.s6-var-box.s6-active .s6-var-inner {
-  box-shadow: 0 0 0 4px rgba(var(--c-primary-rgb,3,105,161),.20), 0 6px 20px rgba(var(--c-primary-rgb,3,105,161),.22);
-  transform: scale(1.06);
-}
-.s6-var-sym { font-family: 'Fira Code', 'Courier New', monospace; font-size: 23px; font-weight: 900; line-height: 1; display: block; margin-bottom: 6px; }
-.s6-var-name { font-size: 11.5px; font-weight: 700; color: #475569; line-height: 1.35; display: block; }
-.s6-var-val  { font-size: 10.5px; font-weight: 600; color: #94a3b8; margin-top: 4px; display: block; font-family: 'Fira Code', monospace; }
-.s6-note-bar {
-  display: flex; align-items: center; justify-content: center; gap: 9px;
-  margin-top: 24px; padding: 13px 22px;
-  background: linear-gradient(135deg, #fffbeb, #fef9c3);
-  border-radius: 14px; border: 1.5px solid #fde68a;
-  opacity: 0; transform: translateY(8px);
-  transition: opacity .45s var(--ease-smooth), transform .45s var(--ease-spring);
-  box-shadow: 0 2px 8px rgba(245,158,11,.12);
-}
-.s6-note-bar.s6-shown { opacity: 1; transform: translateY(0); }
-.s6-note-icon { font-size: 17px; flex-shrink: 0; }
-.s6-note-text { font-size: 13px; font-weight: 700; color: #92400e; }
-.s6-nav-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  padding: 18px 32px 24px; border-top: 1px solid var(--border);
-  background: var(--panel-bg);
-}
-#qanim-scene-modal-backdrop{display:none;position:fixed;inset:0;z-index:7400;background:rgba(15,23,42,.50);backdrop-filter:blur(6px);opacity:0;transition:opacity .25s ease;}
-#qanim-scene-modal-backdrop.qanim-scene-visible{display:block!important;opacity:1;}
-#qanim-scene6-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(860px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s ease,transform .3s cubic-bezier(.34,1.56,.64,1);}
-#qanim-scene6-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
-.s6-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(8,145,178,.14),0 2px 8px rgba(0,0,0,.08);border:1px solid #dde8f8;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
-.s6-title-bar{text-align:center;padding:22px 28px 18px;background:#fff;border-bottom:1px solid #e8eef8;}
-.s6-title-bar h2{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-.3px;}
-.s6-body{padding:28px 32px 24px;background:linear-gradient(160deg,#eef2f9 0%,#e8f0fe 50%,#eff6ff 100%);}
-.s6-formula-box{background:#fff;border:2.5px solid #3b82f6;border-radius:18px;padding:20px 32px 16px;text-align:center;margin-bottom:10px;position:relative;box-shadow:0 4px 24px rgba(59,130,246,.12);}
-.s6-formula-badge{display:inline-block;padding:3px 10px;border-radius:20px;background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.28);font-size:10px;font-weight:800;color:#1d4ed8;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;}
-.s6-formula-main{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:30px;font-weight:700;color:#1d4ed8;letter-spacing:.5px;line-height:1.5;word-break:break-word;opacity:0;transform:translateY(8px);transition:opacity .5s,transform .5s;font-style:italic;}
-.s6-formula-main.s6-shown{opacity:1;transform:translateY(0);}
-.s6-formula-sublabel{font-size:12px;font-weight:700;color:#6366f1;letter-spacing:.3px;margin-top:8px;opacity:0;transition:opacity .4s ease .2s;text-transform:uppercase;letter-spacing:1.2px;}
-.s6-formula-sublabel.s6-shown{opacity:1;}
-.s6-vars-row{display:flex;align-items:flex-start;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:24px;}
-.s6-var-box{display:flex;flex-direction:column;align-items:center;gap:0;min-width:120px;max-width:160px;opacity:0;transform:translateY(16px);transition:opacity .45s cubic-bezier(.4,0,.2,1),transform .4s cubic-bezier(.34,1.56,.64,1);}
-.s6-var-box.s6-shown{opacity:1;transform:translateY(0);}
-.s6-var-arrow{width:2px;height:24px;position:relative;margin-bottom:0;}
-.s6-var-arrow::before{content:'';position:absolute;left:50%;transform:translateX(-50%);top:0;width:2px;height:18px;border-radius:1px;}
-.s6-var-arrow::after{content:'';position:absolute;bottom:0;left:50%;transform:translateX(-50%);border-left:6px solid transparent;border-right:6px solid transparent;}
-.s6-var-box.s6v-red   .s6-var-inner{border-color:#f43f5e;background:#fff1f2;}.s6-var-box.s6v-red .s6-var-sym{color:#be123c;}.s6-var-box.s6v-red .s6-var-arrow::before{background:#f43f5e;}.s6-var-box.s6v-red .s6-var-arrow::after{border-top:8px solid #f43f5e;}
-.s6-var-box.s6v-orange .s6-var-inner{border-color:#f59e0b;background:#fff7ed;}.s6-var-box.s6v-orange .s6-var-sym{color:#d97706;}.s6-var-box.s6v-orange .s6-var-arrow::before{background:#f59e0b;}.s6-var-box.s6v-orange .s6-var-arrow::after{border-top:8px solid #f59e0b;}
-.s6-var-box.s6v-blue  .s6-var-inner{border-color:#3b82f6;background:#eff6ff;}.s6-var-box.s6v-blue .s6-var-sym{color:#1d4ed8;}.s6-var-box.s6v-blue .s6-var-arrow::before{background:#3b82f6;}.s6-var-box.s6v-blue .s6-var-arrow::after{border-top:8px solid #3b82f6;}
-.s6-var-box.s6v-green .s6-var-inner{border-color:#22c55e;background:#f0fdf4;}.s6-var-box.s6v-green .s6-var-sym{color:#15803d;}.s6-var-box.s6v-green .s6-var-arrow::before{background:#22c55e;}.s6-var-box.s6v-green .s6-var-arrow::after{border-top:8px solid #22c55e;}
-.s6-var-box.s6v-purple .s6-var-inner{border-color:#a855f7;background:#faf5ff;}.s6-var-box.s6v-purple .s6-var-sym{color:#7c3aed;}.s6-var-box.s6v-purple .s6-var-arrow::before{background:#a855f7;}.s6-var-box.s6v-purple .s6-var-arrow::after{border-top:8px solid #a855f7;}
-.s6-var-box.s6v-teal  .s6-var-inner{border-color:#14b8a6;background:#f0fdfa;}.s6-var-box.s6v-teal .s6-var-sym{color:#0f766e;}.s6-var-box.s6v-teal .s6-var-arrow::before{background:#14b8a6;}.s6-var-box.s6v-teal .s6-var-arrow::after{border-top:8px solid #14b8a6;}
-.s6-var-inner{border:2px solid;border-radius:14px;padding:14px 16px 12px;text-align:center;width:100%;box-sizing:border-box;}
-.s6-var-sym{font-family:'Courier New',monospace;font-size:22px;font-weight:900;line-height:1;display:block;margin-bottom:5px;}
-.s6-var-name{font-size:11.5px;font-weight:700;color:#475569;line-height:1.35;display:block;}
-.s6-var-val{font-size:10.5px;font-weight:600;color:#94a3b8;margin-top:3px;display:block;}
-.s6-note-bar{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:22px;padding:12px 20px;background:#fff;border-radius:12px;border:1.5px solid #fde68a;opacity:0;transform:translateY(8px);transition:opacity .45s,transform .45s;}
-.s6-note-bar.s6-shown{opacity:1;transform:translateY(0);}
-.s6-note-icon{font-size:16px;flex-shrink:0;}
-.s6-note-text{font-size:13px;font-weight:700;color:#92400e;}
-.s6-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 32px 22px;border-top:1px solid #e8eef8;background:#fff;}
-.s6-phase-progress{font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#0891b2;text-align:center;margin-bottom:4px;min-height:14px;}
-.s6-phase-caption{font-size:13px;font-weight:600;color:#334155;text-align:center;margin-bottom:20px;line-height:1.5;min-height:18px;transition:opacity .3s;}
-.s6-var-box.s6-active .s6-var-inner{box-shadow:0 0 0 4px rgba(8,145,178,.20),0 4px 16px rgba(8,145,178,.22);transform:scale(1.05);transition:transform .3s cubic-bezier(.34,1.56,.64,1),box-shadow .3s;}
-
-/* ── Step-6 "To Find" floating badge (Update 2) ──────────────────────────── */
-/* Replaces the old two-column Given/ToFind card.                             */
-/* Shows a small, elegant badge directly on the SVG so the unknown is visible */
-/* in context — without covering the diagram.                                 */
-#step6-info-panel {
-  position: absolute;
-  bottom: 18px; right: 18px;
-  z-index: 10;
-  pointer-events: none; opacity: 0;
-  transition: opacity .45s cubic-bezier(.4,0,.2,1);
-}
-#step6-info-panel.s6info-visible { opacity: 1; pointer-events: auto; }
-
-.s6tofind-badge {
-  background: rgba(10,22,44,.82);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1.5px solid rgba(74,222,128,.42);
-  border-radius: 16px;
-  padding: 14px 18px 12px;
-  min-width: 180px;
-  max-width: 280px;
-  box-shadow: 0 0 0 1px rgba(74,222,128,.14), 0 8px 32px rgba(74,222,128,.22), 0 2px 8px rgba(0,0,0,.38);
-}
-.s6tofind-heading {
-  font-family: 'Inter','Segoe UI',system-ui,sans-serif;
-  font-size: 9.5px; font-weight: 900;
-  text-transform: uppercase; letter-spacing: 1.8px;
-  color: #4ade80; margin-bottom: 10px;
-  display: flex; align-items: center; gap: 4px;
-}
-.s6tofind-chip {
-  display: flex; align-items: center; gap: 9px;
-  background: rgba(74,222,128,.13);
-  border: 1.5px solid rgba(74,222,128,.32);
-  border-radius: 10px; padding: 9px 13px; margin-bottom: 8px;
-}
-.s6tofind-icon { font-size: 15px; flex-shrink: 0; }
-.s6tofind-label {
-  font-family: 'Fira Code','Courier New',monospace;
-  font-size: 14px; font-weight: 800; color: #4ade80;
-  letter-spacing: .3px;
-}
-.s6tofind-hint {
-  display: flex; align-items: center; gap: 6px;
-  font-family: 'Inter','Segoe UI',system-ui,sans-serif;
-  font-size: 11px; color: #94a3b8;
-  margin-top: 4px; padding: 6px 10px;
-  border: 1px dashed rgba(148,163,184,.32); border-radius: 8px;
-  background: rgba(148,163,184,.07);
-}
-.s6tofind-hint strong { color: #cbd5e1; }
-"""
-
-_SCENE7_CSS = """
-/* ── Scene 8: Substitution overlay ───────────────────────────────────── */
-#qanim-scene7-overlay {
-  display: none; position: fixed; top: 50%; left: 50%;
-  transform: translate(-50%,-50%) scale(.94);
-  z-index: 7500; width: min(920px,96vw); max-height: 92vh;
-  overflow-y: auto; box-sizing: border-box;
-  opacity: 0; pointer-events: none;
-  transition: opacity .32s ease, transform .38s var(--ease-spring);
-}
-#qanim-scene7-overlay.qanim-scene-visible {
-  display: block !important; opacity: 1; pointer-events: auto;
-  transform: translate(-50%,-50%) scale(1);
-}
-.s7-card {
-  background: var(--panel-bg); border-radius: 22px;
-  box-shadow: 0 12px 60px rgba(37,99,235,.14), 0 2px 10px rgba(0,0,0,.08);
-  border: 1px solid #e0eaf8; overflow: hidden;
-  font-family: 'Inter', -apple-system, sans-serif;
-}
-.s7-title-bar {
-  text-align: center; padding: 22px 32px 18px;
-  border-bottom: 1px solid var(--border); background: var(--panel-bg);
-}
-.s7-title-bar h2 {
-  font-size: 20px; font-weight: 900; color: var(--text-main); letter-spacing: -.4px;
-}
-.s7-body-cols { display: flex; align-items: flex-start; gap: 0; min-height: 340px; }
-.s7-left-col {
-  width: 42%; min-width: 200px; border-right: 1.5px solid var(--border);
-  padding: 24px 22px 24px 28px;
-  background: linear-gradient(175deg, #eff6ff 0%, #dbeafe 55%, #bfdbfe 100%);
-  display: flex; flex-direction: column; gap: 0; align-self: stretch;
-}
-.s7-system-label {
-  font-size: 10px; font-weight: 800; color: #1d4ed8;
-  text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 11px;
-}
-.s7-system-visual {
-  background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 50%, #60a5fa 100%);
-  border-radius: 14px; padding: 18px 16px 15px; margin-bottom: 18px;
-  text-align: center; position: relative; overflow: hidden;
-  box-shadow: 0 4px 16px rgba(59,130,246,.20), inset 0 1px 0 rgba(255,255,255,.4);
-}
-.s7-system-visual::before {
-  content: ''; position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 30% 30%, rgba(255,255,255,.35) 0%, transparent 60%);
-  pointer-events: none;
-}
-.s7-system-visual-title { font-size: 13.5px; font-weight: 800; color: #1e3a5f; margin-bottom: 7px; position: relative; }
-.s7-system-arrows { display: flex; justify-content: center; gap: 10px; margin: 9px 0; font-size: 22px; color: #d97706; position: relative; }
-.s7-system-label2 { font-size: 10.5px; font-weight: 600; color: #1e40af; margin-top: 5px; position: relative; }
-.s7-right-col { flex: 1; padding: 24px 28px 22px 22px; display: flex; flex-direction: column; gap: 18px; }
-.s7-given-section-title { font-size: 12.5px; font-weight: 900; color: #1d4ed8; margin-bottom: 9px; letter-spacing: -.1px; }
-.s7-given-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-.s7-given-item {
-  font-size: 12.5px; color: #334155; line-height: 1.55;
-  display: flex; align-items: flex-start; gap: 7px;
-  padding: 5px 0;
-}
-.s7-given-item::before { content: '•'; color: #3b82f6; font-weight: 900; flex-shrink: 0; margin-top: 1px; }
-.s7-given-item strong { font-weight: 700; color: #1e293b; font-family: 'Fira Code', monospace; }
-.s7-approach-section-title { font-size: 12.5px; font-weight: 900; color: #7c3aed; margin-bottom: 9px; }
-.s7-approach-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
-.s7-approach-step {
-  display: flex; align-items: flex-start; gap: 10px;
-  font-size: 12.5px; color: #1e293b; line-height: 1.55;
-  background: #f8fafc; border: 1px solid var(--border);
-  border-radius: 9px; padding: 10px 13px;
-}
-.s7-approach-step-num {
-  font-weight: 900; color: #fff; flex-shrink: 0; min-width: 22px; height: 22px;
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-size: 10.5px; box-shadow: 0 2px 6px rgba(124,58,237,.35);
-  margin-top: 1px;
-}
-.s7-approach-step-eq {
-  display: block; margin-top: 5px;
-  font-family: 'Fira Code', 'Courier New', monospace;
-  font-size: 12px; font-weight: 600; color: #dc2626;
-  background: #fff7ed; border-radius: 6px; padding: 3px 9px;
-  word-break: break-word; border: 1px solid #fed7aa;
-}
-.s7-formula-result-bar {
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border: 2px solid #86efac; border-radius: 13px; padding: 13px 18px;
-  box-shadow: 0 2px 10px rgba(22,163,74,.12);
-}
-.s7-formula-result-text {
-  font-family: 'Fira Code', 'Courier New', monospace;
-  font-size: 14px; font-weight: 900; color: #15803d; line-height: 1.55; word-break: break-word;
-}
-.s7-formula-units { font-size: 11px; color: #166534; margin-top: 4px; font-style: italic; }
-.s7-nav-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  padding: 18px 28px 24px; border-top: 1px solid var(--border); background: var(--panel-bg);
-}
-@media(max-width:600px) {
-  .s7-body-cols { flex-direction: column; }
-  .s7-left-col { width: 100%; border-right: none; border-bottom: 1.5px solid var(--border); }
-}
-#qanim-scene7-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(900px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s cubic-bezier(.34,1.56,.64,1);}
-#qanim-scene7-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
-.s7-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(37,99,235,.12),0 2px 8px rgba(0,0,0,.07);border:1px solid #e8eef8;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
-.s7-title-bar{text-align:center;padding:20px 28px 16px;border-bottom:1px solid #e8eef8;background:#fff;}
-.s7-title-bar h2{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-.3px;}
-.s7-body-cols{display:flex;align-items:flex-start;gap:0;min-height:320px;}
-.s7-left-col{width:44%;min-width:200px;border-right:1.5px solid #e8eef8;padding:22px 20px 22px 26px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);display:flex;flex-direction:column;gap:0;align-self:stretch;}
-.s7-system-label{font-size:10.5px;font-weight:800;color:#1d4ed8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;}
-.s7-system-visual{background:linear-gradient(135deg,#bfdbfe 0%,#93c5fd 100%);border-radius:12px;padding:16px 14px 14px;margin-bottom:16px;text-align:center;position:relative;overflow:hidden;}
-.s7-system-visual-title{font-size:13px;font-weight:800;color:#1e3a5f;margin-bottom:6px;}
-.s7-system-arrows{display:flex;justify-content:center;gap:10px;margin:8px 0;font-size:20px;color:#d97706;}
-.s7-system-label2{font-size:10px;font-weight:600;color:#1e40af;margin-top:4px;}
-.s7-right-col{flex:1;padding:22px 26px 20px 20px;display:flex;flex-direction:column;gap:16px;}
-.s7-given-section-title{font-size:13px;font-weight:900;color:#1d4ed8;margin-bottom:8px;letter-spacing:-.1px;}
-.s7-given-list{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
-.s7-given-item{font-size:12.5px;color:#334155;line-height:1.5;display:flex;align-items:flex-start;gap:7px;}
-.s7-given-item::before{content:'•';color:#3b82f6;font-weight:900;flex-shrink:0;margin-top:1px;}
-.s7-given-item strong{font-weight:700;color:#1e293b;}
-.s7-approach-section-title{font-size:13px;font-weight:900;color:#7c3aed;margin-bottom:8px;}
-.s7-approach-list{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
-.s7-approach-step{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:#1e293b;line-height:1.5;margin-bottom:3px;}
-.s7-approach-step-num{font-weight:800;color:#7c3aed;flex-shrink:0;min-width:18px;}
-.s7-approach-step-eq{display:block;margin-top:4px;font-family:'Courier New',monospace;font-size:12px;font-weight:700;color:#dc2626;background:#fff7ed;border-radius:6px;padding:2px 8px;word-break:break-word;}
-.s7-formula-result-bar{background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:2px solid #86efac;border-radius:12px;padding:12px 16px;}
-.s7-formula-result-text{font-family:'Courier New',monospace;font-size:14px;font-weight:900;color:#15803d;line-height:1.5;word-break:break-word;}
-.s7-formula-units{font-size:11px;color:#166534;margin-top:4px;font-style:italic;}
-.s7-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 26px 22px;border-top:1px solid #e8eef8;background:#fff;}
-@media(max-width:600px){.s7-body-cols{flex-direction:column;}.s7-left-col{width:100%;border-right:none;border-bottom:1.5px solid #e8eef8;}}
-"""
-
-_SCENE9_CSS = """
-/* ── Scene 9: Final Answer overlay ───────────────────────────────────── */
-#qanim-scene9-overlay {
-  display: none; position: fixed; top: 50%; left: 50%;
-  transform: translate(-50%,-50%) scale(.94);
-  z-index: 7500; width: min(800px,96vw); max-height: 92vh;
-  overflow-y: auto; box-sizing: border-box;
-  opacity: 0; pointer-events: none;
-  transition: opacity .32s ease, transform .38s var(--ease-spring);
-}
-#qanim-scene9-overlay.qanim-scene-visible {
-  display: block !important; opacity: 1; pointer-events: auto;
-  transform: translate(-50%,-50%) scale(1);
-}
-.s9-card {
-  background: var(--panel-bg); border-radius: 22px;
-  box-shadow: 0 12px 60px rgba(22,163,74,.22), 0 2px 10px rgba(0,0,0,.09);
-  border: 2px solid #86efac; overflow: hidden;
-  font-family: 'Inter', -apple-system, sans-serif;
-}
-.s9-title-bar {
-  text-align: center; padding: 24px 32px 20px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #d1fae5 50%, #a7f3d0 100%);
-  border-bottom: 2px solid #86efac; position: relative; overflow: hidden;
-}
-.s9-title-bar::before {
-  content: ''; position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 50% 0%, rgba(255,255,255,.5) 0%, transparent 70%);
-  pointer-events: none;
-}
-.s9-title-bar h2 {
-  font-size: 22px; font-weight: 900; color: #14532d; letter-spacing: -.4px; margin-bottom: 5px;
-  position: relative;
-}
-.s9-title-bar p { font-size: 13px; color: #166534; margin: 0; font-weight: 500; position: relative; }
-.s9-body { padding: 32px 36px 28px; background: var(--panel-bg); display: flex; flex-direction: column; gap: 22px; }
-.s9-formula-recap {
-  background: linear-gradient(135deg, #eff6ff 0%, #e0f2fe 100%);
-  border: 1.5px solid #bfdbfe; border-radius: 13px; padding: 15px 22px; text-align: center;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
-}
-.s9-formula-recap-label {
-  font-size: 10px; font-weight: 800; color: #1d4ed8;
-  text-transform: uppercase; letter-spacing: 1.3px; margin-bottom: 7px;
-}
-.s9-formula-recap-eq {
-  font-family: 'Cambria Math','STIX Two Math','Times New Roman', serif;
-  font-size: 20px; font-weight: 700; color: #1d4ed8; font-style: italic;
-}
-.s9-sub-chain { display: flex; flex-direction: column; gap: 10px; }
-.s9-sub-row {
-  display: flex; align-items: center; gap: 13px;
-  background: var(--panel-bg-alt); border: 1px solid var(--border);
-  border-radius: 11px; padding: 13px 18px;
-  opacity: 0; transform: translateX(-22px);
-  transition: opacity .45s var(--ease-spring), transform .45s var(--ease-spring);
-  box-shadow: 0 1px 4px rgba(15,23,42,.05);
-}
-.s9-sub-row.s9-shown { opacity: 1; transform: translateX(0); }
-.s9-sub-num {
-  background: linear-gradient(135deg, var(--c-primary-mid), var(--c-primary-dim));
-  color: #fff; border-radius: 50%; width: 30px; height: 30px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 800; flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(var(--c-primary-rgb,3,105,161),.35);
-}
-.s9-sub-eq {
-  font-family: 'Cambria Math','STIX Two Math','Times New Roman', serif;
-  font-size: 16px; font-weight: 600; color: var(--text-main); flex: 1; font-style: italic;
-}
-.s9-final-box {
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 60%, #bbf7d0 100%);
-  border: 3px solid #22c55e; border-radius: 20px; padding: 30px 36px;
-  text-align: center; position: relative; overflow: hidden;
-  opacity: 0; transform: scale(.93);
-  transition: opacity .55s ease .3s, transform .55s var(--ease-spring) .3s;
-  box-shadow: 0 8px 40px rgba(22,163,74,.20), inset 0 1px 0 rgba(255,255,255,.8);
-}
-.s9-final-box::before {
-  content: ''; position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 50% 0%, rgba(255,255,255,.55) 0%, transparent 65%);
-  pointer-events: none;
-}
-.s9-final-box.s9-shown { opacity: 1; transform: scale(1); }
-.s9-final-label {
-  font-size: 11px; font-weight: 900; text-transform: uppercase;
-  letter-spacing: 2.2px; color: #15803d; margin-bottom: 13px;
-}
-.s9-final-value {
-  font-family: 'Cambria Math','STIX Two Math','Times New Roman', serif;
-  font-size: 38px; font-weight: 700; color: #14532d; line-height: 1.2;
-  position: relative;
-}
-.s9-final-value .s9-highlight {
-  color: #16a34a; font-size: 50px; font-weight: 900;
-  display: inline-block;
-  animation: s9-pulse-value 2.4s ease-in-out infinite;
-}
-@keyframes s9-pulse-value {
-  0%,100% { text-shadow: 0 0 0 transparent; }
-  50% { text-shadow: 0 0 28px rgba(22,163,74,.45), 0 0 10px rgba(22,163,74,.25); }
-}
-.s9-final-unit {
-  font-size: 15px; color: #166534; margin-top: 9px;
-  font-weight: 700; letter-spacing: .5px;
-}
-.s9-step-lbl {
-  font-family: 'Inter', system-ui, sans-serif;
-  font-size: 10.5px; font-weight: 800; color: #64748b;
-  text-transform: uppercase; letter-spacing: .9px; font-style: normal;
-  display: inline-block; margin-right: 5px;
-}
-.s9-insight-bar {
-  display: flex; align-items: flex-start; gap: 11px;
-  background: linear-gradient(135deg, #fff7ed, #ffedd5);
-  border: 1.5px solid #fed7aa; border-radius: 12px; padding: 14px 20px;
-  opacity: 0; transition: opacity .55s ease .75s;
-  box-shadow: 0 2px 10px rgba(217,119,6,.10);
-}
-.s9-insight-bar.s9-shown { opacity: 1; }
-.s9-insight-icon { font-size: 22px; flex-shrink: 0; }
-.s9-insight-text { font-size: 13px; color: #92400e; line-height: 1.68; }
-.s9-insight-text strong { color: #78350f; font-weight: 800; }
-.s9-nav-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  padding: 18px 36px 24px; border-top: 1px solid #bbf7d0;
-  background: linear-gradient(135deg, #f0fdf4, #dcfce7);
-}
-#qanim-scene9-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(780px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s cubic-bezier(.34,1.56,.64,1);}
-#qanim-scene9-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
-.s9-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(22,163,74,.18),0 2px 8px rgba(0,0,0,.08);border:2px solid #86efac;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
-.s9-title-bar{text-align:center;padding:22px 28px 18px;background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border-bottom:2px solid #86efac;}
-.s9-title-bar h2{font-size:22px;font-weight:900;color:#14532d;letter-spacing:-.3px;margin-bottom:4px;}
-.s9-title-bar p{font-size:13px;color:#166534;margin:0;}
-.s9-body{padding:32px 36px 28px;background:#fff;display:flex;flex-direction:column;gap:22px;}
-.s9-formula-recap{background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:14px 20px;text-align:center;}
-.s9-formula-recap-label{font-size:10.5px;font-weight:800;color:#1d4ed8;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;}
-.s9-formula-recap-eq{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:20px;font-weight:700;color:#1d4ed8;font-style:italic;}
-.s9-sub-chain{display:flex;flex-direction:column;gap:10px;}
-.s9-sub-row{display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;opacity:0;transform:translateX(-18px);transition:opacity .45s cubic-bezier(.34,1.56,.64,1),transform .45s cubic-bezier(.34,1.56,.64,1);}
-.s9-sub-row.s9-shown{opacity:1;transform:translateX(0);}
-.s9-sub-num{background:linear-gradient(135deg,#0891b2,#0e7490);color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;box-shadow:0 2px 6px rgba(8,145,178,.35);}
-.s9-sub-eq{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:16px;font-weight:600;color:#1e293b;flex:1;font-style:italic;}
-.s9-final-box{background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border:3px solid #22c55e;border-radius:18px;padding:28px 32px;text-align:center;position:relative;overflow:hidden;opacity:0;transform:scale(.94);transition:opacity .5s ease .3s,transform .5s cubic-bezier(.34,1.56,.64,1) .3s;}
-.s9-final-box.s9-shown{opacity:1;transform:scale(1);}
-.s9-final-label{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#15803d;margin-bottom:12px;}
-.s9-final-value{font-family:'Cambria Math','STIX Two Math','Times New Roman',serif;font-size:36px;font-weight:700;color:#14532d;line-height:1.2;}
-.s9-final-value .s9-highlight{color:#16a34a;font-size:46px;font-weight:900;}
-.s9-final-unit{font-size:15px;color:#166534;margin-top:8px;font-weight:700;letter-spacing:.5px;}
-.s9-step-lbl{font-family:'Segoe UI',system-ui,sans-serif;font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.8px;font-style:normal;display:inline-block;margin-right:4px;}
-.s9-insight-bar{display:flex;align-items:flex-start;gap:10px;background:#fff7ed;border:1.5px solid #fed7aa;border-radius:10px;padding:13px 18px;opacity:0;transition:opacity .5s ease .7s;}
-.s9-insight-bar.s9-shown{opacity:1;}
-.s9-insight-icon{font-size:20px;flex-shrink:0;}
-.s9-insight-text{font-size:13px;color:#92400e;line-height:1.65;}
-.s9-insight-text strong{color:#78350f;}
-.s9-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 36px 22px;border-top:1px solid #bbf7d0;background:#f0fdf4;}
-"""
-
-_CONTROLS_CSS = """
-/* ── Controls bar ─────────────────────────────────────────────────────────── */
-#answerbox-backdrop{display:none;position:fixed;inset:0;z-index:8400;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);}
-#answerbox-backdrop.open{display:block;}
-#answerbox-panel{display:flex;flex-direction:column;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.96);z-index:8500;width:min(480px,94vw);max-height:85vh;border-radius:18px;overflow:hidden;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 48px rgba(124,58,237,.18);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s cubic-bezier(.34,1.56,.64,1);}
-#answerbox-panel.open{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
-.ab-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:linear-gradient(135deg,#faf5ff,#f0f9ff);border-bottom:1px solid #e2e8f0;}
-.ab-header-title{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:16px;font-weight:800;color:#1e293b;}
-.ab-close-btn{width:28px;height:28px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;}
-.ab-close-btn:hover{background:#fee2e2;color:#dc2626;}
-.ab-progress-row{display:flex;align-items:center;justify-content:space-between;padding:10px 20px 6px;border-bottom:1px solid #f1f5f9;}
-.ab-progress-label{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:11.5px;font-weight:700;color:#64748b;}
-.ab-progress-dots{display:flex;gap:4px;}
-.ab-dot{width:8px;height:8px;border-radius:50%;background:#e2e8f0;transition:background .2s;}
-.ab-dot.current{background:#7c3aed;transform:scale(1.2);}
-.ab-dot.done{background:#22c55e;}
-.ab-body{padding:16px 20px 20px;overflow-y:auto;display:flex;flex-direction:column;gap:0;}
-.ab-find-chip{display:flex;align-items:flex-start;gap:8px;padding:10px 14px;border-radius:10px;background:#f5f3ff;border:1px solid #ddd6fe;margin-bottom:14px;}
-.ab-find-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
-.ab-find-text{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12.5px;font-weight:600;color:#5b21b6;line-height:1.5;}
-.ab-find-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#7c3aed;display:block;margin-bottom:2px;}
-.ab-instruction{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;color:#64748b;margin-bottom:10px;line-height:1.6;}
-#ab-user-input{width:100%;min-height:60px;padding:12px 14px;border-radius:10px;border:1.5px solid #e2e8f0;background:#f8fafc;font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;color:#1e293b;line-height:1.6;resize:vertical;transition:border-color .15s;outline:none;box-sizing:border-box;}
-#ab-user-input:focus{border-color:#7c3aed;background:#fff;}
-#ab-submit-btn{width:100%;padding:12px;margin-top:10px;border-radius:10px;border:none;background:#7c3aed;color:#fff;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;transition:background .15s,transform .1s;}
-#ab-submit-btn:hover{background:#6d28d9;transform:translateY(-1px);}
-#ab-feedback{display:none;margin-top:14px;border-radius:12px;overflow:hidden;border:1px solid transparent;}
-#ab-feedback.show{display:block;}
-#ab-feedback.correct{border-color:#bbf7d0;}.ab-feedback.almost{border-color:#fed7aa;}#ab-feedback.wrong{border-color:#fecaca;}
-.ab-feedback-top{display:flex;align-items:center;gap:10px;padding:12px 16px;}
-#ab-feedback.correct .ab-feedback-top{background:#f0fdf4;}#ab-feedback.almost .ab-feedback-top{background:#fff7ed;}#ab-feedback.wrong .ab-feedback-top{background:#fef2f2;}
-.ab-feedback-icon{font-size:22px;flex-shrink:0;}.ab-feedback-verdict{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:800;}
-#ab-feedback.correct .ab-feedback-verdict{color:#15803d;}#ab-feedback.almost .ab-feedback-verdict{color:#c2410c;}#ab-feedback.wrong .ab-feedback-verdict{color:#b91c1c;}
-.ab-feedback-insight{padding:10px 16px 13px;border-top:1px solid;}
-#ab-feedback.correct .ab-feedback-insight{background:#fafffe;border-color:#bbf7d0;}#ab-feedback.almost .ab-feedback-insight{background:#fffbf5;border-color:#fed7aa;}#ab-feedback.wrong .ab-feedback-insight{background:#fff8f8;border-color:#fecaca;}
-.ab-insight-label{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:#64748b;margin-bottom:4px;}
-.ab-insight-text{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12.5px;color:#1e293b;line-height:1.68;}
-.ab-action-row{display:none;gap:8px;margin-top:12px;}.ab-action-row.show{display:flex;}
-#ab-retry-btn{flex:1;padding:9px 14px;border-radius:9px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s;}
-#ab-retry-btn:hover{background:#ede9fe;border-color:#7c3aed;color:#7c3aed;}
-#ab-next-target-btn{flex:2;padding:9px 14px;border-radius:9px;border:none;background:#7c3aed;color:#fff;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;display:none;transition:background .15s;}
-#ab-next-target-btn:hover{background:#6d28d9;}#ab-next-target-btn.show{display:block;}
-#ab-alldone-card{display:none;text-align:center;padding:28px 20px;border-radius:14px;background:linear-gradient(135deg,#f0fdf4,#fefce8);border:1.5px solid #bbf7d0;margin-top:10px;}
-#ab-alldone-card.show{display:block;}
-.ab-alldone-emoji{font-size:40px;display:block;margin-bottom:10px;}
-.ab-alldone-title{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:18px;font-weight:800;color:#15803d;margin-bottom:6px;}
-.ab-alldone-sub{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;color:#166534;line-height:1.6;}
-#qanim-controls-bar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:7000;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.98);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1.5px solid transparent;border-radius:16px;padding:10px 14px;box-shadow:0 6px 36px rgba(124,58,237,.18),0 2px 8px rgba(0,0,0,.08);white-space:nowrap;}
-#qanim-controls-bar::before{content:'';position:absolute;inset:-2px;border-radius:18px;background:linear-gradient(90deg,#7c3aed,#db2777,#f59e0b,#7c3aed);background-size:200% 100%;animation:qanim-bar-glow 4s linear infinite;z-index:-1;}
-@keyframes qanim-bar-glow{0%{background-position:0% 50%}100%{background-position:200% 50%}}
-.qanim-ctrl-btn{display:flex;align-items:center;gap:5px;padding:8px 15px;border-radius:10px;border:1.5px solid #e2e8f0;background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%);color:#334155;font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s;user-select:none;}
-.qanim-ctrl-btn:hover{background:linear-gradient(135deg,#ede9fe 0%,#fdf4ff 100%);border-color:#7c3aed;color:#6d28d9;transform:translateY(-2px);box-shadow:0 4px 14px rgba(124,58,237,.22);}
-.qanim-ctrl-sep{width:1px;height:22px;background:linear-gradient(to bottom,transparent,#c4b5fd,transparent);flex-shrink:0;}
-#btn-prev.qanim-prev-btn{background:#fff;color:#64748b;border:1.5px solid #cbd5e1;padding:11px 20px;border-radius:10px;font-size:13.5px;font-weight:700;font-family:inherit;cursor:pointer;margin-right:auto;box-shadow:0 1px 3px rgba(15,23,42,.06);}
-#btn-prev.qanim-prev-btn:hover:not(:disabled){background:#f8fafc;color:#1e293b;border-color:#94a3b8;box-shadow:0 2px 8px rgba(15,23,42,.10);transform:translateY(-1px);}
-#btn-prev.qanim-prev-btn:disabled{opacity:.38;cursor:not-allowed;}
-#qanim-glossary-backdrop{position:fixed;inset:0;z-index:7150;background:rgba(15,23,42,.28);opacity:0;pointer-events:none;transition:opacity .22s;}
-#qanim-glossary-backdrop.open{opacity:1;pointer-events:auto;}
-#qanim-glossary-panel{position:fixed;top:0;right:0;z-index:7300;width:340px;max-width:88vw;height:100vh;background:#fff;border-left:1px solid #e2e8f0;box-shadow:-8px 0 32px rgba(0,0,0,.14);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform .26s cubic-bezier(.16,1,.3,1);}
-#qanim-glossary-panel.open{transform:translateX(0);}
-#qanim-glossary-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#f0fdfa;border-bottom:1px solid #ccfbf1;flex-shrink:0;}
-.glossary-header-title{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:700;color:#0f766e;}
-.glossary-hdr-btn{width:26px;height:26px;border-radius:7px;border:1px solid #99f6e4;background:rgba(255,255,255,.7);color:#0f766e;font-size:12px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
-#qanim-glossary-body{flex:1 1 auto;overflow-y:auto;padding:12px 14px 20px;}
-.glossary-term-card{background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #0d9488;border-radius:10px;padding:10px 12px;margin-bottom:10px;}
-.glossary-term-word{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;font-weight:800;color:#134e4a;margin-bottom:4px;text-transform:capitalize;}
-.glossary-term-meaning{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12.5px;line-height:1.55;color:#475569;}
-.glossary-ctrl-badge{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#0d9488;color:#fff;font-size:10px;font-weight:800;line-height:16px;text-align:center;box-shadow:0 0 0 2px #fff;}
-"""
-
-# ===========================================================================
-# JavaScript Templates (reference-exact)
-# ===========================================================================
-
-_SCENE6_JS = """
-<script id="qanim-js-scene6">
-(function initScene6(){
-  'use strict';
-  if(window.__qanimScene6Init)return;window.__qanimScene6Init=true;
-
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-
-  var s6Phase=-1;
-  var s6AutoAdvanceTimer=null;
-  var s6AutoAdvanceScheduled=false;
-
-  function _qanimCancelRAF(){
-    if(window.qanimRafId){cancelAnimationFrame(window.qanimRafId);window.qanimRafId=null;}
-    if(window.rafId){cancelAnimationFrame(window.rafId);window.rafId=null;}
-  }
-  function _qanimResumeRAF(){
-    if(typeof window.qanimStartRAF==='function'){window.qanimStartRAF();return;}
-    if(typeof window.startRAF==='function'){window.startRAF();return;}
-    if(typeof window.animate==='function'){requestAnimationFrame(window.animate);}
-  }
-
-  function s6Render(){
-    var boxes=document.querySelectorAll('#s6-vars-row .s6-var-box');
-    var n=boxes.length;
-
-    var fEl=_el('s6-formula-text'),sEl=_el('s6-formula-sublabel');
-    if(fEl)fEl.classList.add('s6-shown');if(sEl)sEl.classList.add('s6-shown');
-
-    for(var i=0;i<n;i++){
-      var b=boxes[i];
-      if(s6Phase>=i+1){b.classList.add('s6-shown');b.classList.toggle('s6-active',s6Phase===i+1);}
-      else{b.classList.remove('s6-shown','s6-active');}
-    }
-
-    var noteEl=_el('s6-note-bar');
-    if(noteEl){if(s6Phase>=n+1)noteEl.classList.add('s6-shown');else noteEl.classList.remove('s6-shown');}
-
-    var progEl=_el('s6-phase-progress');
-    if(progEl){
-      if(s6Phase<=0)progEl.textContent='Step 1 of '+(n+1)+' — The Formula';
-      else if(s6Phase<=n)progEl.textContent='Step '+(s6Phase+1)+' of '+(n+1)+' — Variable '+(s6Phase);
-      else progEl.textContent='Step '+(n+2)+' of '+(n+2)+' — Key Insight';
-    }
-
-    var capEl=_el('s6-phase-caption');
-    if(capEl){
-      if(s6Phase<=0)capEl.textContent='This is the governing formula for this problem.';
-      else if(s6Phase<=n){var sb=boxes[s6Phase-1];capEl.textContent=sb?'Now examining: '+sb.querySelector('.s6-var-sym').textContent+' — '+sb.querySelector('.s6-var-name').textContent:'';}
-      else capEl.textContent='All variables identified. Proceed to the substitution step.';}
-
-    var nb=_el('s6-next-btn');
-    if(nb){
-      if(s6Phase<n){nb.textContent='Next ▶';nb.onclick=function(){window.qanim_s6Advance();};}
-      else if(s6Phase===n){nb.textContent='See Key Insight ▶';nb.onclick=function(){window.qanim_s6Advance();};}
-      else{nb.textContent='Step 8: Substitution ▶';nb.className='btn-primary';
-        nb.onclick=function(){
-          if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
-        };
-        if(!s6AutoAdvanceScheduled){s6AutoAdvanceScheduled=true;
-          s6AutoAdvanceTimer=setTimeout(function(){
-            var ov=_el('qanim-scene6-overlay');
-            if(ov&&ov.classList.contains('qanim-scene-visible')&&typeof window.qanim_showScene7==='function')window.qanim_showScene7();
-          },3500);
-        }
-      }
-    }
-  }
-
-  window.qanim_s6Advance=function(){
-    var n=document.querySelectorAll('#s6-vars-row .s6-var-box').length;
-    if(s6Phase<n+1)s6Phase++;
-    s6Render();
-  };
-
-  window.qanim_showScene6=function(){
-    var ov=_el('qanim-scene6-overlay');if(ov)ov.classList.add('qanim-scene-visible');
-    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
-    _qanimCancelRAF();
-    _syncDots(6);
-    s6Phase=0;s6AutoAdvanceScheduled=false;
-    if(s6AutoAdvanceTimer){clearTimeout(s6AutoAdvanceTimer);s6AutoAdvanceTimer=null;}
-    s6Render();
-  };
-
-  window.qanim_goToPrevScene=function(){
-    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
-    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
-    if(s6AutoAdvanceTimer){clearTimeout(s6AutoAdvanceTimer);s6AutoAdvanceTimer=null;}
-    var stage=document.querySelector('.svg-container');if(stage)stage.style.opacity='1';
-    if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){
-      var last=window.stepsData.length-1;window.currentStep=last;window.applyStep(last);}
-    _qanimResumeRAF();
-  };
-
-  function _syncDots(idx){
-    var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<idx)dots[i].classList.add('done');if(i===idx)dots[i].classList.add('active');}
-    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 7 of 9: Main Formula';
-    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(7/9*100)+'%';
-  }
-
-  _onReady(function(){
-    var origReset=window.resetAnim;
-    window.resetAnim=function(){
-      ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
-      var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
-      var stage=document.querySelector('.svg-container');if(stage)stage.style.opacity='1';
-      s6Phase=-1;s6AutoAdvanceScheduled=false;
-      if(s6AutoAdvanceTimer){clearTimeout(s6AutoAdvanceTimer);s6AutoAdvanceTimer=null;}
-      if(typeof origReset==='function')origReset();
-    };
-  });
-})();
-</script>
-"""
-
-_SCENE7_JS = """
-<script id="qanim-js-scene7">
-(function initScene7(){
-  'use strict';
-  if(window.__qanimScene7Init)return;window.__qanimScene7Init=true;
-
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-
-  function _syncDots8(){
-    var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<7)dots[i].classList.add('done');if(i===7)dots[i].classList.add('active');}
-    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 8 of 9: Step-by-Step Substitution';
-    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(8/9*100)+'%';
-  }
-
-  function _showScene7Core(){
-    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.add('qanim-scene-visible');
-    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
-    _syncDots8();
-  }
-
-  window.qanim_showScene7=_showScene7Core;
-  window.qanim_showScene8=_showScene7Core;
-
-  window.qanim_goToScene6FromScene7=function(){
-    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
-    if(typeof window.qanim_showScene6==='function')window.qanim_showScene6();
-  };
-
-  window.qanim_goToScene7FromScene9=function(){
-    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
-    _showScene7Core();
-  };
-
-  _onReady(function(){
-    var origReset=window.resetAnim;
-    window.resetAnim=function(){
-      var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
-      var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
-      var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
-      if(typeof origReset==='function')origReset();
-    };
-  });
-})();
-</script>
-"""
-
-_SCENE9_JS = """
-<script id="qanim-js-scene9">
-(function initScene9(){
-  'use strict';
-  if(window.__qanimScene9Init)return;window.__qanimScene9Init=true;
-
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-
-  function _syncDots9(){
-    var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<8)dots[i].classList.add('done');if(i===8)dots[i].classList.add('active');}
-    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 9 of 9: Final Answer';
-    var bar=_el('step-bar');if(bar)bar.style.width='100%';
-  }
-
-  function _animateEntrance(){
-    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
-    for(var i=0;i<rows.length;i++){
-      (function(el,delay){setTimeout(function(){el.classList.add('s9-shown');},delay);})(rows[i],200+i*200);}
-    var fb=_el('s9-final-box');
-    if(fb)setTimeout(function(){fb.classList.add('s9-shown');},200+rows.length*200);
-    var ib=_el('s9-insight-bar');
-    if(ib)setTimeout(function(){ib.classList.add('s9-shown');},200+rows.length*200+300);
-  }
-
-  function _resetEntrance(){
-    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
-    for(var i=0;i<rows.length;i++)rows[i].classList.remove('s9-shown');
-    var fb=_el('s9-final-box');if(fb)fb.classList.remove('s9-shown');
-    var ib=_el('s9-insight-bar');if(ib)ib.classList.remove('s9-shown');
-  }
-
-  window.qanim_showScene9=function(){
-    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
-    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
-    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.add('qanim-scene-visible');
-    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
-    _syncDots9();_resetEntrance();setTimeout(_animateEntrance,120);
-  };
-
-  window.qanim_goToScene7FromScene9=function(){
-    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
-    if(typeof window.qanim_showScene8==='function')window.qanim_showScene8();
-    else if(typeof window.qanim_showScene7==='function')window.qanim_showScene7();
-  };
-
-  _onReady(function(){
-    var origReset=window.resetAnim;
-    window.resetAnim=function(){
-      var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
-      if(typeof origReset==='function')origReset();
-    };
-  });
-})();
-</script>
-"""
-
-_AUTOTRIGGER_JS = """
-<script id="qanim-js-scene6-autotrigger">
-(function(){
-  'use strict';
-  if(window.__qanimAutoTrigger)return;window.__qanimAutoTrigger=true;
-
-  function _tryTrigger(){
-    var btn=document.getElementById('btn-next');
-    if(!btn)return;
-    var label=(btn.textContent||btn.innerText||'').trim().toLowerCase();
-    var isFinished=btn.disabled||label.indexOf('finish')!==-1||label.indexOf('formula')!==-1||label.indexOf('step 7')!==-1;
-    if(!isFinished)return;
-    var ov6=document.getElementById('qanim-scene6-overlay');
-    var ov7=document.getElementById('qanim-scene7-overlay');
-    var ov9=document.getElementById('qanim-scene9-overlay');
-    var alreadyOpen=(ov6&&ov6.classList.contains('qanim-scene-visible'))||(ov7&&ov7.classList.contains('qanim-scene-visible'))||(ov9&&ov9.classList.contains('qanim-scene-visible'));
-    if(alreadyOpen)return;
-    if(typeof window.qanim_showScene6==='function'){
-      var svgCont=document.querySelector('.svg-container');
-      var doShow=function(){window.qanim_showScene6();};
-      if(svgCont){svgCont.style.transition='opacity .45s ease';svgCont.style.opacity='0';setTimeout(doShow,460);}
-      else{setTimeout(doShow,120);}
-    }
-  }
-
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  _onReady(function(){
-    var btn=document.getElementById('btn-next');
-    if(btn&&!btn.__qanimAutoWired){btn.__qanimAutoWired=true;btn.addEventListener('click',function(){setTimeout(_tryTrigger,30);});}
-  });
-})();
-</script>
-"""
-
-_PREVSTEP_JS = """
-<script id="qanim-js-prevstep">
-(function initPrevStep(){
-  'use strict';
-  if(window.__qanimPrevStepInit)return;window.__qanimPrevStepInit=true;
-
-  function _updateBtn(){
-    var pb=document.getElementById('btn-prev');
-    if(!pb)return;
-    var cur=typeof window.currentStep==='number'?window.currentStep:-1;
-    pb.disabled=(cur<=0);
-  }
-
-  function _resumeRAF(){
-    if(typeof window.qanimStartRAF==='function'){window.qanimStartRAF();return;}
-    if(typeof window.startRAF==='function'){window.startRAF();return;}
-    if(typeof window.animate==='function'){requestAnimationFrame(window.animate);}
-  }
-
-  window.prevStep=function(){
-    if(typeof window.currentStep!=='number')return;
-    if(window.currentStep<=0)return;
-    window.currentStep--;
-    if(typeof window.applyStep==='function')window.applyStep(window.currentStep);
-    _resumeRAF();
-    var nb=document.getElementById('btn-next');if(nb)nb.style.display='inline-block';
-  };
-
-  var _origApply=window.applyStep;
-  if(typeof _origApply==='function'){
-    window.applyStep=function(idx){_origApply(idx);_updateBtn();};
-  }
-
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  _onReady(function(){
-    var pb=document.getElementById('btn-prev');
-    if(pb){pb.removeAttribute('onclick');pb.addEventListener('click',function(e){e.stopPropagation();window.prevStep();});}
-    _updateBtn();
-  });
-})();
-</script>
-"""
-
-
-_ANSWERBOX_JS_TMPL = """
-<script type="application/json" id="__answer_targets__">{{TARGETS_JSON}}</script>
-<script id="qanim-js-answerbox">
-(function initAnswerBox(){
-  'use strict';
-  if(window.__qanimAnswerBoxInit)return;window.__qanimAnswerBoxInit=true;
-  var abOpen=false,_targets=[],_currentIdx=0,_loaded=false;
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  function _loadTargets(){if(_loaded)return;_loaded=true;try{var t=_el('__answer_targets__');if(!t)return;var d=JSON.parse(t.textContent)||{};_targets=Array.isArray(d.answer_targets)?d.answer_targets:[];}catch(e){_targets=[];}}
-  function _renderTarget(idx){var t=_targets[idx];if(!t)return;var fe=_el('ab-find-text');if(fe)fe.textContent=t.label||'Answer';var total=_targets.length;var pl=_el('ab-progress-label');if(pl)pl.textContent='Question '+(idx+1)+' of '+total;var de=_el('ab-progress-dots');if(de){var h='';for(var i=0;i<total;i++){var cls=i<idx?'ab-dot done':i===idx?'ab-dot current':'ab-dot';h+='<div class="'+cls+'"></div>';}de.innerHTML=h;}var inp=_el('ab-user-input');if(inp){inp.value='';inp.removeAttribute('disabled');}var fb=_el('ab-feedback');if(fb)fb.className='';var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';var sb=_el('ab-submit-btn');if(sb){sb.style.display='';sb.disabled=false;}var adc=_el('ab-alldone-card');if(adc)adc.className='';var u=t.unit?' ('+t.unit+')':'';if(inp)inp.placeholder='Type your answer'+u+'...';}
-  function _nums(s){var m=s.match(/[-+]?\\d*\\.?\\d+(?:[eE][-+]?\\d+)?/g);return m?m.map(parseFloat).filter(function(n){return isFinite(n);}):[];}
-  function _validate(userAns,correctAns){if(!userAns||!userAns.trim())return'empty';var un=_nums(userAns),cn=_nums(correctAns);if(un.length>0&&cn.length>0){var re=Math.abs(un[0]-cn[0])/(Math.abs(cn[0])+1e-12);if(re<0.01)return'correct';if(re<0.15)return'almost';return'wrong';}var uc=userAns.toLowerCase().trim().replace(/[^a-z0-9\\s]/g,' ');var cc=correctAns.toLowerCase().trim().replace(/[^a-z0-9\\s]/g,' ');if(uc===cc)return'correct';return'wrong';}
-  var _FB={correct:{icon:'✅',verdict:'Correct!',cls:'correct'},almost:{icon:'〰️',verdict:'Almost Correct',cls:'almost'},wrong:{icon:'❌',verdict:'Wrong Answer',cls:'wrong'},empty:{icon:'❓',verdict:'No Answer',cls:'wrong'}};
-  function _showFeedback(verdict,insight){var info=_FB[verdict]||_FB['wrong'];var fb=_el('ab-feedback'),icon=_el('ab-feedback-icon'),verd=_el('ab-feedback-verdict'),ins=_el('ab-insight-text');if(!fb)return;fb.className='show '+info.cls;if(icon)icon.textContent=info.icon;if(verd)verd.textContent=info.verdict;if(ins)ins.textContent=insight||'Review the solution.';var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row show';var ntb=_el('ab-next-target-btn'),isLast=(_currentIdx>=_targets.length-1);if(ntb){if((verdict==='correct'||verdict==='almost')&&!isLast){ntb.style.display='';ntb.textContent='Next →';}else{ntb.style.display='none';}}if(verdict==='correct'&&isLast){setTimeout(function(){var adc=_el('ab-alldone-card');if(adc)adc.className='show';var sb=_el('ab-submit-btn');if(sb)sb.style.display='none';},900);}}
-  function openAnswerBox(){_loadTargets();_currentIdx=0;var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');if(!bd||!pn)return;bd.classList.add('open');bd.setAttribute('aria-hidden','false');pn.classList.add('open');pn.setAttribute('aria-hidden','false');abOpen=true;_renderTarget(_currentIdx);setTimeout(function(){var inp=_el('ab-user-input');if(inp)inp.focus();},220);}
-  function closeAnswerBox(){var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');if(bd){bd.classList.remove('open');bd.setAttribute('aria-hidden','true');}if(pn){pn.classList.remove('open');pn.setAttribute('aria-hidden','true');}abOpen=false;}
-  window.openAnswerBox=openAnswerBox;window.closeAnswerBox=closeAnswerBox;
-  // Reset hook: called by __qanimSetAnswerTargets after Customize updates the JSON element.
-  // Clears the internal _loaded flag so the next openAnswerBox() re-reads _targets from DOM.
-  window.__qanimAnswerBoxReset=function(){_loaded=false;_targets=[];_currentIdx=0;};
-  _onReady(function(){
-    function wireCtrl(){var btn=_el('answerbox-ctrl-btn');if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();abOpen?closeAnswerBox():openAnswerBox();});}else{setTimeout(wireCtrl,100);}}
-    wireCtrl();
-    var cb=_el('ab-close-btn');if(cb)cb.addEventListener('click',function(e){e.stopPropagation();closeAnswerBox();});
-    var bd=_el('answerbox-backdrop');if(bd)bd.addEventListener('click',function(e){if(e.target===bd)closeAnswerBox();});
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&abOpen)closeAnswerBox();});
-    var sb=_el('ab-submit-btn');if(sb)sb.addEventListener('click',function(){var inp=_el('ab-user-input'),userAns=inp?inp.value.trim():'';var t=_targets[_currentIdx]||{};var verdict=_validate(userAns,t.value||'');_showFeedback(verdict,t.insight||'');if(inp)inp.disabled=true;});
-    var inp2=_el('ab-user-input');if(inp2)inp2.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();var sb2=_el('ab-submit-btn');if(sb2)sb2.click();}});
-    var rb=_el('ab-retry-btn');if(rb)rb.addEventListener('click',function(){var inp=_el('ab-user-input');if(inp){inp.value='';inp.disabled=false;inp.focus();}var fb=_el('ab-feedback');if(fb)fb.className='';var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';var sb=_el('ab-submit-btn');if(sb)sb.style.display='';var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';});
-    var ntb2=_el('ab-next-target-btn');if(ntb2)ntb2.addEventListener('click',function(){if(_currentIdx<_targets.length-1){_currentIdx++;_renderTarget(_currentIdx);}});
-  });
-})();
-</script>
-"""
-
-_GLOSSARY_JS = """
-<script id="qanim-js-glossary">
-(function initGlossary(){
-  'use strict';
-  if(window.__qanimGlossaryInit)return;window.__qanimGlossaryInit=true;
-  function _el(id){return document.getElementById(id);}
-  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
-  function openGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(!p)return;p.classList.add('open');p.setAttribute('aria-hidden','false');if(b)b.classList.add('open');}
-  function closeGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}if(b)b.classList.remove('open');}
-  _onReady(function(){
-    var btn=_el('glossary-ctrl-btn');
-    if(btn)btn.addEventListener('click',function(){var p=_el('qanim-glossary-panel');if(p&&p.classList.contains('open'))closeGlossary();else openGlossary();});
-    var cb=_el('glossary-close-btn');if(cb)cb.addEventListener('click',closeGlossary);
-    var bd=_el('qanim-glossary-backdrop');if(bd)bd.addEventListener('click',closeGlossary);
-    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeGlossary();});
-  });
-})();
-</script>
-"""
-
-
-
-# ===========================================================================
-# Customize Panel
-# ===========================================================================
-
-_CUSTOMIZE_CSS = """
-<style id="qanim-customize-styles">
-#customize-backdrop {
-  display:none; position:fixed; inset:0; z-index:8800;
-  background:rgba(15,23,42,.52); backdrop-filter:blur(5px);
-}
-#customize-backdrop.open { display:block; }
-
-#customize-panel {
-  display:flex; flex-direction:column;
-  position:fixed; top:50%; left:50%;
-  transform:translate(-50%,-50%) scale(.96);
-  z-index:8900; width:min(520px,95vw); max-height:88vh;
-  border-radius:20px; overflow:hidden;
-  background:#fff;
-  border:1px solid #e2e8f0;
-  box-shadow:0 8px 56px rgba(99,102,241,.22),0 2px 10px rgba(0,0,0,.10);
-  opacity:0; pointer-events:none;
-  transition:opacity .26s, transform .26s cubic-bezier(.34,1.56,.64,1);
-}
-#customize-panel.open {
-  opacity:1; pointer-events:auto;
-  transform:translate(-50%,-50%) scale(1);
-}
-.cust-header {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:16px 22px;
-  background:linear-gradient(135deg,#f5f3ff,#eff6ff);
-  border-bottom:1px solid #e2e8f0; flex-shrink:0;
-}
-.cust-header-title {
-  font-size:16px; font-weight:800; color:#1e293b;
-  display:flex; align-items:center; gap:8px;
-}
-.cust-header-badge {
-  font-size:10px; font-weight:800; text-transform:uppercase;
-  letter-spacing:1px; padding:2px 9px; border-radius:20px;
-  background:rgba(99,102,241,.12); border:1px solid rgba(99,102,241,.28);
-  color:#4338ca;
-}
-.cust-close-btn {
-  width:30px; height:30px; border-radius:8px;
-  border:1px solid #e2e8f0; background:#f8fafc;
-  color:#64748b; font-size:13px; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  transition:background .15s; padding:0;
-}
-.cust-close-btn:hover { background:#fee2e2; color:#dc2626; }
-.cust-body {
-  padding:20px 22px; overflow-y:auto; flex:1 1 auto;
-  display:flex; flex-direction:column; gap:0;
-}
-.cust-section-title {
-  font-size:10px; font-weight:800; text-transform:uppercase;
-  letter-spacing:1.4px; color:#6366f1; margin-bottom:12px;
-  display:flex; align-items:center; gap:6px;
-}
-.cust-section-title::after {
-  content:''; flex:1; height:1px;
-  background:linear-gradient(90deg,rgba(99,102,241,.25),transparent);
-}
-.cust-field-grid {
-  display:grid; grid-template-columns:1fr 1fr; gap:12px;
-  margin-bottom:18px;
-}
-.cust-field { display:flex; flex-direction:column; gap:4px; }
-.cust-field label {
-  font-size:11.5px; font-weight:700; color:#475569;
-  display:flex; align-items:center; gap:5px;
-}
-.cust-field label .cust-sym {
-  font-family:'Fira Code','Courier New',monospace;
-  font-weight:900; font-size:13px; color:#0e7490;
-}
-.cust-field input {
-  padding:9px 12px; border-radius:9px;
-  border:1.5px solid #e2e8f0; background:#f8fafc;
-  font-family:inherit; font-size:13.5px; font-weight:600;
-  color:#1e293b; outline:none;
-  transition:border-color .15s,background .15s;
-  box-sizing:border-box; width:100%;
-}
-.cust-field input:focus {
-  border-color:#6366f1; background:#fff;
-  box-shadow:0 0 0 3px rgba(99,102,241,.12);
-}
-.cust-field .cust-unit { font-size:10.5px; color:#94a3b8; margin-top:1px; }
-.cust-preview-box {
-  background:linear-gradient(135deg,#f5f3ff,#eff6ff);
-  border:1.5px solid rgba(99,102,241,.28);
-  border-radius:12px; padding:14px 16px; margin-bottom:16px;
-}
-.cust-preview-title {
-  font-size:10.5px; font-weight:800; text-transform:uppercase;
-  letter-spacing:1.2px; color:#4338ca; margin-bottom:10px;
-}
-.cust-preview-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
-.cust-preview-item {
-  display:flex; align-items:center; gap:6px;
-  font-size:12.5px; color:#334155;
-}
-.cust-preview-item .cpv-sym {
-  font-weight:800; color:#1e293b;
-  font-family:'Fira Code','Courier New',monospace; font-size:13px;
-}
-.cust-preview-item .cpv-arrow { color:#6366f1; font-size:11px; font-weight:700; }
-.cust-result-bar {
-  background:linear-gradient(135deg,#f0fdf4,#dcfce7);
-  border:1.5px solid #86efac; border-radius:12px;
-  padding:13px 16px; margin-bottom:16px; display:none;
-}
-.cust-result-bar.visible { display:block; }
-.cust-result-title {
-  font-size:10.5px; font-weight:800; text-transform:uppercase;
-  letter-spacing:1.2px; color:#15803d; margin-bottom:7px;
-}
-.cust-result-values {
-  font-size:14px; font-weight:700; color:#14532d;
-  font-family:'Fira Code','Courier New',monospace;
-}
-.cust-error-bar {
-  background:#fef2f2; border:1.5px solid #fecaca;
-  border-radius:10px; padding:10px 14px;
-  font-size:12.5px; color:#b91c1c; font-weight:600;
-  margin-bottom:14px; display:none;
-}
-.cust-error-bar.visible { display:block; }
-.cust-footer {
-  display:flex; gap:10px; justify-content:flex-end;
-  padding:16px 22px; border-top:1px solid #f1f5f9;
-  background:#fafbff; flex-shrink:0;
-}
-.cust-btn-reset {
-  padding:10px 20px; border-radius:10px; border:1.5px solid #e2e8f0;
-  background:#fff; color:#64748b; font-size:13px; font-weight:700;
-  font-family:inherit; cursor:pointer;
-  transition:background .15s,border-color .15s,color .15s;
-}
-.cust-btn-reset:hover { background:#f8fafc; border-color:#94a3b8; color:#334155; }
-.cust-btn-apply {
-  padding:10px 24px; border-radius:10px; border:none;
-  background:linear-gradient(135deg,#4f46e5,#6366f1);
-  color:#fff; font-size:13px; font-weight:700; font-family:inherit;
-  cursor:pointer; box-shadow:0 3px 12px rgba(99,102,241,.35);
-  transition:background .15s,transform .12s,box-shadow .15s;
-}
-.cust-btn-apply:hover {
-  background:linear-gradient(135deg,#4338ca,#4f46e5);
-  transform:translateY(-1px); box-shadow:0 5px 18px rgba(99,102,241,.42);
-}
-.cust-btn-apply:active { transform:translateY(0); }
-@keyframes cust-pulse-ring {
-  0%   { box-shadow:0 0 0 0 rgba(99,102,241,.5); }
-  70%  { box-shadow:0 0 0 8px rgba(99,102,241,0); }
-  100% { box-shadow:0 0 0 0 rgba(99,102,241,0); }
-}
-.cust-applied-ring { animation:cust-pulse-ring .7s ease-out; }
-</style>
-"""
+    return (
+        '<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-labelledby="s9-card-title">\n'
+        ' <div class="s9-card">\n'
+        '  <div class="s9-title-bar"><h2 id="s9-card-title">Step 9 &mdash; Final answers</h2></div>\n'
+        '  <div class="s9-body">\n'
+        '   <div class="lesson-answer-grid" id="s9-answers">\n'
+        + answer_cards +
+        '   </div>\n'
+        '  </div>\n'
+        '  <div class="s9-nav-row">\n'
+        '   <button class="btn-secondary" onclick="qanim_goToScene7FromScene9()">&#x2190; Step 8</button>\n'
+        '   <button class="btn-primary" onclick="resetAnim()">&#x21BA; Restart</button>\n'
+        '  </div>\n'
+        ' </div>\n'
+        '</div>\n'
+    )
 
 
 def _selfcheck_customize_js(customize_html: str) -> None:
@@ -4230,6 +2758,135 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     Customize panel is always shown when there are known given values.
     Returns the combined CSS + panel HTML + JS string.
     """
+    _CUSTOMIZE_CSS = """<style id="qanim-customize-styles">
+/* ── Customize Panel Overlay ────────────────────────────────────── */
+#customize-backdrop {
+  display: none; position: fixed; inset: 0;
+  background: rgba(15,23,42,0.55); z-index: 9998;
+  backdrop-filter: blur(2px);
+}
+#customize-backdrop.open { display: block; }
+
+#customize-panel {
+  display: none; position: fixed; top: 50%; right: 0;
+  transform: translateY(-50%);
+  width: min(420px, 96vw); max-height: 88vh;
+  background: #fff; border-radius: 16px 0 0 16px;
+  box-shadow: -8px 0 40px rgba(0,0,0,0.18);
+  z-index: 9999; flex-direction: column; overflow: hidden;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+#customize-panel.open { display: flex; }
+
+.cust-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px 12px;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: #fff; flex-shrink: 0;
+}
+.cust-header-title {
+  font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+}
+.cust-header-badge {
+  font-size: 10px; font-weight: 600; background: rgba(255,255,255,0.22);
+  border-radius: 20px; padding: 2px 8px; letter-spacing: 0.3px;
+}
+.cust-close-btn {
+  background: rgba(255,255,255,0.18); border: none; color: #fff;
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  font-size: 14px; display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s;
+}
+.cust-close-btn:hover { background: rgba(255,255,255,0.35); }
+
+.cust-body {
+  flex: 1; overflow-y: auto; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.cust-section-title {
+  font-size: 11px; font-weight: 700; color: #64748b;
+  text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 4px;
+}
+.cust-field-grid { display: flex; flex-direction: column; gap: 10px; }
+.cust-field {
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 6px 10px; background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 10px; padding: 10px 12px;
+}
+.cust-field label {
+  font-size: 13px; color: #334155; font-weight: 500;
+  grid-column: 1 / -1;
+}
+.cust-sym {
+  font-family: 'Georgia', serif; font-style: italic;
+  color: #6366f1; font-weight: 700; margin-right: 4px;
+}
+.cust-field input[type="number"] {
+  width: 90px; padding: 5px 8px; border: 1.5px solid #c7d2fe;
+  border-radius: 7px; font-size: 13px; color: #1e293b;
+  background: #fff; outline: none; transition: border-color 0.2s;
+  text-align: right;
+}
+.cust-field input[type="number"]:focus { border-color: #6366f1; }
+.cust-unit { font-size: 11px; color: #94a3b8; }
+
+.cust-preview-box {
+  background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px;
+  padding: 10px 12px;
+}
+.cust-preview-title {
+  font-size: 11.5px; font-weight: 700; color: #0284c7; margin-bottom: 8px;
+}
+.cust-preview-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.cust-preview-item {
+  display: flex; align-items: center; gap: 4px;
+  background: #fff; border: 1px solid #e0f2fe; border-radius: 20px;
+  padding: 3px 10px; font-size: 12px;
+}
+.cpv-sym { font-family: 'Georgia', serif; font-style: italic; color: #6366f1; font-weight: 700; }
+.cpv-arrow { color: #94a3b8; }
+
+.cust-result-bar {
+  display: none; background: #f0fdf4; border: 1px solid #bbf7d0;
+  border-radius: 8px; padding: 8px 12px; font-size: 12.5px; color: #166534;
+}
+.cust-result-bar.visible { display: block; }
+.cust-result-title { font-weight: 700; margin-bottom: 2px; }
+
+.cust-error-bar {
+  display: none; background: #fef2f2; border: 1px solid #fecaca;
+  border-radius: 8px; padding: 8px 12px; font-size: 12.5px; color: #b91c1c;
+}
+.cust-error-bar.visible { display: block; }
+
+.cust-footer {
+  display: flex; gap: 10px; padding: 12px 18px;
+  border-top: 1px solid #f1f5f9; flex-shrink: 0; background: #fafafa;
+}
+.cust-btn-reset, .cust-btn-apply {
+  flex: 1; padding: 9px 0; border-radius: 9px; font-size: 13px;
+  font-weight: 600; cursor: pointer; border: none; transition: all 0.2s;
+}
+.cust-btn-reset {
+  background: #f1f5f9; color: #475569;
+}
+.cust-btn-reset:hover { background: #e2e8f0; }
+.cust-btn-apply {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff; box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+}
+.cust-btn-apply:hover { opacity: 0.9; transform: translateY(-1px); }
+
+/* Pulse ring on the Customize button after applying */
+@keyframes custAppliedRing {
+  0%   { box-shadow: 0 0 0 0 rgba(99,102,241,0.6); }
+  70%  { box-shadow: 0 0 0 10px rgba(99,102,241,0); }
+  100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+}
+.cust-applied-ring { animation: custAppliedRing 0.8s ease-out; }
+</style>
+"""
+
     import re as _re_cust
 
     # Robust parsing of customize block (Gemini sometimes returns a string, list, or omits it)
@@ -5106,9 +3763,9 @@ def _build_step_dots(steps: list, scene: dict) -> str:
             dots += f'<div class="step-dot" id="dot-step{j+1}">Step {j+1}</div><div class="step-connector"></div>\n'
         # Dots for scenes 7, 8, 9
         # FIX G: dot-step8 uses qanim_showScene7 (not qanim_showScene8) for consistency
-        dots += f'<div class="step-dot" id="dot-step7" onclick="if(typeof window.qanim_showScene6===\'function\')window.qanim_showScene6()">7 · Formula</div>\n<div class="step-connector"></div>\n'
-        dots += f'<div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene7===\'function\')window.qanim_showScene7()">8 · Subst.</div>\n<div class="step-connector"></div>\n'
-        dots += f'<div class="step-dot" id="dot-step9" onclick="if(typeof window.qanim_showScene9===\'function\')window.qanim_showScene9()">9 · Answer</div>\n'
+        dots += '<div class="step-dot" id="dot-step7" onclick="if(typeof window.qanim_showScene6===\'function\')window.qanim_showScene6()">7 · Formula</div>\n<div class="step-connector"></div>\n'
+        dots += '<div class="step-dot" id="dot-step8" onclick="if(typeof window.qanim_showScene7===\'function\')window.qanim_showScene7()">8 · Subst.</div>\n<div class="step-connector"></div>\n'
+        dots += '<div class="step-dot" id="dot-step9" onclick="if(typeof window.qanim_showScene9===\'function\')window.qanim_showScene9()">9 · Answer</div>\n'
 
     return dots
 
@@ -5133,7 +3790,7 @@ def _build_glossary_panel(glossary: list) -> str:
   <div class="glossary-term-word">{_he(g.get('term',''))}</div>
   <div class="glossary-term-meaning">{_he(g.get('meaning',''))}</div>
 </div>\n"""
-    badge = len(glossary)
+    # badge count available via len(glossary) at call site if needed
     return f"""<div id="qanim-glossary-backdrop"></div>
 <div id="qanim-glossary-panel" role="dialog" aria-label="Difficult words glossary" aria-hidden="true">
   <div id="qanim-glossary-header">
@@ -5198,7 +3855,7 @@ def _build_step6_panel_html(sol: dict, scene: dict) -> str:
     """
     to_find      = scene.get("to_find", ["The unknown quantity"])
     answer_value = str(sol.get("answer_value", "")).strip()   # used for scrubbing
-    final_answer = str(sol.get("final_answer", "")).strip()   # used for scrubbing
+    # final_answer scrubbing reserved for future use (answer_value covers current cases)
 
     # Build compact "Find: SYMBOL ?" chips — one per unknown
     find_items_html = ""
@@ -5229,71 +3886,1071 @@ def _build_step6_panel_html(sol: dict, scene: dict) -> str:
 </div>"""
 
 
-# ── Topic-adaptive accent palette ───────────────────────────────────────────
-# A small, hand-picked set of accessible, professionally-balanced palettes.
-# Each entry supplies every token the CSS references via --c-primary* /
-# --c-accent* / --c-orange / --c-green / --c-purple, plus the raw "R,G,B"
-# triple used by rgba(var(--c-primary-rgb), alpha) throughout the stylesheet.
-_ACCENT_PALETTES = [
-    {"primary": "#0369a1", "mid": "#0891b2", "dim": "#0e7490", "rgb": "3,105,161",
-     "accent": "#38bdf8", "accent_soft": "rgba(56,189,248,.12)",
-     "orange": "#d97706", "green": "#16a34a", "purple": "#7c3aed"},
-    {"primary": "#6d28d9", "mid": "#7c3aed", "dim": "#5b21b6", "rgb": "109,40,217",
-     "accent": "#a78bfa", "accent_soft": "rgba(167,139,250,.14)",
-     "orange": "#d97706", "green": "#16a34a", "purple": "#c026d3"},
-    {"primary": "#0f766e", "mid": "#0d9488", "dim": "#115e59", "rgb": "15,118,110",
-     "accent": "#2dd4bf", "accent_soft": "rgba(45,212,191,.14)",
-     "orange": "#d97706", "green": "#65a30d", "purple": "#7c3aed"},
-    {"primary": "#b45309", "mid": "#d97706", "dim": "#92400e", "rgb": "180,83,9",
-     "accent": "#fbbf24", "accent_soft": "rgba(251,191,36,.15)",
-     "orange": "#dc2626", "green": "#16a34a", "purple": "#7c3aed"},
-    {"primary": "#be123c", "mid": "#e11d48", "dim": "#9f1239", "rgb": "190,18,60",
-     "accent": "#fb7185", "accent_soft": "rgba(251,113,133,.14)",
-     "orange": "#d97706", "green": "#16a34a", "purple": "#7c3aed"},
-    {"primary": "#4338ca", "mid": "#4f46e5", "dim": "#3730a3", "rgb": "67,56,202",
-     "accent": "#818cf8", "accent_soft": "rgba(129,140,248,.14)",
-     "orange": "#d97706", "green": "#16a34a", "purple": "#a21caf"},
-    {"primary": "#15803d", "mid": "#16a34a", "dim": "#166534", "rgb": "21,128,61",
-     "accent": "#4ade80", "accent_soft": "rgba(74,222,128,.14)",
-     "orange": "#d97706", "green": "#0d9488", "purple": "#7c3aed"},
-    {"primary": "#1e40af", "mid": "#2563eb", "dim": "#1e3a8a", "rgb": "30,64,175",
-     "accent": "#60a5fa", "accent_soft": "rgba(96,165,250,.14)",
-     "orange": "#d97706", "green": "#16a34a", "purple": "#7c3aed"},
-]
+# ===========================================================================
+# Module-level CSS / JS constants used by assemble_html()
+# ===========================================================================
+
+_BASE_CSS = """
+/* ── QAnim Base Styles ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+/* Question banner */
+.q-banner {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border-bottom: 1px solid #1e3a5f;
+  padding: 14px 24px;
+  flex-shrink: 0;
+}
+.q-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: #38bdf8; margin-bottom: 4px;
+}
+.q-text {
+  font-size: 15px; color: #f1f5f9; line-height: 1.5; font-weight: 500;
+}
+/* Main layout */
+.main-layout {
+  display: flex; flex: 1; overflow: hidden;
+}
+.left-panel {
+  width: 220px; flex-shrink: 0;
+  background: #1e293b; border-right: 1px solid #334155;
+  display: flex; flex-direction: column; padding: 16px 12px; gap: 6px;
+  overflow-y: auto;
+}
+.step-dot {
+  padding: 8px 10px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  color: #94a3b8; cursor: pointer; transition: all 0.2s;
+  border-left: 3px solid transparent;
+  line-height: 1.3;
+}
+.step-dot:hover { background: #1e3a5f; color: #e2e8f0; }
+.step-dot.active { background: #1e3a5f; color: #38bdf8; }
+.step-connector {
+  width: 2px; height: 10px; background: #334155;
+  margin-left: 18px;
+}
+.step-legend {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid #334155;
+}
+.step-legend-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: #64748b; margin-bottom: 4px;
+}
+.step-legend-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.right-panel {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+}
+.svg-container {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  background: #0f172a; overflow: hidden; position: relative;
+  transition: opacity 0.3s;
+}
+.svg-container svg {
+  max-width: 100%; max-height: 100%;
+  width: 100%; height: auto;
+}
+/* Info + actions bar */
+.info-actions-bar {
+  background: #1e293b; border-top: 1px solid #334155;
+  padding: 12px 20px; flex-shrink: 0;
+}
+.step-header {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px;
+}
+.step-num {
+  font-size: 11px; font-weight: 700; color: #38bdf8;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.step-label {
+  font-size: 13px; font-weight: 700; color: #f1f5f9;
+}
+.badges {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
+}
+.badge {
+  padding: 3px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 600;
+}
+.info-desc {
+  font-size: 12.5px; color: #94a3b8; line-height: 1.55;
+}
+.actions {
+  display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;
+}
+.btn-primary, .btn-secondary {
+  padding: 8px 18px; border-radius: 8px; font-size: 13px;
+  font-weight: 600; cursor: pointer; border: none; transition: all 0.2s;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #0ea5e9, #6366f1);
+  color: #fff; box-shadow: 0 2px 8px rgba(14,165,233,0.3);
+}
+.btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+.btn-secondary {
+  background: #334155; color: #cbd5e1;
+}
+.btn-secondary:hover { background: #475569; }
+.btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Scene modal backdrop */
+#qanim-scene-modal-backdrop {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7); z-index: 999;
+}
+#qanim-scene-modal-backdrop.qanim-scene-visible { display: block; }
+/* S6 To-Find badge */
+#step6-info-panel {
+  position: absolute; top: 16px; right: 16px; z-index: 10;
+  pointer-events: none;
+}
+.s6tofind-badge {
+  background: rgba(15,23,42,0.88); border: 1px solid #334155;
+  border-radius: 12px; padding: 10px 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.s6tofind-heading {
+  font-size: 11px; font-weight: 700; color: #38bdf8;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.s6tofind-chip {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: #f1f5f9; font-weight: 600;
+}
+.s6tofind-icon { font-size: 14px; }
+.s6tofind-hint {
+  font-size: 11px; color: #64748b; margin-top: 4px;
+}
+/* Answer box backdrop */
+#answerbox-backdrop {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.65); z-index: 9990; backdrop-filter: blur(2px);
+}
+#answerbox-backdrop.ab-open { display: block; }
+/* Answer box panel */
+#answerbox-panel {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: min(480px, 94vw); background: #1e293b;
+  border: 1px solid #334155; border-radius: 16px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  z-index: 9991; display: none; flex-direction: column;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  overflow: hidden;
+}
+#answerbox-panel.ab-open { display: flex; }
+.ab-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+  color: #fff; flex-shrink: 0;
+}
+.ab-header-title { font-size: 15px; font-weight: 700; }
+.ab-close-btn {
+  background: rgba(255,255,255,0.18); border: none; color: #fff;
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  font-size: 14px; display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s;
+}
+.ab-close-btn:hover { background: rgba(255,255,255,0.35); }
+.ab-progress-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 18px; border-bottom: 1px solid #334155; flex-shrink: 0;
+}
+.ab-progress-label { font-size: 12px; color: #64748b; }
+.ab-progress-dots { display: flex; gap: 6px; }
+.ab-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #334155; transition: background 0.2s;
+}
+.ab-dot.ab-dot-active { background: #0ea5e9; }
+.ab-dot.ab-dot-correct { background: #22c55e; }
+.ab-dot.ab-dot-wrong { background: #ef4444; }
+.ab-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.ab-find-chip {
+  display: flex; align-items: center; gap: 10px;
+  background: #0f172a; border: 1px solid #334155; border-radius: 10px;
+  padding: 10px 14px;
+}
+.ab-find-icon { font-size: 20px; }
+.ab-find-label { font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; }
+.ab-find-text { font-size: 13px; color: #f1f5f9; font-weight: 600; margin-top: 2px; }
+.ab-instruction { font-size: 12.5px; color: #94a3b8; line-height: 1.5; }
+#ab-user-input {
+  width: 100%; min-height: 64px; padding: 10px 12px;
+  background: #0f172a; border: 1.5px solid #334155; border-radius: 8px;
+  color: #f1f5f9; font-size: 14px; font-family: inherit; resize: vertical;
+  outline: none; transition: border-color 0.2s;
+}
+#ab-user-input:focus { border-color: #38bdf8; }
+.ab-feedback {
+  display: none; padding: 10px 14px; border-radius: 8px;
+  font-size: 13px; font-weight: 600;
+}
+.ab-feedback.ab-correct {
+  display: block; background: #052e16; color: #4ade80;
+  border: 1px solid #166534;
+}
+.ab-feedback.ab-wrong {
+  display: block; background: #450a0a; color: #f87171;
+  border: 1px solid #991b1b;
+}
+.ab-reveal { display: none; }
+.ab-reveal.ab-visible { display: block; font-size: 12.5px; color: #94a3b8; line-height: 1.5; }
+.ab-footer {
+  display: flex; gap: 10px; padding: 12px 18px;
+  border-top: 1px solid #334155; flex-shrink: 0; flex-wrap: wrap;
+}
+.ab-btn {
+  flex: 1; padding: 9px 0; border-radius: 8px; font-size: 13px;
+  font-weight: 600; cursor: pointer; border: none; transition: all 0.2s;
+}
+.ab-btn-submit { background: linear-gradient(135deg,#0ea5e9,#6366f1); color:#fff; }
+.ab-btn-submit:hover { opacity: 0.88; transform: translateY(-1px); }
+.ab-btn-next { background: #334155; color: #cbd5e1; }
+.ab-btn-next:hover { background: #475569; }
+/* Fullscreen button - styles in _CONTROLS_CSS */
+"""
+
+_SCENE6_CSS = """
+
+/* ── Scene 6/7/9: shared light-theme variables ──────────────────────────────────────── */
+:root {
+  --panel-bg: #fff;
+  --panel-bg-alt: #f8fbff;
+  --border: #e8eef8;
+  --text-main: #0f172a;
+  --text-sub: #475569;
+  --c-primary-dim: #0e7490;
+  --c-primary-mid: #0891b2;
+  --c-accent-soft: rgba(56,189,248,.12);
+  --bg-page: #eef2f9;
+  --bg-page-end: #e8f0fe;
+  --ease-spring: cubic-bezier(.34,1.56,.64,1);
+  --ease-smooth: cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Scene 6: Formulas overlay ───────────────────────────────────────────────────────── */
+#qanim-scene6-overlay {
+  display: none; position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(.94);
+  z-index: 7500; width: min(880px,96vw); max-height: 92vh;
+  overflow-y: auto; box-sizing: border-box;
+  opacity: 0; pointer-events: none;
+  transition: opacity .32s ease, transform .38s var(--ease-spring);
+}
+#qanim-scene6-overlay.qanim-scene-visible {
+  display: block !important; opacity: 1; pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
+}
+.s6-card {
+  background: var(--panel-bg); border-radius: 22px;
+  box-shadow: 0 12px 60px rgba(37,99,235,.14), 0 2px 10px rgba(0,0,0,.08);
+  border: 1px solid #dde8f8; overflow: hidden;
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+.s6-title-bar {
+  text-align: center; padding: 22px 32px 18px;
+  border-bottom: 1px solid var(--border); background: var(--panel-bg);
+}
+.s6-title-bar h2 {
+  font-size: 20px; font-weight: 900; color: var(--text-main); letter-spacing: -.4px;
+}
+.s6-body {
+  padding: 28px 32px 24px;
+  background: linear-gradient(160deg, var(--bg-page) 0%, var(--bg-page-end) 60%, #eff6ff 100%);
+}
+.s6-formula-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 20px;
+  background: rgba(59,130,246,.10); border: 1px solid rgba(59,130,246,.28);
+  font-size: 10px; font-weight: 800; color: #1d4ed8;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px;
+}
+.s6-nav-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 18px 32px 24px; border-top: 1px solid var(--border); background: var(--panel-bg);
+}
+#qanim-scene6-overlay .lesson-formula-grid {
+  display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px;
+}
+#qanim-scene6-overlay .lesson-formula {
+  background: #fff; border: 1.5px solid #bfdbfe; border-radius: 14px; padding: 18px;
+}
+#qanim-scene6-overlay .lesson-formula-eq {
+  font-size: 19px; font-weight: 800; color: #1d4ed8; line-height: 1.5; overflow-wrap: anywhere;
+}
+#qanim-scene6-overlay .lesson-why { font-size: 14px; color: #334155; line-height: 1.5; margin-top: 9px; }
+#qanim-scene6-overlay .lesson-key { font-size: 12px; color: #64748b; line-height: 1.5; margin-top: 6px; }
+@media(max-width:600px){
+  #qanim-scene6-overlay .lesson-formula-grid{grid-template-columns:1fr;}
+  #qanim-scene6-overlay .s6-body{padding:20px;}
+}
+"""
+
+_SCENE7_CSS = """
+
+/* ── Scene 7/8: Interactive solver overlay ───────────────────────────────────────────── */
+#qanim-scene7-overlay {
+  display: none; position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(.94);
+  z-index: 7500; width: min(920px,96vw); max-height: 92vh;
+  overflow-y: auto; box-sizing: border-box;
+  opacity: 0; pointer-events: none;
+  transition: opacity .32s ease, transform .38s var(--ease-spring);
+}
+#qanim-scene7-overlay.qanim-scene-visible {
+  display: block !important; opacity: 1; pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
+}
+.s7-card {
+  background: var(--panel-bg); border-radius: 22px;
+  box-shadow: 0 12px 60px rgba(37,99,235,.14), 0 2px 10px rgba(0,0,0,.08);
+  border: 1px solid #e0eaf8; overflow: hidden;
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+.s7-title-bar {
+  text-align: center; padding: 22px 32px 18px;
+  border-bottom: 1px solid var(--border); background: var(--panel-bg);
+}
+.s7-title-bar h2 { font-size: 20px; font-weight: 900; color: var(--text-main); letter-spacing: -.4px; }
+.s7-body-cols { display: flex; align-items: flex-start; gap: 0; min-height: 340px; }
+.s7-left-col {
+  width: 42%; min-width: 200px; border-right: 1.5px solid var(--border);
+  padding: 24px 22px 24px 28px;
+  background: linear-gradient(175deg, #eff6ff 0%, #dbeafe 55%, #bfdbfe 100%);
+  display: flex; flex-direction: column; gap: 0; align-self: stretch;
+}
+.s7-system-label { font-size: 10px; font-weight: 800; color: #1d4ed8; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 11px; }
+.s7-system-visual {
+  background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 50%, #60a5fa 100%);
+  border-radius: 14px; padding: 18px 16px 15px; margin-bottom: 18px;
+  text-align: center; position: relative; overflow: hidden;
+  box-shadow: 0 4px 16px rgba(59,130,246,.20), inset 0 1px 0 rgba(255,255,255,.4);
+}
+.s7-system-visual::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 30% 30%, rgba(255,255,255,.35) 0%, transparent 60%);
+  pointer-events: none;
+}
+.s7-system-visual-title { font-size: 13.5px; font-weight: 800; color: #1e3a5f; margin-bottom: 7px; position: relative; }
+.s7-given-section-title { font-size: 12.5px; font-weight: 900; color: #1d4ed8; margin-bottom: 9px; letter-spacing: -.1px; }
+.s7-given-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+.s7-given-item {
+  font-size: 12.5px; color: #334155; line-height: 1.55;
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 5px 0;
+}
+.s7-given-item::before { content: '\u2022'; color: #3b82f6; font-weight: 900; flex-shrink: 0; margin-top: 1px; }
+.s7-given-item strong { font-weight: 700; color: #1e293b; font-family: 'Fira Code', monospace; }
+.s7-right-col { flex: 1; padding: 24px 28px 22px 22px; display: flex; flex-direction: column; gap: 18px; }
+.s7-approach-section-title { font-size: 12.5px; font-weight: 900; color: #7c3aed; margin-bottom: 9px; }
+.s7-approach-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+.s7-approach-step {
+  display: flex; align-items: flex-start; gap: 10px;
+  font-size: 12.5px; color: #1e293b; line-height: 1.55;
+  background: #f8fafc; border: 1px solid var(--border);
+  border-radius: 9px; padding: 10px 13px;
+}
+.s7-approach-step-num {
+  font-weight: 900; color: #fff; flex-shrink: 0; min-width: 22px; height: 22px;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; box-shadow: 0 2px 6px rgba(124,58,237,.35);
+  margin-top: 1px;
+}
+.s7-approach-step-eq {
+  display: block; margin-top: 5px;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 12px; font-weight: 600; color: #dc2626;
+  background: #fff7ed; border-radius: 6px; padding: 3px 9px;
+  word-break: break-word; border: 1px solid #fed7aa;
+}
+/* lesson-calc: styled work-step block used in engine/slider multi-answer mode */
+.lesson-calc { margin-bottom: 14px; }
+.lesson-calc-label { font-size: 14px; font-weight: 700; color: #334155; line-height: 1.5; }
+#qanim-scene7-overlay .lesson-calc .s7-approach-step-eq { font-size: 14px; line-height: 1.65; padding: 8px 10px; }
+.s7-formula-result-bar {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 2px solid #86efac; border-radius: 13px; padding: 13px 18px;
+  box-shadow: 0 2px 10px rgba(22,163,74,.12);
+}
+.s7-formula-result-text {
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 14px; font-weight: 900; color: #15803d; line-height: 1.55; word-break: break-word;
+}
+.s7-formula-units { font-size: 11px; color: #166534; margin-top: 4px; font-style: italic; }
+.s7-nav-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 18px 28px 24px; border-top: 1px solid var(--border); background: var(--panel-bg);
+}
+#qanim-scene7-overlay .lesson-targets {
+  display: flex; flex-wrap: wrap; gap: 7px;
+  padding: 16px 26px; background: #fff; border-bottom: 1px solid #e8eef8;
+}
+#qanim-scene7-overlay .lesson-target {
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  border: 1px solid #cbd5e1; border-radius: 20px;
+  background: #f8fafc; color: #475569; padding: 7px 12px; cursor: pointer; transition: all .15s;
+}
+#qanim-scene7-overlay .lesson-target.is-current { color: #fff; background: #0891b2; border-color: #0891b2; }
+#qanim-scene7-overlay .lesson-target:focus-visible { outline: 3px solid #38bdf8; outline-offset: 2px; }
+#qanim-scene7-overlay .s7-right-col{min-width:0;}
+@media(max-width:600px){
+  .s7-body-cols { flex-direction: column; }
+  .s7-left-col { width: 100%; border-right: none; border-bottom: 1.5px solid var(--border); }
+  #qanim-scene7-overlay .s7-nav-row{flex-wrap:wrap;}
+}
+"""
+
+_SCENE9_CSS = """
+
+/* ── Scene 9: Final answers overlay ─────────────────────────────────────────── */
+#qanim-scene9-overlay {
+  display: none; position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(.94);
+  z-index: 7500; width: min(800px,96vw); max-height: 92vh;
+  overflow-y: auto; box-sizing: border-box;
+  opacity: 0; pointer-events: none;
+  transition: opacity .32s ease, transform .38s var(--ease-spring);
+}
+#qanim-scene9-overlay.qanim-scene-visible {
+  display: block !important; opacity: 1; pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
+}
+.s9-card {
+  background: var(--panel-bg); border-radius: 22px;
+  box-shadow: 0 12px 60px rgba(22,163,74,.22), 0 2px 10px rgba(0,0,0,.09);
+  border: 2px solid #86efac; overflow: hidden;
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+.s9-title-bar {
+  text-align: center; padding: 24px 32px 20px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #d1fae5 50%, #a7f3d0 100%);
+  border-bottom: 2px solid #86efac; position: relative; overflow: hidden;
+}
+.s9-title-bar::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(255,255,255,.5) 0%, transparent 70%);
+  pointer-events: none;
+}
+.s9-title-bar h2 { font-size: 22px; font-weight: 900; color: #14532d; letter-spacing: -.4px; margin-bottom: 5px; position: relative; }
+.s9-title-bar p { font-size: 13px; color: #166534; margin: 0; font-weight: 500; position: relative; }
+.s9-body { padding: 32px 36px 28px; background: var(--panel-bg); display: flex; flex-direction: column; gap: 22px; }
+.s9-nav-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 18px 36px 24px; border-top: 1px solid #bbf7d0;
+  background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+}
+#qanim-scene9-overlay .lesson-answer-grid {
+  display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px;
+}
+#qanim-scene9-overlay .lesson-answer {
+  background: #edf9f6; border: 1px solid #bce7de; border-radius: 15px; padding: 20px;
+}
+#qanim-scene9-overlay .lesson-answer h3 {
+  color: #00858d; font-size: 12px; font-weight: 800;
+  letter-spacing: .7px; text-transform: uppercase; line-height: 1.5; margin: 0;
+}
+#qanim-scene9-overlay .lesson-answer-number {
+  color: #00858d; font-size: 36px; font-weight: 800; line-height: 1.3;
+  margin: 16px 0 10px; overflow-wrap: anywhere;
+}
+#qanim-scene9-overlay .lesson-answer-number span { font-size: 18px; font-weight: 600; margin-left: 7px; }
+#qanim-scene9-overlay .lesson-answer p { font-size: 13px; color: #476d82; line-height: 1.5; margin: 0; }
+@media(max-width:600px){
+  #qanim-scene9-overlay .lesson-answer-grid{grid-template-columns:1fr;}
+  #qanim-scene9-overlay .s9-body{padding:20px;}
+}
+"""
+
+_CONTROLS_CSS = """
+/* ── Controls bar ──────────────────────────────────────────────────────── */
+#qanim-controls-bar {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 7000; display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.98); backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid transparent;
+  border-radius: 16px; padding: 10px 14px;
+  box-shadow: 0 6px 36px rgba(124,58,237,.18), 0 2px 8px rgba(0,0,0,.08);
+  white-space: nowrap; position: fixed;
+}
+#qanim-controls-bar::before {
+  content: ''; position: absolute; inset: -2px; border-radius: 18px;
+  background: linear-gradient(90deg,#7c3aed,#db2777,#f59e0b,#7c3aed);
+  background-size: 200% 100%;
+  animation: qanim-bar-glow 4s linear infinite; z-index: -1;
+}
+@keyframes qanim-bar-glow {
+  0%   { background-position: 0% 50% }
+  100% { background-position: 200% 50% }
+}
+.qanim-ctrl-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 8px 15px; border-radius: 10px;
+  border: 1.5px solid #e2e8f0;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  color: #334155; font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s, transform .12s, box-shadow .15s;
+  user-select: none;
+}
+.qanim-ctrl-btn:hover {
+  background: linear-gradient(135deg, #ede9fe 0%, #fdf4ff 100%);
+  border-color: #7c3aed; color: #6d28d9;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(124,58,237,.22);
+}
+.ctrl-label { font-size: 12px; font-weight: 700; }
+.qanim-ctrl-sep { width: 1px; height: 22px; background: linear-gradient(to bottom, transparent, #c4b5fd, transparent); flex-shrink: 0; }
+.glossary-ctrl-badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px;
+  background: #0d9488; color: #fff;
+  font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
+  box-shadow: 0 0 0 2px #fff;
+}
+/* Answer Box */
+#answerbox-backdrop {
+  display: none; position: fixed; inset: 0; z-index: 8400;
+  background: rgba(15,23,42,.45); backdrop-filter: blur(4px);
+}
+#answerbox-backdrop.open { display: block; }
+#answerbox-panel {
+  display: flex; flex-direction: column;
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(.96);
+  z-index: 8500; width: min(480px,94vw); max-height: 85vh;
+  border-radius: 18px; overflow: hidden;
+  background: #fff; border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 48px rgba(124,58,237,.18);
+  opacity: 0; pointer-events: none;
+  transition: opacity .25s, transform .25s cubic-bezier(.34,1.56,.64,1);
+}
+#answerbox-panel.open { opacity: 1; pointer-events: auto; transform: translate(-50%,-50%) scale(1); }
+.ab-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #faf5ff, #f0f9ff);
+  border-bottom: 1px solid #e2e8f0;
+}
+.ab-header-title { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 16px; font-weight: 800; color: #1e293b; }
+.ab-close-btn {
+  width: 28px; height: 28px; border-radius: 8px; border: 1px solid #e2e8f0;
+  background: #f8fafc; color: #64748b; font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background .15s;
+}
+.ab-close-btn:hover { background: #fee2e2; color: #dc2626; }
+.ab-progress-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px 6px; border-bottom: 1px solid #f1f5f9;
+}
+.ab-progress-label { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 11.5px; font-weight: 700; color: #64748b; }
+.ab-progress-dots { display: flex; gap: 4px; }
+.ab-dot { width: 8px; height: 8px; border-radius: 50%; background: #e2e8f0; transition: background .2s; }
+.ab-dot.current { background: #7c3aed; transform: scale(1.2); }
+.ab-dot.done { background: #22c55e; }
+.ab-body { padding: 16px 20px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 0; }
+.ab-find-chip {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 14px; border-radius: 10px;
+  background: #f5f3ff; border: 1px solid #ddd6fe; margin-bottom: 14px;
+}
+.ab-find-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.ab-find-text { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 12.5px; font-weight: 600; color: #5b21b6; line-height: 1.5; }
+.ab-find-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #7c3aed; display: block; margin-bottom: 2px; }
+.ab-instruction { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #64748b; margin-bottom: 10px; line-height: 1.6; }
+#ab-user-input {
+  width: 100%; min-height: 60px; padding: 12px 14px; border-radius: 10px;
+  border: 1.5px solid #e2e8f0; background: #f8fafc;
+  font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1e293b;
+  line-height: 1.6; resize: vertical; transition: border-color .15s; outline: none; box-sizing: border-box;
+}
+#ab-user-input:focus { border-color: #7c3aed; background: #fff; }
+#ab-submit-btn {
+  width: 100%; padding: 12px; margin-top: 10px; border-radius: 10px;
+  border: none; background: #7c3aed; color: #fff;
+  font-size: 14px; font-weight: 700; font-family: inherit; cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+#ab-submit-btn:hover { background: #6d28d9; transform: translateY(-1px); }
+#ab-feedback { display: none; margin-top: 14px; border-radius: 12px; overflow: hidden; border: 1px solid transparent; }
+#ab-feedback.show { display: block; }
+#ab-feedback.correct { border-color: #bbf7d0; }
+#ab-feedback.almost { border-color: #fed7aa; }
+#ab-feedback.wrong { border-color: #fecaca; }
+.ab-feedback-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
+#ab-feedback.correct .ab-feedback-top { background: #f0fdf4; }
+#ab-feedback.almost .ab-feedback-top { background: #fff7ed; }
+#ab-feedback.wrong .ab-feedback-top { background: #fef2f2; }
+.ab-feedback-icon { font-size: 22px; flex-shrink: 0; }
+.ab-feedback-verdict { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 15px; font-weight: 800; }
+#ab-feedback.correct .ab-feedback-verdict { color: #15803d; }
+#ab-feedback.almost .ab-feedback-verdict { color: #c2410c; }
+#ab-feedback.wrong .ab-feedback-verdict { color: #b91c1c; }
+.ab-feedback-insight { padding: 10px 16px 13px; border-top: 1px solid; }
+#ab-feedback.correct .ab-feedback-insight { background: #fafffe; border-color: #bbf7d0; }
+#ab-feedback.almost .ab-feedback-insight { background: #fffbf5; border-color: #fed7aa; }
+#ab-feedback.wrong .ab-feedback-insight { background: #fff8f8; border-color: #fecaca; }
+.ab-insight-label { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px; color: #64748b; margin-bottom: 4px; }
+.ab-insight-text { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 12.5px; color: #1e293b; line-height: 1.68; }
+.ab-action-row { display: none; gap: 8px; margin-top: 12px; }
+.ab-action-row.show { display: flex; }
+#ab-retry-btn {
+  flex: 1; padding: 9px 14px; border-radius: 9px; border: 1px solid #e2e8f0;
+  background: #f8fafc; color: #64748b; font-size: 12px; font-weight: 600;
+  font-family: inherit; cursor: pointer; transition: background .15s;
+}
+#ab-retry-btn:hover { background: #ede9fe; border-color: #7c3aed; color: #7c3aed; }
+#ab-next-target-btn {
+  flex: 2; padding: 9px 14px; border-radius: 9px; border: none;
+  background: #7c3aed; color: #fff; font-size: 12px; font-weight: 700;
+  font-family: inherit; cursor: pointer; display: none; transition: background .15s;
+}
+#ab-next-target-btn:hover { background: #6d28d9; }
+#ab-alldone-card {
+  display: none; text-align: center; padding: 28px 20px; border-radius: 14px;
+  background: linear-gradient(135deg, #f0fdf4, #fefce8);
+  border: 1.5px solid #bbf7d0; margin-top: 10px;
+}
+#ab-alldone-card.show { display: block; }
+.ab-alldone-emoji { font-size: 40px; display: block; margin-bottom: 10px; }
+.ab-alldone-title { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 18px; font-weight: 800; color: #15803d; margin-bottom: 6px; }
+.ab-alldone-sub { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #166534; line-height: 1.6; }
+/* Glossary panel */
+#qanim-glossary-backdrop {
+  position: fixed; inset: 0; z-index: 7150;
+  background: rgba(15,23,42,.28); opacity: 0; pointer-events: none; transition: opacity .22s;
+}
+#qanim-glossary-backdrop.open { opacity: 1; pointer-events: auto; }
+#qanim-glossary-panel {
+  position: fixed; top: 0; right: 0; z-index: 7300;
+  width: 340px; max-width: 88vw; height: 100vh;
+  background: #fff; border-left: 1px solid #e2e8f0;
+  box-shadow: -8px 0 32px rgba(0,0,0,.14);
+  display: flex; flex-direction: column; overflow: hidden;
+  transform: translateX(100%); transition: transform .26s cubic-bezier(.16,1,.3,1);
+}
+#qanim-glossary-panel.open { transform: translateX(0); }
+#qanim-glossary-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; background: #f0fdfa; border-bottom: 1px solid #ccfbf1; flex-shrink: 0;
+}
+.glossary-header-title { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 14px; font-weight: 700; color: #0f766e; }
+.glossary-hdr-btn {
+  width: 26px; height: 26px; border-radius: 7px; border: 1px solid #99f6e4;
+  background: rgba(255,255,255,.7); color: #0f766e; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+#qanim-glossary-body { flex: 1 1 auto; overflow-y: auto; padding: 12px 14px 20px; }
+.glossary-term-card {
+  background: #f8fafc; border: 1px solid #e2e8f0; border-left: 3px solid #0d9488;
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+}
+.glossary-term-word { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: 800; color: #134e4a; margin-bottom: 4px; text-transform: capitalize; }
+.glossary-term-meaning { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 12.5px; line-height: 1.55; color: #475569; }
+/* Fullscreen button */
+#qanim-fullscreen-btn {
+  position: fixed; top: 14px; right: 16px; z-index: 9000;
+  display: flex; align-items: center; gap: 6px; padding: 8px 15px;
+  border-radius: 12px; border: 1.5px solid rgba(8,145,178,.30);
+  background: rgba(255,255,255,.92); backdrop-filter: blur(12px);
+  color: #0e7490; font-family: inherit; font-size: 12px; font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(8,145,178,.18), 0 1px 4px rgba(0,0,0,.08);
+  transition: background .2s, border-color .2s, color .2s,
+              transform .18s cubic-bezier(.34,1.56,.64,1), box-shadow .2s;
+}
+#qanim-fullscreen-btn:hover {
+  background: rgba(8,145,178,.10); border-color: #0891b2;
+  transform: translateY(-2px); box-shadow: 0 6px 22px rgba(8,145,178,.28);
+}
+#qanim-fullscreen-btn .fs-icon { font-size: 14px; line-height: 1; transition: transform .3s; }
+#qanim-fullscreen-btn.is-fullscreen { background: rgba(8,145,178,.12); border-color: #0891b2; }
+#qanim-fullscreen-btn.is-fullscreen .fs-icon { transform: rotate(180deg); }
+"""
 
 
-def _topic_accent_style(question: str, title: str) -> str:
-    """
-    Build a small inline <style> that overrides the topic-adaptive CSS
-    variables declared in _BASE_CSS. Different questions/topics get a
-    different (but always accessible, pre-vetted) accent palette, purely
-    from a stable hash of the question text — no extra API call, no
-    randomness between runs of the *same* question.
-    """
-    seed = (title or question or "qanim").strip().lower()
-    idx = int(hashlib.sha256(seed.encode("utf-8")).hexdigest(), 16) % len(_ACCENT_PALETTES)
-    p = _ACCENT_PALETTES[idx]
-    return f"""  <style id="qanim-topic-accent">
-    :root {{
-      --c-primary: {p['primary']};
-      --c-primary-mid: {p['mid']};
-      --c-primary-dim: {p['dim']};
-      --c-primary-rgb: {p['rgb']};
-      --c-accent: {p['accent']};
-      --c-accent-soft: {p['accent_soft']};
-      --c-orange: {p['orange']};
-      --c-green: {p['green']};
-      --c-purple: {p['purple']};
-    }}
-  </style>"""
+_MATHJAX_CSS = """
+/* -- MathJax rendering tweaks -------------------------------------------- */
+mjx-container { overflow-x: auto; max-width: 100%; }
+mjx-container[jax="SVG"] { direction: ltr; }
+"""
 
+_MATHJAX_SCRIPT = """<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [['\\(', '\\)']],
+      displayMath: [['\\[', '\\]']],
+      processEscapes: true
+    },
+    svg: { fontCache: 'global' },
+    startup: {
+      ready() {
+        MathJax.startup.defaultReady();
+        window.qanimRenderMath = function() {
+          if (window.MathJax && MathJax.typesetPromise) {
+            MathJax.typesetPromise().catch(function(e) {
+              console.warn('[QAnim] MathJax typeset error:', e);
+            });
+          }
+        };
+      }
+    }
+  };
+</script>
+<script id="qanim-mathjax-loader" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>"""
+
+_SCENE6_JS = """
+<script id="qanim-js-scene6">
+(function(){
+  'use strict';
+  var $=function(id){return document.getElementById(id);};
+  var f=function(x,d){return Number(x.toFixed(d===undefined?2:d)).toLocaleString('en-US',{maximumFractionDigits:d===undefined?2:d});};
+
+  function showScene6(){
+    var ov=$('qanim-scene6-overlay');
+    var bd=$('qanim-scene-modal-backdrop');
+    if(ov){ov.classList.add('qanim-scene-visible');ov.scrollTop=0;}
+    if(bd){bd.classList.add('qanim-scene-visible');}
+    document.querySelectorAll('.step-dot').forEach(function(d,i){d.classList.toggle('active',i===6);d.classList.toggle('done',i<6);});
+    var sl=$('step-label');if(sl)sl.textContent='Step 7 of 9';
+    var sb=$('step-bar');if(sb)sb.style.width=(7/9*100)+'%';
+  }
+  function hideScene6(){
+    var ov=$('qanim-scene6-overlay');
+    var bd=$('qanim-scene-modal-backdrop');
+    if(ov){ov.classList.remove('qanim-scene-visible');}
+    if(bd){bd.classList.remove('qanim-scene-visible');}
+  }
+  window.qanim_showScene6=showScene6;
+  window.qanim_showScene8=showScene6;  // alias: scene8 = Step 7 formula scene
+  window.qanim_hideScene6=hideScene6;
+  window.qanim_goToPrevScene=function(){
+    hideScene6();
+    if(typeof window.applyStep==='function') window.applyStep(5);
+    var sc=document.querySelector('.svg-container');
+    if(sc)sc.style.opacity='1';
+  };
+  // Called by Customize panel after recalculating with new values.
+  // Re-populates Steps 7/8/9 with updated lesson_tasks JSON.
+  window.qanimUpdateLesson=function(vals){
+    // If the page has a lesson controller (engine-style multi-answer),
+    // delegate to it. Otherwise silently ignore.
+    if(typeof window._qanimLessonBuild==='function'){window._qanimLessonBuild(vals);return;}
+    // Fallback: update the formula-grid badges with new numeric values
+    var grid=$('s7-formulas');
+    if(!grid)return;
+    // No-op for simple single-answer questions — Customize handles step 8/9 via DOM search.
+  };
+})();
+</script>
+"""
+
+_SCENE7_JS = """
+<script id="qanim-js-scene7">
+(function(){
+  'use strict';
+  var _currentTaskIdx=0;
+  function _getLessonTasks(){
+    try{
+      var el=document.getElementById('qanim-lesson-tasks-data');
+      if(el){var d=JSON.parse(el.textContent||'[]');if(Array.isArray(d)&&d.length)return d;}
+    }catch(e){}
+    return [];
+  }
+  function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function _row(label,eq){
+    return '<div class="lesson-calc"><div class="lesson-calc-label">'+_esc(label)+'</div>'
+      +'<div class="s7-approach-step-eq">'+_esc(eq)+'</div></div>';
+  }
+  function _renderTask(idx){
+    var tasks=_getLessonTasks();
+    if(!tasks.length)return;
+    idx=Math.max(0,Math.min(idx,tasks.length-1));
+    _currentTaskIdx=idx;
+    var t=tasks[idx];
+    var n=tasks.length;
+    var prog=document.getElementById('s8-progress');
+    if(prog)prog.textContent='Answer '+(idx+1)+' of '+n;
+    var titleEl=document.getElementById('s8-task-title');
+    if(titleEl)titleEl.textContent=t.name||'';
+    var givenEl=document.getElementById('s8-task-given');
+    if(givenEl){
+      var givenLines=(t.given||'').split('\n').filter(function(l){return l.trim();});
+      givenEl.innerHTML=givenLines.map(function(l){
+        return '<div style="padding:3px 0;border-bottom:1px solid rgba(59,130,246,.15);display:flex;align-items:center;gap:8px;">'
+          +'<span style="color:#3b82f6;font-weight:900;flex-shrink:0">&#x2022;</span>'
+          +'<span style="font-family:\'Fira Code\',\'Courier New\',monospace;font-weight:700;">'+_esc(l)+'</span>'
+          +'</div>';
+      }).join('');
+    }
+    var formulaEl=document.getElementById('s8-task-formula');
+    if(formulaEl)formulaEl.textContent=t.formula||'';
+    var workEl=document.getElementById('s8-task-work');
+    if(workEl){
+      var work=Array.isArray(t.work)?t.work:[];
+      if(work.length>0&&(work[0].label!==undefined||work[0].eq!==undefined)){
+        workEl.innerHTML=work.map(function(w){return _row(w.label||'',w.eq||'');}).join('');
+      } else {
+        workEl.innerHTML=work.map(function(w,wi){
+          return '<div class="s7-approach-step">'
+            +'<span class="s7-approach-step-num">'+(wi+1)+'</span>'
+            +'<span>'+_esc(w.label||'')
+            +'<span class="s7-approach-step-eq">'+_esc(w.eq||'')+'</span>'
+            +'</span>'
+            +'</div>';
+        }).join('');
+      }
+    }
+    var resultEl=document.getElementById('s8-task-result');
+    if(resultEl)resultEl.textContent=(t.symbol?t.symbol+' = ':'')+( t.value||'?')+(t.unit?' '+t.unit:'');
+    var navEl=document.getElementById('s8-task-nav');
+    if(navEl){
+      navEl.innerHTML=tasks.map(function(task,i){
+        return '<button class="lesson-target'+(i===idx?' is-current':'')+'" type="button" onclick="qanimGoToCondition('+i+')"'+(i===idx?' aria-current="step"':'')+'>'          +(i+1)+' · '+_esc(task.name||'Answer '+(i+1))+'</button>';
+      }).join('');
+    }
+    var backBtn=document.getElementById('s8-back');
+    var nextBtn=document.getElementById('s8-next');
+    if(backBtn)backBtn.textContent=(idx===0)?'\u2190 Step 7':'\u2190 Previous answer';
+    if(nextBtn)nextBtn.textContent=(idx===n-1)?'Step 9: Answers \u25b6':'Next answer \u25b6';
+    var ov2=document.getElementById('qanim-scene7-overlay');
+    if(ov2)ov2.scrollTop=0;
+  }
+  function showScene7(){
+    var ov=document.getElementById('qanim-scene7-overlay');
+    var bd=document.getElementById('qanim-scene-modal-backdrop');
+    if(ov){ov.classList.add('qanim-scene-visible');ov.scrollTop=0;}
+    if(bd){bd.classList.add('qanim-scene-visible');}
+    document.querySelectorAll('.step-dot').forEach(function(d,i){d.classList.toggle('active',i===7);d.classList.toggle('done',i<7);});
+    var sl=document.getElementById('step-label');if(sl)sl.textContent='Step 8 of 9';
+    var sb=document.getElementById('step-bar');if(sb)sb.style.width=(8/9*100)+'%';
+    _renderTask(0);
+  }
+  function hideScene7(){
+    var ov=document.getElementById('qanim-scene7-overlay');
+    var bd=document.getElementById('qanim-scene-modal-backdrop');
+    if(ov){ov.classList.remove('qanim-scene-visible');}
+    if(bd){bd.classList.remove('qanim-scene-visible');}
+  }
+  window.qanim_showScene7=showScene7;
+  window.qanim_hideScene7=hideScene7;
+  window.qanim_goToScene6FromScene7=function(){hideScene7();if(typeof window.qanim_showScene6==='function')window.qanim_showScene6();};
+  window.qanim_goToScene7FromScene9_impl=function(){
+    var tasks=_getLessonTasks();
+    _renderTask(tasks.length>0?tasks.length-1:0);
+    showScene7();
+  };
+  window.qanimNextCondition=function(){
+    var tasks=_getLessonTasks();
+    if(_currentTaskIdx<tasks.length-1){_renderTask(_currentTaskIdx+1);}
+    else{hideScene7();if(typeof window.qanim_showScene9==='function')window.qanim_showScene9();}
+  };
+  window.qanimPreviousCondition=function(){
+    if(_currentTaskIdx>0){_renderTask(_currentTaskIdx-1);}
+    else{hideScene7();if(typeof window.qanim_showScene6==='function')window.qanim_showScene6();}
+  };
+  window.qanimS8SwitchTask=function(idx){_renderTask(idx);};
+  window.qanimGoToCondition=function(i){
+    if(Number.isInteger(i)&&i>=0&&i<_getLessonTasks().length){_renderTask(i);}
+  };
+})();
+</script>
+"""
+_SCENE9_JS = """
+<script id="qanim-js-scene9">
+(function(){
+  'use strict';
+  function showScene9(){
+    var ov=document.getElementById('qanim-scene9-overlay');
+    var bd=document.getElementById('qanim-scene-modal-backdrop');
+    if(ov){ov.classList.add('qanim-scene-visible');ov.scrollTop=0;}
+    if(bd){bd.classList.add('qanim-scene-visible');}
+    document.querySelectorAll('.step-dot').forEach(function(d,i){d.classList.toggle('active',i===8);d.classList.toggle('done',i<8);});
+    var sl=document.getElementById('step-label');if(sl)sl.textContent='Step 9 of 9';
+    var sb=document.getElementById('step-bar');if(sb)sb.style.width='100%';
+  }
+  function hideScene9(){
+    var ov=document.getElementById('qanim-scene9-overlay');
+    var bd=document.getElementById('qanim-scene-modal-backdrop');
+    if(ov){ov.classList.remove('qanim-scene-visible');}
+    if(bd){bd.classList.remove('qanim-scene-visible');}
+  }
+  function qanim_goToScene7FromScene9(){
+    hideScene9();
+    if(typeof window.qanim_goToScene7FromScene9_impl==='function'){window.qanim_goToScene7FromScene9_impl();}
+    else if(typeof window.qanim_showScene7==='function'){window.qanim_showScene7();}
+  }
+  window.qanim_showScene9=showScene9;
+  window.qanim_hideScene9=hideScene9;
+  window.qanim_goToScene7FromScene9=qanim_goToScene7FromScene9;
+})();
+</script>
+"""
+
+_GLOSSARY_JS = """
+<script id="qanim-js-glossary">
+(function initGlossary(){
+  'use strict';
+  if(window.__qanimGlossaryInit) return;
+  window.__qanimGlossaryInit=true;
+  function _el(id){return document.getElementById(id);}
+  function openGlossary(){
+    var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');
+    if(!p)return;
+    p.classList.add('open');p.setAttribute('aria-hidden','false');
+    if(b)b.classList.add('open');
+  }
+  function closeGlossary(){
+    var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');
+    if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}
+    if(b)b.classList.remove('open');
+  }
+  function onReady(fn){
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn);
+    else setTimeout(fn,0);
+  }
+  onReady(function(){
+    var btn=_el('glossary-ctrl-btn');
+    if(btn)btn.addEventListener('click',function(){
+      var p=_el('qanim-glossary-panel');
+      if(p&&p.classList.contains('open'))closeGlossary();else openGlossary();
+    });
+    var cb=_el('glossary-close-btn');if(cb)cb.addEventListener('click',closeGlossary);
+    var bd=_el('qanim-glossary-backdrop');if(bd)bd.addEventListener('click',closeGlossary);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeGlossary();});
+  });
+})();
+</script>
+"""
+
+_ANSWERBOX_JS_TMPL = """
+<script id="qanim-js-answerbox">
+(function initAnswerBox(){
+  'use strict';
+  if(window.__qanimAnswerBoxInit)return;
+  window.__qanimAnswerBoxInit=true;
+  var abOpen=false,_targets=[],_currentIdx=0,_loaded=false;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _loadTargets(){
+    if(_loaded)return;_loaded=true;
+    try{
+      // Try JSON element first
+      var t=_el('__answer_targets__');
+      if(t){var d=JSON.parse(t.textContent)||{};_targets=Array.isArray(d.answer_targets)?d.answer_targets:[];}
+      // Fallback to inline targets
+      if(!_targets.length){var raw={{TARGETS_JSON}};_targets=Array.isArray(raw)?raw:[];}
+    }catch(e){try{var raw2={{TARGETS_JSON}};_targets=Array.isArray(raw2)?raw2:[];}catch(e2){_targets=[];}}
+  }
+  function _renderTarget(idx){
+    _loadTargets();
+    var t=_targets[idx];if(!t)return;
+    var fe=_el('ab-find-text');if(fe)fe.textContent=t.label||'Answer';
+    var total=_targets.length;
+    var pl=_el('ab-progress-label');if(pl)pl.textContent='Question '+(idx+1)+' of '+total;
+    var de=_el('ab-progress-dots');
+    if(de){var h='';for(var i=0;i<total;i++){var cls=i<idx?'ab-dot done':i===idx?'ab-dot current':'ab-dot';h+='<div class="'+cls+'"></div>';}de.innerHTML=h;}
+    var inp=_el('ab-user-input');if(inp){inp.value='';inp.removeAttribute('disabled');}
+    var fb=_el('ab-feedback');if(fb)fb.className='';
+    var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';
+    var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';
+    var sb=_el('ab-submit-btn');if(sb){sb.style.display='';sb.disabled=false;}
+    var adc=_el('ab-alldone-card');if(adc)adc.className='';
+    var u=t.unit?' ('+t.unit+')':'';if(inp)inp.placeholder='Type your answer'+u+'...';
+  }
+  function _nums(s){var m=s.match(/[-+]?\\d*\\.?\\d+(?:[eE][-+]?\\d+)?/g);return m?m.map(parseFloat).filter(function(n){return isFinite(n);}):[];}
+  function _validate(userAns,correctAns){
+    if(!userAns||!userAns.trim())return'empty';
+    var un=_nums(userAns),cn=_nums(correctAns);
+    if(un.length>0&&cn.length>0){var re=Math.abs(un[0]-cn[0])/(Math.abs(cn[0])+1e-12);if(re<0.01)return'correct';if(re<0.15)return'almost';return'wrong';}
+    var uc=userAns.toLowerCase().trim().replace(/[^a-z0-9\\s]/g,' ');
+    var cc=correctAns.toLowerCase().trim().replace(/[^a-z0-9\\s]/g,' ');
+    if(uc===cc)return'correct';return'wrong';
+  }
+  var _FB={correct:{icon:'\u2705',verdict:'Correct!',cls:'correct'},almost:{icon:'\u3030\uFE0F',verdict:'Almost Correct',cls:'almost'},wrong:{icon:'\u274C',verdict:'Wrong Answer',cls:'wrong'},empty:{icon:'\u2753',verdict:'No Answer',cls:'wrong'}};
+  function _showFeedback(verdict,insight){
+    var info=_FB[verdict]||_FB['wrong'];
+    var fb=_el('ab-feedback'),icon=_el('ab-feedback-icon'),verd=_el('ab-feedback-verdict'),ins=_el('ab-insight-text');
+    if(!fb)return;
+    fb.className='show '+info.cls;
+    if(icon)icon.textContent=info.icon;
+    if(verd)verd.textContent=info.verdict;
+    if(ins)ins.textContent=insight||'Review the solution.';
+    var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row show';
+    var ntb=_el('ab-next-target-btn'),isLast=(_currentIdx>=_targets.length-1);
+    if(ntb){if((verdict==='correct'||verdict==='almost')&&!isLast){ntb.style.display='';ntb.textContent='Next \u2192';}else{ntb.style.display='none';}}
+    if(verdict==='correct'&&isLast){setTimeout(function(){var adc=_el('ab-alldone-card');if(adc)adc.className='show';var sb=_el('ab-submit-btn');if(sb)sb.style.display='none';},900);}
+  }
+  function openAnswerBox(){
+    _loadTargets();_currentIdx=0;
+    var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');
+    if(!bd||!pn)return;
+    bd.classList.add('open');bd.setAttribute('aria-hidden','false');
+    pn.classList.add('open');pn.setAttribute('aria-hidden','false');
+    abOpen=true;_renderTarget(_currentIdx);
+    setTimeout(function(){var inp=_el('ab-user-input');if(inp)inp.focus();},220);
+  }
+  function closeAnswerBox(){
+    var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');
+    if(bd){bd.classList.remove('open');bd.setAttribute('aria-hidden','true');}
+    if(pn){pn.classList.remove('open');pn.setAttribute('aria-hidden','true');}
+    abOpen=false;
+  }
+  window.openAnswerBox=openAnswerBox;window.closeAnswerBox=closeAnswerBox;
+  window.__qanimAnswerBoxReset=function(){_loaded=false;_targets=[];_currentIdx=0;};
+  _onReady(function(){
+    function wireCtrl(){
+      var btn=_el('answerbox-ctrl-btn');
+      if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();abOpen?closeAnswerBox():openAnswerBox();});}
+      else{setTimeout(wireCtrl,100);}
+    }
+    wireCtrl();
+    var cb=_el('ab-close-btn');if(cb)cb.addEventListener('click',function(e){e.stopPropagation();closeAnswerBox();});
+    var bd=_el('answerbox-backdrop');if(bd)bd.addEventListener('click',function(e){if(e.target===bd)closeAnswerBox();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&abOpen)closeAnswerBox();});
+    var sb=_el('ab-submit-btn');
+    if(sb)sb.addEventListener('click',function(){
+      _loadTargets();
+      var inp=_el('ab-user-input'),userAns=inp?inp.value.trim():'';
+      var t=_targets[_currentIdx]||{};
+      var verdict=_validate(userAns,t.value||'');
+      _showFeedback(verdict,t.insight||'');
+      if(inp)inp.disabled=true;
+    });
+    var inp2=_el('ab-user-input');
+    if(inp2)inp2.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();var sb2=_el('ab-submit-btn');if(sb2)sb2.click();}});
+    var rb=_el('ab-retry-btn');
+    if(rb)rb.addEventListener('click',function(){
+      var inp=_el('ab-user-input');if(inp){inp.value='';inp.disabled=false;inp.focus();}
+      var fb=_el('ab-feedback');if(fb)fb.className='';
+      var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';
+      var sb=_el('ab-submit-btn');if(sb)sb.style.display='';
+      var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';
+    });
+    var ntb2=_el('ab-next-target-btn');
+    if(ntb2)ntb2.addEventListener('click',function(){if(_currentIdx<_targets.length-1){_currentIdx++;_renderTarget(_currentIdx);}});
+  });
+})();
+</script>
+"""
 
 def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     """Assemble the complete HTML file from all parts."""
 
     title = _he(scene.get("title", question[:60]))
     question_escaped = _he(question)
-    topic_accent_style = _topic_accent_style(question, scene.get("title", ""))
     steps = scene.get("steps", [])
     to_find = scene.get("to_find", ["The unknown quantity"])
     glossary = scene.get("glossary", [])
@@ -5320,7 +4977,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     svg_defs = _re_assemble.sub(r'\s*</defs>\s*$', '', svg_defs, flags=_re_assemble.IGNORECASE).strip()
     svg_layers = svg_data.get("svg_layers", "")
     steps_data_js = svg_data.get("steps_data_js", "var stepsData = [];")
-    apply_step_js = svg_data.get("apply_step_js", "function applyStep(idx){window.currentStep=idx;}")
+    # apply_step_js from svg_data is not used: applyStep is defined in nav_js directly
     raf_js = svg_data.get("raf_js", "")
 
     # Normalize stepsData to window scope
@@ -5457,18 +5114,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
       const s6panel = document.getElementById('step6-info-panel');
       if (s6panel) s6panel.style.display = 'none';
     }}
-    // Wrap applyStep so the SVG's accessible name tracks the visible step
-    // heading, without depending on the internals of the Gemini-generated
-    // applyStep body (which varies per question).
-    var _qanimRawApplyStep = applyStep;
-    window.applyStep = function(idx) {{
-      _qanimRawApplyStep(idx);
-      var stage = document.getElementById('stage');
-      var heading = document.querySelector('.info-box h3');
-      if (stage && heading) {{
-        stage.setAttribute('aria-label', 'Interactive diagram: ' + heading.textContent.trim());
-      }}
-    }};
+    window.applyStep = applyStep;
 
     // ── Deterministic navigation (Fix F) ──────────────────────────────────────
     // qanim_nextStep: concept steps 0-4 → next concept step;
@@ -5600,55 +5246,11 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   <style id="qanim-controls-styles">
 {_CONTROLS_CSS}
   </style>
-{topic_accent_style}
-  <style id="qanim-responsive-fixes">
-    /* These two mobile rules exist in the design reference but were missing
-       from the generator: without them, the formula/answer grids stay
-       multi-column and the step-dot row doesn't wrap on narrow screens. */
-    @media(max-width:600px){{
-      #qanim-scene6-overlay .lesson-formula-grid,
-      #qanim-scene9-overlay .lesson-answer-grid{{grid-template-columns:1fr;}}
-      #qanim-scene6-overlay .s6-body,
-      #qanim-scene9-overlay .s9-body{{padding:20px;}}
-      #qanim-scene7-overlay .s7-left-col{{min-width:0;}}
-      #qanim-scene7-overlay .s7-nav-row{{flex-wrap:wrap;}}
-    }}
-    @media(max-width:600px){{
-      .step-connector{{display:none;}}
-      .actions{{flex-wrap:wrap;}}
-      .step-dot{{font-size:11px;padding:6px 9px;}}
-      .s6-nav-row,.s7-nav-row,.s9-nav-row{{padding-left:20px;padding-right:20px;}}
-    }}
+  <style id="qanim-mathjax-styles">
+{_MATHJAX_CSS}
   </style>
-  <style id="qanim-a11y-motion">
-    @media (prefers-reduced-motion: reduce) {{
-      *, *::before, *::after {{
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-      }}
-    }}
-  </style>
-  <script>
-  // ── Plain-text formula renderer (replaces KaTeX) ──────────────────────────
-  // After _clean_latex() runs server-side, formulas are already plain Unicode.
-  // This function just copies data-formula → textContent so the element shows
-  // the clean text instead of any stale placeholder. No CDN dependency.
-  window.qanimRenderMath = function(scope) {{
-    var root = scope || document;
-    var els = root.querySelectorAll('[data-formula]:not([data-math-ok])');
-    els.forEach(function(el) {{
-      var f = el.getAttribute('data-formula');
-      if (!f) return;
-      // Only overwrite if the element is empty or still shows a placeholder
-      if (!el.textContent.trim() || el.textContent === f) {{
-        el.textContent = f;
-      }}
-      el.setAttribute('data-math-ok', '1');
-    }});
-  }};
-  </script>
+  {_MATHJAX_SCRIPT}
+
 </head>
 <body>
 
@@ -5715,7 +5317,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   </div>
 
   <div class="svg-container">
-    <svg xmlns="http://www.w3.org/2000/svg" id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Interactive diagram: {title}">
+    <svg xmlns="http://www.w3.org/2000/svg" id="stage" viewBox="0 0 850 478" preserveAspectRatio="xMidYMid slice">
       <defs>
         {svg_defs}
         <!-- Guaranteed light background pattern -->
