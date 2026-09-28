@@ -398,6 +398,108 @@ Solve the given problem and return ONLY valid JSON (no markdown, no fences):
   }
 }
 
+FOURTH EXAMPLE — Bus time-distance meeting problem:
+{
+  "steps": [
+    "Step 1: Let k = speed of bus from A (km/h). Bus from B travels at k+20 km/h.",
+    "Step 2: Total distance covered when they meet = 100 km, time = t hours. So: k·t + (k+20)·t = 100.",
+    "Step 3: Buses start 2h apart: bus from B departs 2h later, so it travels (t−2)h before meeting. Equation: k·t + (k+20)·(t−2) = 100.",
+    "Step 4: Also given t = 2.5 h (they meet 2.5 h after bus A departs). Substitute: k·2.5 + (k+20)·0.5 = 100.",
+    "Step 5: 2.5k + 0.5k + 10 = 100 → 3k = 90 → k = 30 km/h. Distance A covers = 30×2.5 = 75 km."
+  ],
+  "final_answer": "k = 30 km/h; bus A travels 75 km before they meet",
+  "answer_value": "30",
+  "answer_unit": "km/h",
+  "key_insight": "Set up two simultaneous distance equations — one per bus — then equate total distance to the gap between cities.",
+  "formula": "d_A + d_B = D_total",
+  "formula_name": "Meeting Point Equation",
+  "variables": [
+    {"symbol": "k",    "name": "Speed of bus A",        "value": "? (to find)", "unit": "km/h", "color": "green"},
+    {"symbol": "k+20", "name": "Speed of bus B",        "value": "k + 20",      "unit": "km/h", "color": "orange"},
+    {"symbol": "t",    "name": "Travel time of bus A",  "value": "2.5",         "unit": "h",    "color": "blue"},
+    {"symbol": "D",    "name": "Total distance A to B",  "value": "100",         "unit": "km",   "color": "blue"}
+  ],
+  "substitution_chain": [
+    {"num": 1, "eq": "d_A + d_B = D_total"},
+    {"num": 2, "eq": "k·t + (k+20)·(t−2) = 100"},
+    {"num": 3, "eq": "30·2.5 + (30+20)·0.5 = 75 + 25 = 100 ✓"},
+    {"num": 4, "eq": "k = 30 km/h, d_A = 30 × 2.5 = 75 km"}
+  ],
+  "given_list": [
+    "D = 100 km (city A to city B)",
+    "Speed of B = speed of A + 20 km/h",
+    "Bus B departs 2 h after bus A",
+    "They meet 2.5 h after bus A departs"
+  ],
+  "approach_steps": [
+    {"num": "8.1", "label": "Write distance equation", "eq": "k·t_A + (k+20)·t_B = 100", "note": "t_B = t_A − 2 = 0.5 h"},
+    {"num": "8.2", "label": "Substitute t_A = 2.5 h",  "eq": "2.5k + 0.5(k+20) = 100",   "note": "Expand and collect"},
+    {"num": "8.3", "label": "Solve for k",             "eq": "3k = 90  →  k = 30 km/h",  "note": "Speed of bus A"},
+    {"num": "8.4", "label": "Distance covered by A",   "eq": "d_A = 30 × 2.5 = 75 km",   "note": "Final answer"}
+  ],
+  "system_title": "Two Buses — Meeting Problem",
+  "system_label2": "Bus A and Bus B travel toward each other and meet",
+  "customize": {
+    "fields": [
+      {"id": "D",   "symbol": "D",    "label": "Total distance A→B",  "default": 100, "unit": "km"},
+      {"id": "dv",  "symbol": "Δv",   "label": "Speed difference B−A","default": 20,  "unit": "km/h"},
+      {"id": "tA",  "symbol": "t_A",  "label": "Travel time of bus A","default": 2.5, "unit": "h"},
+      {"id": "lag", "symbol": "t_lag","label": "Bus B departure delay","default": 2,   "unit": "h"}
+    ],
+    "compute_js": "var tB = vals.tA - vals.lag; if(tB <= 0 || vals.tA <= 0) return {answer:'?', answer_unit:'km/h', answer_label:'k', derived:{}}; var k = (vals.D - vals.dv * tB) / (vals.tA + tB); if(k <= 0) return {answer:'?', answer_unit:'km/h', answer_label:'k', derived:{}}; var dA = k * vals.tA; return {answer: _fmt(k), answer_unit: 'km/h', answer_label: 'k', derived: {'Speed of A (k)': _fmt(k) + ' km/h', 'Speed of B': _fmt(k + vals.dv) + ' km/h', 'Distance by A': _fmt(dA) + ' km', 'Distance by B': _fmt(vals.D - dA) + ' km'}};",
+    "question_template": "Two buses start from cities {D} km apart. Bus B is {dv} km/h faster than bus A. Bus B departs {lag} h later. They meet {tA} h after bus A departs. Find the speed of bus A."
+  }
+}
+
+FIFTH EXAMPLE — Slider-crank mechanism (kinematics / trigonometry):
+{
+  "steps": [
+    "Step 1: Crank radius R and connecting rod length L are given. Crank rotates at angular velocity ω.",
+    "Step 2: Crank-pin position: x_A = R·cos θ, y_A = −R·sin θ.",
+    "Step 3: Slider displacement from centre: x_B = R·cos θ + √(L² − R²·sin²θ).",
+    "Step 4: Slider velocity: v_B = dx_B/dt = −R·ω·sin θ − (R²·ω·sin θ·cos θ)/√(L²−R²·sin²θ).",
+    "Step 5: At given θ, substitute R, L, ω to get numeric x_B and v_B."
+  ],
+  "final_answer": "x_B = R·cos θ + √(L²−R²·sin²θ); v_B = computed from formula",
+  "answer_value": "x_B",
+  "answer_unit": "m",
+  "key_insight": "The slider-crank converts rotary motion to linear; the exact slider displacement and velocity follow from the constraint that the rod length L is constant.",
+  "formula": "x_B = R·cos θ + √(L² − R²·sin²θ)",
+  "formula_name": "Slider Displacement Equation",
+  "variables": [
+    {"symbol": "R",   "name": "Crank radius",          "value": "given",       "unit": "m",    "color": "blue"},
+    {"symbol": "L",   "name": "Connecting rod length",  "value": "given",       "unit": "m",    "color": "blue"},
+    {"symbol": "θ",   "name": "Crank angle",            "value": "given",       "unit": "rad",  "color": "blue"},
+    {"symbol": "ω",   "name": "Angular velocity",       "value": "given",       "unit": "rad/s","color": "blue"},
+    {"symbol": "x_B", "name": "Slider displacement",    "value": "? (to find)", "unit": "m",    "color": "green"},
+    {"symbol": "v_B", "name": "Slider velocity",         "value": "? (to find)", "unit": "m/s",  "color": "green"}
+  ],
+  "substitution_chain": [
+    {"num": 1, "eq": "x_B = R·cos θ + √(L² − R²·sin²θ)"},
+    {"num": 2, "eq": "disc = L² − R²·sin²θ  (check disc ≥ 0)"},
+    {"num": 3, "eq": "x_B = R·cos θ + √(disc)"},
+    {"num": 4, "eq": "v_B = −R·ω·sin θ − (R²·ω·sin θ·cos θ)/√(disc)"}
+  ],
+  "given_list": ["R = crank radius (m)", "L = rod length (m)", "θ = crank angle (rad)", "ω = angular velocity (rad/s)"],
+  "approach_steps": [
+    {"num": "8.1", "label": "Discriminant",    "eq": "disc = L² − R²·sin²θ",                               "note": "Must be ≥ 0"},
+    {"num": "8.2", "label": "Slider position", "eq": "x_B = R·cos θ + √disc",                              "note": "From rod constraint"},
+    {"num": "8.3", "label": "Slider velocity", "eq": "v_B = −R·ω·sin θ − R²·ω·sin θ·cos θ / √disc",        "note": "dx_B/dt"}
+  ],
+  "system_title": "Slider-Crank Mechanism",
+  "system_label2": "Crank rotates → rod pushes slider horizontally",
+  "customize": {
+    "fields": [
+      {"id": "R",     "symbol": "R",  "label": "Crank radius",    "default": 0.1,  "unit": "m"},
+      {"id": "L",     "symbol": "L",  "label": "Rod length",      "default": 0.25, "unit": "m"},
+      {"id": "theta", "symbol": "θ",  "label": "Crank angle",     "default": 30,   "unit": "°"},
+      {"id": "omega", "symbol": "ω",  "label": "Angular velocity","default": 10,   "unit": "rad/s"}
+    ],
+    "compute_js": "var th = vals.theta * Math.PI / 180; var disc = vals.L*vals.L - vals.R*vals.R*Math.sin(th)*Math.sin(th); if(disc < 0) return {answer:'?', answer_unit:'m', answer_label:'x_B', derived:{}}; var xB = vals.R*Math.cos(th) + Math.sqrt(disc); var vB = -vals.R*vals.omega*Math.sin(th) - (vals.R*vals.R*vals.omega*Math.sin(th)*Math.cos(th))/Math.sqrt(disc); return {answer: _fmt(xB), answer_unit: 'm', answer_label: 'x_B', derived: {'x_B (slider pos)': _fmt(xB) + ' m', 'v_B (slider vel)': _fmt(vB) + ' m/s', 'disc': _fmt(disc)}};",
+    "question_template": "Slider-crank: R = {R} m, L = {L} m, θ = {theta}°, ω = {omega} rad/s. Find slider displacement x_B and velocity v_B."
+  }
+}
+
 Rules:
 - steps: 3–5 numbered solution steps.
 - final_answer: complete expression with value and unit.
@@ -423,6 +525,10 @@ Rules:
   superscripts (², ³), subscripts (_0, _min), fractions as (a)/(b). NEVER use \\frac, \\left,
   \\right, \\omega, \\alpha, \\sqrt, \\cdot, or ANY LaTeX backslash command.
   Example CORRECT: "u_min = m0*g / alpha"  Example WRONG: "u_{min} = \\frac{m_0 g}{\\alpha}"
+- approach_steps: ALWAYS provide 3–5 steps, each with a non-empty "note" field. The "eq" must show the actual equation or numerical substitution for that sub-step — never just a description. The "label" must be a short action verb phrase ("Set up equation", "Solve for k", "Compute distance"). Do not copy "label" from "eq".
+- substitution_chain: MUST show the full numerical substitution chain, not just symbolic steps. Each "eq" after the first must contain at least one numeric value substituted from given_list.
+- customize.compute_js: For multi-step problems (speed+distance, mechanism position+velocity, etc.), compute ALL intermediate values and include them all in the "derived" dict so the Customize panel displays each intermediate result. Intermediate values help students see how changing one input ripples through all derived quantities.
+- customize.fields: NEVER include the unknown(s) as a field — only given, known inputs go in fields. If a quantity is labeled color "green" in variables (i.e. the answer), it must NOT appear in customize.fields.
 
 SECOND EXAMPLE — Rolling body with energy loss (ring on incline):
 {
@@ -2480,6 +2586,30 @@ def _build_scene7_html(sol: dict, scene: dict) -> str:
         </div>
 """
 
+    # FIX 6 — Derived / intermediate variables (color == "orange") shown in left panel
+    derived_vars = [v for v in sol.get("variables", []) if v.get("color") == "orange"]
+    derived_section_html = ""
+    if derived_vars:
+        derived_items = ""
+        for dv in derived_vars:
+            sym  = _he(dv.get("symbol") or dv.get("sym") or "?")
+            val  = _he(_clean_latex(str(dv.get("value", "?") or "?")))
+            unit = _he(str(dv.get("unit", "")))
+            name = _he(_clean_latex(str(dv.get("name", ""))))
+            _em_name = (" &nbsp;<em style=\"color:#64748b;font-size:11px;\">" + name + "</em>") if name else ""
+            derived_items += (
+                f'<div class="s7-given-item" style="border-left:3px solid #d97706;padding-left:8px;">'
+                f'<strong style="color:#d97706;">{sym}</strong> = {val} {unit}'
+                + _em_name +
+                f'</div>\n'
+            )
+        derived_section_html = (
+            '\n        <div style="margin-top:10px;">'
+            '\n          <div class="s7-given-section-title" style="color:#d97706;">Derived / Intermediate</div>'
+            f'\n          <div class="s7-given-list">{derived_items}</div>'
+            '\n        </div>'
+        )
+
     return f"""<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">
   <div class="s7-card">
     <div class="s7-title-bar">
@@ -2496,7 +2626,7 @@ def _build_scene7_html(sol: dict, scene: dict) -> str:
         <div class="s7-formula-result-bar">
           <div class="s7-formula-result-text" id="s7-formula-result">{formula_result}</div>
           <div class="s7-formula-units" id="s7-units-hint">Units: check dimensional consistency</div>
-        </div>
+        </div>{derived_section_html}
       </div>
       <div class="s7-right-col">
         <div>
@@ -2515,10 +2645,11 @@ def _build_scene7_html(sol: dict, scene: dict) -> str:
     </div>
     <div class="s7-nav-row">
       <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Step 7</button>
-      <button class="btn-primary" onclick="if(typeof window.qanim_showScene9===&#39;function&#39;)window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>
+      <button class="btn-primary" onclick="if(typeof window.qanim_showScene9==='function')window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>
     </div>
   </div>
 </div>"""
+
 
 
 def _build_scene9_html(sol: dict, to_find: list) -> str:
@@ -2534,14 +2665,21 @@ def _build_scene9_html(sol: dict, to_find: list) -> str:
     final_answer = _he(sol.get("final_answer", "See calculation"))
 
     chain_html = ""
+    _total_chain = len(chain)
     for row in chain:
         num = row.get("num", 1)
         eq_raw  = row.get("eq", "")
         eq_attr = html_module.escape(eq_raw, quote=True)
         eq_text = _he(eq_raw)
-        # Add a descriptive step label if available
-        step_labels = ["Write formula", "Substitute values", "Simplify", "Compute result", "Final answer"]
-        step_label = step_labels[num - 1] if (num - 1) < len(step_labels) else f"Step {num}"
+        # FIX 2 — Dynamic label derived from position in chain
+        if num == 1:
+            step_label = "Write formula"
+        elif num == _total_chain:
+            step_label = "Final answer"
+        elif num == _total_chain - 1:
+            step_label = "Compute result"
+        else:
+            step_label = f"Step {num}"
         chain_html += (
             f'<div class="s9-sub-row" data-s9-idx="{num-1}">'
             f'<div class="s9-sub-num">{num}</div>'
@@ -3028,15 +3166,6 @@ button{padding:11px 24px;border-radius:10px;font-size:13.5px;font-weight:700;fon
   box-shadow:0 1px 3px rgba(15,23,42,.06);}
 .btn-secondary:hover{background:#f8fafc;color:var(--text-main);border-color:#94a3b8;
   box-shadow:0 2px 8px rgba(15,23,42,.10);transform:translateY(-1px);}
-
-
-/* ---- Steps 1-6: SVG layer spring animation ---- */
-.svg-layer {
-  will-change: opacity, transform;
-  transition: opacity 0.72s cubic-bezier(.4,0,.2,1),
-              transform 0.72s cubic-bezier(.34,1.56,.64,1) !important;
-}
-
 """
 
 _SCENE6_CSS = """
@@ -3276,17 +3405,6 @@ _SCENE6_CSS = """
   background: rgba(148,163,184,.07);
 }
 .s6tofind-hint strong { color: #cbd5e1; }
-
-
-/* ---- Step 7: formula card text ---- */
-.lesson-why {
-  font-size: 13.5px; color: #334155; line-height: 1.55; margin-top: 8px;
-}
-.lesson-key {
-  font-size: 12px; color: #64748b; line-height: 1.5; margin-top: 5px;
-  font-style: italic;
-}
-
 """
 
 _SCENE7_CSS = """
@@ -3419,46 +3537,6 @@ _SCENE7_CSS = """
 .s7-formula-units{font-size:11px;color:#166534;margin-top:4px;font-style:italic;}
 .s7-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 26px 22px;border-top:1px solid #e8eef8;background:#fff;}
 @media(max-width:600px){.s7-body-cols{flex-direction:column;}.s7-left-col{width:100%;border-right:none;border-bottom:1.5px solid #e8eef8;}}
-
-
-/* ---- Tab navigation (Step 8 multi-answer) ---- */
-.lesson-targets {
-  display: flex; flex-wrap: wrap; gap: 7px;
-  padding: 14px 24px 12px; background: var(--panel-bg);
-  border-bottom: 1px solid var(--border);
-}
-.lesson-target {
-  font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700;
-  border: 1px solid #cbd5e1; border-radius: 20px;
-  background: #f8fafc; color: #475569;
-  padding: 5px 12px; cursor: pointer;
-  transition: background .2s, border-color .2s, color .2s,
-              transform .18s cubic-bezier(.34,1.56,.64,1);
-}
-.lesson-target:hover {
-  background: rgba(8,145,178,.08); border-color: rgba(8,145,178,.4);
-  color: #0e7490; transform: translateY(-1px);
-}
-.lesson-target.is-current {
-  color: #fff; background: linear-gradient(135deg,#0e7490,#0891b2);
-  border-color: transparent; box-shadow: 0 2px 8px rgba(8,145,178,.28);
-}
-.lesson-target:focus-visible { outline: 3px solid #38bdf8; outline-offset: 2px; }
-
-/* ---- Step 8: calculation work area ---- */
-.lesson-calc { margin-bottom: 16px; }
-.lesson-calc-label {
-  font-size: 13px; font-weight: 700; color: #1e293b;
-  margin-bottom: 7px; line-height: 1.5;
-}
-.s7-approach-step-eq {
-  font-family: 'Cambria Math','STIX Two Text','Times New Roman', serif;
-  font-size: 15.5px; font-style: italic; font-weight: 600;
-  color: #dc2626; background: #fff7ed; border-radius: 10px;
-  padding: 9px 13px; line-height: 1.65;
-  border: 1px solid #fed7aa; overflow-wrap: anywhere;
-}
-
 """
 
 _SCENE9_CSS = """
@@ -3617,32 +3695,6 @@ _SCENE9_CSS = """
 .s9-insight-text{font-size:13px;color:#92400e;line-height:1.65;}
 .s9-insight-text strong{color:#78350f;}
 .s9-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 36px 22px;border-top:1px solid #bbf7d0;background:#f0fdf4;}
-
-
-/* ---- Step 9: answer pulse animation ---- */
-@keyframes s9-value-pulse {
-  0%,100% { text-shadow: none; }
-  50% { text-shadow: 0 0 20px rgba(13,148,136,.4), 0 0 6px rgba(13,148,136,.2); }
-}
-.lesson-answer-number {
-  font-family: 'Cambria Math','STIX Two Text','Times New Roman', serif;
-  color: #0d9488; font-size: 36px; font-weight: 800;
-  line-height: 1.2; margin-bottom: 10px; overflow-wrap: anywhere;
-  animation: s9-value-pulse 2.8s ease-in-out infinite;
-}
-.lesson-answer-number span {
-  font-size: 18px; font-weight: 600; margin-left: 5px;
-  font-family: 'Inter', system-ui, sans-serif; color: #0f766e;
-}
-
-/* ---- Step 9: insight note ---- */
-.lesson-insight-note {
-  font-size: 12.5px; color: #92400e; line-height: 1.6;
-  padding: 10px 14px; border-radius: 10px;
-  background: linear-gradient(135deg,#fffbeb,#fef9c3);
-  border: 1.5px solid #fde68a; margin-top: 4px;
-}
-
 """
 
 _CONTROLS_CSS = """
@@ -3749,11 +3801,11 @@ _SCENE6_JS = """
     var fEl=_el('s6-formula-text'),sEl=_el('s6-formula-sublabel');
     if(fEl)fEl.classList.add('s6-shown');if(sEl)sEl.classList.add('s6-shown');
 
-    for(var i=0;i<n;i++){
-      var b=boxes[i];
-      if(s6Phase>=i+1){b.classList.add('s6-shown');b.classList.toggle('s6-active',s6Phase===i+1);}
-      else{b.classList.remove('s6-shown','s6-active');}
-    }
+    // FIX 3 — boxes appear one per click; current box gets s6-active highlight
+    boxes.forEach(function(b,i){
+      b.classList.toggle('s6-shown',  i <= s6Phase - 1);
+      b.classList.toggle('s6-active', i === s6Phase - 1);
+    });
 
     var noteEl=_el('s6-note-bar');
     if(noteEl){if(s6Phase>=n+1)noteEl.classList.add('s6-shown');else noteEl.classList.remove('s6-shown');}
@@ -3824,57 +3876,7 @@ _SCENE6_JS = """
     var bar=_el('step-bar');if(bar)bar.style.width=Math.round(7/9*100)+'%';
   }
 
-  
-  // ---- Multi-task controller for Step 8 tab navigation ----
-  var _tasks=[], _current=0, _tLoaded=false;
-
-  function _initTasks(){
-    if(_tLoaded)return;
-    _tLoaded=true;
-    var el=document.getElementById('qanim-scene6-tasks-data');
-    if(el){try{_tasks=JSON.parse(el.textContent||'[]');}catch(x){_tasks=[];}}
-    if(!_tasks.length)_tasks=[{name:'',formula:'',given_html:'',work_html:'',result:''}];
-  }
-
-  function _renderTask(idx){
-    _initTasks();
-    if(!_tasks.length)return;
-    idx=Math.max(0,Math.min(idx,_tasks.length-1));
-    _current=idx;
-    var t=_tasks[idx];
-    var e=function(id){return document.getElementById(id);};
-    var pg=e('s8-progress');if(pg)pg.textContent='ANSWER '+(idx+1)+' OF '+_tasks.length;
-    var tl=e('s8-task-title');if(tl)tl.textContent=t.name||'';
-    var gv=e('s8-task-given');if(gv)gv.innerHTML=t.given_html||'';
-    var fm=e('s8-task-formula');if(fm)fm.textContent=t.formula||'';
-    var wk=e('s8-task-work');if(wk)wk.innerHTML=t.work_html||'';
-    var rs=e('s8-task-result');if(rs)rs.textContent=t.result||'';
-    var nav=e('s8-task-nav');
-    if(nav){
-      var btns=nav.querySelectorAll('.lesson-target');
-      for(var b=0;b<btns.length;b++)btns[b].classList.toggle('is-current',b===idx);
-    }
-    var bk=e('s8-back');if(bk)bk.textContent=idx===0?'<-- Step 7':'<-- Previous';
-    var nx=e('s8-next');if(nx)nx.textContent=idx>=_tasks.length-1?'Step 9 >>':'Next >>';
-    var ov7=e('qanim-scene7-overlay');if(ov7)ov7.scrollTop=0;
-  }
-
-  window.qanimGoToCondition=function(i){
-    _initTasks();
-    if(Number.isInteger(i)&&i>=0&&i<_tasks.length)_renderTask(i);
-  };
-  window.qanimPreviousCondition=function(){
-    _initTasks();
-    if(_current>0)_renderTask(_current-1);
-    else if(typeof window.qanim_goToScene6FromScene7==='function')window.qanim_goToScene6FromScene7();
-  };
-  window.qanimNextCondition=function(){
-    _initTasks();
-    if(_current<_tasks.length-1)_renderTask(_current+1);
-    else if(typeof window.qanim_showScene9==='function')window.qanim_showScene9();
-  };
-
-_onReady(function(){
+  _onReady(function(){
     var origReset=window.resetAnim;
     window.resetAnim=function(){
       ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
@@ -5434,13 +5436,30 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     to_find = scene.get("to_find", ["The unknown quantity"])
     glossary = scene.get("glossary", [])
 
-    # Answer targets for AnswerBox
-    answer_targets = [{
-        "label": to_find[0] if to_find else "Final Answer",
-        "value": sol.get("answer_value", "?"),
-        "unit": sol.get("answer_unit", ""),
-        "insight": sol.get("key_insight", "Apply the governing formula."),
-    }]
+    # FIX 4 — Build one answer target per green variable (multi-unknown support)
+    green_vars = [v for v in sol.get("variables", []) if v.get("color") == "green"]
+    if green_vars:
+        answer_targets = []
+        for gv in green_vars:
+            sym  = gv.get("symbol") or gv.get("sym") or "?"
+            val  = gv.get("value", "?")
+            unit = gv.get("unit", "")
+            # Replace "? (to find)" placeholder with actual answer_value for the primary unknown
+            if "?" in str(val) or "to find" in str(val).lower():
+                val = sol.get("answer_value", "?")
+            answer_targets.append({
+                "label":   sym,
+                "value":   str(val),
+                "unit":    unit,
+                "insight": sol.get("key_insight", "Apply the governing formula."),
+            })
+    else:
+        answer_targets = [{
+            "label":   to_find[0] if to_find else "Final Answer",
+            "value":   sol.get("answer_value", "?"),
+            "unit":    sol.get("answer_unit", ""),
+            "insight": sol.get("key_insight", "Apply the governing formula."),
+        }]
     targets_json = json.dumps({"answer_targets": answer_targets}, ensure_ascii=False)
 
     # Step-6 given/to-find panel
@@ -5471,48 +5490,6 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     scene6_html = _build_scene6_html(sol, scene)
     scene7_html = _build_scene7_html(sol, scene)
     scene9_html = _build_scene9_html(sol, to_find)
-
-
-    # Build tasks JSON for JS Step 8 multi-task controller
-    import json as _json_assemble
-    _ap_steps    = sol.get("approach_steps") or []
-    _given_list  = sol.get("given_list") or []
-    _formula_raw = _clean_latex(str(sol.get("formula", "")))
-    _given_html  = ""
-    for _g in _given_list:
-        _gs = str(_g)
-        if "=" in _gs:
-            _pts = _gs.split("=", 1)
-            _sym = _he(_clean_latex(_pts[0].strip()))
-            _val = _he(_clean_latex(_pts[1].strip()))
-            _given_html += ('<div class="s8-given-row">'
-                + '<span class="s8-given-sym">' + _sym + '</span>'
-                + '<span class="s8-given-eq">=</span>'
-                + '<span class="s8-given-val">' + _val + '</span>'
-                + '</div>')
-        else:
-            _given_html += '<div class="s8-given-row s8-given-note">' + _he(_clean_latex(_gs)) + '</div>'
-    _js_tasks = []
-    for _i, _ap in enumerate(_ap_steps):
-        _lbl  = _clean_latex(str(_ap.get("label", "Step " + str(_i+1))))
-        _eq   = _clean_latex(str(_ap.get("eq",    "")))
-        _nt   = _clean_latex(str(_ap.get("note",  "")))
-        _note_div = ('<div style="font-size:11.5px;color:#64748b;margin-top:4px;font-style:italic;">'
-                    + _he(_nt) + '</div>') if _nt else ""
-        _work = ('<div class="lesson-calc">'
-            + '<div class="lesson-calc-label">' + _he(_lbl) + '</div>'
-            + '<div class="s7-approach-step-eq">' + _he(_eq) + '</div>'
-            + _note_div + '</div>')
-        _js_tasks.append({
-            "name": _lbl, "formula": _formula_raw,
-            "given_html": _given_html, "work_html": _work,
-            "result": _lbl + ": " + _eq if _eq else _lbl,
-        })
-    tasks_data_script = (
-        '<script id="qanim-scene6-tasks-data" type="application/json">'
-        + _json_assemble.dumps(_js_tasks, ensure_ascii=False)
-        + '</script>'
-    ) if _js_tasks else ""
     glossary_panel = _build_glossary_panel(glossary)
     glossary_badge = f'<span class="glossary-ctrl-badge">{len(glossary)}</span>' if glossary else ""
     glossary_sep = '<div class="qanim-ctrl-sep"></div>' if glossary else ""
@@ -5832,7 +5809,6 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 
 {scene9_html}
 {scene7_html}
-{tasks_data_script}
 <div id="qanim-scene-modal-backdrop"></div>
 {scene6_html}
 {glossary_panel}
