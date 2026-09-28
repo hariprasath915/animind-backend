@@ -306,6 +306,18 @@ def _clean_latex(text: str) -> str:
     # ── 9. Restore protected backslash then clean up whitespace ──────────────
     t = t.replace('\x00BSLASH\x00', '')
     t = _re_lt.sub(r'[ \t]+', ' ', t).strip()
+
+    # \u2500\u2500 10. Improve display of subscript digits \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    SUB_D = {'0':'\u2080','1':'\u2081','2':'\u2082','3':'\u2083','4':'\u2084',
+             '5':'\u2085','6':'\u2086','7':'\u2087','8':'\u2088','9':'\u2089',
+             'n':'\u2099','i':'\u1d62','x':'\u2093'}
+    def _sub_d(m):
+        c = m.group(1)
+        return SUB_D.get(c, '_' + c)
+    t = _re_lt.sub(r'_([a-z0-9])', _sub_d, t)
+    # Ensure * is shown as x (multiplication) for readability in display
+    t = t.replace(' * ', ' \u00d7 ').replace('*', '\u00d7')
+    t = _re_lt.sub(r'  +', ' ', t).strip()
     return t
 
 
@@ -2569,120 +2581,375 @@ def _build_scene9_html(sol: dict, to_find: list) -> str:
 # ===========================================================================
 
 _LESSON_CONDITIONS_CSS = """
-/* ── Lesson conditions: formula-grid (Step 7), targets (Step 8), answer-grid (Step 9) ── */
-/* Matches engine_step_by_step.html reference exactly */
-#qanim-scene6-overlay .lesson-formula-grid,
-#qanim-scene9-overlay .lesson-answer-grid {
+
+/* LESSON CONDITIONS CSS - Steps 7-9 Premium Math Typesetting */
+
+/* Step 7: formula-grid */
+#qanim-scene6-overlay .lesson-formula-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
 }
 #qanim-scene6-overlay .lesson-formula {
-  background: #fff;
+  background: linear-gradient(160deg, #fff 0%, #f0f5ff 100%);
   border: 1.5px solid #bfdbfe;
-  border-radius: 14px;
-  padding: 18px;
+  border-radius: 18px;
+  padding: 22px 20px 18px;
+  position: relative; overflow: hidden;
+  box-shadow: 0 2px 14px rgba(29,78,216,.07), inset 0 1px 0 rgba(255,255,255,.9);
+  transition: transform .22s cubic-bezier(.34,1.56,.64,1), box-shadow .22s;
 }
+#qanim-scene6-overlay .lesson-formula:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 22px rgba(29,78,216,.14);
+}
+#qanim-scene6-overlay .lesson-formula::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, #1d4ed8, #6366f1);
+  border-radius: 18px 18px 0 0;
+}
+#qanim-scene6-overlay .s6-formula-badge {
+  display: inline-block;
+  padding: 4px 13px; border-radius: 22px;
+  background: rgba(29,78,216,.09); border: 1px solid rgba(29,78,216,.22);
+  font-size: 10.5px; font-weight: 800; color: #1e40af;
+  letter-spacing: .8px; text-transform: uppercase; margin-bottom: 14px;
+}
+/* Formula equation - serif math font, textbook quality */
 #qanim-scene6-overlay .lesson-formula-eq {
-  font-size: 19px;
-  font-weight: 800;
-  color: #1d4ed8;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
+  font-family: 'STIX Two Text', 'Cambria Math', 'Times New Roman', 'Georgia', serif;
+  font-size: 22px; font-weight: 700; font-style: italic;
+  color: #1d4ed8; line-height: 1.6; overflow-wrap: anywhere;
+  letter-spacing: .2px;
 }
 #qanim-scene6-overlay .lesson-why {
-  font-size: 14px;
-  color: #334155;
-  line-height: 1.5;
-  margin-top: 9px;
+  font-size: 13.5px; color: #334155; line-height: 1.65;
+  margin-top: 11px; font-weight: 400;
 }
 #qanim-scene6-overlay .lesson-key {
-  font-size: 12px;
-  color: #64748b;
-  line-height: 1.5;
-  margin-top: 6px;
+  font-size: 11.5px; color: #64748b; line-height: 1.5;
+  margin-top: 7px; font-weight: 600; font-style: italic;
 }
+#qanim-scene6-overlay #lesson-basis {
+  font-size: 12px; line-height: 1.6; color: #92400e;
+  margin-top: 18px; padding: 10px 16px;
+  background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
+}
+
+/* Step 8: lesson-targets nav tabs */
 #qanim-scene7-overlay .lesson-targets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  padding: 16px 26px;
-  background: #fff;
-  border-bottom: 1px solid #e8eef8;
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 16px 28px;
+  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+  border-bottom: 1.5px solid #e2eeff;
 }
 #qanim-scene7-overlay .lesson-target {
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  border: 1px solid #cbd5e1;
-  border-radius: 20px;
-  background: #f8fafc;
-  color: #475569;
-  padding: 7px 12px;
+  font-family: inherit; font-size: 12.5px; font-weight: 700;
+  border: 1.5px solid #cbd5e1; border-radius: 22px;
+  background: #f8fafc; color: #475569; padding: 7px 16px;
   cursor: pointer;
+  transition: all .2s cubic-bezier(.34,1.56,.64,1);
+}
+#qanim-scene7-overlay .lesson-target:hover {
+  background: rgba(8,145,178,.08); border-color: rgba(8,145,178,.35);
+  color: #0e7490; transform: translateY(-1px);
 }
 #qanim-scene7-overlay .lesson-target.is-current {
-  color: #fff;
-  background: #0891b2;
-  border-color: #0891b2;
+  color: #fff; background: linear-gradient(135deg,#0e7490,#0891b2);
+  border-color: transparent; box-shadow: 0 3px 10px rgba(8,145,178,.32);
 }
 #qanim-scene7-overlay .lesson-target:focus-visible {
-  outline: 3px solid #38bdf8;
-  outline-offset: 2px;
+  outline: 3px solid #38bdf8; outline-offset: 2px;
 }
+/* Step 8 work area: math equations with serif font */
 #qanim-scene7-overlay .lesson-calc {
-  margin-bottom: 14px;
+  margin-bottom: 18px; padding: 14px 16px;
+  background: linear-gradient(135deg, #f8fbff, #f0f5ff);
+  border-radius: 12px; border: 1px solid #dde8f8;
+  border-left: 3px solid #0891b2;
 }
 #qanim-scene7-overlay .lesson-calc-label {
-  font-size: 14px;
-  font-weight: 700;
-  color: #334155;
-  line-height: 1.5;
+  font-size: 11.5px; font-weight: 800; color: #0e7490;
+  letter-spacing: .5px; text-transform: uppercase; margin-bottom: 7px;
 }
 #qanim-scene7-overlay .s7-approach-step-eq {
-  font-size: 14px;
-  line-height: 1.65;
-  padding: 8px 10px;
+  font-family: 'STIX Two Text', 'Cambria Math', 'Times New Roman', serif;
+  font-size: 16px; font-style: italic; font-weight: 600;
+  color: #1e293b; line-height: 1.7; padding: 4px 0;
+  overflow-wrap: anywhere; letter-spacing: .1px;
 }
-#qanim-scene7-overlay .s7-right-col {
-  min-width: 0;
+#qanim-scene7-overlay .s7-right-col { min-width: 0; }
+#qanim-scene7-overlay .s7-given-item {
+  font-size: 13.5px; line-height: 1.9; color: #334155;
+}
+#qanim-scene7-overlay .s7-given-item strong {
+  font-family: 'STIX Two Text', 'Cambria Math', serif;
+  font-style: italic; color: #0e7490;
+}
+#qanim-scene7-overlay .s7-formula-result-bar {
+  margin-top: 12px; padding: 10px 14px;
+  background: linear-gradient(135deg, #eff6ff, #dbeafe);
+  border-radius: 10px; border: 1.5px solid #bfdbfe;
+}
+#qanim-scene7-overlay .s7-formula-result-text {
+  font-family: 'STIX Two Text', 'Cambria Math', 'Times New Roman', serif;
+  font-size: 15px; font-style: italic; font-weight: 700;
+  color: #1d4ed8; overflow-wrap: anywhere;
+}
+#qanim-scene7-overlay .s7-given-section-title {
+  font-size: 10.5px; font-weight: 800; color: #0891b2;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;
+}
+#qanim-scene7-overlay .s7-system-visual {
+  background: linear-gradient(135deg, #f0fdfb, #e6f7ff);
+  border: 1.5px solid #a5f3fc; border-radius: 14px;
+  padding: 16px; margin-bottom: 14px;
+}
+#qanim-scene7-overlay .s7-system-visual-title {
+  font-size: 14px; font-weight: 800; color: #0e7490; text-align: center;
+}
+#qanim-scene7-overlay .s7-system-label {
+  font-size: 10px; font-weight: 800; color: #475569;
+  letter-spacing: .8px; text-transform: uppercase; margin-bottom: 8px;
+}
+
+/* Step 9: lesson-answer-grid */
+#qanim-scene9-overlay .lesson-answer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
 }
 #qanim-scene9-overlay .lesson-answer {
-  background: #edf9f6;
-  border: 1px solid #bce7de;
-  border-radius: 15px;
-  padding: 20px;
+  background: linear-gradient(160deg, #edfaf4 0%, #d1fae5 100%);
+  border: 1.5px solid #6ee7b7; border-radius: 18px;
+  padding: 22px 20px 18px; position: relative; overflow: hidden;
+  box-shadow: 0 2px 14px rgba(0,133,141,.08), inset 0 1px 0 rgba(255,255,255,.8);
+  transition: transform .22s cubic-bezier(.34,1.56,.64,1), box-shadow .22s;
+}
+#qanim-scene9-overlay .lesson-answer:hover {
+  transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,133,141,.18);
+}
+#qanim-scene9-overlay .lesson-answer::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, #059669, #10b981);
+  border-radius: 18px 18px 0 0;
 }
 #qanim-scene9-overlay .lesson-answer h3 {
-  color: #00858d;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: .7px;
-  text-transform: uppercase;
-  line-height: 1.5;
-  margin: 0;
+  font-size: 10.5px; font-weight: 800; color: #059669;
+  letter-spacing: .8px; text-transform: uppercase; margin: 0 0 14px;
 }
+/* Big answer number - textbook math font */
 #qanim-scene9-overlay .lesson-answer-number {
-  color: #00858d;
-  font-size: 36px;
-  font-weight: 800;
-  line-height: 1.3;
-  margin: 16px 0 10px;
-  overflow-wrap: anywhere;
+  font-family: 'STIX Two Text', 'Cambria Math', 'Georgia', serif;
+  font-size: 38px; font-weight: 700; color: #047857;
+  line-height: 1.25; margin-bottom: 10px;
+  overflow-wrap: anywhere; letter-spacing: -.5px;
 }
 #qanim-scene9-overlay .lesson-answer-number span {
-  font-size: 18px;
-  font-weight: 600;
-  margin-left: 7px;
+  font-family: 'Inter', sans-serif;
+  font-size: 17px; font-weight: 600; color: #059669;
+  margin-left: 6px; vertical-align: middle;
 }
 #qanim-scene9-overlay .lesson-answer p {
-  font-size: 13px;
-  color: #476d82;
-  line-height: 1.5;
-  margin: 0;
+  font-size: 13px; color: #065f46; line-height: 1.6; margin: 0;
 }
+
+/* Modal card shells: shared polish */
+.s6-card, .s7-card, .s9-card {
+  font-family: 'Inter', -apple-system, sans-serif;
+  border-radius: 22px;
+  box-shadow: 0 14px 60px rgba(8,145,178,.16), 0 2px 12px rgba(0,0,0,.09);
+  overflow: hidden;
+}
+.s6-title-bar, .s7-title-bar, .s9-title-bar {
+  padding: 26px 32px 22px;
+  background: linear-gradient(135deg, #fff 0%, #f5f8ff 100%);
+  border-bottom: 1.5px solid #e0eaff; text-align: center;
+}
+.s6-title-bar h2, .s7-title-bar h2, .s9-title-bar h2 {
+  font-size: 21px; font-weight: 900; color: #0f172a; letter-spacing: -.4px;
+}
+.s6-body, .s9-body {
+  padding: 28px 32px 24px;
+  background: linear-gradient(160deg, #f0f5fc 0%, #e8f0fe 55%, #eff6ff 100%);
+}
+.s7-body-cols {
+  display: flex; gap: 24px; padding: 24px 28px;
+  background: linear-gradient(160deg, #f0f5fc 0%, #e8f0fe 55%, #eff6ff 100%);
+}
+.s7-left-col { flex: 0 0 260px; min-width: 0; }
+.s7-right-col { flex: 1 1 0; min-width: 0; overflow-y: auto; max-height: 52vh; }
+.s6-nav-row, .s7-nav-row, .s9-nav-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 18px 32px 24px; border-top: 1.5px solid #e2eeff; background: #fff;
+}
+
 """
 
+
+
+
+_STEPS16_UPGRADE_CSS = """
+
+/* =========================================================
+   STEPS 1-6 VISUAL UPGRADE
+   Richer animations, premium info-box, textbook typography
+   ========================================================= */
+
+/* --- SVG layer reveal: spring-in animation --- */
+.svg-layer {
+  transition: opacity 0.65s cubic-bezier(.4,0,.2,1),
+              transform 0.65s cubic-bezier(.34,1.56,.64,1);
+  transform-origin: center center;
+}
+
+/* --- Progress bar: animated shimmer gradient --- */
+.step-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg,
+    #0e7490 0%, #7c3aed 40%, #d97706 80%, #38bdf8 100%);
+  background-size: 200% 100%;
+  animation: qanim-bar-shimmer 3s linear infinite;
+  border-radius: 2px;
+  transition: width 0.55s cubic-bezier(.4,0,.2,1);
+}
+@keyframes qanim-bar-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position:   0% 0; }
+}
+
+/* --- Step dot: pulse on active --- */
+.step-dot.active {
+  animation: qanim-dot-pulse 2.2s ease-in-out infinite;
+}
+@keyframes qanim-dot-pulse {
+  0%,100% { box-shadow:0 3px 12px rgba(8,145,178,.38),0 0 0 0 rgba(8,145,178,.30); }
+  50%      { box-shadow:0 3px 12px rgba(8,145,178,.38),0 0 0 7px rgba(8,145,178,.00); }
+}
+
+/* --- Info box: textbook-style premium --- */
+.info-box {
+  background: linear-gradient(160deg,#f8fbff 0%,#f2f7ff 50%,#eef5ff 100%);
+  border: 1px solid #c7dcf6;
+  border-left: 4.5px solid var(--c-primary-mid,#0891b2);
+  border-radius: 14px;
+  padding: 22px 26px 20px;
+  min-height: 140px;
+  display: flex; flex-direction: column; gap: 12px;
+  position: relative; overflow: hidden;
+  box-shadow: 0 2px 12px rgba(8,145,178,.08),inset 0 1px 0 rgba(255,255,255,.9);
+}
+.info-box::after {
+  content: '';
+  position: absolute; top: 0; right: 0;
+  width: 140px; height: 140px;
+  background: radial-gradient(circle at 100% 0%,
+    rgba(3,105,161,.07) 0%,transparent 65%);
+  pointer-events: none;
+}
+
+/* Step title: serif textbook feel */
+.info-box h3 {
+  font-family: 'Georgia','Times New Roman','Palatino Linotype',serif;
+  font-size: 17px; font-weight: 700; color: #0f172a;
+  line-height: 1.35; letter-spacing: -.2px;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.info-box h3::before {
+  content: '';
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+  margin-top: 5px;
+  background: linear-gradient(135deg,var(--c-primary-dim,#0e7490),var(--c-primary-mid,#0891b2));
+  box-shadow: 0 0 0 3px rgba(8,145,178,.18);
+  animation: qanim-dot-glow 2.5s ease-in-out infinite;
+}
+@keyframes qanim-dot-glow {
+  0%,100% { box-shadow:0 0 0 3px rgba(8,145,178,.18); }
+  50%      { box-shadow:0 0 0 7px rgba(8,145,178,.00); }
+}
+
+/* Description text: readable textbook quality */
+.info-desc {
+  font-size: 14.5px; line-height: 1.8; color: #334155;
+  font-weight: 400; letter-spacing: .01em;
+}
+
+/* --- Badges: richer micro-styles --- */
+.badge {
+  padding: 5px 14px; border-radius: 22px;
+  font-size: 12px; font-weight: 700; letter-spacing: .1px;
+  backdrop-filter: blur(4px);
+  transition: transform .18s cubic-bezier(.34,1.56,.64,1);
+}
+.badge:hover { transform: translateY(-1px); }
+.badge-cyan {
+  background: linear-gradient(135deg,rgba(8,145,178,.10),rgba(14,116,144,.06));
+  border: 1px solid rgba(8,145,178,.30); color: #0c5e78;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
+}
+.badge-orange {
+  background: linear-gradient(135deg,rgba(217,119,6,.10),rgba(245,158,11,.06));
+  border: 1px solid rgba(217,119,6,.30); color: #92400e;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
+}
+.badge-green {
+  background: linear-gradient(135deg,rgba(22,163,74,.10),rgba(21,128,61,.06));
+  border: 1px solid rgba(22,163,74,.30); color: #15653d;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
+}
+
+/* --- Question banner: textbook decorative mark --- */
+.question-banner {
+  padding: 24px 30px 20px;
+  background: linear-gradient(160deg,#f0f6ff 0%,#eaf2ff 40%,#f5f8ff 100%);
+  border-bottom: 1px solid #dde8f8;
+  position: relative; overflow: hidden;
+}
+.q-text { font-size: 15.5px; color: #0f172a; line-height: 1.7; font-weight: 450; }
+
+/* --- Navigation buttons: premium feel --- */
+.btn-primary {
+  background: linear-gradient(135deg,#0e7490 0%,#0891b2 60%,#06b6d4 100%);
+  color: #fff; border-radius: 12px; padding: 12px 28px;
+  box-shadow: 0 4px 16px rgba(8,145,178,.32),0 1px 4px rgba(0,0,0,.10);
+  font-size: 14px; font-weight: 800; letter-spacing: .2px;
+  transition: all .22s cubic-bezier(.34,1.56,.64,1);
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg,#0c6680 0%,#0e7490 100%);
+  box-shadow: 0 7px 24px rgba(8,145,178,.40),0 2px 6px rgba(0,0,0,.12);
+  transform: translateY(-2px);
+}
+.btn-secondary {
+  background: #fff; color: #475569; border: 1.5px solid #cbd5e1;
+  border-radius: 12px; padding: 12px 22px; font-size: 13.5px; font-weight: 700;
+  box-shadow: 0 1px 4px rgba(15,23,42,.06);
+}
+.btn-secondary:hover {
+  background: #f0f7ff; color: #0f172a; border-color: #93c5fd;
+  box-shadow: 0 3px 10px rgba(15,23,42,.10); transform: translateY(-1px);
+}
+
+/* --- Dashboard: animated top bar --- */
+.dashboard::before {
+  height: 4px;
+  background: linear-gradient(90deg,#0e7490 0%,#7c3aed 33%,#d97706 66%,#0891b2 100%);
+  background-size: 300% 100%;
+  animation: qanim-topbar 4s linear infinite;
+}
+@keyframes qanim-topbar {
+  0%   { background-position:   0% 0; }
+  100% { background-position: 300% 0; }
+}
+
+/* --- Control panel --- */
+.control-panel {
+  padding: 24px 30px 28px;
+  background: linear-gradient(180deg,#fff 0%,#f7faff 100%);
+}
+
+"""
 
 _BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fira+Code:wght@400;500;600;700&display=swap');
@@ -5629,6 +5896,9 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   <title>{title} — Interactive Animation</title>
   <style id="qanim-base-styles">
 {_BASE_CSS}
+  </style>
+  <style id="qanim-steps16-upgrade">
+{_STEPS16_UPGRADE_CSS}
   </style>
   <style id="qanim-scene6-styles">
 {_SCENE6_CSS}
