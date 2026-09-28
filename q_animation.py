@@ -306,18 +306,6 @@ def _clean_latex(text: str) -> str:
     # ── 9. Restore protected backslash then clean up whitespace ──────────────
     t = t.replace('\x00BSLASH\x00', '')
     t = _re_lt.sub(r'[ \t]+', ' ', t).strip()
-
-    # \u2500\u2500 10. Improve display of subscript digits \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    SUB_D = {'0':'\u2080','1':'\u2081','2':'\u2082','3':'\u2083','4':'\u2084',
-             '5':'\u2085','6':'\u2086','7':'\u2087','8':'\u2088','9':'\u2089',
-             'n':'\u2099','i':'\u1d62','x':'\u2093'}
-    def _sub_d(m):
-        c = m.group(1)
-        return SUB_D.get(c, '_' + c)
-    t = _re_lt.sub(r'_([a-z0-9])', _sub_d, t)
-    # Ensure * is shown as x (multiplication) for readability in display
-    t = t.replace(' * ', ' \u00d7 ').replace('*', '\u00d7')
-    t = _re_lt.sub(r'  +', ' ', t).strip()
     return t
 
 
@@ -2393,563 +2381,211 @@ if (!window.__qanimRAFStarted) {
     return data
 
 def _build_scene6_html(sol: dict, scene: dict) -> str:
-    """Build Scene 7 (Formula Cards) HTML — matches reference lesson-formula-grid layout."""
-    # ── Build lesson-formula-grid from sol data ──────────────────────────────
-    # Match the reference layout: formula cards, one per answer, with name,
-    # formula equation, why-explanation, and key-meaning fields.
-    # Primary source: sol["approach_steps"] → each step becomes a formula card.
-    # Fallback: single card from sol["formula"] + sol["formula_name"].
-
-    approach_steps = sol.get("approach_steps") or []
+    """Build Scene 7 (Main Formula) HTML — matches reference exactly."""
+    # Apply LaTeX → plain text cleanup before any HTML escaping
     formula_raw    = _clean_latex(str(sol.get("formula", "Governing Formula")))
-    formula_name   = _clean_latex(str(sol.get("formula_name", "Formula")))
+    formula_text   = _he(formula_raw)
+    formula_attr   = html_module.escape(formula_raw, quote=True)
+    formula_name   = _he(_clean_latex(str(sol.get("formula_name", "Formula"))))
 
-    formula_cards = ""
-    if approach_steps:
-        for i, ap in enumerate(approach_steps, 1):
-            card_name    = _he(_clean_latex(str(ap.get("label", f"Step {i}"))))
-            card_formula = _he(_clean_latex(str(ap.get("eq", formula_raw))))
-            card_why     = _he(_clean_latex(str(ap.get("note", "Apply this formula to find the answer."))))
-            card_key     = _he(_clean_latex(str(ap.get("label", ""))))
-            badge_num    = _he(str(ap.get("num", i)))
-            formula_cards += (
-                f'<article class="lesson-formula">'
-                f'<div class="s6-formula-badge">{badge_num} &middot; {card_name}</div>'
-                f'<div class="lesson-formula-eq">{card_formula}</div>'
-                f'<p class="lesson-why">{card_why}</p>'
-                f'<p class="lesson-key">{card_key}</p>'
-                f'</article>\n'
-            )
-    else:
-        # Single-formula fallback
-        formula_text = _he(formula_raw)
-        formula_name_he = _he(formula_name)
-        key_insight_he = _he(_clean_latex(str(sol.get("key_insight", "Apply the formula with the given values."))))
-        formula_cards = (
-            f'<article class="lesson-formula">'
-            f'<div class="s6-formula-badge">1 &middot; {formula_name_he}</div>'
-            f'<div class="lesson-formula-eq">{formula_text}</div>'
-            f'<p class="lesson-why">This is the governing equation for this problem.</p>'
-            f'<p class="lesson-key">{key_insight_he}</p>'
-            f'</article>\n'
-        )
+    variables = sol.get("variables", [])
+    var_boxes = ""
+    for v in variables:
+        # Support both Gemini key names: "symbol" (correct) and "sym" (legacy)
+        sym_raw  = v.get("symbol") or v.get("sym") or "?"
+        sym  = _he(sym_raw)
+        name = _he(v.get("name", "Variable"))
+        # Show value + unit together if available
+        val_raw  = v.get("value") or v.get("val") or ""
+        unit_raw = v.get("unit", "")
+        val_disp = _he((val_raw + (" " + unit_raw if unit_raw else "")).strip())
+        # Map color string to CSS variant class
+        color_map = {
+            "blue": "s6v-blue", "green": "s6v-green", "orange": "s6v-orange",
+            "red": "s6v-red", "purple": "s6v-purple", "teal": "s6v-teal",
+        }
+        color_cls = color_map.get(str(v.get("color", "blue")).lower(), "s6v-blue")
+        var_boxes += f"""<div class="s6-var-box {color_cls}">
+          <div class="s6-var-arrow"></div>
+          <div class="s6-var-inner">
+            <span class="s6-var-sym">{sym}</span>
+            <span class="s6-var-name">{sym} &mdash; {name}</span>
+            <span class="s6-var-val" id="s6v-{sym_raw}-val">{val_disp}</span>
+          </div>
+        </div>\n"""
 
-    # Basis note (e.g. "Use BP and efficiency")
-    basis_text = _he(_clean_latex(str(sol.get("note", "")))) if sol.get("note") else ""
-    basis_p = f'<p id="lesson-basis" style="font-size:12px;line-height:1.5;color:#92400e;margin-top:16px">{basis_text}</p>' if basis_text else '<p id="lesson-basis" style="font-size:12px;line-height:1.5;color:#92400e;margin-top:16px"></p>'
+    note_text = _he(_clean_latex(str(sol.get("note", "")))) if sol.get("note") else ""
+    note_bar = ""
+    if note_text:
+        note_bar = f"""<div class="s6-note-bar" id="s6-note-bar">
+        <span class="s6-note-icon">&#x26A1;</span>
+        <span class="s6-note-text" id="s6-note-text">{note_text}</span>
+      </div>"""
 
     return f"""<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-labelledby="s6-card-title">
- <div class="s6-card">
-  <div class="s6-title-bar"><h2 id="s6-card-title">Step 7 &#x2014; Formulas to use</h2></div>
-  <div class="s6-body"><div class="lesson-formula-grid" id="s7-formulas">
-{formula_cards}
-  </div>{basis_p}</div>
-  <div class="s6-nav-row"><button class="btn-secondary" onclick="qanim_goToPrevScene()">&#x2190; Step 6</button><button class="btn-primary" onclick="if(typeof window.qanim_showScene7==='function')window.qanim_showScene7()">Step 8: Solve &#x25B6;</button></div>
- </div>
+  <div class="s6-card">
+    <div class="s6-title-bar">
+      <h2 id="s6-card-title">Step 7 &mdash; Main Formula</h2>
+    </div>
+    <div class="s6-body">
+      <div class="s6-phase-progress" id="s6-phase-progress">Step 1 of {len(variables) + 1} &mdash; The Formula</div>
+      <div class="s6-phase-caption" id="s6-phase-caption">This is the governing equation for this problem. Each symbol is explained below.</div>
+      <div class="s6-formula-box">
+        <div class="s6-formula-badge">Governing Equation</div>
+        <div class="s6-formula-main s6-math-formula" id="s6-formula-text"
+             data-formula="{formula_attr}">{formula_text}</div>
+        <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_name}</div>
+      </div>
+      <div class="s6-vars-row" id="s6-vars-row">
+        {var_boxes}
+      </div>
+      {note_bar}
+    </div>
+    <div class="s6-nav-row">
+      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back to Step 6</button>
+      <button class="btn-primary" onclick="qanim_s6Advance()" id="s6-next-btn">Next &#x25B6;</button>
+    </div>
+  </div>
 </div>"""
 
 
 def _build_scene7_html(sol: dict, scene: dict) -> str:
-    """Build Scene 8 (Solve Each Answer) HTML — matches reference navable lesson layout."""
-    # Build per-condition solving content from approach_steps
-    # The reference uses lesson-targets tabs + left/right layout for each answer.
+    """Build Scene 8 (Substitution) HTML — matches reference exactly."""
+    # Apply LaTeX → plain text cleanup before HTML escaping
+    system_title  = _he(_clean_latex(str(sol.get("system_title",  "Physical System"))))
+    system_label2 = _he(_clean_latex(str(sol.get("system_label2", "Substituting given values"))))
+    formula_result = _he(_clean_latex(str(sol.get("formula", "Formula"))))
+    final_answer   = _he(_clean_latex(str(sol.get("final_answer", "See calculation"))))
 
-    given_list = sol.get("given_list") or []
-    given_html = ""
-    for g in given_list:
-        g_str = str(g)
-        if "=" in g_str:
-            sym_part = _he(_clean_latex(g_str.split("=")[0].strip()))
-            val_part = _he(_clean_latex(g_str.split("=", 1)[1].strip()))
-            given_html += f'<div class="s7-given-item"><strong>{sym_part}</strong> = {val_part}</div>\n'
-        else:
-            given_html += f'<div class="s7-given-item">{_he(_clean_latex(g_str))}</div>\n'
+    given_list = sol.get("given_list", [])
+    given_html = "".join(
+        f'<div class="s7-given-item"><strong>{_he(_clean_latex(g.split("=")[0].strip()) if "=" in g else "")}</strong>'
+        f'{(" = " + _he(_clean_latex(g.split("=",1)[1].strip()))) if "=" in g else _he(_clean_latex(str(g)))}</div>\n'
+        for g in given_list
+    )
 
-    # Right-col: approach step-by-step work
-    approach_steps = sol.get("approach_steps") or []
-    work_html = ""
+    approach_steps = sol.get("approach_steps", [])
+    approach_html = ""
     for ap in approach_steps:
+        num   = _he(str(ap.get("num", "")))
         label = _he(_clean_latex(str(ap.get("label", ""))))
         eq    = _he(_clean_latex(str(ap.get("eq", ""))))
         note  = _he(_clean_latex(str(ap.get("note", ""))))
-        work_html += (
-            f'<div class="lesson-calc">'
-            f'<div class="lesson-calc-label">{label}</div>'
-            f'<div class="s7-approach-step-eq">{eq}'
-            + (f'<br><span style="font-size:11px;color:#64748b;">{note}</span>' if note else '')
-            + f'</div></div>\n'
-        )
+        approach_html += f"""<div class="s7-approach-step">
+          <span class="s7-approach-step-num">{num}</span>
+          <span>{label}
+            <span class="s7-approach-step-eq">{eq}</span>
+            {f'<span style="display:block;font-size:11px;color:#64748b;margin-top:3px;">{note}</span>' if note else ''}
+          </span>
+        </div>
+"""
 
-    formula_result = _he(_clean_latex(str(sol.get("formula", ""))))
-    final_val      = _he(str(sol.get("answer_value", "?")))
-    final_unit     = _he(str(sol.get("answer_unit", "")))
-    system_title   = _he(_clean_latex(str(sol.get("system_title", "Physical System"))))
-
-    return (
-        '<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">\n'
-        ' <div class="s7-card">\n'
-        '  <div class="s7-title-bar"><h2 id="s8-card-title">Step 8 &#x2014; Solve each answer</h2></div>\n'
-        '  <nav class="lesson-targets" id="s8-task-nav" aria-label="Answers to find"></nav>\n'
-        '  <div class="s7-body-cols">\n'
-        '   <div class="s7-left-col">\n'
-        '    <div class="s7-system-label" id="s8-progress"></div>\n'
-        f'    <div class="s7-system-visual"><div class="s7-system-visual-title" id="s8-task-title">{system_title}</div></div>\n'
-        '    <div class="s7-given-section-title">Use these values</div>\n'
-        f'    <div class="s7-given-list" id="s8-task-given" style="font-size:14px;line-height:1.9;color:#334155">{given_html}</div>\n'
-        f'    <div class="s7-formula-result-bar"><div class="s7-formula-result-text" id="s8-task-formula">{formula_result}</div></div>\n'
-        '   </div>\n'
-        '   <div class="s7-right-col" aria-live="polite">\n'
-        f'    <div class="s7-approach-list" id="s8-task-work">{work_html}</div>\n'
-        f'    <div class="s7-formula-result-bar"><div class="s7-formula-result-text" id="s8-task-result">{final_val} {final_unit}</div></div>\n'
-        '   </div>\n'
-        '  </div>\n'
-        '  <div class="s7-nav-row">'
-        '<button class="btn-secondary" id="s8-back" onclick="if(typeof window.qanim_goToScene6FromScene7===\'function\')window.qanim_goToScene6FromScene7()">&#x2190; Step 7</button>'
-        '<button class="btn-primary" id="s8-next" onclick="if(typeof window.qanim_showScene9===\'function\')window.qanim_showScene9()">Step 9: Final answer &#x25B6;</button>'
-        '</div>\n'
-        ' </div>\n'
-        '</div>'
-    )
+    return f"""<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">
+  <div class="s7-card">
+    <div class="s7-title-bar">
+      <h2 id="s8-card-title">Step 8 &mdash; Step-by-Step Substitution</h2>
+    </div>
+    <div class="s7-body-cols">
+      <div class="s7-left-col">
+        <div class="s7-system-label">System Diagram</div>
+        <div class="s7-system-visual">
+          <div class="s7-system-visual-title" id="s7-system-title">{system_title}</div>
+          <div class="s7-system-arrows">&#x2191; &#x2191; &#x2191;</div>
+          <div class="s7-system-label2" id="s7-system-label2">{system_label2}</div>
+        </div>
+        <div class="s7-formula-result-bar">
+          <div class="s7-formula-result-text" id="s7-formula-result">{formula_result}</div>
+          <div class="s7-formula-units" id="s7-units-hint">Units: check dimensional consistency</div>
+        </div>
+      </div>
+      <div class="s7-right-col">
+        <div>
+          <div class="s7-given-section-title">Given Parameters</div>
+          <div class="s7-given-list" id="s7-given-list">{given_html}</div>
+        </div>
+        <div>
+          <div class="s7-approach-section-title">Substituting Given Values into the Formula</div>
+          <div class="s7-approach-list" id="s7-approach-list">{approach_html}</div>
+        </div>
+        <div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fcd34d;border-radius:10px;padding:11px 15px;display:flex;align-items:center;gap:8px;">
+          <span style="font-size:16px;">&#x27A1;&#xFE0F;</span>
+          <span style="font-size:12.5px;font-weight:700;color:#92400e;">Proceed to <strong>Step 9</strong> to see the Final Answer with units and conclusion.</span>
+        </div>
+      </div>
+    </div>
+    <div class="s7-nav-row">
+      <button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Back to Step 7</button>
+      <button class="btn-primary" onclick="if(typeof window.qanim_showScene9===&#39;function&#39;)window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>
+    </div>
+  </div>
+</div>"""
 
 
 def _build_scene9_html(sol: dict, to_find: list) -> str:
-    """Build Scene 9 (Final Answers) HTML — matches reference lesson-answer-grid layout."""
-    # Build lesson-answer-grid from sol data
-    # Match the reference: one answer card per sub-answer with value, unit, note.
-    # Primary source: sol["approach_steps"] gives each sub-answer.
-    # Fallback: single card from sol["answer_value"] + sol["answer_unit"].
+    """Build Scene 9 (Final Answer) HTML — matches reference exactly."""
+    formula_raw    = sol.get("formula", "Governing Formula")
+    formula_recap  = _he(formula_raw)
+    formula_attr   = html_module.escape(formula_raw, quote=True)
+    chain = sol.get("substitution_chain", [])
+    answer_value = _he(sol.get("answer_value", "?"))
+    answer_unit = _he(sol.get("answer_unit", ""))
+    key_insight = sol.get("key_insight", "Apply the governing formula with the given data.")
+    to_find_label = _he(to_find[0] if to_find else "Final Answer")
+    final_answer = _he(sol.get("final_answer", "See calculation"))
 
-    import re as _re_ans
-    approach_steps = sol.get("approach_steps") or []
-    answer_value = str(sol.get("answer_value", "?"))
-    answer_unit  = str(sol.get("answer_unit", ""))
-    key_insight  = _clean_latex(str(sol.get("key_insight", "Apply the governing formula with the given data.")))
-
-    answer_cards = ""
-    if approach_steps:
-        for i, ap in enumerate(approach_steps, 1):
-            eq_raw = str(ap.get("eq", ""))
-            label  = _he(_clean_latex(str(ap.get("label", f"Answer {i}"))))
-            note   = _he(_clean_latex(str(ap.get("note", ""))))
-            eq_clean = _clean_latex(eq_raw)
-            # Try to extract trailing numeric result from equation
-            num_match = _re_ans.search(r'[=\u2248]\s*([\d,.]+(?:\s*\w+)?(?:/\w+)?)\s*$', eq_clean)
-            if num_match:
-                card_val  = _he(num_match.group(1).strip())
-                card_unit = ""
-            else:
-                card_val  = _he(eq_clean[:60]) if eq_clean else _he(answer_value)
-                card_unit = _he(answer_unit)
-            answer_cards += (
-                f'<article class="lesson-answer">'
-                f'<h3>{i} &middot; {label}</h3>'
-                f'<div class="lesson-answer-number">{card_val}<span>{card_unit}</span></div>'
-                f'<p>{note}</p>'
-                f'</article>\n'
-            )
-    else:
-        # Single final answer fallback
-        to_find_label = _he(to_find[0] if to_find else "Final Answer")
-        answer_cards = (
-            f'<article class="lesson-answer">'
-            f'<h3>1 &middot; {to_find_label}</h3>'
-            f'<div class="lesson-answer-number">{_he(answer_value)}<span>{_he(answer_unit)}</span></div>'
-            f'<p>{_he(key_insight)}</p>'
-            f'</article>\n'
+    chain_html = ""
+    for row in chain:
+        num = row.get("num", 1)
+        eq_raw  = row.get("eq", "")
+        eq_attr = html_module.escape(eq_raw, quote=True)
+        eq_text = _he(eq_raw)
+        # Add a descriptive step label if available
+        step_labels = ["Write formula", "Substitute values", "Simplify", "Compute result", "Final answer"]
+        step_label = step_labels[num - 1] if (num - 1) < len(step_labels) else f"Step {num}"
+        chain_html += (
+            f'<div class="s9-sub-row" data-s9-idx="{num-1}">'
+            f'<div class="s9-sub-num">{num}</div>'
+            f'<div class="s9-sub-eq s9-math-formula" data-formula="{eq_attr}">'
+            f'<span class="s9-step-lbl">{step_label}:</span> {eq_text}</div>'
+            f'</div>\n'
         )
 
-    return (
-        '<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-labelledby="s9-card-title">\n'
-        ' <div class="s9-card">\n'
-        '  <div class="s9-title-bar"><h2 id="s9-card-title">Step 9 &#x2014; Final answers</h2></div>\n'
-        '  <div class="s9-body"><div class="lesson-answer-grid" id="s9-answers">\n'
-        f'{answer_cards}'
-        '  </div></div>\n'
-        '  <div class="s9-nav-row">'
-        '<button class="btn-secondary" onclick="if(typeof window.qanim_goToScene7FromScene9===\'function\')window.qanim_goToScene7FromScene9()">&#x2190; Step 8</button>'
-        '<button class="btn-primary" onclick="if(typeof window.resetAnim===\'function\')window.resetAnim()">&#x21BA; Restart</button>'
-        '</div>\n'
-        ' </div>\n'
-        '</div>'
-    )
-
-
+    return f"""<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-labelledby="s9-card-title">
+  <div class="s9-card">
+    <div class="s9-title-bar">
+      <h2 id="s9-card-title">&#x2705; Step 9 &mdash; Final Answer</h2>
+      <p>{to_find_label}</p>
+    </div>
+    <div class="s9-body">
+      <div class="s9-formula-recap">
+        <div class="s9-formula-recap-label">&#x1F4D0; Governing Formula (from Step 7)</div>
+        <div class="s9-formula-recap-eq s9-math-formula" id="s9-formula-recap"
+             data-formula="{formula_attr}">{formula_recap}</div>
+      </div>
+      <div class="s9-sub-chain" id="s9-sub-chain">
+        {chain_html}
+      </div>
+      <div class="s9-final-box" id="s9-final-box">
+        <div class="s9-final-label">&#x2B50; Final Answer</div>
+        <div class="s9-final-value" id="s9-final-value"><span class="s9-highlight">{answer_value}</span> {answer_unit}</div>
+        <div class="s9-final-unit" id="s9-final-unit">Units: {answer_unit} &nbsp;|&nbsp; &#x2714; Dimensionally consistent</div>
+      </div>
+      <div class="s9-insight-bar" id="s9-insight-bar">
+        <span class="s9-insight-icon">&#x1F4A1;</span>
+        <div class="s9-insight-text" id="s9-insight-text"><strong>Key Insight:</strong> {_he(key_insight)}</div>
+      </div>
+    </div>
+    <div class="s9-nav-row">
+      <button class="btn-secondary" onclick="if(typeof window.qanim_goToScene7FromScene9===&#39;function&#39;)window.qanim_goToScene7FromScene9()">&#x2190; Back to Step 8</button>
+      <button class="btn-primary" onclick="if(typeof window.resetAnim===&#39;function&#39;)window.resetAnim()">&#x21BA; Restart Animation</button>
+    </div>
+  </div>
+</div>"""
 
 
 # ===========================================================================
 # CSS Templates (reference-exact)
 # ===========================================================================
-
-_LESSON_CONDITIONS_CSS = """
-
-/* LESSON CONDITIONS CSS - Steps 7-9 Premium Math Typesetting */
-
-/* Step 7: formula-grid */
-#qanim-scene6-overlay .lesson-formula-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-}
-#qanim-scene6-overlay .lesson-formula {
-  background: linear-gradient(160deg, #fff 0%, #f0f5ff 100%);
-  border: 1.5px solid #bfdbfe;
-  border-radius: 18px;
-  padding: 22px 20px 18px;
-  position: relative; overflow: hidden;
-  box-shadow: 0 2px 14px rgba(29,78,216,.07), inset 0 1px 0 rgba(255,255,255,.9);
-  transition: transform .22s cubic-bezier(.34,1.56,.64,1), box-shadow .22s;
-}
-#qanim-scene6-overlay .lesson-formula:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 6px 22px rgba(29,78,216,.14);
-}
-#qanim-scene6-overlay .lesson-formula::before {
-  content: '';
-  position: absolute; top: 0; left: 0; right: 0; height: 3px;
-  background: linear-gradient(90deg, #1d4ed8, #6366f1);
-  border-radius: 18px 18px 0 0;
-}
-#qanim-scene6-overlay .s6-formula-badge {
-  display: inline-block;
-  padding: 4px 13px; border-radius: 22px;
-  background: rgba(29,78,216,.09); border: 1px solid rgba(29,78,216,.22);
-  font-size: 10.5px; font-weight: 800; color: #1e40af;
-  letter-spacing: .8px; text-transform: uppercase; margin-bottom: 14px;
-}
-/* Formula equation - serif math font, textbook quality */
-#qanim-scene6-overlay .lesson-formula-eq {
-  font-family: 'STIX Two Text', 'Cambria Math', 'Times New Roman', 'Georgia', serif;
-  font-size: 22px; font-weight: 700; font-style: italic;
-  color: #1d4ed8; line-height: 1.6; overflow-wrap: anywhere;
-  letter-spacing: .2px;
-}
-#qanim-scene6-overlay .lesson-why {
-  font-size: 13.5px; color: #334155; line-height: 1.65;
-  margin-top: 11px; font-weight: 400;
-}
-#qanim-scene6-overlay .lesson-key {
-  font-size: 11.5px; color: #64748b; line-height: 1.5;
-  margin-top: 7px; font-weight: 600; font-style: italic;
-}
-#qanim-scene6-overlay #lesson-basis {
-  font-size: 12px; line-height: 1.6; color: #92400e;
-  margin-top: 18px; padding: 10px 16px;
-  background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
-}
-
-/* Step 8: lesson-targets nav tabs */
-#qanim-scene7-overlay .lesson-targets {
-  display: flex; flex-wrap: wrap; gap: 8px;
-  padding: 16px 28px;
-  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
-  border-bottom: 1.5px solid #e2eeff;
-}
-#qanim-scene7-overlay .lesson-target {
-  font-family: inherit; font-size: 12.5px; font-weight: 700;
-  border: 1.5px solid #cbd5e1; border-radius: 22px;
-  background: #f8fafc; color: #475569; padding: 7px 16px;
-  cursor: pointer;
-  transition: all .2s cubic-bezier(.34,1.56,.64,1);
-}
-#qanim-scene7-overlay .lesson-target:hover {
-  background: rgba(8,145,178,.08); border-color: rgba(8,145,178,.35);
-  color: #0e7490; transform: translateY(-1px);
-}
-#qanim-scene7-overlay .lesson-target.is-current {
-  color: #fff; background: linear-gradient(135deg,#0e7490,#0891b2);
-  border-color: transparent; box-shadow: 0 3px 10px rgba(8,145,178,.32);
-}
-#qanim-scene7-overlay .lesson-target:focus-visible {
-  outline: 3px solid #38bdf8; outline-offset: 2px;
-}
-/* Step 8 work area: math equations with serif font */
-#qanim-scene7-overlay .lesson-calc {
-  margin-bottom: 18px; padding: 14px 16px;
-  background: linear-gradient(135deg, #f8fbff, #f0f5ff);
-  border-radius: 12px; border: 1px solid #dde8f8;
-  border-left: 3px solid #0891b2;
-}
-#qanim-scene7-overlay .lesson-calc-label {
-  font-size: 11.5px; font-weight: 800; color: #0e7490;
-  letter-spacing: .5px; text-transform: uppercase; margin-bottom: 7px;
-}
-#qanim-scene7-overlay .s7-approach-step-eq {
-  font-family: 'STIX Two Text', 'Cambria Math', 'Times New Roman', serif;
-  font-size: 16px; font-style: italic; font-weight: 600;
-  color: #1e293b; line-height: 1.7; padding: 4px 0;
-  overflow-wrap: anywhere; letter-spacing: .1px;
-}
-#qanim-scene7-overlay .s7-right-col { min-width: 0; }
-#qanim-scene7-overlay .s7-given-item {
-  font-size: 13.5px; line-height: 1.9; color: #334155;
-}
-#qanim-scene7-overlay .s7-given-item strong {
-  font-family: 'STIX Two Text', 'Cambria Math', serif;
-  font-style: italic; color: #0e7490;
-}
-#qanim-scene7-overlay .s7-formula-result-bar {
-  margin-top: 12px; padding: 10px 14px;
-  background: linear-gradient(135deg, #eff6ff, #dbeafe);
-  border-radius: 10px; border: 1.5px solid #bfdbfe;
-}
-#qanim-scene7-overlay .s7-formula-result-text {
-  font-family: 'STIX Two Text', 'Cambria Math', 'Times New Roman', serif;
-  font-size: 15px; font-style: italic; font-weight: 700;
-  color: #1d4ed8; overflow-wrap: anywhere;
-}
-#qanim-scene7-overlay .s7-given-section-title {
-  font-size: 10.5px; font-weight: 800; color: #0891b2;
-  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;
-}
-#qanim-scene7-overlay .s7-system-visual {
-  background: linear-gradient(135deg, #f0fdfb, #e6f7ff);
-  border: 1.5px solid #a5f3fc; border-radius: 14px;
-  padding: 16px; margin-bottom: 14px;
-}
-#qanim-scene7-overlay .s7-system-visual-title {
-  font-size: 14px; font-weight: 800; color: #0e7490; text-align: center;
-}
-#qanim-scene7-overlay .s7-system-label {
-  font-size: 10px; font-weight: 800; color: #475569;
-  letter-spacing: .8px; text-transform: uppercase; margin-bottom: 8px;
-}
-
-/* Step 9: lesson-answer-grid */
-#qanim-scene9-overlay .lesson-answer-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-}
-#qanim-scene9-overlay .lesson-answer {
-  background: linear-gradient(160deg, #edfaf4 0%, #d1fae5 100%);
-  border: 1.5px solid #6ee7b7; border-radius: 18px;
-  padding: 22px 20px 18px; position: relative; overflow: hidden;
-  box-shadow: 0 2px 14px rgba(0,133,141,.08), inset 0 1px 0 rgba(255,255,255,.8);
-  transition: transform .22s cubic-bezier(.34,1.56,.64,1), box-shadow .22s;
-}
-#qanim-scene9-overlay .lesson-answer:hover {
-  transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,133,141,.18);
-}
-#qanim-scene9-overlay .lesson-answer::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-  background: linear-gradient(90deg, #059669, #10b981);
-  border-radius: 18px 18px 0 0;
-}
-#qanim-scene9-overlay .lesson-answer h3 {
-  font-size: 10.5px; font-weight: 800; color: #059669;
-  letter-spacing: .8px; text-transform: uppercase; margin: 0 0 14px;
-}
-/* Big answer number - textbook math font */
-#qanim-scene9-overlay .lesson-answer-number {
-  font-family: 'STIX Two Text', 'Cambria Math', 'Georgia', serif;
-  font-size: 38px; font-weight: 700; color: #047857;
-  line-height: 1.25; margin-bottom: 10px;
-  overflow-wrap: anywhere; letter-spacing: -.5px;
-}
-#qanim-scene9-overlay .lesson-answer-number span {
-  font-family: 'Inter', sans-serif;
-  font-size: 17px; font-weight: 600; color: #059669;
-  margin-left: 6px; vertical-align: middle;
-}
-#qanim-scene9-overlay .lesson-answer p {
-  font-size: 13px; color: #065f46; line-height: 1.6; margin: 0;
-}
-
-/* Modal card shells: shared polish */
-.s6-card, .s7-card, .s9-card {
-  font-family: 'Inter', -apple-system, sans-serif;
-  border-radius: 22px;
-  box-shadow: 0 14px 60px rgba(8,145,178,.16), 0 2px 12px rgba(0,0,0,.09);
-  overflow: hidden;
-}
-.s6-title-bar, .s7-title-bar, .s9-title-bar {
-  padding: 26px 32px 22px;
-  background: linear-gradient(135deg, #fff 0%, #f5f8ff 100%);
-  border-bottom: 1.5px solid #e0eaff; text-align: center;
-}
-.s6-title-bar h2, .s7-title-bar h2, .s9-title-bar h2 {
-  font-size: 21px; font-weight: 900; color: #0f172a; letter-spacing: -.4px;
-}
-.s6-body, .s9-body {
-  padding: 28px 32px 24px;
-  background: linear-gradient(160deg, #f0f5fc 0%, #e8f0fe 55%, #eff6ff 100%);
-}
-.s7-body-cols {
-  display: flex; gap: 24px; padding: 24px 28px;
-  background: linear-gradient(160deg, #f0f5fc 0%, #e8f0fe 55%, #eff6ff 100%);
-}
-.s7-left-col { flex: 0 0 260px; min-width: 0; }
-.s7-right-col { flex: 1 1 0; min-width: 0; overflow-y: auto; max-height: 52vh; }
-.s6-nav-row, .s7-nav-row, .s9-nav-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  padding: 18px 32px 24px; border-top: 1.5px solid #e2eeff; background: #fff;
-}
-
-"""
-
-
-
-
-_STEPS16_UPGRADE_CSS = """
-
-/* =========================================================
-   STEPS 1-6 VISUAL UPGRADE
-   Richer animations, premium info-box, textbook typography
-   ========================================================= */
-
-/* --- SVG layer reveal: spring-in animation --- */
-.svg-layer {
-  transition: opacity 0.65s cubic-bezier(.4,0,.2,1),
-              transform 0.65s cubic-bezier(.34,1.56,.64,1);
-  transform-origin: center center;
-}
-
-/* --- Progress bar: animated shimmer gradient --- */
-.step-progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg,
-    #0e7490 0%, #7c3aed 40%, #d97706 80%, #38bdf8 100%);
-  background-size: 200% 100%;
-  animation: qanim-bar-shimmer 3s linear infinite;
-  border-radius: 2px;
-  transition: width 0.55s cubic-bezier(.4,0,.2,1);
-}
-@keyframes qanim-bar-shimmer {
-  0%   { background-position: 100% 0; }
-  100% { background-position:   0% 0; }
-}
-
-/* --- Step dot: pulse on active --- */
-.step-dot.active {
-  animation: qanim-dot-pulse 2.2s ease-in-out infinite;
-}
-@keyframes qanim-dot-pulse {
-  0%,100% { box-shadow:0 3px 12px rgba(8,145,178,.38),0 0 0 0 rgba(8,145,178,.30); }
-  50%      { box-shadow:0 3px 12px rgba(8,145,178,.38),0 0 0 7px rgba(8,145,178,.00); }
-}
-
-/* --- Info box: textbook-style premium --- */
-.info-box {
-  background: linear-gradient(160deg,#f8fbff 0%,#f2f7ff 50%,#eef5ff 100%);
-  border: 1px solid #c7dcf6;
-  border-left: 4.5px solid var(--c-primary-mid,#0891b2);
-  border-radius: 14px;
-  padding: 22px 26px 20px;
-  min-height: 140px;
-  display: flex; flex-direction: column; gap: 12px;
-  position: relative; overflow: hidden;
-  box-shadow: 0 2px 12px rgba(8,145,178,.08),inset 0 1px 0 rgba(255,255,255,.9);
-}
-.info-box::after {
-  content: '';
-  position: absolute; top: 0; right: 0;
-  width: 140px; height: 140px;
-  background: radial-gradient(circle at 100% 0%,
-    rgba(3,105,161,.07) 0%,transparent 65%);
-  pointer-events: none;
-}
-
-/* Step title: serif textbook feel */
-.info-box h3 {
-  font-family: 'Georgia','Times New Roman','Palatino Linotype',serif;
-  font-size: 17px; font-weight: 700; color: #0f172a;
-  line-height: 1.35; letter-spacing: -.2px;
-  display: flex; align-items: flex-start; gap: 10px;
-}
-.info-box h3::before {
-  content: '';
-  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
-  margin-top: 5px;
-  background: linear-gradient(135deg,var(--c-primary-dim,#0e7490),var(--c-primary-mid,#0891b2));
-  box-shadow: 0 0 0 3px rgba(8,145,178,.18);
-  animation: qanim-dot-glow 2.5s ease-in-out infinite;
-}
-@keyframes qanim-dot-glow {
-  0%,100% { box-shadow:0 0 0 3px rgba(8,145,178,.18); }
-  50%      { box-shadow:0 0 0 7px rgba(8,145,178,.00); }
-}
-
-/* Description text: readable textbook quality */
-.info-desc {
-  font-size: 14.5px; line-height: 1.8; color: #334155;
-  font-weight: 400; letter-spacing: .01em;
-}
-
-/* --- Badges: richer micro-styles --- */
-.badge {
-  padding: 5px 14px; border-radius: 22px;
-  font-size: 12px; font-weight: 700; letter-spacing: .1px;
-  backdrop-filter: blur(4px);
-  transition: transform .18s cubic-bezier(.34,1.56,.64,1);
-}
-.badge:hover { transform: translateY(-1px); }
-.badge-cyan {
-  background: linear-gradient(135deg,rgba(8,145,178,.10),rgba(14,116,144,.06));
-  border: 1px solid rgba(8,145,178,.30); color: #0c5e78;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
-}
-.badge-orange {
-  background: linear-gradient(135deg,rgba(217,119,6,.10),rgba(245,158,11,.06));
-  border: 1px solid rgba(217,119,6,.30); color: #92400e;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
-}
-.badge-green {
-  background: linear-gradient(135deg,rgba(22,163,74,.10),rgba(21,128,61,.06));
-  border: 1px solid rgba(22,163,74,.30); color: #15653d;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
-}
-
-/* --- Question banner: textbook decorative mark --- */
-.question-banner {
-  padding: 24px 30px 20px;
-  background: linear-gradient(160deg,#f0f6ff 0%,#eaf2ff 40%,#f5f8ff 100%);
-  border-bottom: 1px solid #dde8f8;
-  position: relative; overflow: hidden;
-}
-.q-text { font-size: 15.5px; color: #0f172a; line-height: 1.7; font-weight: 450; }
-
-/* --- Navigation buttons: premium feel --- */
-.btn-primary {
-  background: linear-gradient(135deg,#0e7490 0%,#0891b2 60%,#06b6d4 100%);
-  color: #fff; border-radius: 12px; padding: 12px 28px;
-  box-shadow: 0 4px 16px rgba(8,145,178,.32),0 1px 4px rgba(0,0,0,.10);
-  font-size: 14px; font-weight: 800; letter-spacing: .2px;
-  transition: all .22s cubic-bezier(.34,1.56,.64,1);
-}
-.btn-primary:hover {
-  background: linear-gradient(135deg,#0c6680 0%,#0e7490 100%);
-  box-shadow: 0 7px 24px rgba(8,145,178,.40),0 2px 6px rgba(0,0,0,.12);
-  transform: translateY(-2px);
-}
-.btn-secondary {
-  background: #fff; color: #475569; border: 1.5px solid #cbd5e1;
-  border-radius: 12px; padding: 12px 22px; font-size: 13.5px; font-weight: 700;
-  box-shadow: 0 1px 4px rgba(15,23,42,.06);
-}
-.btn-secondary:hover {
-  background: #f0f7ff; color: #0f172a; border-color: #93c5fd;
-  box-shadow: 0 3px 10px rgba(15,23,42,.10); transform: translateY(-1px);
-}
-
-/* --- Dashboard: animated top bar --- */
-.dashboard::before {
-  height: 4px;
-  background: linear-gradient(90deg,#0e7490 0%,#7c3aed 33%,#d97706 66%,#0891b2 100%);
-  background-size: 300% 100%;
-  animation: qanim-topbar 4s linear infinite;
-}
-@keyframes qanim-topbar {
-  0%   { background-position:   0% 0; }
-  100% { background-position: 300% 0; }
-}
-
-/* --- Control panel --- */
-.control-panel {
-  padding: 24px 30px 28px;
-  background: linear-gradient(180deg,#fff 0%,#f7faff 100%);
-}
-
-"""
 
 _BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fira+Code:wght@400;500;600;700&display=swap');
@@ -3392,6 +3028,15 @@ button{padding:11px 24px;border-radius:10px;font-size:13.5px;font-weight:700;fon
   box-shadow:0 1px 3px rgba(15,23,42,.06);}
 .btn-secondary:hover{background:#f8fafc;color:var(--text-main);border-color:#94a3b8;
   box-shadow:0 2px 8px rgba(15,23,42,.10);transform:translateY(-1px);}
+
+
+/* ---- Steps 1-6: SVG layer spring animation ---- */
+.svg-layer {
+  will-change: opacity, transform;
+  transition: opacity 0.72s cubic-bezier(.4,0,.2,1),
+              transform 0.72s cubic-bezier(.34,1.56,.64,1) !important;
+}
+
 """
 
 _SCENE6_CSS = """
@@ -3631,6 +3276,17 @@ _SCENE6_CSS = """
   background: rgba(148,163,184,.07);
 }
 .s6tofind-hint strong { color: #cbd5e1; }
+
+
+/* ---- Step 7: formula card text ---- */
+.lesson-why {
+  font-size: 13.5px; color: #334155; line-height: 1.55; margin-top: 8px;
+}
+.lesson-key {
+  font-size: 12px; color: #64748b; line-height: 1.5; margin-top: 5px;
+  font-style: italic;
+}
+
 """
 
 _SCENE7_CSS = """
@@ -3763,6 +3419,46 @@ _SCENE7_CSS = """
 .s7-formula-units{font-size:11px;color:#166534;margin-top:4px;font-style:italic;}
 .s7-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 26px 22px;border-top:1px solid #e8eef8;background:#fff;}
 @media(max-width:600px){.s7-body-cols{flex-direction:column;}.s7-left-col{width:100%;border-right:none;border-bottom:1.5px solid #e8eef8;}}
+
+
+/* ---- Tab navigation (Step 8 multi-answer) ---- */
+.lesson-targets {
+  display: flex; flex-wrap: wrap; gap: 7px;
+  padding: 14px 24px 12px; background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+}
+.lesson-target {
+  font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700;
+  border: 1px solid #cbd5e1; border-radius: 20px;
+  background: #f8fafc; color: #475569;
+  padding: 5px 12px; cursor: pointer;
+  transition: background .2s, border-color .2s, color .2s,
+              transform .18s cubic-bezier(.34,1.56,.64,1);
+}
+.lesson-target:hover {
+  background: rgba(8,145,178,.08); border-color: rgba(8,145,178,.4);
+  color: #0e7490; transform: translateY(-1px);
+}
+.lesson-target.is-current {
+  color: #fff; background: linear-gradient(135deg,#0e7490,#0891b2);
+  border-color: transparent; box-shadow: 0 2px 8px rgba(8,145,178,.28);
+}
+.lesson-target:focus-visible { outline: 3px solid #38bdf8; outline-offset: 2px; }
+
+/* ---- Step 8: calculation work area ---- */
+.lesson-calc { margin-bottom: 16px; }
+.lesson-calc-label {
+  font-size: 13px; font-weight: 700; color: #1e293b;
+  margin-bottom: 7px; line-height: 1.5;
+}
+.s7-approach-step-eq {
+  font-family: 'Cambria Math','STIX Two Text','Times New Roman', serif;
+  font-size: 15.5px; font-style: italic; font-weight: 600;
+  color: #dc2626; background: #fff7ed; border-radius: 10px;
+  padding: 9px 13px; line-height: 1.65;
+  border: 1px solid #fed7aa; overflow-wrap: anywhere;
+}
+
 """
 
 _SCENE9_CSS = """
@@ -3921,6 +3617,32 @@ _SCENE9_CSS = """
 .s9-insight-text{font-size:13px;color:#92400e;line-height:1.65;}
 .s9-insight-text strong{color:#78350f;}
 .s9-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 36px 22px;border-top:1px solid #bbf7d0;background:#f0fdf4;}
+
+
+/* ---- Step 9: answer pulse animation ---- */
+@keyframes s9-value-pulse {
+  0%,100% { text-shadow: none; }
+  50% { text-shadow: 0 0 20px rgba(13,148,136,.4), 0 0 6px rgba(13,148,136,.2); }
+}
+.lesson-answer-number {
+  font-family: 'Cambria Math','STIX Two Text','Times New Roman', serif;
+  color: #0d9488; font-size: 36px; font-weight: 800;
+  line-height: 1.2; margin-bottom: 10px; overflow-wrap: anywhere;
+  animation: s9-value-pulse 2.8s ease-in-out infinite;
+}
+.lesson-answer-number span {
+  font-size: 18px; font-weight: 600; margin-left: 5px;
+  font-family: 'Inter', system-ui, sans-serif; color: #0f766e;
+}
+
+/* ---- Step 9: insight note ---- */
+.lesson-insight-note {
+  font-size: 12.5px; color: #92400e; line-height: 1.6;
+  padding: 10px 14px; border-radius: 10px;
+  background: linear-gradient(135deg,#fffbeb,#fef9c3);
+  border: 1.5px solid #fde68a; margin-top: 4px;
+}
+
 """
 
 _CONTROLS_CSS = """
@@ -4006,6 +3728,10 @@ _SCENE6_JS = """
   function _el(id){return document.getElementById(id);}
   function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
 
+  var s6Phase=-1;
+  var s6AutoAdvanceTimer=null;
+  var s6AutoAdvanceScheduled=false;
+
   function _qanimCancelRAF(){
     if(window.qanimRafId){cancelAnimationFrame(window.qanimRafId);window.qanimRafId=null;}
     if(window.rafId){cancelAnimationFrame(window.rafId);window.rafId=null;}
@@ -4016,12 +3742,58 @@ _SCENE6_JS = """
     if(typeof window.animate==='function'){requestAnimationFrame(window.animate);}
   }
 
-  function _syncDots(idx){
-    var dots=document.querySelectorAll('.step-dot');
-    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<idx)dots[i].classList.add('done');if(i===idx)dots[i].classList.add('active');}
-    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 7 of 9: Formulas';
-    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(7/9*100)+'%';
+  function s6Render(){
+    var boxes=document.querySelectorAll('#s6-vars-row .s6-var-box');
+    var n=boxes.length;
+
+    var fEl=_el('s6-formula-text'),sEl=_el('s6-formula-sublabel');
+    if(fEl)fEl.classList.add('s6-shown');if(sEl)sEl.classList.add('s6-shown');
+
+    for(var i=0;i<n;i++){
+      var b=boxes[i];
+      if(s6Phase>=i+1){b.classList.add('s6-shown');b.classList.toggle('s6-active',s6Phase===i+1);}
+      else{b.classList.remove('s6-shown','s6-active');}
+    }
+
+    var noteEl=_el('s6-note-bar');
+    if(noteEl){if(s6Phase>=n+1)noteEl.classList.add('s6-shown');else noteEl.classList.remove('s6-shown');}
+
+    var progEl=_el('s6-phase-progress');
+    if(progEl){
+      if(s6Phase<=0)progEl.textContent='Step 1 of '+(n+1)+' — The Formula';
+      else if(s6Phase<=n)progEl.textContent='Step '+(s6Phase+1)+' of '+(n+1)+' — Variable '+(s6Phase);
+      else progEl.textContent='Step '+(n+2)+' of '+(n+2)+' — Key Insight';
+    }
+
+    var capEl=_el('s6-phase-caption');
+    if(capEl){
+      if(s6Phase<=0)capEl.textContent='This is the governing formula for this problem.';
+      else if(s6Phase<=n){var sb=boxes[s6Phase-1];capEl.textContent=sb?'Now examining: '+sb.querySelector('.s6-var-sym').textContent+' — '+sb.querySelector('.s6-var-name').textContent:'';}
+      else capEl.textContent='All variables identified. Proceed to the substitution step.';}
+
+    var nb=_el('s6-next-btn');
+    if(nb){
+      if(s6Phase<n){nb.textContent='Next ▶';nb.onclick=function(){window.qanim_s6Advance();};}
+      else if(s6Phase===n){nb.textContent='See Key Insight ▶';nb.onclick=function(){window.qanim_s6Advance();};}
+      else{nb.textContent='Step 8: Substitution ▶';nb.className='btn-primary';
+        nb.onclick=function(){
+          if(typeof window.qanim_showScene7==='function') window.qanim_showScene7();
+        };
+        if(!s6AutoAdvanceScheduled){s6AutoAdvanceScheduled=true;
+          s6AutoAdvanceTimer=setTimeout(function(){
+            var ov=_el('qanim-scene6-overlay');
+            if(ov&&ov.classList.contains('qanim-scene-visible')&&typeof window.qanim_showScene7==='function')window.qanim_showScene7();
+          },3500);
+        }
+      }
+    }
   }
+
+  window.qanim_s6Advance=function(){
+    var n=document.querySelectorAll('#s6-vars-row .s6-var-box').length;
+    if(s6Phase<n+1)s6Phase++;
+    s6Render();
+  };
 
   window.qanim_showScene6=function(){
     var ov=_el('qanim-scene6-overlay');if(ov)ov.classList.add('qanim-scene-visible');
@@ -4030,31 +3802,86 @@ _SCENE6_JS = """
     var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
     _qanimCancelRAF();
     _syncDots(6);
+    s6Phase=0;s6AutoAdvanceScheduled=false;
+    if(s6AutoAdvanceTimer){clearTimeout(s6AutoAdvanceTimer);s6AutoAdvanceTimer=null;}
+    s6Render();
   };
 
   window.qanim_goToPrevScene=function(){
     ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
     var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
+    if(s6AutoAdvanceTimer){clearTimeout(s6AutoAdvanceTimer);s6AutoAdvanceTimer=null;}
     var stage=document.querySelector('.svg-container');if(stage)stage.style.opacity='1';
     if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){
       var last=window.stepsData.length-1;window.currentStep=last;window.applyStep(last);}
     _qanimResumeRAF();
   };
 
-  // Also wire qanimPreviousCondition / qanimNextCondition for Step 8 nav
+  function _syncDots(idx){
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<idx)dots[i].classList.add('done');if(i===idx)dots[i].classList.add('active');}
+    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 7 of 9: Main Formula';
+    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(7/9*100)+'%';
+  }
+
+  
+  // ---- Multi-task controller for Step 8 tab navigation ----
+  var _tasks=[], _current=0, _tLoaded=false;
+
+  function _initTasks(){
+    if(_tLoaded)return;
+    _tLoaded=true;
+    var el=document.getElementById('qanim-scene6-tasks-data');
+    if(el){try{_tasks=JSON.parse(el.textContent||'[]');}catch(x){_tasks=[];}}
+    if(!_tasks.length)_tasks=[{name:'',formula:'',given_html:'',work_html:'',result:''}];
+  }
+
+  function _renderTask(idx){
+    _initTasks();
+    if(!_tasks.length)return;
+    idx=Math.max(0,Math.min(idx,_tasks.length-1));
+    _current=idx;
+    var t=_tasks[idx];
+    var e=function(id){return document.getElementById(id);};
+    var pg=e('s8-progress');if(pg)pg.textContent='ANSWER '+(idx+1)+' OF '+_tasks.length;
+    var tl=e('s8-task-title');if(tl)tl.textContent=t.name||'';
+    var gv=e('s8-task-given');if(gv)gv.innerHTML=t.given_html||'';
+    var fm=e('s8-task-formula');if(fm)fm.textContent=t.formula||'';
+    var wk=e('s8-task-work');if(wk)wk.innerHTML=t.work_html||'';
+    var rs=e('s8-task-result');if(rs)rs.textContent=t.result||'';
+    var nav=e('s8-task-nav');
+    if(nav){
+      var btns=nav.querySelectorAll('.lesson-target');
+      for(var b=0;b<btns.length;b++)btns[b].classList.toggle('is-current',b===idx);
+    }
+    var bk=e('s8-back');if(bk)bk.textContent=idx===0?'<-- Step 7':'<-- Previous';
+    var nx=e('s8-next');if(nx)nx.textContent=idx>=_tasks.length-1?'Step 9 >>':'Next >>';
+    var ov7=e('qanim-scene7-overlay');if(ov7)ov7.scrollTop=0;
+  }
+
+  window.qanimGoToCondition=function(i){
+    _initTasks();
+    if(Number.isInteger(i)&&i>=0&&i<_tasks.length)_renderTask(i);
+  };
   window.qanimPreviousCondition=function(){
-    if(typeof window.qanim_goToScene6FromScene7==='function')window.qanim_goToScene6FromScene7();
+    _initTasks();
+    if(_current>0)_renderTask(_current-1);
+    else if(typeof window.qanim_goToScene6FromScene7==='function')window.qanim_goToScene6FromScene7();
   };
   window.qanimNextCondition=function(){
-    if(typeof window.qanim_showScene9==='function')window.qanim_showScene9();
+    _initTasks();
+    if(_current<_tasks.length-1)_renderTask(_current+1);
+    else if(typeof window.qanim_showScene9==='function')window.qanim_showScene9();
   };
 
-  _onReady(function(){
+_onReady(function(){
     var origReset=window.resetAnim;
     window.resetAnim=function(){
       ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
       var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
       var stage=document.querySelector('.svg-container');if(stage)stage.style.opacity='1';
+      s6Phase=-1;s6AutoAdvanceScheduled=false;
+      if(s6AutoAdvanceTimer){clearTimeout(s6AutoAdvanceTimer);s6AutoAdvanceTimer=null;}
       if(typeof origReset==='function')origReset();
     };
   });
@@ -5644,6 +5471,48 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     scene6_html = _build_scene6_html(sol, scene)
     scene7_html = _build_scene7_html(sol, scene)
     scene9_html = _build_scene9_html(sol, to_find)
+
+
+    # Build tasks JSON for JS Step 8 multi-task controller
+    import json as _json_assemble
+    _ap_steps    = sol.get("approach_steps") or []
+    _given_list  = sol.get("given_list") or []
+    _formula_raw = _clean_latex(str(sol.get("formula", "")))
+    _given_html  = ""
+    for _g in _given_list:
+        _gs = str(_g)
+        if "=" in _gs:
+            _pts = _gs.split("=", 1)
+            _sym = _he(_clean_latex(_pts[0].strip()))
+            _val = _he(_clean_latex(_pts[1].strip()))
+            _given_html += ('<div class="s8-given-row">'
+                + '<span class="s8-given-sym">' + _sym + '</span>'
+                + '<span class="s8-given-eq">=</span>'
+                + '<span class="s8-given-val">' + _val + '</span>'
+                + '</div>')
+        else:
+            _given_html += '<div class="s8-given-row s8-given-note">' + _he(_clean_latex(_gs)) + '</div>'
+    _js_tasks = []
+    for _i, _ap in enumerate(_ap_steps):
+        _lbl  = _clean_latex(str(_ap.get("label", "Step " + str(_i+1))))
+        _eq   = _clean_latex(str(_ap.get("eq",    "")))
+        _nt   = _clean_latex(str(_ap.get("note",  "")))
+        _note_div = ('<div style="font-size:11.5px;color:#64748b;margin-top:4px;font-style:italic;">'
+                    + _he(_nt) + '</div>') if _nt else ""
+        _work = ('<div class="lesson-calc">'
+            + '<div class="lesson-calc-label">' + _he(_lbl) + '</div>'
+            + '<div class="s7-approach-step-eq">' + _he(_eq) + '</div>'
+            + _note_div + '</div>')
+        _js_tasks.append({
+            "name": _lbl, "formula": _formula_raw,
+            "given_html": _given_html, "work_html": _work,
+            "result": _lbl + ": " + _eq if _eq else _lbl,
+        })
+    tasks_data_script = (
+        '<script id="qanim-scene6-tasks-data" type="application/json">'
+        + _json_assemble.dumps(_js_tasks, ensure_ascii=False)
+        + '</script>'
+    ) if _js_tasks else ""
     glossary_panel = _build_glossary_panel(glossary)
     glossary_badge = f'<span class="glossary-ctrl-badge">{len(glossary)}</span>' if glossary else ""
     glossary_sep = '<div class="qanim-ctrl-sep"></div>' if glossary else ""
@@ -5897,9 +5766,6 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   <style id="qanim-base-styles">
 {_BASE_CSS}
   </style>
-  <style id="qanim-steps16-upgrade">
-{_STEPS16_UPGRADE_CSS}
-  </style>
   <style id="qanim-scene6-styles">
 {_SCENE6_CSS}
   </style>
@@ -5911,9 +5777,6 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   </style>
   <style id="qanim-controls-styles">
 {_CONTROLS_CSS}
-  </style>
-  <style id="lesson-conditions-style">
-{_LESSON_CONDITIONS_CSS}
   </style>
 {topic_accent_style}
   <style id="qanim-responsive-fixes">
@@ -5969,6 +5832,7 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
 
 {scene9_html}
 {scene7_html}
+{tasks_data_script}
 <div id="qanim-scene-modal-backdrop"></div>
 {scene6_html}
 {glossary_panel}
