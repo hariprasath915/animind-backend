@@ -128,7 +128,7 @@ MAX_TOKENS_SCENE     = 10000
 # 12000 tokens is sufficient for a well-formed 6-step SVG animation JSON and
 # produces ~40-50KB streams that complete reliably even on unstable IPv6 paths.
 # The primary fix is forcing IPv4 on the API client (see _gemini_client init below).
-MAX_TOKENS_HTML      = 12000
+MAX_TOKENS_HTML      = 14000
 TIMEOUT_SOLUTION     = 180.0   # ↑ increased from 120s — allows slower Gemini responses
 TIMEOUT_SCENE        = 210.0   # ↑ increased from 150s — SVG scene generation can be slow
 # ── Increased from 480s to 600s ───────────────────────────────────────────────
@@ -950,7 +950,12 @@ STRICT RULES
     • Operators: × (multiply), ÷ (divide), · (dot product), √ (square root), ∑ (sum), ∫ (integral)
     • Relations: ≥ ≤ ≈ ≠ ∝ ⇒ → ↔ ≠
     • Style: formal and compact, like a printed LaTeX derivation — no casual abbreviations
-    NEVER use \\alpha, \\omega, \\frac, \\sqrt, $...$, or any LaTeX backslash command."""
+    NEVER use \\alpha, \\omega, \\frac, \\sqrt, $...$, or any LaTeX backslash command.
+14. VISUAL CONCRETENESS: every step's description must name a REAL, drawable object or
+    setting element (e.g. "sedan on a two-lane highway", "traffic queue with brake lights",
+    "fuel-gauge dial"), and layer descriptions in svg_layers must say what physical thing is
+    drawn there. For abstract problems, pick a concrete real-world metaphor from the
+    question's own context."""
 
 
 def analyze_scene(question: str) -> dict:
@@ -1658,6 +1663,253 @@ Do NOT return an empty "raf_js" for problems involving dynamics.
 Return "raf_js": "" ONLY for purely static problems (circuit labels, formula derivation).
 """
 
+_REALISM_ADDON = r"""
+
+============================================================
+SCENE DIRECTOR — REALISTIC WORLD BUILDER (OVERRIDES ANY GENERIC DRAWING RULE ABOVE)
+============================================================
+
+The student must feel they are looking at the REAL situation from the question,
+not a diagram of it. Before drawing, silently plan the following (never output the plan):
+
+ 1. DOMAIN      — vehicles/travel, mechanics, fluids, heat, electricity, optics, waves,
+                  finance/ratio/mixture, geometry, number/algebra, chemistry, biology, other.
+ 2. ACTORS      — every real-world object named or implied in the question
+                  (car, road, fuel tank, wire, pulley, tank, bulb, ball, ladder, train, ...).
+ 3. ENVIRONMENT — where it happens (highway, lab bench, factory floor, playground, pipe network...).
+ 4. STORY BEAT PER STEP — each of the 6 steps adds one visible thing to the world.
+ 5. MOTION      — what is physically moving or changing, and how it should move.
+
+RULE OF REALISM: draw the ACTUAL thing, in a believable setting, with depth.
+NEVER draw a generic rectangle, circle, or icon standing in for a real object.
+If the question is abstract (pure math, ratios, percentages), choose a concrete physical
+METAPHOR from the problem's own context (fuel gauge, water tank, measuring jar, price tag,
+number-line road, balance scale) and build the scene from that.
+
+------------------------------------------------------------
+A. ENVIRONMENT (layer-frame) — a living backdrop, not a grid
+------------------------------------------------------------
+- Keep the mandatory light background rect first. Then add a real setting with depth:
+  * horizon band, soft sky gradient (#e0f2fe → #f8fafc), ground plane, distant silhouettes
+    (hills, buildings, trees, lab shelves, pipes) in low-contrast tints (#cbd5e1 / #e2e8f0).
+  * perspective cues: converging lines, overlapping layers, smaller/lighter far objects.
+  * contact shadows under every grounded object (ellipse, blur filter, opacity .25).
+  * a subtle measurement device that belongs to the scene (distance ruler, odometer strip,
+    scale bar, axis) — never a floating abstract axis.
+- Ambient motion allowed in the frame (loops in RAF): drifting clouds, scrolling lane
+  dashes, flowing water, flickering lamp, rising heat shimmer. Keep it slow and calm.
+- Keep all important content inside x=30..820, y=30..448 (viewBox is cropped by "slice").
+
+------------------------------------------------------------
+B. OBJECT CRAFT (layer-object and layer-param*)
+------------------------------------------------------------
+Build each object from 5+ SVG parts, never one shape:
+  body silhouette (path with curves) + 2-stop or 3-stop gradient + highlight stripe
+  (white, opacity .35) + dark edge stroke (1.2px) + small details (windows, bolts, vents,
+  handles, labels) + drop shadow filter.
+Use <linearGradient>/<radialGradient> for metal, glass, paint, liquid, rubber.
+Liquids: translucent fill + lighter meniscus line + small bubbles/highlight.
+Rotating parts (wheels, gears, pulleys): give the moving part its own <g id="..."> so
+raf_js can rotate it with transform="rotate(a cx cy)". Add spokes/teeth so rotation is visible.
+Define reusable parts once in <defs> with <symbol> or <g id> and place with <use>
+(saves tokens — e.g. one wheel used 4 times, one car body reused for traffic cars).
+
+Domain reference builds (adapt, never copy blindly):
+
+■ VEHICLES / FUEL / SPEED / TRAFFIC
+  - Road: dark asphalt band with lighter edge lines, dashed center lane markings, curb,
+    roadside tree/pole silhouettes, kilometre marker posts with numbers.
+  - Car: side-view sedan/hatchback path: lower body, cabin with gradient glass windows,
+    door line, handle, headlight (warm yellow radial), taillight (red), bumper, side mirror,
+    wheels = tyre (dark circle) + rim (silver radial) + 5 spokes + hub cap, wheel arches,
+    ground shadow ellipse.
+  - Fuel: fuel-gauge dial (arc, ticks E…F, needle) and/or a translucent tank cutaway with
+    liquid level; label "8 L" as a pill; pump icon only if relevant.
+  - Distance: horizontal dimension line with end caps between two road markers, label "120 km".
+  - Traffic: 3–5 other cars (reuse car symbol, different pastel colours, smaller/lighter for
+    depth), tight spacing, red brake lights glowing (feGaussianBlur), a traffic light,
+    slow-moving/queued behaviour, faint exhaust puffs. Mood shifts warmer/greyer in traffic.
+  - Efficiency change: a simple km/L badge or gauge that visibly drops.
+  - Motion: road dashes scroll left; wheels spin proportional to speed; car body bobs 1px;
+    in traffic steps speed eases down (scroll and spin slow), brake lights pulse.
+
+■ MECHANICS (blocks, ramps, pulleys, springs, collisions, projectiles, pendulums)
+  Real textures (wood grain lines, steel gradient), rope as a curved path, spring as
+  zig-zag path, hatched ground, force arrows with marker heads, motion trails.
+  Motion: block slides along ramp with correct friction deceleration; pendulum swings
+  via sin(omega*t); spring compressed/extended via parametric zig-zag path update;
+  projectile follows parabolic arc (x=v0x*t, y=h0-v0y*t+0.5*g*t^2); rope sags with catenary.
+
+■ FLUIDS / TANKS / PIPES / MIXTURES
+  Glass-look containers (white stroke, translucent fill), level line, animated waves via
+  path morph or translateX, valve wheels, flow particles along paths, inlet/outlet arrows.
+  Motion: liquid level rises/falls smoothly (interpolate rect height); wave crest oscillates
+  translateX sinusoidally; 3–5 flow-particle circles move along pipe path cyclically;
+  valve handle rotates; bubbles rise with random vertical speed in the liquid column.
+
+■ HEAT / THERMO
+  Metal with heat gradient, flame or heater coil, thermometers with red column, shimmer
+  lines, insulation hatching, heat-flow arrows hot→cold, temperature pills.
+  Motion: flame tip y ±3 px at ~4 Hz (Math.sin(now*0.004)); thermometer red-column height
+  interpolates to step target; shimmer lines (5 short strokes) translate upward cyclically,
+  opacity fades in-out; metal body shifts hue via filter: hue-rotate or fill lerp (red→blue).
+
+■ ELECTRICITY / CIRCUITS / MAGNETISM
+  Real component drawings (battery with cap, bulb with filament + glow, resistor colour
+  bands, switch with lever, ammeter/voltmeter dial), wires as rounded paths, animated
+  current dots along wires, field lines curved with arrowheads.
+  Motion: 4–6 current-dot circles step along wire path (use getTotalLength + getPointAtLength
+  or pre-compute cx/cy waypoints, stagger offset by index/N); bulb glow pulsates via
+  feGaussianBlur stdDeviation lerp; voltmeter needle rotates proportional to step voltage;
+  switch lever rotates from open (30°) to closed (0°) at step 3 or when circuit closes.
+
+■ OPTICS / WAVES / SOUND
+  Lens/mirror with glass gradient, light rays with arrow markers and angle arcs,
+  sinusoidal waves animated by phase shift, source/observer drawn as real objects.
+  Motion: wave path redrawn each frame as d="M x0,y0 " + points where y=A*sin(kx-wt);
+  multiple concentric arc rings for sound/wave source, opacity decays with radius;
+  light ray endpoints lerp between step positions; image position slides along optical axis.
+
+■ GEOMETRY / ALGEBRA / RATIO / PERCENT / MONEY / AGE / WORK-TIME
+  Draw the story: ladder against a wall, field with fence, water pipes filling a tank,
+  workers with tools, shop shelf with price tags, coins/notes stacks, clocks, balance scale,
+  bar meters showing the percentage. Numbers appear on physical things (tags, dials, signs),
+  never as floating text alone.
+
+■ CHEMISTRY / BIOLOGY / EARTH & SPACE
+  Beakers/flasks with liquid, burner, molecules as shaded spheres with bonds, cells with
+  organelles, planets/orbits with atmosphere glow, layered ground cross-sections.
+
+------------------------------------------------------------
+C. STEP-BY-STEP STORY (one new visible thing per step)
+------------------------------------------------------------
+ Step 1 layer-frame   : the real setting + a scene-appropriate measuring reference.
+ Step 2 layer-object  : the hero object, fully detailed, entering with a spring pop-in
+                        (or driving/sliding in from off-canvas via RAF).
+ Step 3 layer-param1  : first GIVEN quantity attached to a real object (gauge, tag, dimension line).
+ Step 4 layer-param2  : the changing condition/second given (traffic, force, heat, load...).
+                        Its effect on the hero must be VISIBLE (slower car, stretched wire, taller flame).
+ Step 5 layer-derived : the bridge quantity shown physically (new efficiency gauge, ratio bars,
+                        comparison "before vs after" ghost outline). No equations, no answer.
+ Step 6 layer-summary : the whole scene together + polished callout listing given values and
+                        the unknown as a glowing "?" pill with a "Find →" arrow to the
+                        place in the scene where the answer will apply (e.g., 300 km stretch
+                        of road, fuel gauge with "? L"). NEVER show the answer value.
+
+Worked example — "A car consumes 8 L of fuel for 120 km. In traffic its efficiency drops 25%.
+Fuel needed for 300 km in traffic?"
+ 1: two-lane highway at daytime, sky gradient, distant hills, km marker posts, road dashes scrolling.
+ 2: detailed side-view car with spinning wheels driving along the road, headlights, shadow.
+ 3: fuel-tank cutaway/gauge "8 L" + dimension line "120 km" between two markers.
+ 4: traffic jam: 4 cars queued ahead, brake lights, traffic light red, car slows and
+    exhaust puffs increase; badge "Efficiency ↓ 25%" pinned to the dashboard gauge.
+ 5: before/after efficiency gauges (normal vs traffic) as dial needles — needle drops visibly.
+ 6: long road segment marked "300 km" with the car at start, traffic ahead, fuel gauge showing "? L",
+    callout with 8 L, 120 km, 25%, 300 km as pills and the glowing unknown.
+
+------------------------------------------------------------
+D. MOTION (raf_js) — must feel physical
+------------------------------------------------------------
+- Always provide raf_js for any scene with movable/ambient elements.
+- Structure: read window.currentStep every frame; keep prevStep; on change record the
+  transition start time and ease (easeInOutCubic) over ~1500 ms toward the new step state.
+- Keep two kinds of motion:
+    (a) AMBIENT, always on: scrolling road/lane dashes, wheel/gear spin, flow particles,
+        flame flicker, cloud drift, wave phase.
+    (b) STEP-DRIVEN: hero entrance (step 2), effect of the changing condition (step 4),
+        before/after transition (step 5), final composed pose (step 6).
+- Speed is a single variable (e.g. "speed"); scroll offset, wheel angle, exhaust rate and
+  bob amplitude are all derived from it, so everything stays consistent.
+- Use transform attributes on named <g> elements (translate/rotate/scale). Do NOT animate
+  by rebuilding innerHTML. Cache getElementById results once (inside qanimStartRAF).
+- Guard every element lookup (if (el) ...). Never crash if an element is missing.
+- Required pattern (copy this skeleton, then fill in your motion logic):
+    window.qanimStartRAF = function(){
+      if (window.qanimRafId) cancelAnimationFrame(window.qanimRafId);
+      var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var prevStep = -1, transStart = 0, EASE_MS = 1200;
+      function easeIO(t){ t=Math.min(1,t); return t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2; }
+      // Cache element refs here (once), e.g.:
+      // var wheel = document.getElementById('wheel-front');
+      function drawFrame(now){
+        var step = window.currentStep || 0;
+        if (step !== prevStep){ transStart = now; prevStep = step; }
+        var p = easeIO(Math.min(1, (now - transStart) / EASE_MS)); // 0→1 eased
+        if (!reduced) {
+          // AMBIENT: always-on motion (scroll, spin, flicker, flow...)
+          // e.g. wheelAngle += 2; wheel.setAttribute('transform','rotate('+wheelAngle+' 80 380)');
+        }
+        // STEP-DRIVEN: use p to interpolate between step states
+        // e.g. var speed = [1,1,0.4,0.2,0.2,0.2][step]; scrollOffset += speed;
+        window.qanimRafId = requestAnimationFrame(drawFrame);
+      }
+      window.qanimRafId = requestAnimationFrame(drawFrame);
+    };
+  (drawFrame lives INSIDE qanimStartRAF; nothing else assigns qanimStartRAF.)
+- Respect prefers-reduced-motion: if matchMedia('(prefers-reduced-motion: reduce)').matches,
+  freeze ambient motion (still apply step states with p=1 immediately).
+- PERFORMANCE: do not allocate objects inside drawFrame. Cache all getElementById, 
+  Math.PI, step-state arrays at the top of qanimStartRAF.
+
+------------------------------------------------------------
+E. LABELS, TEXT, AND READABILITY
+------------------------------------------------------------
+- Every label sits on a pill (white, opacity .9, rx 6+) with a leader line to its object.
+- Use real names + symbol + value + unit ("Fuel used  8 L", "Distance  120 km").
+- Serif font for quantities, sans for object names; min 12px; dark text (#0f172a).
+- No overlapping labels: place them in free space (sky area, below the road, above objects).
+- Never write the final answer or "= value" of the unknown anywhere in steps 1-6.
+
+------------------------------------------------------------
+F. TECHNICAL SAFETY (the Python sanitizer depends on these)
+------------------------------------------------------------
+- The six top-level groups keep EXACT ids: layer-frame, layer-object, layer-param1,
+  layer-param2, layer-derived, layer-summary. layer-frame starts style="opacity:1", the others
+  style="opacity:0". Sub-groups inside them must NOT start with "layer-" (use car-group,
+  wheel-front, traffic-group, gauge-needle, etc.).
+- Layers are cumulative: objects drawn in layer-object must not be redrawn in later layers;
+  later layers only ADD.
+- svg_defs contains only the inside of <defs> (no <defs> wrapper). Unique ids for every
+  gradient/filter/marker/symbol. No external URLs, images, fonts, or data: URIs.
+- Text inside SVG: Unicode only, no LaTeX. Escape & as &amp; in labels.
+- JSON strings: escape every double quote inside svg_layers/raf_js; prefer single quotes for
+  SVG attribute values and JS strings so the JSON stays valid.
+- SIZE BUDGET: keep total output under ~11,000 tokens. Achieve richness through <symbol>/<use>
+  reuse, gradients, and smart paths — not by repeating long markup. Prioritise: hero object
+  detail > environment depth > secondary details.
+- MOTION CONSISTENCY: every animated quantity (speed, level, angle, brightness) must be
+  represented as a single numeric variable in raf_js. All visual outputs (scroll offset,
+  wheel angle, dial needle, fill height) are derived from that variable — so that when speed
+  halves in step 4, the road scrolls slower AND the wheels spin slower AND the exhaust
+  puff rate drops — all consistently, with no independent hardcoded values.
+- SMOOTH LERP: interpolate every step-driven value with lerp(a,b,p) = a + (b-a)*p where
+  p = easeInOutCubic((now - transStart) / 1200). Never snap values instantly between steps.
+- RICH RAF (minimum requirements for non-static scenes):
+    ✓ At least 2 ambient motion effects running continuously
+    ✓ At least 1 step-driven effect that visibly changes between step 1 and step 6
+    ✓ Element refs cached before drawFrame, never re-queried each frame
+    ✓ Guard: if(!el) return; for every element before setAttribute
+- Return ONLY the JSON object with svg_defs, svg_layers, steps_data_js, apply_step_js, raf_js.
+
+------------------------------------------------------------
+G. FINAL QUALITY CHECK (silently, before output)
+------------------------------------------------------------
+[ ] Would a student instantly recognise the real-world situation from Step 2 alone?
+[ ] Does each step add exactly one new visible, physically-grounded thing?
+[ ] Does the changing condition visibly change the hero object or environment?
+[ ] Are there gradients, shadows, highlights, depth layers, and named moving parts?
+[ ] Is anything moving in a way that matches the physics (speed consistency, rotation, flow)?
+[ ] Are labels readable, non-overlapping, and free of the final answer?
+[ ] Is the JSON valid and every id unique?
+[ ] Does raf_js use easeInOutCubic and interpolate ALL step-driven values smoothly?
+[ ] Are at least 2 ambient effects running continuously in the RAF loop?
+[ ] Are all moving element refs cached outside drawFrame?
+[ ] Does every object have a gradient, a highlight, AND a drop-shadow?
+[ ] Does the environment layer have a sky, a ground, and at least one depth silhouette?
+"""
+
+_SVG_BUILDER_SYSTEM = _SVG_BUILDER_SYSTEM + _REALISM_ADDON
+
 
 def _rebuild_steps_data_js(scene: dict) -> str:
     """Rebuild stepsData from scene dict to avoid JS syntax errors."""
@@ -1707,21 +1959,59 @@ def build_svg_and_steps(question: str, scene: dict, sol: dict) -> dict:
     # Python f-string interpolation would try to evaluate those as Python
     # expressions, raising NameError: name 'note_text' is not defined.
     prompt = (
-        "You are generating a HIGH-QUALITY, REALISTIC, VISUALLY RICH 6-step SVG animation "
-        "for a student physics/engineering/math question. "
-        "The animation must include:\n"
-        "  • A CLEAR, WELL-ORGANISED LAYOUT with all elements properly positioned.\n"
-        "  • A PROFESSIONAL, ATTRACTIVE DESIGN with gradients, shadows, arrowheads, and vivid colours.\n"
-        "  • STEP-BY-STEP visual explanation from Step 1 (environment) to Step 6 (complete setup).\n"
-        "  • A CLEAR SETUP of the problem: label every object by its real name, symbol, value, and unit.\n"
-        "  • ACCURATE ANIMATIONS for the physical concept: "
-              "mechanical motion, heat transfer, orbital mechanics, elastic deformation, "
-              "fluid flow, oscillation, electrical circuits — as appropriate.\n"
-        "  • SMOOTH TRANSITIONS between each step (opacity fade-in + translateY or scale spring easing).\n"
-        "  • CORRECT LABELS, ARROWS, DIMENSION LINES, and force vectors on every relevant element.\n"
-        "  • REALISTIC MOVEMENT with proper physics-based kinematics in the RAF loop.\n"
-        "  • EASY-TO-UNDERSTAND PRESENTATION: each step should make one concept click for the student.\n"
+        "MISSION: Produce a CINEMA-QUALITY 6-step SVG concept animation for the question below.\n"
+        "You are the world's best scientific SVG artist. Every pixel must earn its place.\n"
         "\n"
+        "=== REALISM REQUIREMENTS (ALL MANDATORY) ===\n"
+        "1. REAL OBJECTS ONLY — draw the actual physical things: a real car with body, windows, "
+           "wheels (tyres + rims + spokes), headlights, mirrors. A real pulley with groove and "
+           "rope. A real beaker with glass highlight and liquid meniscus. NEVER a plain rectangle.\n"
+        "2. LAYERED ENVIRONMENT — sky gradient, ground plane, horizon, distant silhouettes, "
+           "perspective depth. Layer-frame is a living backdrop, not a blank canvas.\n"
+        "3. MATERIALS & SHADING — every solid object gets a 2-stop gradient (light face + dark "
+           "edge), a white highlight stripe (opacity .3), and a blurred ground shadow ellipse.\n"
+        "4. AMBIENT MOTION (always running in RAF loop):\n"
+           "   • Vehicles: road dashes scroll, wheels rotate, body bobs ±1 px at breathing rate.\n"
+           "   • Fluids: wave crest oscillates via sinusoidal translateX on a path.\n"
+           "   • Heat: flame tip y-wobbles ±2 px, shimmer lines scroll upward.\n"
+           "   • Electricity: current-dot groups translate along wire paths cyclically.\n"
+           "   • Pendulum/spring: angular/linear SHM via sin(t * omega + phase).\n"
+           "   • Celestial: orbiting body updates x=cx+r*cos, y=cy+r*sin each frame.\n"
+        "5. STEP-DRIVEN STATE CHANGES — easeInOutCubic over 1 200 ms; speed, position, gauge "
+           "needle, liquid level, and colour ALL interpolate smoothly between step states.\n"
+        "6. NAMED MOVING PARTS — every rotating or translating element is in its own <g id=\"...\"> "
+           "so the RAF loop can transform it directly (never rebuild innerHTML).\n"
+        "7. SYMBOL REUSE — define a <symbol id=\"wheel\"> once; place it 4 times with <use>. "
+           "Define a <symbol id=\"car\"> once; reuse for traffic cars. This saves token budget.\n"
+        "8. LABEL CRAFT — every measurement sits on a white pill (opacity .92, rx 7) with a "
+           "1 px leader line from pill centre to the measured point. Serif font for quantities, "
+           "sans for object names. Min 12 px, max 15 px. Zero overlap.\n"
+        "9. STEP 6 ONLY — show the glowing unknown '?' pill + 'Find →' arrow pointing to the "
+           "place in the scene where the answer will apply. NEVER show the numeric answer.\n"
+        "10. prefers-reduced-motion — if matched, freeze ambient motion but still apply step "
+            "states (opacity, translate) immediately.\n"
+        "\n"
+        "=== RAF LOOP PATTERN (copy this skeleton exactly) ===\n"
+        "window.qanimStartRAF = function(){\n"
+           "  if (window.qanimRafId) cancelAnimationFrame(window.qanimRafId);\n"
+           "  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;\n"
+           "  var prevStep = -1, transStart = 0, EASE_MS = 1200;\n"
+           "  function ease(t){ t=Math.min(1,t); return t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2; }\n"
+           "  function drawFrame(now){\n"
+           "    var step = window.currentStep || 0;\n"
+           "    if (step !== prevStep){ transStart = now; prevStep = step; }\n"
+           "    var p = ease(Math.min(1,(now-transStart)/EASE_MS));\n"
+           "    // 1. ambient motion (if !reduced) \n"
+           "    // 2. step-driven state (always) \n"
+           "    window.qanimRafId = requestAnimationFrame(drawFrame);\n"
+           "  }\n"
+           "  window.qanimRafId = requestAnimationFrame(drawFrame);\n"
+        "};\n"
+        "\n"
+        "• A REALISTIC WORLD: draw the actual objects and setting from the question "
+        "(e.g. a detailed car on a highway with traffic, wheels spinning, fuel gauge), with depth, "
+        "shading, ambient motion, and a visible effect for every changing condition. "
+        "Never use generic boxes or icons. Reuse parts via <symbol>/<use> to stay within the size budget.\n"
         "Follow the scene script and solution EXACTLY — match every object name, symbol, and value.\n"
         "Return ONLY valid JSON (no markdown, no fences).\n"
         "\n"
