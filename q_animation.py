@@ -384,6 +384,47 @@ Solve the given problem and return ONLY valid JSON (no markdown, no fences):
     {"num": "8.2", "label": "Compute ΔT", "eq": "ΔT = 150 − 30 = 120 K", "note": "Temperature difference"},
     {"num": "8.3", "label": "Substitute and solve", "eq": "Q = 25 × 2 × 120 = 6000 W", "note": "Final value"}
   ],
+  "formula_preamble": {
+    "title": "First calculate",
+    "formula": "ω = 2πN ÷ 60",
+    "note": "Convert rpm to rad/s first. Use metres and degree mode."
+  },
+  "formulas": [
+    {
+      "id": "A",
+      "label": "A · SLIDER VELOCITY",
+      "formula": "v = rω sin(θ + φ) ÷ cos φ",
+      "description": "Find how fast the slider moves along its guide.",
+      "vars": "r = crank length; ω = crank speed; θ = crank angle; φ = rod angle"
+    }
+  ],
+  "sub_answers": [
+    {
+      "id": "a",
+      "tab_label": "a · Slider velocity",
+      "answer_label": "Slider velocity",
+      "given_values": ["r = 0.1 m", "l = 0.4 m", "N = 300 rpm", "θ = 60°"],
+      "formula_used": "v = rω sin(θ + φ) ÷ cos φ",
+      "solution_steps": [
+        {
+          "num": 1,
+          "title": "Convert crank speed",
+          "lines": ["ω = 2πN ÷ 60", "ω = 2π × 300 ÷ 60 = 31.4159 rad/s"]
+        }
+      ],
+      "final_line": "v = 3.069 m/s · Toward O (left)"
+    }
+  ],
+  "final_answers": [
+    {
+      "id": "1",
+      "label": "1 · INDICATED POWER",
+      "value": "22.5",
+      "unit": "kW",
+      "description": "Power made inside"
+    }
+  ],
+  "answer_context": "At θ = 60° · crank 300 rpm clockwise",
   "system_title": "Hot Plate in Forced Airflow",
   "system_label2": "Forced convection over a hot surface",
   "customize": {
@@ -395,108 +436,6 @@ Solve the given problem and return ONLY valid JSON (no markdown, no fences):
     ],
     "compute_js": "var Q = vals.h * vals.A * Math.abs(vals.Ts - vals.Ti); return { answer: _fmt(Q), answer_unit: 'W', answer_label: 'Q', derived: {'Q (heat loss)': _fmt(Q) + ' W'} };",
     "question_template": "A surface with area {A} m² and convective coefficient h = {h} W/m²·K. Surface temperature = {Ts} °C, ambient temperature = {Ti} °C. Find the heat loss rate Q."
-  }
-}
-
-FOURTH EXAMPLE — Bus time-distance meeting problem:
-{
-  "steps": [
-    "Step 1: Let k = speed of bus from A (km/h). Bus from B travels at k+20 km/h.",
-    "Step 2: Total distance covered when they meet = 100 km, time = t hours. So: k·t + (k+20)·t = 100.",
-    "Step 3: Buses start 2h apart: bus from B departs 2h later, so it travels (t−2)h before meeting. Equation: k·t + (k+20)·(t−2) = 100.",
-    "Step 4: Also given t = 2.5 h (they meet 2.5 h after bus A departs). Substitute: k·2.5 + (k+20)·0.5 = 100.",
-    "Step 5: 2.5k + 0.5k + 10 = 100 → 3k = 90 → k = 30 km/h. Distance A covers = 30×2.5 = 75 km."
-  ],
-  "final_answer": "k = 30 km/h; bus A travels 75 km before they meet",
-  "answer_value": "30",
-  "answer_unit": "km/h",
-  "key_insight": "Set up two simultaneous distance equations — one per bus — then equate total distance to the gap between cities.",
-  "formula": "d_A + d_B = D_total",
-  "formula_name": "Meeting Point Equation",
-  "variables": [
-    {"symbol": "k",    "name": "Speed of bus A",        "value": "? (to find)", "unit": "km/h", "color": "green"},
-    {"symbol": "k+20", "name": "Speed of bus B",        "value": "k + 20",      "unit": "km/h", "color": "orange"},
-    {"symbol": "t",    "name": "Travel time of bus A",  "value": "2.5",         "unit": "h",    "color": "blue"},
-    {"symbol": "D",    "name": "Total distance A to B",  "value": "100",         "unit": "km",   "color": "blue"}
-  ],
-  "substitution_chain": [
-    {"num": 1, "eq": "d_A + d_B = D_total"},
-    {"num": 2, "eq": "k·t + (k+20)·(t−2) = 100"},
-    {"num": 3, "eq": "30·2.5 + (30+20)·0.5 = 75 + 25 = 100 ✓"},
-    {"num": 4, "eq": "k = 30 km/h, d_A = 30 × 2.5 = 75 km"}
-  ],
-  "given_list": [
-    "D = 100 km (city A to city B)",
-    "Speed of B = speed of A + 20 km/h",
-    "Bus B departs 2 h after bus A",
-    "They meet 2.5 h after bus A departs"
-  ],
-  "approach_steps": [
-    {"num": "8.1", "label": "Write distance equation", "eq": "k·t_A + (k+20)·t_B = 100", "note": "t_B = t_A − 2 = 0.5 h"},
-    {"num": "8.2", "label": "Substitute t_A = 2.5 h",  "eq": "2.5k + 0.5(k+20) = 100",   "note": "Expand and collect"},
-    {"num": "8.3", "label": "Solve for k",             "eq": "3k = 90  →  k = 30 km/h",  "note": "Speed of bus A"},
-    {"num": "8.4", "label": "Distance covered by A",   "eq": "d_A = 30 × 2.5 = 75 km",   "note": "Final answer"}
-  ],
-  "system_title": "Two Buses — Meeting Problem",
-  "system_label2": "Bus A and Bus B travel toward each other and meet",
-  "customize": {
-    "fields": [
-      {"id": "D",   "symbol": "D",    "label": "Total distance A→B",  "default": 100, "unit": "km"},
-      {"id": "dv",  "symbol": "Δv",   "label": "Speed difference B−A","default": 20,  "unit": "km/h"},
-      {"id": "tA",  "symbol": "t_A",  "label": "Travel time of bus A","default": 2.5, "unit": "h"},
-      {"id": "lag", "symbol": "t_lag","label": "Bus B departure delay","default": 2,   "unit": "h"}
-    ],
-    "compute_js": "var tB = vals.tA - vals.lag; if(tB <= 0 || vals.tA <= 0) return {answer:'?', answer_unit:'km/h', answer_label:'k', derived:{}}; var k = (vals.D - vals.dv * tB) / (vals.tA + tB); if(k <= 0) return {answer:'?', answer_unit:'km/h', answer_label:'k', derived:{}}; var dA = k * vals.tA; return {answer: _fmt(k), answer_unit: 'km/h', answer_label: 'k', derived: {'Speed of A (k)': _fmt(k) + ' km/h', 'Speed of B': _fmt(k + vals.dv) + ' km/h', 'Distance by A': _fmt(dA) + ' km', 'Distance by B': _fmt(vals.D - dA) + ' km'}};",
-    "question_template": "Two buses start from cities {D} km apart. Bus B is {dv} km/h faster than bus A. Bus B departs {lag} h later. They meet {tA} h after bus A departs. Find the speed of bus A."
-  }
-}
-
-FIFTH EXAMPLE — Slider-crank mechanism (kinematics / trigonometry):
-{
-  "steps": [
-    "Step 1: Crank radius R and connecting rod length L are given. Crank rotates at angular velocity ω.",
-    "Step 2: Crank-pin position: x_A = R·cos θ, y_A = −R·sin θ.",
-    "Step 3: Slider displacement from centre: x_B = R·cos θ + √(L² − R²·sin²θ).",
-    "Step 4: Slider velocity: v_B = dx_B/dt = −R·ω·sin θ − (R²·ω·sin θ·cos θ)/√(L²−R²·sin²θ).",
-    "Step 5: At given θ, substitute R, L, ω to get numeric x_B and v_B."
-  ],
-  "final_answer": "x_B = R·cos θ + √(L²−R²·sin²θ); v_B = computed from formula",
-  "answer_value": "x_B",
-  "answer_unit": "m",
-  "key_insight": "The slider-crank converts rotary motion to linear; the exact slider displacement and velocity follow from the constraint that the rod length L is constant.",
-  "formula": "x_B = R·cos θ + √(L² − R²·sin²θ)",
-  "formula_name": "Slider Displacement Equation",
-  "variables": [
-    {"symbol": "R",   "name": "Crank radius",          "value": "given",       "unit": "m",    "color": "blue"},
-    {"symbol": "L",   "name": "Connecting rod length",  "value": "given",       "unit": "m",    "color": "blue"},
-    {"symbol": "θ",   "name": "Crank angle",            "value": "given",       "unit": "rad",  "color": "blue"},
-    {"symbol": "ω",   "name": "Angular velocity",       "value": "given",       "unit": "rad/s","color": "blue"},
-    {"symbol": "x_B", "name": "Slider displacement",    "value": "? (to find)", "unit": "m",    "color": "green"},
-    {"symbol": "v_B", "name": "Slider velocity",         "value": "? (to find)", "unit": "m/s",  "color": "green"}
-  ],
-  "substitution_chain": [
-    {"num": 1, "eq": "x_B = R·cos θ + √(L² − R²·sin²θ)"},
-    {"num": 2, "eq": "disc = L² − R²·sin²θ  (check disc ≥ 0)"},
-    {"num": 3, "eq": "x_B = R·cos θ + √(disc)"},
-    {"num": 4, "eq": "v_B = −R·ω·sin θ − (R²·ω·sin θ·cos θ)/√(disc)"}
-  ],
-  "given_list": ["R = crank radius (m)", "L = rod length (m)", "θ = crank angle (rad)", "ω = angular velocity (rad/s)"],
-  "approach_steps": [
-    {"num": "8.1", "label": "Discriminant",    "eq": "disc = L² − R²·sin²θ",                               "note": "Must be ≥ 0"},
-    {"num": "8.2", "label": "Slider position", "eq": "x_B = R·cos θ + √disc",                              "note": "From rod constraint"},
-    {"num": "8.3", "label": "Slider velocity", "eq": "v_B = −R·ω·sin θ − R²·ω·sin θ·cos θ / √disc",        "note": "dx_B/dt"}
-  ],
-  "system_title": "Slider-Crank Mechanism",
-  "system_label2": "Crank rotates → rod pushes slider horizontally",
-  "customize": {
-    "fields": [
-      {"id": "R",     "symbol": "R",  "label": "Crank radius",    "default": 0.1,  "unit": "m"},
-      {"id": "L",     "symbol": "L",  "label": "Rod length",      "default": 0.25, "unit": "m"},
-      {"id": "theta", "symbol": "θ",  "label": "Crank angle",     "default": 30,   "unit": "°"},
-      {"id": "omega", "symbol": "ω",  "label": "Angular velocity","default": 10,   "unit": "rad/s"}
-    ],
-    "compute_js": "var th = vals.theta * Math.PI / 180; var disc = vals.L*vals.L - vals.R*vals.R*Math.sin(th)*Math.sin(th); if(disc < 0) return {answer:'?', answer_unit:'m', answer_label:'x_B', derived:{}}; var xB = vals.R*Math.cos(th) + Math.sqrt(disc); var vB = -vals.R*vals.omega*Math.sin(th) - (vals.R*vals.R*vals.omega*Math.sin(th)*Math.cos(th))/Math.sqrt(disc); return {answer: _fmt(xB), answer_unit: 'm', answer_label: 'x_B', derived: {'x_B (slider pos)': _fmt(xB) + ' m', 'v_B (slider vel)': _fmt(vB) + ' m/s', 'disc': _fmt(disc)}};",
-    "question_template": "Slider-crank: R = {R} m, L = {L} m, θ = {theta}°, ω = {omega} rad/s. Find slider displacement x_B and velocity v_B."
   }
 }
 
@@ -525,10 +464,35 @@ Rules:
   superscripts (², ³), subscripts (_0, _min), fractions as (a)/(b). NEVER use \\frac, \\left,
   \\right, \\omega, \\alpha, \\sqrt, \\cdot, or ANY LaTeX backslash command.
   Example CORRECT: "u_min = m0*g / alpha"  Example WRONG: "u_{min} = \\frac{m_0 g}{\\alpha}"
-- approach_steps: ALWAYS provide 3–5 steps, each with a non-empty "note" field. The "eq" must show the actual equation or numerical substitution for that sub-step — never just a description. The "label" must be a short action verb phrase ("Set up equation", "Solve for k", "Compute distance"). Do not copy "label" from "eq".
-- substitution_chain: MUST show the full numerical substitution chain, not just symbolic steps. Each "eq" after the first must contain at least one numeric value substituted from given_list.
-- customize.compute_js: For multi-step problems (speed+distance, mechanism position+velocity, etc.), compute ALL intermediate values and include them all in the "derived" dict so the Customize panel displays each intermediate result. Intermediate values help students see how changing one input ripples through all derived quantities.
-- customize.fields: NEVER include the unknown(s) as a field — only given, known inputs go in fields. If a quantity is labeled color "green" in variables (i.e. the answer), it must NOT appear in customize.fields.
+
+MULTI-PART RULES:
+- If the question asks for multiple quantities (a, b, c or 1, 2, 3, 4 or IP/FP/IMEP/efficiency),
+  populate "formulas", "sub_answers", and "final_answers" with one entry per part.
+- If the question asks for a single quantity, each array contains exactly one entry.
+- "formula_preamble" is used only when there is a preliminary calculation needed before
+  the main formulas (e.g. converting rpm to rad/s, finding an intermediate angle).
+  Omit it (set to null) for simple single-step problems.
+- "answer_context" is a short subtitle for Step 9, e.g.:
+    "At θ = 60° · crank 300 rpm clockwise"
+    "18 kW brake output · 80% mechanical efficiency"
+    "For the given operating conditions"
+- "formulas[].label" format: "1 · INDICATED POWER" or "A · SLIDER VELOCITY" uppercase.
+- "sub_answers[].given_values": plain strings like "r = 0.1 m", "η_m = 80%".
+- "solution_steps[].lines": each string is one line of working, shown in a code box.
+  Use multiple lines per step for multi-line derivations.
+- "final_line": the boxed green conclusion line for that sub-answer.
+- "final_answers[].value": the numeric result as a string, e.g. "22.5" or "3.069".
+- "final_answers[].unit": unit string only, e.g. "kW", "m/s", "bar", "%".
+- "final_answers[].description": one short phrase, e.g. "Power lost to friction".
+
+NOTATION RULES — CRITICAL (apply to every formula string in formulas, sub_answers, final_answers):
+- Use Unicode directly: ω η θ φ α β γ π ÷ × · ° √ ∞ ± ≥ ≤ ≈
+- Superscripts: v² r³ s⁻¹ sin⁻¹ cos⁻¹ tan⁻¹ (Unicode superscript characters)
+- Subscripts: ηₘ ωᵣ v₀ T₁ (Unicode subscript where available, else underscore: η_m)
+- Fractions: write as (numerator) ÷ (denominator), never \frac
+- Trig: sin cos tan sin⁻¹ cos⁻¹ tan⁻¹ — no backslash, no LaTeX
+- NEVER use \frac \omega \alpha \sqrt \left \right or any LaTeX backslash command
+- All formula strings must be pure Unicode plain text
 
 SECOND EXAMPLE — Rolling body with energy loss (ring on incline):
 {
@@ -636,6 +600,12 @@ def generate_solution(question: str) -> dict:
         "system_label2": "Applying the formula",
         # Fallback customize — a minimal single-field panel so the button always works
         "customize": {"fields": [], "compute_js": "", "question_template": ""},
+        # New fields — always present even in fallback
+        "formulas": [],
+        "formula_preamble": None,
+        "sub_answers": [],
+        "final_answers": [],
+        "answer_context": "For the given operating conditions",
         "_fallback": True,
     }
     if _gemini_client is None:
@@ -673,6 +643,26 @@ def generate_solution(question: str) -> dict:
                     if isinstance(_var, dict):
                         for _vk in ("name", "value"):
                             if _vk in _var: _var[_vk] = _clean_latex(_var[_vk])
+                # ── New fields: sanitize formulas, sub_answers, final_answers ──
+                for _f in data.get("formulas", []):
+                    if isinstance(_f, dict):
+                        if "formula" in _f: _f["formula"] = _clean_latex(_f["formula"])
+                        if "vars"    in _f: _f["vars"]    = _clean_latex(_f["vars"])
+                        if "label"   in _f: _f["label"]   = _clean_latex(_f["label"])
+                for _sa in data.get("sub_answers", []):
+                    if isinstance(_sa, dict):
+                        if "formula_used" in _sa: _sa["formula_used"] = _clean_latex(_sa["formula_used"])
+                        if "final_line"   in _sa: _sa["final_line"]   = _clean_latex(_sa["final_line"])
+                        for _ss in _sa.get("solution_steps", []):
+                            if isinstance(_ss, dict):
+                                if "title" in _ss: _ss["title"] = _clean_latex(_ss["title"])
+                                _ss["lines"] = [_clean_latex(l) for l in _ss.get("lines", [])]
+                if "formula_preamble" in data and isinstance(data["formula_preamble"], dict):
+                    if "formula" in data["formula_preamble"]:
+                        data["formula_preamble"]["formula"] = _clean_latex(data["formula_preamble"]["formula"])
+                for _fa in data.get("final_answers", []):
+                    if isinstance(_fa, dict):
+                        if "description" in _fa: _fa["description"] = _clean_latex(_fa["description"])
                 Log.ok("Solution", f"Got solution: {data.get('final_answer', '')[:60]}")
                 return data
         except Exception as e:
@@ -2487,320 +2477,1504 @@ if (!window.__qanimRAFStarted) {
     return data
 
 def _build_scene6_html(sol: dict, scene: dict) -> str:
-    """Build Scene 7 (Main Formula) HTML — matches reference exactly."""
-    # Apply LaTeX → plain text cleanup before any HTML escaping
-    formula_raw    = _clean_latex(str(sol.get("formula", "Governing Formula")))
-    formula_text   = _he(formula_raw)
-    formula_attr   = html_module.escape(formula_raw, quote=True)
-    formula_name   = _he(_clean_latex(str(sol.get("formula_name", "Formula"))))
+    """Build Scene 7 (Formulas to use) HTML — tabbed formula grid layout."""
 
-    variables = sol.get("variables", [])
-    var_boxes = ""
-    for v in variables:
-        # Support both Gemini key names: "symbol" (correct) and "sym" (legacy)
-        sym_raw  = v.get("symbol") or v.get("sym") or "?"
-        sym  = _he(sym_raw)
-        name = _he(v.get("name", "Variable"))
-        # Show value + unit together if available
-        val_raw  = v.get("value") or v.get("val") or ""
-        unit_raw = v.get("unit", "")
-        val_disp = _he((val_raw + (" " + unit_raw if unit_raw else "")).strip())
-        # Map color string to CSS variant class
-        color_map = {
-            "blue": "s6v-blue", "green": "s6v-green", "orange": "s6v-orange",
-            "red": "s6v-red", "purple": "s6v-purple", "teal": "s6v-teal",
-        }
-        color_cls = color_map.get(str(v.get("color", "blue")).lower(), "s6v-blue")
-        var_boxes += f"""<div class="s6-var-box {color_cls}">
-          <div class="s6-var-arrow"></div>
-          <div class="s6-var-inner">
-            <span class="s6-var-sym">{sym}</span>
-            <span class="s6-var-name">{sym} &mdash; {name}</span>
-            <span class="s6-var-val" id="s6v-{sym_raw}-val">{val_disp}</span>
-          </div>
-        </div>\n"""
-
-    note_text = _he(_clean_latex(str(sol.get("note", "")))) if sol.get("note") else ""
-    note_bar = ""
-    if note_text:
-        note_bar = f"""<div class="s6-note-bar" id="s6-note-bar">
-        <span class="s6-note-icon">&#x26A1;</span>
-        <span class="s6-note-text" id="s6-note-text">{note_text}</span>
-      </div>"""
-
-    return f"""<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-labelledby="s6-card-title">
-  <div class="s6-card">
-    <div class="s6-title-bar">
-      <h2 id="s6-card-title">Step 7 &mdash; Main Formula</h2>
-    </div>
-    <div class="s6-body">
-      <div class="s6-phase-progress" id="s6-phase-progress">Step 1 of {len(variables) + 1} &mdash; The Formula</div>
-      <div class="s6-phase-caption" id="s6-phase-caption">This is the governing equation for this problem. Each symbol is explained below.</div>
-      <div class="s6-formula-box">
-        <div class="s6-formula-badge">Governing Equation</div>
-        <div class="s6-formula-main s6-math-formula" id="s6-formula-text"
-             data-formula="{formula_attr}">{formula_text}</div>
-        <div class="s6-formula-sublabel" id="s6-formula-sublabel">{formula_name}</div>
-      </div>
-      <div class="s6-vars-row" id="s6-vars-row">
-        {var_boxes}
-      </div>
-      {note_bar}
-    </div>
-    <div class="s6-nav-row">
-      <button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Back to Step 6</button>
-      <button class="btn-primary" onclick="qanim_s6Advance()" id="s6-next-btn">Next &#x25B6;</button>
-    </div>
-  </div>
-</div>"""
-
-
-def _build_scene7_html(sol: dict, scene: dict) -> str:
-    """Build Scene 8 (Substitution) HTML — reference design: tabbed multi-answer."""
-    system_title  = _he(_clean_latex(str(sol.get("system_title",  "Physical System"))))
-    system_label2 = _he(_clean_latex(str(sol.get("system_label2", "Substituting given values"))))
-    formula_result = _he(_clean_latex(str(sol.get("formula", "Formula"))))
-
-    given_list = sol.get("given_list", [])
-    given_html = "".join(
-        f'<div class="s7-given-item"><strong>{_he(_clean_latex(g.split("=")[0].strip()) if "=" in g else "")}</strong>'
-        f'{(" = " + _he(_clean_latex(g.split("=",1)[1].strip()))) if "=" in g else _he(_clean_latex(str(g)))}</div>\n'
-        for g in given_list
-    )
-
-    # Build one "task" per green variable (multi-answer tabs)
-    green_vars = [v for v in sol.get("variables", []) if v.get("color") == "green"]
-    approach_steps = sol.get("approach_steps", [])
-
-    # Build task tabs HTML
-    if not green_vars:
-        # Fallback: single tab
-        green_vars = [{"symbol": sol.get("answer_value","?"), "name": "Answer",
-                       "value": sol.get("answer_value","?"), "unit": sol.get("answer_unit","")}]
-
-    tasks_json_parts = []
-    for i, gv in enumerate(green_vars):
-        sym  = _he(gv.get("symbol") or "?")
-        name = _he(_clean_latex(str(gv.get("name","Answer"))))
-        unit = _he(str(gv.get("unit","")))
-        val  = gv.get("value","?")
-        if "?" in str(val) or "to find" in str(val).lower():
-            val = sol.get("answer_value","?")
-        val = _he(str(val))
-        tasks_json_parts.append(f'{{"sym":"{sym}","name":"{name}","unit":"{unit}","val":"{val}"}}')
-
-    tasks_json = "[" + ",".join(tasks_json_parts) + "]"
-
-    # Build approach steps HTML for the right column
-    approach_html = ""
-    for ap in approach_steps:
-        num   = _he(str(ap.get("num", "")))
-        label = _he(_clean_latex(str(ap.get("label", ""))))
-        eq    = _he(_clean_latex(str(ap.get("eq", ""))))
-        note  = _he(_clean_latex(str(ap.get("note", ""))))
-        approach_html += f"""<div class="s7-approach-step">
-          <span class="s7-approach-step-num">{num}</span>
-          <span>{label}
-            <span class="s7-approach-step-eq">{eq}</span>
-            {f'<span style="display:block;font-size:11px;color:#64748b;margin-top:3px;">{note}</span>' if note else ''}
-          </span>
-        </div>
-"""
-
-    # FIX 6 — Derived / intermediate variables (color == "orange") shown in left panel
-    derived_vars = [v for v in sol.get("variables", []) if v.get("color") == "orange"]
-    derived_section_html = ""
-    if derived_vars:
-        derived_items = ""
-        for dv in derived_vars:
-            sym  = _he(dv.get("symbol") or dv.get("sym") or "?")
-            val  = _he(_clean_latex(str(dv.get("value", "?") or "?")))
-            unit = _he(str(dv.get("unit", "")))
-            name = _he(_clean_latex(str(dv.get("name", ""))))
-            _em_name = (" &nbsp;<em style=\"color:#64748b;font-size:11px;\">" + name + "</em>") if name else ""
-            derived_items += (
-                f'<div class="s7-given-item" style="border-left:3px solid #d97706;padding-left:8px;">'
-                f'<strong style="color:#d97706;">{sym}</strong> = {val} {unit}'
-                + _em_name +
-                f'</div>\n'
-            )
-        derived_section_html = (
-            '\n        <div style="margin-top:10px;">'
-            '\n          <div class="s7-given-section-title" style="color:#d97706;">Derived / Intermediate</div>'
-            f'\n          <div class="s7-given-list">{derived_items}</div>'
-            '\n        </div>'
+    # Preamble card
+    preamble = sol.get("formula_preamble")
+    preamble_html = ""
+    if preamble and isinstance(preamble, dict) and preamble.get("formula"):
+        pre_title   = _he(_clean_latex(str(preamble.get("title", "First calculate"))))
+        pre_formula = _he(_clean_latex(str(preamble.get("formula", ""))))
+        pre_note    = _he(_clean_latex(str(preamble.get("note", ""))))
+        preamble_html = (
+            '<div class="s6-preamble-card">'
+            f'<div class="s6-preamble-title">{pre_title}</div>'
+            f'<div class="s6-preamble-formula">{pre_formula}</div>'
+            + (f'<div class="s6-preamble-note">{pre_note}</div>' if pre_note else "")
+            + '</div>'
         )
 
-    return f"""<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">
-  <div class="s7-card">
-    <div class="s7-title-bar">
-      <h2 id="s8-card-title">Step 8 &mdash; Solve each answer</h2>
-    </div>
-    <nav class="lesson-targets" id="s8-task-nav" aria-label="Answers to find"></nav>
-    <div class="s7-body-cols">
-      <div class="s7-left-col">
-        <div class="s7-system-label" id="s8-progress">Given Values</div>
-        <div class="s7-system-visual">
-          <div class="s7-system-visual-title" id="s8-task-title">{system_title}</div>
-          <div class="s7-system-arrows">&#x2192; &#x2192; &#x2192;</div>
-          <div class="s7-system-label2">{system_label2}</div>
-        </div>
-        <div class="s7-given-section-title">Use these values</div>
-        <div class="s7-given-list" id="s8-task-given" style="font-size:13px;line-height:1.8;color:#334155">{given_html}</div>
-        <div class="s7-formula-result-bar">
-          <div class="s7-formula-result-text" id="s8-task-formula">{formula_result}</div>
-        </div>{derived_section_html}
-      </div>
-      <div class="s7-right-col" aria-live="polite">
-        <div class="s7-approach-section-title">Step-by-step working</div>
-        <div class="s7-approach-list" id="s8-task-work">{approach_html}</div>
-        <div class="s8-result-row" id="s8-task-result-row" style="display:none">
-          <div class="s8-result-value" id="s8-task-result"></div>
-        </div>
-      </div>
-    </div>
-    <div class="s7-nav-row">
-      <button class="btn-secondary" id="s8-back" onclick="qanimPreviousCondition()">&#x2190; Back to Step 7</button>
-      <button class="btn-primary" id="s8-next" onclick="qanimNextCondition()">Next answer &#x25B6;</button>
-    </div>
-  </div>
-</div>
-<script>
-(function(){{
-  var tasks={tasks_json};
-  var idx=0;
-  function render(){{
-    var t=tasks[idx];
-    var nav=document.getElementById('s8-task-nav');
-    if(nav)nav.innerHTML=tasks.map(function(tt,i){{
-      return'<button class="lesson-target'+(i===idx?' is-current':'')+'" onclick="qanimGoToCondition('+i+')"'+(i===idx?' aria-current="step"':'')+'>'+( i+1)+' · '+(tt.sym||tt.name)+'</button>';
-    }}).join('');
-    var prog=document.getElementById('s8-progress');
-    if(prog)prog.textContent='Answer '+(idx+1)+' of '+tasks.length;
-    var title=document.getElementById('s8-task-title');
-    if(title)title.textContent=t.name;
-    var res=document.getElementById('s8-task-result');
-    if(res)res.textContent=t.sym+' = '+t.val+' '+t.unit;
-    var rr=document.getElementById('s8-task-result-row');
-    if(rr)rr.style.display='block';
-    var back=document.getElementById('s8-back');
-    if(back)back.textContent=idx?'\u2190 Previous answer':'\u2190 Back to Step 7';
-    var nxt=document.getElementById('s8-next');
-    if(nxt)nxt.textContent=idx===tasks.length-1?'Step 9: Final Answers \u25B6':'Next answer \u25B6';
-  }}
-  window.qanimGoToCondition=function(i){{if(i>=0&&i<tasks.length){{idx=i;render();}}}};
-  window.qanimNextCondition=function(){{
-    if(idx<tasks.length-1){{idx++;render();}}
-    else if(typeof window.qanim_showScene9==='function')window.qanim_showScene9();
-  }};
-  window.qanimPreviousCondition=function(){{
-    if(idx>0){{idx--;render();}}
-    else if(typeof window.qanim_showScene6==='function')window.qanim_showScene6();
-  }};
-  // Reset when scene opens
-  var _origShow7=window.qanim_showScene7;
-  window.qanim_showScene7=function(){{idx=0;render();if(_origShow7)_origShow7();}};
-  // Also wire goToScene7FromScene9
-  window.qanim_goToScene7FromScene9=function(){{idx=tasks.length-1;render();if(typeof window.qanim_showScene7==='function')window.qanim_showScene7();}};
-  // Initial render on DOMContentLoaded
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',render);else setTimeout(render,0);
-}})();
-</script>"""
+    # Formula cards grid
+    formulas = sol.get("formulas", [])
+    cards_html = ""
+    if formulas:
+        for f in formulas:
+            flabel   = _he(_clean_latex(str(f.get("label", ""))))
+            fformula = _he(_clean_latex(str(f.get("formula", ""))))
+            fdesc    = _he(_clean_latex(str(f.get("description", ""))))
+            fvars    = _he(_clean_latex(str(f.get("vars", ""))))
+            cards_html += (
+                '<div class="s6-formula-card">'
+                f'<span class="s6-formula-pill">{flabel}</span>'
+                f'<div class="s6-formula-eq">{fformula}</div>'
+                f'<div class="s6-formula-desc">{fdesc}</div>'
+                + (f'<div class="s6-formula-vars">{fvars}</div>' if fvars else "")
+                + '</div>\n'
+            )
+    else:
+        fallback_formula = _he(_clean_latex(str(sol.get("formula", ""))))
+        cards_html = f'<div class="s6-formula-card" style="grid-column:1/-1;"><div class="s6-formula-eq">{fallback_formula}</div></div>'
 
+    grid_html = f'<div class="s6-formulas-grid">{cards_html}</div>'
 
-def _build_scene9_html(sol: dict, to_find: list) -> str:
-    """Build Scene 9 (Final Answers) HTML — reference design: answer grid + sub chain."""
-    formula_raw    = sol.get("formula", "Governing Formula")
-    formula_recap  = _he(formula_raw)
-    formula_attr   = html_module.escape(formula_raw, quote=True)
-    chain = sol.get("substitution_chain", [])
-    answer_value = _he(sol.get("answer_value", "?"))
-    answer_unit = _he(sol.get("answer_unit", ""))
-    key_insight = sol.get("key_insight", "Apply the governing formula with the given data.")
-    to_find_label = _he(to_find[0] if to_find else "Final Answer")
-    final_answer = _he(sol.get("final_answer", "See calculation"))
+    fn_text = sol.get("formula_note", "")
+    note_html = ""
+    if fn_text:
+        note_html = f'<div class="s6-formula-note">&#x25B6; {_he(_clean_latex(str(fn_text)))}</div>'
 
-    # Substitution chain rows (animated slide-in)
-    chain_html = ""
-    _total_chain = len(chain)
-    for row in chain:
-        num = row.get("num", 1)
-        eq_raw  = row.get("eq", "")
-        eq_attr = html_module.escape(eq_raw, quote=True)
-        eq_text = _he(eq_raw)
-        if num == 1:
-            step_label = "Write formula"
-        elif num == _total_chain:
-            step_label = "Final answer"
-        elif num == _total_chain - 1:
-            step_label = "Compute result"
-        else:
-            step_label = f"Step {num}"
-        chain_html += (
-            f'<div class="s9-sub-row" data-s9-idx="{num-1}">'
-            f'<div class="s9-sub-num">{num}</div>'
-            f'<div class="s9-sub-eq s9-math-formula" data-formula="{eq_attr}">'
-            f'<span class="s9-step-lbl">{step_label}:</span> {eq_text}</div>'
+    return (
+        '<div id="qanim-scene6-overlay" role="dialog" aria-modal="true" aria-labelledby="s6-card-title">'
+        '<div class="s6-card">'
+        '<div class="s6-title-bar"><h2 id="s6-card-title">Step 7 &mdash; Formulas to use</h2></div>'
+        f'<div class="s6-body">{preamble_html}{grid_html}{note_html}</div>'
+        '<div class="s6-nav-row">'
+        '<button class="btn-secondary" onclick="qanim_goToPrevScene()" id="s6-prev-btn">&#x2190; Step 6</button>'
+        '<button class="btn-primary" onclick="qanim_showScene7()" id="s6-next-btn">Step 8: Solve &#x25B6;</button>'
+        '</div>'
+        '</div>'
+        '</div>'
+    )
+
+def _build_scene7_html(sol: dict, scene: dict) -> str:
+    """Build Scene 8 (Solve each answer) HTML — tabbed sub-answer layout."""
+    sub_answers = sol.get("sub_answers", [])
+
+    if not sub_answers:
+        # Fallback: original two-column layout
+        system_title   = _he(_clean_latex(str(sol.get("system_title",  "Physical System"))))
+        system_label2  = _he(_clean_latex(str(sol.get("system_label2", "Substituting given values"))))
+        formula_result = _he(_clean_latex(str(sol.get("formula", "Formula"))))
+        given_list = sol.get("given_list", [])
+        given_html = "".join(
+            '<div class="s7-given-item"><strong>'
+            + _he(_clean_latex(g.split("=")[0].strip()) if "=" in g else "")
+            + '</strong>'
+            + ((" = " + _he(_clean_latex(g.split("=", 1)[1].strip()))) if "=" in g else _he(_clean_latex(str(g))))
+            + '</div>\n'
+            for g in given_list
+        )
+        approach_steps = sol.get("approach_steps", [])
+        approach_html = ""
+        for ap in approach_steps:
+            num   = _he(str(ap.get("num", "")))
+            label = _he(_clean_latex(str(ap.get("label", ""))))
+            eq    = _he(_clean_latex(str(ap.get("eq", ""))))
+            note  = _he(_clean_latex(str(ap.get("note", ""))))
+            approach_html += (
+                '<div class="s7-approach-step">'
+                f'<span class="s7-approach-step-num">{num}</span>'
+                f'<span>{label}<span class="s7-approach-step-eq">{eq}</span>'
+                + (f'<span style="display:block;font-size:11px;color:#64748b;margin-top:3px;">{note}</span>' if note else '')
+                + '</span></div>\n'
+            )
+        return (
+            '<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">'
+            '<div class="s7-card">'
+            '<div class="s7-title-bar"><h2 id="s8-card-title">Step 8 &mdash; Solve each answer</h2></div>'
+            '<div class="s7-body-cols">'
+            f'<div class="s7-left-col"><div class="s7-given-heading">GIVEN VALUES</div><div class="s7-given-list">{given_html}</div><div class="s7-formula-used-box">{formula_result}</div></div>'
+            f'<div style="flex:1;padding:20px 24px;"><div class="s7-approach-list">{approach_html}</div></div>'
+            '</div>'
+            '<div class="s7-nav-row">'
+            '<button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Step 7</button>'
+            '<button class="btn-primary" onclick="if(typeof window.qanim_showScene9===\'function\')window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>'
+            '</div></div></div>'
+        )
+
+    # Tabbed layout
+    total = len(sub_answers)
+
+    tabs_html = ""
+    if total > 1:
+        for i, sa in enumerate(sub_answers):
+            tab_label = _he(_clean_latex(str(sa.get("tab_label", f"Answer {i+1}"))))
+            active_class = "s7-tab active" if i == 0 else "s7-tab"
+            tabs_html += f'<button id="s8-tab-{i}" class="{active_class}" onclick="qanim_s8ShowTab({i})">{tab_label}</button>\n'
+        tabs_html = f'<div class="s7-tabs">\n{tabs_html}</div>\n'
+
+    counter_html = f'<div class="s7-answer-counter" id="s8-answer-counter">ANSWER 1 OF {total}</div>\n'
+
+    contents_html = ""
+    for i, sa in enumerate(sub_answers):
+        display = "block" if i == 0 else "none"
+        answer_label  = _he(_clean_latex(str(sa.get("answer_label", f"Answer {i+1}"))))
+        given_values  = sa.get("given_values", [])
+        formula_used  = _he(_clean_latex(str(sa.get("formula_used", ""))))
+        solution_steps = sa.get("solution_steps", [])
+        final_line    = _he(_clean_latex(str(sa.get("final_line", ""))))
+
+        gv_html = "".join(
+            f'<span class="s7-given-value">{_he(_clean_latex(str(gv)))}</span>\n'
+            for gv in given_values
+        )
+
+        steps_html = ""
+        for ss in solution_steps:
+            step_num   = ss.get("num", "")
+            step_title = _he(_clean_latex(str(ss.get("title", ""))))
+            lines      = ss.get("lines", [])
+            lines_html = "".join(
+                f'<span class="s7-step-line">{_he(_clean_latex(str(ln)))}</span>\n'
+                for ln in lines
+            )
+            steps_html += (
+                f'<div class="s7-step-title">{step_num}. {step_title}</div>'
+                f'<div class="s7-step-box">{lines_html}</div>'
+            )
+        steps_html += f'<div class="s7-final-line-box">{final_line}</div>'
+
+        active_cls = " active" if i == 0 else ""
+        contents_html += (
+            f'<div id="s8-content-{i}" class="s7-content{active_cls}" style="display:{display}">'
+            f'<div class="s7-left">'
+            f'<div class="s7-answer-name-box">{answer_label}</div>'
+            f'<div class="s7-given-heading">USE THESE VALUES</div>'
+            f'{gv_html}'
+            f'<div class="s7-formula-used-box">{formula_used}</div>'
+            f'</div>'
+            f'<div class="s7-right">{steps_html}</div>'
             f'</div>\n'
         )
 
-    # Answer grid: one card per green variable
-    green_vars = [v for v in sol.get("variables", []) if v.get("color") == "green"]
-    if green_vars:
-        answer_cards_html = ""
-        for i, gv in enumerate(green_vars):
-            sym  = _he(gv.get("symbol") or "?")
-            name = _he(_clean_latex(str(gv.get("name","Answer"))))
-            unit = _he(str(gv.get("unit","")))
-            val  = gv.get("value","?")
-            if "?" in str(val) or "to find" in str(val).lower():
-                # Use the primary answer_value for the first unknown; derived note for others
-                val = sol.get("answer_value","?") if i == 0 else "—"
-            val = _he(str(val))
-            note = _he(sol.get("key_insight","") if i == 0 else "")
-            answer_cards_html += (
-                f'<article class="lesson-answer">'
-                f'<h3>{i+1} &middot; {name}</h3>'
-                f'<div class="lesson-answer-number">{val}<span>{unit}</span></div>'
-                f'<p>{note}</p></article>\n'
-            )
+    if total > 1:
+        right_btn = '<button id="s8-next-btn" class="btn-primary" onclick="qanim_s8NextTab()">Next answer &#x25B6;</button>'
     else:
-        answer_cards_html = (
-            f'<article class="lesson-answer">'
-            f'<h3>Final Answer</h3>'
-            f'<div class="lesson-answer-number">{answer_value}<span>{answer_unit}</span></div>'
-            f'<p>{_he(key_insight)}</p></article>\n'
+        right_btn = '<button id="s8-next-btn" class="btn-primary" onclick="if(typeof window.qanim_showScene9===\'function\')window.qanim_showScene9()">Step 9: Final Answer &#x25B6;</button>'
+
+    js_block = f"""<script>
+var s8CurrentTab=0,s8Total={total};
+function qanim_s8ShowTab(i){{
+  for(var t=0;t<s8Total;t++){{
+    var tb=document.getElementById('s8-tab-'+t);
+    var ct=document.getElementById('s8-content-'+t);
+    if(tb){{tb.style.background=(t===i)?'#0d9488':'white';tb.style.color=(t===i)?'white':'#374151';tb.style.borderColor=(t===i)?'#0d9488':'#d1d5db';}}
+    if(ct)ct.style.display=(t===i)?'block':'none';
+  }}
+  s8CurrentTab=i;
+  var counter=document.getElementById('s8-answer-counter');
+  if(counter)counter.textContent='ANSWER '+(i+1)+' OF '+s8Total;
+  var nb=document.getElementById('s8-next-btn');
+  if(nb){{
+    if(i<s8Total-1){{nb.textContent='Next answer \u25b6';nb.onclick=function(){{qanim_s8NextTab();}};}}
+    else{{nb.textContent='Step 9: Final Answer \u25b6';nb.onclick=function(){{if(typeof window.qanim_showScene9==='function')window.qanim_showScene9();}};}}
+  }}
+}}
+function qanim_s8NextTab(){{if(s8CurrentTab<s8Total-1)qanim_s8ShowTab(s8CurrentTab+1);}}
+</script>"""
+
+    return (
+        '<div id="qanim-scene7-overlay" role="dialog" aria-modal="true" aria-labelledby="s8-card-title">'
+        '<div class="s7-card">'
+        '<div class="s7-title-bar"><h2 id="s8-card-title">Step 8 &mdash; Solve each answer</h2></div>'
+        + tabs_html
+        + counter_html
+        + contents_html
+        + '<div class="s7-nav-row">'
+        + '<button class="btn-secondary" onclick="qanim_goToScene6FromScene7()">&#x2190; Step 7</button>'
+        + right_btn
+        + '</div>'
+        + '</div>'
+        + js_block
+        + '</div>'
+    )
+
+def _build_scene9_html(sol: dict, to_find: list) -> str:
+    """Build Scene 9 (Final answers grid) HTML — animated answer cards."""
+    final_answers  = sol.get("final_answers", [])
+    answer_context = _he(_clean_latex(str(sol.get("answer_context", "For the given operating conditions"))))
+
+    if not final_answers:
+        final_answers = [{
+            "id": "1",
+            "label": "1 \u00b7 FINAL ANSWER",
+            "value": sol.get("answer_value", "?"),
+            "unit":  sol.get("answer_unit", ""),
+            "description": str(sol.get("key_insight", ""))[:80],
+        }]
+
+    cards_html = ""
+    for i, fa in enumerate(final_answers):
+        fa_label = _he(_clean_latex(str(fa.get("label", ""))))
+        fa_value = _he(_clean_latex(str(fa.get("value", "?"))))
+        fa_unit  = _he(_clean_latex(str(fa.get("unit", ""))))
+        fa_desc  = _he(_clean_latex(str(fa.get("description", ""))))
+        delay_ms = i * 150
+        cards_html += (
+            f'<div class="s9-answer-card" id="s9-answer-card-{i}"'
+            f' style="opacity:0;transform:translateY(16px);transition:opacity .4s ease {delay_ms}ms,transform .4s ease {delay_ms}ms">'
+            f'<span class="s9-answer-label">{fa_label}</span>'
+            '<div class="s9-answer-value-row">'
+            f'<span class="s9-answer-value">{fa_value}</span>'
+            + (f'<span class="s9-answer-unit">{fa_unit}</span>' if fa_unit else "")
+            + '</div>'
+            + (f'<div class="s9-answer-desc">{fa_desc}</div>' if fa_desc else "")
+            + '</div>\n'
         )
 
-    return f"""<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-labelledby="s9-card-title">
-  <div class="s9-card">
-    <div class="s9-title-bar">
-      <h2 id="s9-card-title">&#x2705; Step 9 &mdash; Final Answers</h2>
-      <p id="s9-at-angle">{to_find_label}</p>
-    </div>
-    <div class="s9-body">
-      <div class="s9-formula-recap">
-        <div class="s9-formula-recap-label">&#x1F4D0; Governing Formula (from Step 7)</div>
-        <div class="s9-formula-recap-eq s9-math-formula" id="s9-formula-recap"
-             data-formula="{formula_attr}">{formula_recap}</div>
-      </div>
-      <div class="s9-sub-chain" id="s9-sub-chain">
-        {chain_html}
-      </div>
-      <div class="lesson-answer-grid" id="s9-answers">
-        {answer_cards_html}
-      </div>
-      <div class="s9-insight-bar" id="s9-insight-bar">
-        <span class="s9-insight-icon">&#x1F4A1;</span>
-        <div class="s9-insight-text" id="s9-insight-text"><strong>Key Insight:</strong> {_he(key_insight)}</div>
-      </div>
-    </div>
-    <div class="s9-nav-row">
-      <button class="btn-secondary" onclick="if(typeof window.qanim_goToScene7FromScene9==='function')window.qanim_goToScene7FromScene9()">&#x2190; Back to Step 8</button>
-      <button class="btn-primary" onclick="if(typeof window.resetAnim==='function')window.resetAnim()">&#x21BA; Restart Animation</button>
-    </div>
-  </div>
-</div>"""
+    anim_script = """<script>
+window.__s9AnimateCards = function() {
+  var cards = document.querySelectorAll('[id^="s9-answer-card-"]');
+  cards.forEach(function(card, i) {
+    setTimeout(function() {
+      card.style.opacity = '1';
+      card.style.transform = 'translateY(0)';
+    }, 120 + i * 150);
+  });
+};
+</script>"""
+
+    return (
+        '<div id="qanim-scene9-overlay" role="dialog" aria-modal="true" aria-labelledby="s9-card-title">'
+        '<div class="s9-card">'
+        '<div class="s9-header">'
+        '<h2 id="s9-card-title">&#x2705; Step 9 &mdash; Final answers</h2>'
+        f'<p>{answer_context}</p>'
+        '</div>'
+        f'<div class="s9-grid">{cards_html}</div>'
+        '<div class="s9-nav-row">'
+        '<button class="btn-secondary" onclick="if(typeof window.qanim_goToScene7FromScene9===\'function\')window.qanim_goToScene7FromScene9()">&#x2190; Step 8</button>'
+        '<button class="btn-primary" onclick="if(typeof window.resetAnim===\'function\')window.resetAnim()">&#x21BA; Restart</button>'
+        '</div>'
+        '</div>'
+        + anim_script
+        + '</div>'
+    )
+
+
+
+
+
+# ===========================================================================
+# CSS Templates (reference-exact)
+# ===========================================================================
+
+_BASE_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fira+Code:wght@400;500;600;700&display=swap');
+
+/* ── Topic-adaptive CSS variables (overridden per-render by inline <style>) ── */
+:root {
+  /* Palette */
+  --c-primary:        #0369a1;
+  --c-primary-mid:    #0891b2;
+  --c-primary-dim:    #0e7490;
+  --c-accent:         #38bdf8;
+  --c-accent-soft:    rgba(56,189,248,.12);
+  --c-orange:         #d97706;
+  --c-green:          #16a34a;
+  --c-green-soft:     rgba(22,163,74,.10);
+  --c-purple:         #7c3aed;
+  /* Surfaces */
+  --bg-page:          #f0f5fc;
+  --bg-page-end:      #e8f0fe;
+  --panel-bg:         #ffffff;
+  --panel-bg-alt:     #f8fbff;
+  --border:           #e2e8f0;
+  --border-strong:    #cbd5e1;
+  --text-main:        #0f172a;
+  --text-sub:         #475569;
+  --text-muted:       #94a3b8;
+  /* Tokens */
+  --radius-card:      18px;
+  --radius-sm:        10px;
+  --radius-xs:        7px;
+  --shadow-card:      0 1px 2px rgba(15,23,42,.04), 0 4px 16px rgba(15,23,42,.07), 0 20px 48px rgba(15,23,42,.05);
+  --shadow-deep:      0 8px 32px rgba(15,23,42,.12), 0 2px 8px rgba(15,23,42,.07);
+  --ease-spring:      cubic-bezier(.34,1.56,.64,1);
+  --ease-smooth:      cubic-bezier(.4,0,.2,1);
+  --transition:       .4s var(--ease-smooth);
+}
+
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: linear-gradient(155deg, var(--bg-page) 0%, var(--bg-page-end) 55%, #eff6ff 100%);
+  background-attachment: fixed;
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  padding: 32px 16px 160px;
+  letter-spacing: -.01em;
+}
+
+/* ── Page header ─────────────────────────────────────────────────────────── */
+.page-header {
+  width: 100%; max-width: 900px; margin-bottom: 18px;
+  display: flex; align-items: center; gap: 10px;
+}
+.page-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 14px; border-radius: 24px;
+  background: rgba(var(--c-primary-rgb, 3,105,161),.09);
+  border: 1px solid rgba(var(--c-primary-rgb, 3,105,161),.20);
+  font-size: 10.5px; font-weight: 800; color: var(--c-primary-dim);
+  text-transform: uppercase; letter-spacing: 1px;
+  backdrop-filter: blur(6px);
+}
+.page-chip-icon { font-size: 13px; line-height: 1; }
+.page-topic-badge {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 20px;
+  background: var(--c-accent-soft);
+  border: 1px solid rgba(var(--c-primary-rgb,3,105,161),.18);
+  font-size: 10px; font-weight: 800; color: var(--c-primary-dim);
+  text-transform: uppercase; letter-spacing: .9px;
+}
+
+/* ── Fullscreen button ───────────────────────────────────────────────────── */
+#qanim-fullscreen-btn {
+  position: fixed; top: 14px; right: 16px; z-index: 9000;
+  display: flex; align-items: center; gap: 6px; padding: 8px 15px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(var(--c-primary-rgb,3,105,161),.25);
+  background: rgba(255,255,255,.94); backdrop-filter: blur(14px);
+  color: var(--c-primary-dim); font-family: inherit; font-size: 12px; font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(var(--c-primary-rgb,3,105,161),.14), 0 1px 4px rgba(0,0,0,.07);
+  transition: background .2s, border-color .2s, transform .22s var(--ease-spring), box-shadow .2s;
+}
+#qanim-fullscreen-btn:hover {
+  background: var(--c-accent-soft);
+  border-color: var(--c-primary-mid);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(var(--c-primary-rgb,3,105,161),.24);
+}
+#qanim-fullscreen-btn .fs-icon { font-size: 14px; line-height: 1; transition: transform .3s; }
+#qanim-fullscreen-btn.is-fullscreen { background: var(--c-accent-soft); border-color: var(--c-primary-mid); }
+#qanim-fullscreen-btn.is-fullscreen .fs-icon { transform: rotate(180deg); }
+
+/* Fullscreen tweaks */
+body.qanim-fullscreen { padding: 0 !important; background: var(--panel-bg) !important; }
+body.qanim-fullscreen .dashboard { max-width: 100% !important; border-radius: 0 !important; box-shadow: none !important; border: none !important; height: 100vh; display: flex; flex-direction: column; }
+body.qanim-fullscreen .page-header { display: none !important; }
+body.qanim-fullscreen .question-banner { display: none !important; }
+body.qanim-fullscreen .svg-container { flex: 1 1 auto; aspect-ratio: unset !important; }
+body.qanim-fullscreen .step-indicator { display: none !important; }
+body.qanim-fullscreen .step-color-legend { display: none !important; }
+body.qanim-fullscreen .step-progress-wrap { display: none !important; }
+body.qanim-fullscreen .step-label { display: none !important; }
+body.qanim-fullscreen #qanim-controls-bar { bottom: 10px; }
+body.qanim-fullscreen #qanim-fullscreen-btn { top: 10px; right: 12px; }
+body.qanim-fullscreen .control-panel { padding: 12px 20px 14px !important; flex-shrink: 0; }
+body.qanim-fullscreen .info-box { min-height: 70px !important; padding: 12px 16px !important; }
+body.qanim-fullscreen .actions { margin-top: 10px !important; }
+
+/* ── Dashboard card ──────────────────────────────────────────────────────── */
+
+.dashboard {
+  width: 100%; max-width: 900px; margin: 0 auto;
+  background: var(--panel-bg);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  position: relative;
+}
+.dashboard::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3.5px;
+  background: linear-gradient(90deg, var(--c-primary-dim) 0%, var(--c-purple) 50%, var(--c-orange) 100%);
+  border-radius: var(--radius-card) var(--radius-card) 0 0; z-index: 2;
+}
+
+/* ── Question banner ─────────────────────────────────────────────────────── */
+.question-banner {
+  padding: 22px 28px 18px;
+  background: linear-gradient(135deg, var(--panel-bg-alt) 0%, #f0f5ff 40%, var(--bg-page) 100%);
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px;
+  position: relative; overflow: hidden;
+}
+.question-banner::after {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3.5px;
+  background: linear-gradient(to bottom, var(--c-primary-mid), var(--c-accent));
+  border-radius: 0 3px 3px 0;
+}
+.q-label {
+  font-size: 10px; font-weight: 800; color: var(--c-primary-dim);
+  text-transform: uppercase; letter-spacing: 2px;
+  display: flex; align-items: center; gap: 8px;
+}
+.q-label-dot {
+  display: inline-block; width: 16px; height: 16px; border-radius: 5px;
+  background: linear-gradient(135deg, var(--c-primary-dim), var(--c-primary-mid));
+  flex-shrink: 0;
+}
+.q-text {
+  font-size: 15px; color: var(--text-main); line-height: 1.65;
+  font-weight: 450; max-width: 820px;
+}
+
+/* ── SVG container ───────────────────────────────────────────────────────── */
+.svg-container {
+  width: 100%; aspect-ratio: 16/9;
+  position: relative; overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(145deg, #f8fafc 0%, #eef5ff 55%, #f0f6ff 100%);
+}
+svg { display: block; width: 100%; height: 100%; }
+.svg-layer { transition: opacity .55s var(--ease-smooth); }
+
+/* ── Control panel ───────────────────────────────────────────────────────── */
+.control-panel {
+  padding: 22px 28px 26px;
+  background: linear-gradient(180deg, #ffffff 0%, var(--panel-bg-alt) 100%);
+  border-top: 1px solid var(--border);
+}
+.step-color-legend {
+  display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.step-legend-item {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; color: var(--text-sub); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .6px;
+}
+.step-legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* ── Step indicator ──────────────────────────────────────────────────────── */
+.step-indicator {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 18px; flex-wrap: wrap;
+}
+.step-connector {
+  flex: 0 0 14px; height: 1.5px;
+  background: linear-gradient(90deg, #cbd5e1, #e2e8f0);
+  border-radius: 2px;
+}
+.step-dot {
+  padding: 6px 13px; border-radius: 20px;
+  background: #f1f5f9; border: 1.5px solid #e2e8f0;
+  font-size: 11.5px; font-weight: 700; color: #94a3b8;
+  cursor: pointer; white-space: nowrap; user-select: none;
+  position: relative;
+  transition: background .28s, color .28s, border-color .28s,
+              box-shadow .28s, transform .22s var(--ease-spring);
+}
+.step-dot:hover:not(.active) {
+  background: var(--c-accent-soft);
+  border-color: rgba(var(--c-primary-rgb,3,105,161),.28);
+  color: var(--c-primary-dim);
+  transform: translateY(-2px);
+}
+.step-dot.active {
+  background: linear-gradient(135deg, var(--c-primary-dim) 0%, var(--c-primary-mid) 100%);
+  border-color: transparent; color: #fff;
+  box-shadow: 0 3px 12px rgba(var(--c-primary-rgb,3,105,161),.38),
+              0 1px 3px rgba(var(--c-primary-rgb,3,105,161),.22);
+  transform: scale(1.07);
+}
+.step-dot.done {
+  background: var(--c-green-soft);
+  border-color: rgba(22,163,74,.28);
+  color: #15803d;
+}
+.step-label {
+  font-size: 11px; color: var(--text-muted); font-weight: 600;
+  letter-spacing: .6px; text-transform: uppercase;
+  margin-left: 6px; flex: 1; min-width: 0;
+}
+.step-progress-wrap {
+  height: 3px; background: #f1f5f9; border-radius: 2px;
+  margin-bottom: 22px; overflow: hidden;
+}
+.step-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--c-primary-dim), var(--c-primary-mid), var(--c-accent));
+  border-radius: 2px;
+  transition: width .5s var(--ease-smooth);
+  width: 0%;
+}
+
+/* ── Info box ────────────────────────────────────────────────────────────── */
+.info-box {
+  background: linear-gradient(135deg, #f8fbff 0%, #f3f8ff 100%);
+  border: 1px solid #d8e8f8;
+  border-left: 4px solid var(--c-primary-mid);
+  border-radius: var(--radius-sm);
+  padding: 20px 22px;
+  min-height: 130px;
+  display: flex; flex-direction: column; gap: 11px;
+  position: relative; overflow: hidden;
+}
+.info-box::before {
+  content: ''; position: absolute; top: -30px; right: -30px;
+  width: 100px; height: 100px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--c-primary-rgb,3,105,161),.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+.info-box h3 {
+  color: var(--text-main); font-size: 16px; font-weight: 800;
+  display: flex; align-items: center; gap: 10px; line-height: 1.35;
+  letter-spacing: -.25px;
+}
+.info-box h3::before {
+  content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--c-primary-mid); flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(var(--c-primary-rgb,3,105,161),.18);
+}
+
+/* ── Badges ──────────────────────────────────────────────────────────────── */
+.badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.badge {
+  padding: 4px 12px; border-radius: 20px;
+  font-size: 11.5px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 5px;
+  letter-spacing: .1px; font-family: 'Inter', system-ui, sans-serif;
+}
+.badge-cyan  { background: rgba(8,145,178,.09);  border: 1px solid rgba(8,145,178,.28);  color: #0e7490; }
+.badge-orange{ background: rgba(217,119,6,.09);  border: 1px solid rgba(217,119,6,.28);  color: #92400e; }
+.badge-green { background: rgba(22,163,74,.09);  border: 1px solid rgba(22,163,74,.28);  color: #15803d; }
+.info-desc { font-size: 14px; line-height: 1.72; color: var(--text-sub); font-weight: 400; }
+
+/* ── Action buttons ──────────────────────────────────────────────────────── */
+.actions {
+  display: flex; justify-content: flex-end; align-items: center;
+  gap: 10px; margin-top: 20px;
+}
+button {
+  padding: 11px 24px; border-radius: 10px;
+  font-size: 13.5px; font-weight: 700; font-family: inherit;
+  cursor: pointer; border: none; outline: none; letter-spacing: .05px;
+  transition: background .22s, box-shadow .22s, transform .2s var(--ease-spring), color .2s, border-color .2s;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--c-primary-dim) 0%, var(--c-primary-mid) 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(var(--c-primary-rgb,3,105,161),.30), 0 1px 3px rgba(var(--c-primary-rgb,3,105,161),.15);
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-dim) 100%);
+  box-shadow: 0 6px 22px rgba(var(--c-primary-rgb,3,105,161),.38);
+  transform: translateY(-2px);
+}
+.btn-secondary {
+  background: #fff; color: var(--text-sub);
+  border: 1.5px solid var(--border-strong);
+  box-shadow: 0 1px 3px rgba(15,23,42,.06);
+}
+.btn-secondary:hover {
+  background: var(--panel-bg-alt); color: var(--text-main);
+  border-color: #94a3b8;
+  box-shadow: 0 2px 8px rgba(15,23,42,.10);
+  transform: translateY(-1px);
+}
+:root {
+  /* NOTE: these are ALIASES onto the topic-adaptive tokens defined in the
+     primary :root block above, not a second competing palette. Every
+     selector below that used to hard-pin its own cyan palette now tracks
+     whatever --c-primary* / --radius-* values a per-question <style>
+     override sets later in <head> (see the accent-color injection in
+     assemble_html). This is what makes different questions render with
+     different accent colors instead of every animation looking identical. */
+  /* text-main / text-sub / text-muted / border / border-strong / panel-bg /
+     shadow-card are intentionally NOT redeclared here — they already exist
+     with the same meaning in the primary :root above; redefining a custom
+     property in terms of itself (var(--text-main) inside --text-main:...)
+     is a circular reference and CSS would treat it as invalid, so we must
+     never do that. Only genuinely differently-named tokens are aliased: */
+  --bg-color: var(--bg-page, #eef2f9);
+  --accent-cyan: var(--c-primary-mid, #0891b2);
+  --accent-cyan-dim: var(--c-primary-dim, #0e7490);
+  --accent-orange: var(--c-orange, #d97706);
+  --accent-green: var(--c-green, #16a34a);
+  --border-radius: var(--radius-card, 16px);
+  --border-radius-sm: var(--radius-sm, 10px);
+  --transition-smooth: var(--transition, .45s cubic-bezier(.4,0,.2,1));
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  background:linear-gradient(160deg,#eef2f9 0%,#e8f0fe 50%,#eff6ff 100%);background-attachment:fixed;
+  color:var(--text-main);display:flex;flex-direction:column;align-items:center;
+  justify-content:flex-start;min-height:100vh;padding:28px 16px 140px;}
+.page-header{width:100%;max-width:900px;margin-bottom:14px;display:flex;align-items:center;gap:10px;}
+.page-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;
+  background:rgba(8,145,178,.10);border:1px solid rgba(8,145,178,.22);font-size:11px;font-weight:700;
+  color:var(--accent-cyan-dim);text-transform:uppercase;letter-spacing:.8px;}
+.page-chip::before{content:'▶';font-size:8px;}
+/* ── Fullscreen button ─────────────────────────────────────────────── */
+#qanim-fullscreen-btn{position:fixed;top:14px;right:16px;z-index:9000;
+  display:flex;align-items:center;gap:6px;padding:8px 14px;
+  border-radius:12px;border:1.5px solid rgba(8,145,178,.30);
+  background:rgba(255,255,255,.92);backdrop-filter:blur(12px);
+  color:var(--accent-cyan-dim);font-family:inherit;font-size:12px;font-weight:700;
+  cursor:pointer;box-shadow:0 4px 16px rgba(8,145,178,.18),0 1px 4px rgba(0,0,0,.08);
+  transition:background .2s,border-color .2s,color .2s,transform .18s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;}
+#qanim-fullscreen-btn:hover{background:rgba(8,145,178,.10);border-color:var(--accent-cyan);
+  transform:translateY(-2px);box-shadow:0 6px 22px rgba(8,145,178,.28);}
+#qanim-fullscreen-btn .fs-icon{font-size:14px;line-height:1;transition:transform .3s;}
+#qanim-fullscreen-btn.is-fullscreen{background:rgba(8,145,178,.12);border-color:var(--accent-cyan);}
+#qanim-fullscreen-btn.is-fullscreen .fs-icon{transform:rotate(180deg);}
+/* Fullscreen mode tweaks */
+body.qanim-fullscreen{padding:0!important;background:var(--panel-bg)!important;}
+body.qanim-fullscreen .dashboard{max-width:100%!important;border-radius:0!important;
+  box-shadow:none!important;border:none!important;height:100vh;display:flex;flex-direction:column;}
+body.qanim-fullscreen .page-header{display:none!important;}
+body.qanim-fullscreen .question-banner{display:none!important;}
+body.qanim-fullscreen .svg-container{flex:1 1 auto;aspect-ratio:unset!important;}
+body.qanim-fullscreen .step-indicator{display:none!important;}
+body.qanim-fullscreen .step-color-legend{display:none!important;}
+body.qanim-fullscreen .step-progress-wrap{display:none!important;}
+body.qanim-fullscreen .step-label{display:none!important;}
+body.qanim-fullscreen #qanim-controls-bar{bottom:10px;}
+body.qanim-fullscreen #qanim-fullscreen-btn{top:10px;right:12px;}
+body.qanim-fullscreen .control-panel{
+  padding:12px 20px 14px!important;flex-shrink:0;}
+body.qanim-fullscreen .info-box{
+  min-height:70px!important;padding:12px 16px!important;}
+body.qanim-fullscreen .actions{
+  margin-top:10px!important;}
+.dashboard{width:100%;max-width:900px;margin:0 auto;background:var(--panel-bg);
+  border-radius:var(--border-radius);box-shadow:var(--shadow-card);overflow:hidden;
+  border:1px solid var(--border);position:relative;}
+.dashboard::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--accent-cyan-dim) 0%,#7c3aed 50%,var(--accent-orange) 100%);
+  border-radius:var(--border-radius) var(--border-radius) 0 0;z-index:2;}
+.question-banner{padding:22px 28px 18px;
+  background:linear-gradient(135deg,#f8faff 0%,#f0f5ff 40%,#eef2f9 100%);
+  border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden;}
+.q-label{font-size:10.5px;font-weight:800;color:var(--accent-cyan-dim);text-transform:uppercase;
+  letter-spacing:1.8px;display:flex;align-items:center;gap:8px;}
+.q-label::before{content:'';display:inline-block;width:16px;height:16px;border-radius:5px;
+  background:linear-gradient(135deg,var(--accent-cyan-dim),var(--accent-cyan));flex-shrink:0;}
+.q-text{font-size:15px;color:var(--text-main);line-height:1.6;font-weight:450;max-width:820px;}
+.svg-container{width:100%;aspect-ratio:16/9;
+  background:linear-gradient(145deg,#f8fafc 0%,#eef5ff 55%,#f0f6ff 100%);
+  position:relative;overflow:hidden;border-bottom:1px solid var(--border);}
+svg{display:block;width:100%;height:100%;}
+.svg-layer{transition:opacity .55s cubic-bezier(.4,0,.2,1);}
+.control-panel{padding:22px 28px 26px;background:linear-gradient(180deg,#ffffff 0%,#f9fbff 100%);border-top:1px solid var(--border);}
+.step-color-legend{display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;}
+.step-legend-item{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-sub);font-weight:600;text-transform:uppercase;}
+.step-legend-dot{width:8px;height:8px;border-radius:50%;}
+.step-indicator{display:flex;align-items:center;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
+.step-connector{flex:0 0 18px;height:1.5px;background:linear-gradient(90deg,#cbd5e1,#e2e8f0);border-radius:2px;}
+.step-dot{padding:6px 14px;border-radius:20px;background:#f1f5f9;border:1.5px solid #e2e8f0;
+  font-size:11.5px;font-weight:700;color:#94a3b8;cursor:pointer;
+  transition:background .3s,color .3s,border-color .3s,box-shadow .3s,transform .25s cubic-bezier(.34,1.56,.64,1);
+  white-space:nowrap;user-select:none;position:relative;}
+.step-dot:hover:not(.active){background:rgba(8,145,178,.07);border-color:rgba(8,145,178,.3);color:var(--accent-cyan-dim);}
+.step-dot.active{background:linear-gradient(135deg,#0e7490 0%,#0891b2 100%);border-color:transparent;color:#fff;
+  box-shadow:0 3px 12px rgba(8,145,178,.38),0 1px 3px rgba(8,145,178,.20);transform:scale(1.07);}
+.step-dot.done{background:rgba(22,163,74,.09);border-color:rgba(22,163,74,.28);color:#15803d;}
+.step-label{font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:.6px;
+  text-transform:uppercase;margin-left:6px;flex:1;min-width:0;}
+.step-progress-wrap{height:3px;background:#f1f5f9;border-radius:2px;margin-bottom:20px;overflow:hidden;}
+.step-progress-bar{height:100%;background:linear-gradient(90deg,#0e7490,#0891b2,#38bdf8);
+  border-radius:2px;transition:width .5s cubic-bezier(.4,0,.2,1);width:0%;}
+.info-box{background:linear-gradient(135deg,#f8fbff 0%,#f4f8ff 100%);border:1px solid #dde8f8;
+  border-left:4px solid var(--accent-cyan);border-radius:var(--border-radius-sm);
+  padding:20px 22px;min-height:130px;display:flex;flex-direction:column;gap:11px;position:relative;overflow:hidden;}
+.info-box h3{color:var(--text-main);font-size:16.5px;font-weight:800;display:flex;align-items:center;
+  gap:10px;line-height:1.3;letter-spacing:-.2px;}
+.info-box h3::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:var(--accent-cyan);flex-shrink:0;box-shadow:0 0 0 3px rgba(8,145,178,.18);}
+.badges{display:flex;gap:7px;flex-wrap:wrap;align-items:center;}
+.badge{padding:4px 12px;border-radius:20px;font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;gap:5px;letter-spacing:.1px;}
+.badge-cyan{background:rgba(8,145,178,.09);border:1px solid rgba(8,145,178,.28);color:#0e7490;}
+.badge-orange{background:rgba(217,119,6,.09);border:1px solid rgba(217,119,6,.28);color:#92400e;}
+.badge-green{background:rgba(22,163,74,.09);border:1px solid rgba(22,163,74,.28);color:#15803d;}
+.info-desc{font-size:14px;line-height:1.7;color:var(--text-sub);font-weight:400;}
+.actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:20px;}
+button{padding:11px 24px;border-radius:10px;font-size:13.5px;font-weight:700;font-family:inherit;
+  cursor:pointer;transition:background .22s,box-shadow .22s,transform .18s cubic-bezier(.34,1.56,.64,1),color .2s,border-color .2s;border:none;outline:none;letter-spacing:.1px;}
+.btn-primary{background:linear-gradient(135deg,#0e7490 0%,#0891b2 100%);color:#fff;
+  box-shadow:0 4px 14px rgba(8,145,178,.30),0 1px 3px rgba(8,145,178,.15);}
+.btn-primary:hover{background:linear-gradient(135deg,#0c6680 0%,#0e7490 100%);
+  box-shadow:0 6px 22px rgba(8,145,178,.38);transform:translateY(-2px);}
+.btn-secondary{background:#fff;color:var(--text-sub);border:1.5px solid var(--border-strong);
+  box-shadow:0 1px 3px rgba(15,23,42,.06);}
+.btn-secondary:hover{background:#f8fafc;color:var(--text-main);border-color:#94a3b8;
+  box-shadow:0 2px 8px rgba(15,23,42,.10);transform:translateY(-1px);}
+"""
+
+_SCENE6_CSS = """
+/* ── Scene 7: Formula overlay ─────────────────────────────────────────── */
+#qanim-scene-modal-backdrop {
+  display: none; position: fixed; inset: 0; z-index: 7400;
+  background: rgba(10,18,40,.55); backdrop-filter: blur(8px);
+  opacity: 0; transition: opacity .28s ease;
+}
+#qanim-scene-modal-backdrop.qanim-scene-visible { display: block !important; opacity: 1; }
+#qanim-scene6-overlay {
+  display: none; position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(.94);
+  z-index: 7500; width: min(880px,96vw); max-height: 92vh;
+  overflow-y: auto; box-sizing: border-box;
+  opacity: 0; pointer-events: none;
+  transition: opacity .32s ease, transform .38s var(--ease-spring);
+}
+#qanim-scene6-overlay.qanim-scene-visible {
+  display: block !important; opacity: 1; pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
+}
+.s6-card {
+  background: var(--panel-bg); border-radius: 22px;
+  box-shadow: 0 12px 60px rgba(var(--c-primary-rgb,3,105,161),.16), 0 2px 10px rgba(0,0,0,.09);
+  border: 1px solid #dde8f8; overflow: hidden;
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+.s6-title-bar {
+  text-align: center; padding: 24px 32px 20px;
+  background: linear-gradient(135deg, var(--panel-bg) 0%, var(--panel-bg-alt) 100%);
+  border-bottom: 1px solid var(--border);
+}
+.s6-title-bar h2 {
+  font-size: 20px; font-weight: 900; color: var(--text-main); letter-spacing: -.4px;
+}
+.s6-body {
+  padding: 28px 32px 24px;
+  background: linear-gradient(160deg, var(--bg-page) 0%, var(--bg-page-end) 60%, #eff6ff 100%);
+}
+.s6-nav-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 18px 32px 24px; border-top: 1px solid var(--border);
+  background: var(--panel-bg);
+}
+#qanim-scene-modal-backdrop{display:none;position:fixed;inset:0;z-index:7400;background:rgba(15,23,42,.50);backdrop-filter:blur(6px);opacity:0;transition:opacity .25s ease;}
+#qanim-scene-modal-backdrop.qanim-scene-visible{display:block!important;opacity:1;}
+#qanim-scene6-overlay{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.95);z-index:7500;width:min(860px,96vw);max-height:92vh;overflow-y:auto;box-sizing:border-box;opacity:0;pointer-events:none;transition:opacity .3s ease,transform .3s cubic-bezier(.34,1.56,.64,1);}
+#qanim-scene6-overlay.qanim-scene-visible{display:block!important;opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
+.s6-card{background:#fff;border-radius:20px;box-shadow:0 8px 48px rgba(8,145,178,.14),0 2px 8px rgba(0,0,0,.08);border:1px solid #dde8f8;overflow:hidden;font-family:-apple-system,'Segoe UI',Arial,sans-serif;}
+.s6-title-bar{text-align:center;padding:22px 28px 18px;background:#fff;border-bottom:1px solid #e8eef8;}
+.s6-title-bar h2{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-.3px;}
+.s6-body{padding:28px 32px 24px;background:linear-gradient(160deg,#eef2f9 0%,#e8f0fe 50%,#eff6ff 100%);}
+.s6-nav-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 32px 22px;border-top:1px solid #e8eef8;background:#fff;}
+.s6-preamble-card {
+  background: #eff6ff; border: 2px solid #3b82f6; border-radius: 14px;
+  padding: 20px 28px; text-align: center; margin-bottom: 20px;
+}
+.s6-preamble-title {
+  font-size: 12px; font-weight: 800; color: #1d4ed8;
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;
+}
+.s6-preamble-formula {
+  font-family: 'Cambria Math','Times New Roman',serif;
+  font-style: italic; font-size: 20px; font-weight: 700; color: #1d4ed8;
+}
+.s6-preamble-note { font-size: 12px; color: #6b7280; margin-top: 8px; }
+.s6-formulas-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;
+}
+.s6-formula-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+.s6-formula-pill {
+  display: inline-block; padding: 2px 10px; border-radius: 20px;
+  background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.20);
+  color: #1d4ed8; font-size: 10px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px;
+}
+.s6-formula-eq {
+  font-family: 'Cambria Math','Times New Roman',serif;
+  font-style: italic; font-size: 24px; font-weight: 700;
+  color: #1d4ed8; line-height: 1.4; margin-bottom: 10px; word-break: break-word;
+}
+.s6-formula-desc { font-size: 13px; color: #374151; line-height: 1.6; margin-bottom: 6px; }
+.s6-formula-vars { font-size: 11px; color: #6b7280; line-height: 1.5; }
+.s6-formula-note { color: #b45309; font-size: 12px; margin-top: 14px; font-style: italic; }
+#step6-info-panel {
+  position: absolute; bottom: 18px; right: 18px; z-index: 10;
+  pointer-events: none; opacity: 0; transition: opacity .45s cubic-bezier(.4,0,.2,1);
+}
+#step6-info-panel.s6info-visible { opacity: 1; pointer-events: auto; }
+.s6tofind-badge {
+  background: rgba(10,22,44,.82); backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px); border: 1.5px solid rgba(74,222,128,.42);
+  border-radius: 16px; padding: 14px 18px 12px; min-width: 180px; max-width: 280px;
+  box-shadow: 0 0 0 1px rgba(74,222,128,.14), 0 8px 32px rgba(74,222,128,.22), 0 2px 8px rgba(0,0,0,.38);
+}
+.s6tofind-heading {
+  font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 9.5px; font-weight: 900;
+  text-transform: uppercase; letter-spacing: 1.8px; color: #4ade80; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 4px;
+}
+.s6tofind-chip {
+  display: flex; align-items: center; gap: 9px; background: rgba(74,222,128,.13);
+  border: 1.5px solid rgba(74,222,128,.32); border-radius: 10px; padding: 9px 13px; margin-bottom: 8px;
+}
+.s6tofind-icon { font-size: 15px; flex-shrink: 0; }
+.s6tofind-label { font-family: 'Fira Code','Courier New',monospace; font-size: 14px; font-weight: 800; color: #4ade80; letter-spacing: .3px; }
+.s6tofind-hint {
+  display: flex; align-items: center; gap: 6px;
+  font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 11px; color: #94a3b8;
+  margin-top: 4px; padding: 6px 10px; border: 1px dashed rgba(148,163,184,.32); border-radius: 8px;
+  background: rgba(148,163,184,.07);
+}
+.s6tofind-hint strong { color: #cbd5e1; }
+"""
+
+_SCENE7_CSS = """
+/* ── Scene 8: Solve each answer overlay ──────────────────────────────── */
+#qanim-scene7-overlay {
+  display: none; position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(.94);
+  z-index: 7500; width: min(960px,97vw); max-height: 94vh;
+  overflow-y: auto; box-sizing: border-box;
+  opacity: 0; pointer-events: none;
+  transition: opacity .32s ease, transform .38s cubic-bezier(.34,1.56,.64,1);
+}
+#qanim-scene7-overlay.qanim-scene-visible {
+  display: block !important; opacity: 1; pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
+}
+.s7-card {
+  background: white; border-radius: 22px;
+  box-shadow: 0 12px 60px rgba(13,148,136,.14), 0 2px 10px rgba(0,0,0,.08);
+  border: 1px solid #e5e7eb; overflow: hidden; font-family: 'Inter',system-ui,sans-serif;
+}
+.s7-title-bar { text-align: center; padding: 22px 32px 18px; border-bottom: 1px solid #f1f5f9; background: white; }
+.s7-title-bar h2 { font-size: 20px; font-weight: 900; color: #0f172a; }
+.s7-tabs { display: flex; gap: 8px; padding: 16px 24px 0; flex-wrap: wrap; }
+.s7-tab {
+  padding: 8px 18px; border-radius: 20px; border: 1px solid #d1d5db;
+  background: white; color: #374151; font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+  transition: background .18s, color .18s, border-color .18s;
+}
+.s7-tab.active { background: #0d9488; color: white; border-color: #0d9488; }
+.s7-answer-counter {
+  font-size: 10px; font-weight: 800; color: #0891b2;
+  text-transform: uppercase; letter-spacing: 1.2px; padding: 14px 24px 0;
+}
+.s7-content { display: none; }
+.s7-content.active { display: flex; min-height: 320px; }
+.s7-left {
+  width: 42%; min-width: 200px; border-right: 1.5px solid #e5e7eb;
+  padding: 20px 20px 20px 24px;
+  background: linear-gradient(180deg, #eff6ff, #dbeafe);
+  display: flex; flex-direction: column;
+}
+.s7-answer-name-box {
+  background: linear-gradient(135deg, #bfdbfe, #93c5fd);
+  border-radius: 10px; padding: 16px; margin-bottom: 16px; text-align: center;
+  font-size: 15px; font-weight: 800; color: #1e3a5f;
+}
+.s7-given-heading { font-size: 10px; font-weight: 800; color: #0891b2; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.s7-given-value { display: block; font-family: 'Fira Code','Courier New',monospace; font-size: 12.5px; color: #1e293b; padding: 2px 0; line-height: 1.7; }
+.s7-formula-used-box {
+  background: rgba(16,185,129,.08); border: 1px solid #6ee7b7;
+  border-radius: 8px; padding: 10px 14px; margin-top: auto;
+  font-family: 'Fira Code','Courier New',monospace;
+  font-size: 12px; font-weight: 700; color: #dc2626; word-break: break-word;
+}
+.s7-right { flex: 1; padding: 20px 24px; }
+.s7-step-title { font-size: 13.5px; font-weight: 700; color: #1e293b; margin-bottom: 6px; }
+.s7-step-box { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+.s7-step-line { display: block; font-family: 'Fira Code','Courier New',monospace; font-size: 13px; color: #dc2626; line-height: 1.65; }
+.s7-final-line-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 10px 14px; margin-top: 4px; font-family: 'Fira Code','Courier New',monospace; font-size: 13px; font-weight: 700; color: #15803d; }
+.s7-nav-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 24px 22px; border-top: 1px solid #f1f5f9; background: white; }
+.s7-given-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+.s7-given-item { font-size: 12.5px; color: #334155; line-height: 1.55; display: flex; align-items: flex-start; gap: 7px; }
+.s7-given-item::before { content: '\2022'; color: #3b82f6; font-weight: 900; flex-shrink: 0; }
+.s7-given-item strong { font-weight: 700; color: #1e293b; font-family: 'Fira Code', monospace; }
+.s7-approach-list { display: flex; flex-direction: column; gap: 7px; }
+.s7-approach-step { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; color: #1e293b; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 9px; padding: 10px 13px; }
+.s7-approach-step-num { font-weight: 900; color: #fff; flex-shrink: 0; min-width: 22px; height: 22px; background: linear-gradient(135deg, #7c3aed, #6d28d9); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10.5px; }
+.s7-approach-step-eq { display: block; margin-top: 5px; font-family: 'Fira Code','Courier New',monospace; font-size: 12px; font-weight: 600; color: #dc2626; background: #fff7ed; border-radius: 6px; padding: 3px 9px; word-break: break-word; border: 1px solid #fed7aa; }
+.s7-body-cols { display: flex; min-height: 320px; }
+.s7-left-col { width: 42%; min-width: 200px; border-right: 1.5px solid #e5e7eb; padding: 20px 20px 20px 24px; background: linear-gradient(180deg,#eff6ff,#dbeafe); display: flex; flex-direction: column; }
+@media(max-width:600px){
+  .s7-content { flex-direction: column; }
+  .s7-content.active { flex-direction: column; }
+  .s7-left { width: 100%; border-right: none; border-bottom: 1.5px solid #e5e7eb; }
+  .s7-body-cols { flex-direction: column; }
+  .s7-left-col { width: 100%; border-right: none; border-bottom: 1.5px solid #e5e7eb; }
+}"""
+
+_SCENE9_CSS = """
+/* ── Scene 9: Final answers grid overlay ─────────────────────────────── */
+#qanim-scene9-overlay {
+  display: none; position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(.94);
+  z-index: 7500; width: min(820px,96vw); max-height: 92vh;
+  overflow-y: auto; box-sizing: border-box;
+  opacity: 0; pointer-events: none;
+  transition: opacity .32s ease, transform .38s cubic-bezier(.34,1.56,.64,1);
+}
+#qanim-scene9-overlay.qanim-scene-visible {
+  display: block !important; opacity: 1; pointer-events: auto;
+  transform: translate(-50%,-50%) scale(1);
+}
+.s9-card {
+  background: white; border-radius: 22px;
+  box-shadow: 0 12px 60px rgba(16,185,129,.18), 0 2px 10px rgba(0,0,0,.08);
+  border: 1px solid #d1fae5; overflow: hidden;
+}
+.s9-header {
+  background: linear-gradient(135deg, #f0fdf4, #d1fae5);
+  border-bottom: 2px solid #10b981; padding: 24px 32px 20px; text-align: center;
+}
+.s9-header h2 { font-size: 22px; font-weight: 900; color: #064e3b; margin-bottom: 6px; }
+.s9-header p { font-size: 13px; color: #065f46; margin: 0; }
+.s9-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px; padding: 28px 32px; background: white;
+}
+.s9-answer-card {
+  background: white; border: 1px solid #e5e7eb; border-radius: 14px;
+  padding: 22px 24px; opacity: 0; transform: translateY(16px);
+  transition: opacity .4s ease, transform .4s ease;
+}
+.s9-answer-label {
+  display: block; font-size: 10px; font-weight: 800; color: #0891b2;
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+}
+.s9-answer-value-row { display: flex; align-items: baseline; gap: 6px; }
+.s9-answer-value { font-size: 36px; font-weight: 900; color: #0f766e; }
+.s9-answer-unit  { font-size: 18px; font-weight: 600; color: #0f766e; }
+.s9-answer-desc  { font-size: 13px; color: #6b7280; margin-top: 8px; line-height: 1.5; }
+.s9-nav-row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; padding: 18px 32px 24px;
+  border-top: 1px solid #a7f3d0;
+  background: linear-gradient(135deg, #f0fdf4, #d1fae5);
+}"""
+
+_CONTROLS_CSS = """
+/* ── Controls bar ─────────────────────────────────────────────────────────── */
+#answerbox-backdrop{display:none;position:fixed;inset:0;z-index:8400;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);}
+#answerbox-backdrop.open{display:block;}
+#answerbox-panel{display:flex;flex-direction:column;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.96);z-index:8500;width:min(480px,94vw);max-height:85vh;border-radius:18px;overflow:hidden;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 48px rgba(124,58,237,.18);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s cubic-bezier(.34,1.56,.64,1);}
+#answerbox-panel.open{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1);}
+.ab-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:linear-gradient(135deg,#faf5ff,#f0f9ff);border-bottom:1px solid #e2e8f0;}
+.ab-header-title{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:16px;font-weight:800;color:#1e293b;}
+.ab-close-btn{width:28px;height:28px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;}
+.ab-close-btn:hover{background:#fee2e2;color:#dc2626;}
+.ab-progress-row{display:flex;align-items:center;justify-content:space-between;padding:10px 20px 6px;border-bottom:1px solid #f1f5f9;}
+.ab-progress-label{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:11.5px;font-weight:700;color:#64748b;}
+.ab-progress-dots{display:flex;gap:4px;}
+.ab-dot{width:8px;height:8px;border-radius:50%;background:#e2e8f0;transition:background .2s;}
+.ab-dot.current{background:#7c3aed;transform:scale(1.2);}
+.ab-dot.done{background:#22c55e;}
+.ab-body{padding:16px 20px 20px;overflow-y:auto;display:flex;flex-direction:column;gap:0;}
+.ab-find-chip{display:flex;align-items:flex-start;gap:8px;padding:10px 14px;border-radius:10px;background:#f5f3ff;border:1px solid #ddd6fe;margin-bottom:14px;}
+.ab-find-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.ab-find-text{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12.5px;font-weight:600;color:#5b21b6;line-height:1.5;}
+.ab-find-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#7c3aed;display:block;margin-bottom:2px;}
+.ab-instruction{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;color:#64748b;margin-bottom:10px;line-height:1.6;}
+#ab-user-input{width:100%;min-height:60px;padding:12px 14px;border-radius:10px;border:1.5px solid #e2e8f0;background:#f8fafc;font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;color:#1e293b;line-height:1.6;resize:vertical;transition:border-color .15s;outline:none;box-sizing:border-box;}
+#ab-user-input:focus{border-color:#7c3aed;background:#fff;}
+#ab-submit-btn{width:100%;padding:12px;margin-top:10px;border-radius:10px;border:none;background:#7c3aed;color:#fff;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;transition:background .15s,transform .1s;}
+#ab-submit-btn:hover{background:#6d28d9;transform:translateY(-1px);}
+#ab-feedback{display:none;margin-top:14px;border-radius:12px;overflow:hidden;border:1px solid transparent;}
+#ab-feedback.show{display:block;}
+#ab-feedback.correct{border-color:#bbf7d0;}.ab-feedback.almost{border-color:#fed7aa;}#ab-feedback.wrong{border-color:#fecaca;}
+.ab-feedback-top{display:flex;align-items:center;gap:10px;padding:12px 16px;}
+#ab-feedback.correct .ab-feedback-top{background:#f0fdf4;}#ab-feedback.almost .ab-feedback-top{background:#fff7ed;}#ab-feedback.wrong .ab-feedback-top{background:#fef2f2;}
+.ab-feedback-icon{font-size:22px;flex-shrink:0;}.ab-feedback-verdict{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:800;}
+#ab-feedback.correct .ab-feedback-verdict{color:#15803d;}#ab-feedback.almost .ab-feedback-verdict{color:#c2410c;}#ab-feedback.wrong .ab-feedback-verdict{color:#b91c1c;}
+.ab-feedback-insight{padding:10px 16px 13px;border-top:1px solid;}
+#ab-feedback.correct .ab-feedback-insight{background:#fafffe;border-color:#bbf7d0;}#ab-feedback.almost .ab-feedback-insight{background:#fffbf5;border-color:#fed7aa;}#ab-feedback.wrong .ab-feedback-insight{background:#fff8f8;border-color:#fecaca;}
+.ab-insight-label{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:#64748b;margin-bottom:4px;}
+.ab-insight-text{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12.5px;color:#1e293b;line-height:1.68;}
+.ab-action-row{display:none;gap:8px;margin-top:12px;}.ab-action-row.show{display:flex;}
+#ab-retry-btn{flex:1;padding:9px 14px;border-radius:9px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s;}
+#ab-retry-btn:hover{background:#ede9fe;border-color:#7c3aed;color:#7c3aed;}
+#ab-next-target-btn{flex:2;padding:9px 14px;border-radius:9px;border:none;background:#7c3aed;color:#fff;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;display:none;transition:background .15s;}
+#ab-next-target-btn:hover{background:#6d28d9;}#ab-next-target-btn.show{display:block;}
+#ab-alldone-card{display:none;text-align:center;padding:28px 20px;border-radius:14px;background:linear-gradient(135deg,#f0fdf4,#fefce8);border:1.5px solid #bbf7d0;margin-top:10px;}
+#ab-alldone-card.show{display:block;}
+.ab-alldone-emoji{font-size:40px;display:block;margin-bottom:10px;}
+.ab-alldone-title{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:18px;font-weight:800;color:#15803d;margin-bottom:6px;}
+.ab-alldone-sub{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;color:#166534;line-height:1.6;}
+#qanim-controls-bar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:7000;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.98);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1.5px solid transparent;border-radius:16px;padding:10px 14px;box-shadow:0 6px 36px rgba(124,58,237,.18),0 2px 8px rgba(0,0,0,.08);white-space:nowrap;}
+#qanim-controls-bar::before{content:'';position:absolute;inset:-2px;border-radius:18px;background:linear-gradient(90deg,#7c3aed,#db2777,#f59e0b,#7c3aed);background-size:200% 100%;animation:qanim-bar-glow 4s linear infinite;z-index:-1;}
+@keyframes qanim-bar-glow{0%{background-position:0% 50%}100%{background-position:200% 50%}}
+.qanim-ctrl-btn{display:flex;align-items:center;gap:5px;padding:8px 15px;border-radius:10px;border:1.5px solid #e2e8f0;background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%);color:#334155;font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s;user-select:none;}
+.qanim-ctrl-btn:hover{background:linear-gradient(135deg,#ede9fe 0%,#fdf4ff 100%);border-color:#7c3aed;color:#6d28d9;transform:translateY(-2px);box-shadow:0 4px 14px rgba(124,58,237,.22);}
+.qanim-ctrl-sep{width:1px;height:22px;background:linear-gradient(to bottom,transparent,#c4b5fd,transparent);flex-shrink:0;}
+#btn-prev.qanim-prev-btn{background:#fff;color:#64748b;border:1.5px solid #cbd5e1;padding:11px 20px;border-radius:10px;font-size:13.5px;font-weight:700;font-family:inherit;cursor:pointer;margin-right:auto;box-shadow:0 1px 3px rgba(15,23,42,.06);}
+#btn-prev.qanim-prev-btn:hover:not(:disabled){background:#f8fafc;color:#1e293b;border-color:#94a3b8;box-shadow:0 2px 8px rgba(15,23,42,.10);transform:translateY(-1px);}
+#btn-prev.qanim-prev-btn:disabled{opacity:.38;cursor:not-allowed;}
+#qanim-glossary-backdrop{position:fixed;inset:0;z-index:7150;background:rgba(15,23,42,.28);opacity:0;pointer-events:none;transition:opacity .22s;}
+#qanim-glossary-backdrop.open{opacity:1;pointer-events:auto;}
+#qanim-glossary-panel{position:fixed;top:0;right:0;z-index:7300;width:340px;max-width:88vw;height:100vh;background:#fff;border-left:1px solid #e2e8f0;box-shadow:-8px 0 32px rgba(0,0,0,.14);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform .26s cubic-bezier(.16,1,.3,1);}
+#qanim-glossary-panel.open{transform:translateX(0);}
+#qanim-glossary-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#f0fdfa;border-bottom:1px solid #ccfbf1;flex-shrink:0;}
+.glossary-header-title{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:700;color:#0f766e;}
+.glossary-hdr-btn{width:26px;height:26px;border-radius:7px;border:1px solid #99f6e4;background:rgba(255,255,255,.7);color:#0f766e;font-size:12px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+#qanim-glossary-body{flex:1 1 auto;overflow-y:auto;padding:12px 14px 20px;}
+.glossary-term-card{background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #0d9488;border-radius:10px;padding:10px 12px;margin-bottom:10px;}
+.glossary-term-word{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:13px;font-weight:800;color:#134e4a;margin-bottom:4px;text-transform:capitalize;}
+.glossary-term-meaning{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12.5px;line-height:1.55;color:#475569;}
+.glossary-ctrl-badge{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#0d9488;color:#fff;font-size:10px;font-weight:800;line-height:16px;text-align:center;box-shadow:0 0 0 2px #fff;}
+"""
+
+# ===========================================================================
+# JavaScript Templates (reference-exact)
+# ===========================================================================
+
+_SCENE6_JS = """
+<script id="qanim-js-scene6">
+(function initScene6(){
+  'use strict';
+  if(window.__qanimScene6Init)return;window.__qanimScene6Init=true;
+
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  function _qanimCancelRAF(){
+    if(window.qanimRafId){cancelAnimationFrame(window.qanimRafId);window.qanimRafId=null;}
+    if(window.rafId){cancelAnimationFrame(window.rafId);window.rafId=null;}
+  }
+  function _qanimResumeRAF(){
+    if(typeof window.qanimStartRAF==='function'){window.qanimStartRAF();return;}
+    if(typeof window.startRAF==='function'){window.startRAF();return;}
+    if(typeof window.animate==='function'){requestAnimationFrame(window.animate);}
+  }
+
+  function _syncDots(idx){
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<idx)dots[i].classList.add('done');if(i===idx)dots[i].classList.add('active');}
+    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 7 of 9: Formulas';
+    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(7/9*100)+'%';
+  }
+
+  window.qanim_showScene6=function(){
+    var ov  =_el('qanim-scene6-overlay');
+    var ov7 =_el('qanim-scene7-overlay');
+    var ov9 =_el('qanim-scene9-overlay');
+    var bd  =_el('qanim-scene-modal-backdrop');
+    if(ov)  ov.classList.add('qanim-scene-visible');
+    if(ov7) ov7.classList.remove('qanim-scene-visible');
+    if(ov9) ov9.classList.remove('qanim-scene-visible');
+    if(bd)  bd.classList.add('qanim-scene-visible');
+    _qanimCancelRAF();
+    _syncDots(6);
+  };
+
+  window.qanim_goToPrevScene=function(){
+    ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
+    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
+    var stage=document.querySelector('.svg-container');if(stage)stage.style.opacity='1';
+    if(typeof window.applyStep==='function'&&typeof window.stepsData!=='undefined'){
+      var last=window.stepsData.length-1;window.currentStep=last;window.applyStep(last);}
+    _qanimResumeRAF();
+  };
+
+  _onReady(function(){
+    var origReset=window.resetAnim;
+    window.resetAnim=function(){
+      ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){var el=_el(id);if(el)el.classList.remove('qanim-scene-visible');});
+      var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
+      var stage=document.querySelector('.svg-container');if(stage)stage.style.opacity='1';
+      if(typeof origReset==='function')origReset();
+    };
+  });
+})();
+</script>
+"""
+
+_SCENE7_JS = """
+<script id="qanim-js-scene7">
+(function initScene7(){
+  'use strict';
+  if(window.__qanimScene7Init)return;window.__qanimScene7Init=true;
+
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  function _syncDots8(){
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<7)dots[i].classList.add('done');if(i===7)dots[i].classList.add('active');}
+    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 8 of 9: Step-by-Step Substitution';
+    var bar=_el('step-bar');if(bar)bar.style.width=Math.round(8/9*100)+'%';
+  }
+
+  function _showScene7Core(){
+    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.add('qanim-scene-visible');
+    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
+    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
+    _syncDots8();
+  }
+
+  window.qanim_showScene7=_showScene7Core;
+  window.qanim_showScene8=_showScene7Core;
+
+  window.qanim_goToScene6FromScene7=function(){
+    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
+    if(typeof window.qanim_showScene6==='function')window.qanim_showScene6();
+  };
+
+  window.qanim_goToScene7FromScene9=function(){
+    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
+    _showScene7Core();
+  };
+
+  _onReady(function(){
+    var origReset=window.resetAnim;
+    window.resetAnim=function(){
+      var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
+      var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
+      var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.remove('qanim-scene-visible');
+      if(typeof origReset==='function')origReset();
+    };
+  });
+})();
+</script>
+"""
+
+_SCENE9_JS = """
+<script id="qanim-js-scene9">
+(function initScene9(){
+  'use strict';
+  if(window.__qanimScene9Init)return;window.__qanimScene9Init=true;
+
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+
+  function _syncDots9(){
+    var dots=document.querySelectorAll('.step-dot');
+    for(var i=0;i<dots.length;i++){dots[i].classList.remove('active','done');if(i<8)dots[i].classList.add('done');if(i===8)dots[i].classList.add('active');}
+    var lbl=_el('step-label');if(lbl)lbl.innerText='Step 9 of 9: Final Answer';
+    var bar=_el('step-bar');if(bar)bar.style.width='100%';
+  }
+
+  function _animateEntrance(){
+    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
+    for(var i=0;i<rows.length;i++){
+      (function(el,delay){setTimeout(function(){el.classList.add('s9-shown');},delay);})(rows[i],200+i*200);}
+    var fb=_el('s9-final-box');
+    if(fb)setTimeout(function(){fb.classList.add('s9-shown');},200+rows.length*200);
+    var ib=_el('s9-insight-bar');
+    if(ib)setTimeout(function(){ib.classList.add('s9-shown');},200+rows.length*200+300);
+  }
+
+  function _resetEntrance(){
+    var rows=document.querySelectorAll('#s9-sub-chain .s9-sub-row');
+    for(var i=0;i<rows.length;i++)rows[i].classList.remove('s9-shown');
+    var fb=_el('s9-final-box');if(fb)fb.classList.remove('s9-shown');
+    var ib=_el('s9-insight-bar');if(ib)ib.classList.remove('s9-shown');
+  }
+
+  window.qanim_showScene9=function(){
+    var ov7=_el('qanim-scene7-overlay');if(ov7)ov7.classList.remove('qanim-scene-visible');
+    var ov6=_el('qanim-scene6-overlay');if(ov6)ov6.classList.remove('qanim-scene-visible');
+    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.add('qanim-scene-visible');
+    var bd=_el('qanim-scene-modal-backdrop');if(bd)bd.classList.add('qanim-scene-visible');
+    _syncDots9();_resetEntrance();setTimeout(_animateEntrance,120);
+    if(typeof window.__s9AnimateCards==='function'){setTimeout(window.__s9AnimateCards,80);}
+  };
+
+  window.qanim_goToScene7FromScene9=function(){
+    var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
+    if(typeof window.qanim_showScene8==='function')window.qanim_showScene8();
+    else if(typeof window.qanim_showScene7==='function')window.qanim_showScene7();
+  };
+
+  _onReady(function(){
+    var origReset=window.resetAnim;
+    window.resetAnim=function(){
+      var ov9=_el('qanim-scene9-overlay');if(ov9)ov9.classList.remove('qanim-scene-visible');
+      if(typeof origReset==='function')origReset();
+    };
+  });
+})();
+</script>
+"""
+
+_AUTOTRIGGER_JS = """
+<script id="qanim-js-scene6-autotrigger">
+(function(){
+  'use strict';
+  if(window.__qanimAutoTrigger)return;window.__qanimAutoTrigger=true;
+
+  function _tryTrigger(){
+    var btn=document.getElementById('btn-next');
+    if(!btn)return;
+    var label=(btn.textContent||btn.innerText||'').trim().toLowerCase();
+    var isFinished=btn.disabled||label.indexOf('finish')!==-1||label.indexOf('formula')!==-1||label.indexOf('step 7')!==-1;
+    if(!isFinished)return;
+    var ov6=document.getElementById('qanim-scene6-overlay');
+    var ov7=document.getElementById('qanim-scene7-overlay');
+    var ov9=document.getElementById('qanim-scene9-overlay');
+    var alreadyOpen=(ov6&&ov6.classList.contains('qanim-scene-visible'))||(ov7&&ov7.classList.contains('qanim-scene-visible'))||(ov9&&ov9.classList.contains('qanim-scene-visible'));
+    if(alreadyOpen)return;
+    if(typeof window.qanim_showScene6==='function'){
+      var svgCont=document.querySelector('.svg-container');
+      var doShow=function(){window.qanim_showScene6();};
+      if(svgCont){svgCont.style.transition='opacity .45s ease';svgCont.style.opacity='0';setTimeout(doShow,460);}
+      else{setTimeout(doShow,120);}
+    }
+  }
+
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  _onReady(function(){
+    var btn=document.getElementById('btn-next');
+    if(btn&&!btn.__qanimAutoWired){btn.__qanimAutoWired=true;btn.addEventListener('click',function(){setTimeout(_tryTrigger,30);});}
+  });
+})();
+</script>
+"""
+
+_PREVSTEP_JS = """
+<script id="qanim-js-prevstep">
+(function initPrevStep(){
+  'use strict';
+  if(window.__qanimPrevStepInit)return;window.__qanimPrevStepInit=true;
+
+  function _updateBtn(){
+    var pb=document.getElementById('btn-prev');
+    if(!pb)return;
+    var cur=typeof window.currentStep==='number'?window.currentStep:-1;
+    pb.disabled=(cur<=0);
+  }
+
+  function _resumeRAF(){
+    if(typeof window.qanimStartRAF==='function'){window.qanimStartRAF();return;}
+    if(typeof window.startRAF==='function'){window.startRAF();return;}
+    if(typeof window.animate==='function'){requestAnimationFrame(window.animate);}
+  }
+
+  window.prevStep=function(){
+    if(typeof window.currentStep!=='number')return;
+    if(window.currentStep<=0)return;
+    window.currentStep--;
+    if(typeof window.applyStep==='function')window.applyStep(window.currentStep);
+    _resumeRAF();
+    var nb=document.getElementById('btn-next');if(nb)nb.style.display='inline-block';
+  };
+
+  var _origApply=window.applyStep;
+  if(typeof _origApply==='function'){
+    window.applyStep=function(idx){_origApply(idx);_updateBtn();};
+  }
+
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  _onReady(function(){
+    var pb=document.getElementById('btn-prev');
+    if(pb){pb.removeAttribute('onclick');pb.addEventListener('click',function(e){e.stopPropagation();window.prevStep();});}
+    _updateBtn();
+  });
+})();
+</script>
+"""
+
+
+_ANSWERBOX_JS_TMPL = """
+<script type="application/json" id="__answer_targets__">{{TARGETS_JSON}}</script>
+<script id="qanim-js-answerbox">
+(function initAnswerBox(){
+  'use strict';
+  if(window.__qanimAnswerBoxInit)return;window.__qanimAnswerBoxInit=true;
+  var abOpen=false,_targets=[],_currentIdx=0,_loaded=false;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function _loadTargets(){if(_loaded)return;_loaded=true;try{var t=_el('__answer_targets__');if(!t)return;var d=JSON.parse(t.textContent)||{};_targets=Array.isArray(d.answer_targets)?d.answer_targets:[];}catch(e){_targets=[];}}
+  function _renderTarget(idx){var t=_targets[idx];if(!t)return;var fe=_el('ab-find-text');if(fe)fe.textContent=t.label||'Answer';var total=_targets.length;var pl=_el('ab-progress-label');if(pl)pl.textContent='Question '+(idx+1)+' of '+total;var de=_el('ab-progress-dots');if(de){var h='';for(var i=0;i<total;i++){var cls=i<idx?'ab-dot done':i===idx?'ab-dot current':'ab-dot';h+='<div class="'+cls+'"></div>';}de.innerHTML=h;}var inp=_el('ab-user-input');if(inp){inp.value='';inp.removeAttribute('disabled');}var fb=_el('ab-feedback');if(fb)fb.className='';var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';var sb=_el('ab-submit-btn');if(sb){sb.style.display='';sb.disabled=false;}var adc=_el('ab-alldone-card');if(adc)adc.className='';var u=t.unit?' ('+t.unit+')':'';if(inp)inp.placeholder='Type your answer'+u+'...';}
+  function _nums(s){var m=s.match(/[-+]?\\d*\\.?\\d+(?:[eE][-+]?\\d+)?/g);return m?m.map(parseFloat).filter(function(n){return isFinite(n);}):[];}
+  function _validate(userAns,correctAns){if(!userAns||!userAns.trim())return'empty';var un=_nums(userAns),cn=_nums(correctAns);if(un.length>0&&cn.length>0){var re=Math.abs(un[0]-cn[0])/(Math.abs(cn[0])+1e-12);if(re<0.01)return'correct';if(re<0.15)return'almost';return'wrong';}var uc=userAns.toLowerCase().trim().replace(/[^a-z0-9\\s]/g,' ');var cc=correctAns.toLowerCase().trim().replace(/[^a-z0-9\\s]/g,' ');if(uc===cc)return'correct';return'wrong';}
+  var _FB={correct:{icon:'✅',verdict:'Correct!',cls:'correct'},almost:{icon:'〰️',verdict:'Almost Correct',cls:'almost'},wrong:{icon:'❌',verdict:'Wrong Answer',cls:'wrong'},empty:{icon:'❓',verdict:'No Answer',cls:'wrong'}};
+  function _showFeedback(verdict,insight){var info=_FB[verdict]||_FB['wrong'];var fb=_el('ab-feedback'),icon=_el('ab-feedback-icon'),verd=_el('ab-feedback-verdict'),ins=_el('ab-insight-text');if(!fb)return;fb.className='show '+info.cls;if(icon)icon.textContent=info.icon;if(verd)verd.textContent=info.verdict;if(ins)ins.textContent=insight||'Review the solution.';var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row show';var ntb=_el('ab-next-target-btn'),isLast=(_currentIdx>=_targets.length-1);if(ntb){if((verdict==='correct'||verdict==='almost')&&!isLast){ntb.style.display='';ntb.textContent='Next →';}else{ntb.style.display='none';}}if(verdict==='correct'&&isLast){setTimeout(function(){var adc=_el('ab-alldone-card');if(adc)adc.className='show';var sb=_el('ab-submit-btn');if(sb)sb.style.display='none';},900);}}
+  function openAnswerBox(){_loadTargets();_currentIdx=0;var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');if(!bd||!pn)return;bd.classList.add('open');bd.setAttribute('aria-hidden','false');pn.classList.add('open');pn.setAttribute('aria-hidden','false');abOpen=true;_renderTarget(_currentIdx);setTimeout(function(){var inp=_el('ab-user-input');if(inp)inp.focus();},220);}
+  function closeAnswerBox(){var bd=_el('answerbox-backdrop'),pn=_el('answerbox-panel');if(bd){bd.classList.remove('open');bd.setAttribute('aria-hidden','true');}if(pn){pn.classList.remove('open');pn.setAttribute('aria-hidden','true');}abOpen=false;}
+  window.openAnswerBox=openAnswerBox;window.closeAnswerBox=closeAnswerBox;
+  // Reset hook: called by __qanimSetAnswerTargets after Customize updates the JSON element.
+  // Clears the internal _loaded flag so the next openAnswerBox() re-reads _targets from DOM.
+  window.__qanimAnswerBoxReset=function(){_loaded=false;_targets=[];_currentIdx=0;};
+  _onReady(function(){
+    function wireCtrl(){var btn=_el('answerbox-ctrl-btn');if(btn){btn.removeAttribute('onclick');btn.addEventListener('click',function(e){e.stopPropagation();abOpen?closeAnswerBox():openAnswerBox();});}else{setTimeout(wireCtrl,100);}}
+    wireCtrl();
+    var cb=_el('ab-close-btn');if(cb)cb.addEventListener('click',function(e){e.stopPropagation();closeAnswerBox();});
+    var bd=_el('answerbox-backdrop');if(bd)bd.addEventListener('click',function(e){if(e.target===bd)closeAnswerBox();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&abOpen)closeAnswerBox();});
+    var sb=_el('ab-submit-btn');if(sb)sb.addEventListener('click',function(){var inp=_el('ab-user-input'),userAns=inp?inp.value.trim():'';var t=_targets[_currentIdx]||{};var verdict=_validate(userAns,t.value||'');_showFeedback(verdict,t.insight||'');if(inp)inp.disabled=true;});
+    var inp2=_el('ab-user-input');if(inp2)inp2.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();var sb2=_el('ab-submit-btn');if(sb2)sb2.click();}});
+    var rb=_el('ab-retry-btn');if(rb)rb.addEventListener('click',function(){var inp=_el('ab-user-input');if(inp){inp.value='';inp.disabled=false;inp.focus();}var fb=_el('ab-feedback');if(fb)fb.className='';var ar=_el('ab-action-row');if(ar)ar.className='ab-action-row';var sb=_el('ab-submit-btn');if(sb)sb.style.display='';var ntb=_el('ab-next-target-btn');if(ntb)ntb.style.display='none';});
+    var ntb2=_el('ab-next-target-btn');if(ntb2)ntb2.addEventListener('click',function(){if(_currentIdx<_targets.length-1){_currentIdx++;_renderTarget(_currentIdx);}});
+  });
+})();
+</script>
+"""
+
+_GLOSSARY_JS = """
+<script id="qanim-js-glossary">
+(function initGlossary(){
+  'use strict';
+  if(window.__qanimGlossaryInit)return;window.__qanimGlossaryInit=true;
+  function _el(id){return document.getElementById(id);}
+  function _onReady(fn){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);else setTimeout(fn,0);}
+  function openGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(!p)return;p.classList.add('open');p.setAttribute('aria-hidden','false');if(b)b.classList.add('open');}
+  function closeGlossary(){var p=_el('qanim-glossary-panel'),b=_el('qanim-glossary-backdrop');if(p){p.classList.remove('open');p.setAttribute('aria-hidden','true');}if(b)b.classList.remove('open');}
+  _onReady(function(){
+    var btn=_el('glossary-ctrl-btn');
+    if(btn)btn.addEventListener('click',function(){var p=_el('qanim-glossary-panel');if(p&&p.classList.contains('open'))closeGlossary();else openGlossary();});
+    var cb=_el('glossary-close-btn');if(cb)cb.addEventListener('click',closeGlossary);
+    var bd=_el('qanim-glossary-backdrop');if(bd)bd.addEventListener('click',closeGlossary);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeGlossary();});
+  });
+})();
+</script>
+"""
+
+
+
+# ===========================================================================
+# Customize Panel
+# ===========================================================================
+
+_CUSTOMIZE_CSS = """
+<style id="qanim-customize-styles">
+#customize-backdrop {
+  display:none; position:fixed; inset:0; z-index:8800;
+  background:rgba(15,23,42,.52); backdrop-filter:blur(5px);
+}
+#customize-backdrop.open { display:block; }
+
+#customize-panel {
+  display:flex; flex-direction:column;
+  position:fixed; top:50%; left:50%;
+  transform:translate(-50%,-50%) scale(.96);
+  z-index:8900; width:min(520px,95vw); max-height:88vh;
+  border-radius:20px; overflow:hidden;
+  background:#fff;
+  border:1px solid #e2e8f0;
+  box-shadow:0 8px 56px rgba(99,102,241,.22),0 2px 10px rgba(0,0,0,.10);
+  opacity:0; pointer-events:none;
+  transition:opacity .26s, transform .26s cubic-bezier(.34,1.56,.64,1);
+}
+#customize-panel.open {
+  opacity:1; pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1);
+}
+.cust-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 22px;
+  background:linear-gradient(135deg,#f5f3ff,#eff6ff);
+  border-bottom:1px solid #e2e8f0; flex-shrink:0;
+}
+.cust-header-title {
+  font-size:16px; font-weight:800; color:#1e293b;
+  display:flex; align-items:center; gap:8px;
+}
+.cust-header-badge {
+  font-size:10px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1px; padding:2px 9px; border-radius:20px;
+  background:rgba(99,102,241,.12); border:1px solid rgba(99,102,241,.28);
+  color:#4338ca;
+}
+.cust-close-btn {
+  width:30px; height:30px; border-radius:8px;
+  border:1px solid #e2e8f0; background:#f8fafc;
+  color:#64748b; font-size:13px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  transition:background .15s; padding:0;
+}
+.cust-close-btn:hover { background:#fee2e2; color:#dc2626; }
+.cust-body {
+  padding:20px 22px; overflow-y:auto; flex:1 1 auto;
+  display:flex; flex-direction:column; gap:0;
+}
+.cust-section-title {
+  font-size:10px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1.4px; color:#6366f1; margin-bottom:12px;
+  display:flex; align-items:center; gap:6px;
+}
+.cust-section-title::after {
+  content:''; flex:1; height:1px;
+  background:linear-gradient(90deg,rgba(99,102,241,.25),transparent);
+}
+.cust-field-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:12px;
+  margin-bottom:18px;
+}
+.cust-field { display:flex; flex-direction:column; gap:4px; }
+.cust-field label {
+  font-size:11.5px; font-weight:700; color:#475569;
+  display:flex; align-items:center; gap:5px;
+}
+.cust-field label .cust-sym {
+  font-family:'Fira Code','Courier New',monospace;
+  font-weight:900; font-size:13px; color:#0e7490;
+}
+.cust-field input {
+  padding:9px 12px; border-radius:9px;
+  border:1.5px solid #e2e8f0; background:#f8fafc;
+  font-family:inherit; font-size:13.5px; font-weight:600;
+  color:#1e293b; outline:none;
+  transition:border-color .15s,background .15s;
+  box-sizing:border-box; width:100%;
+}
+.cust-field input:focus {
+  border-color:#6366f1; background:#fff;
+  box-shadow:0 0 0 3px rgba(99,102,241,.12);
+}
+.cust-field .cust-unit { font-size:10.5px; color:#94a3b8; margin-top:1px; }
+.cust-preview-box {
+  background:linear-gradient(135deg,#f5f3ff,#eff6ff);
+  border:1.5px solid rgba(99,102,241,.28);
+  border-radius:12px; padding:14px 16px; margin-bottom:16px;
+}
+.cust-preview-title {
+  font-size:10.5px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1.2px; color:#4338ca; margin-bottom:10px;
+}
+.cust-preview-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+.cust-preview-item {
+  display:flex; align-items:center; gap:6px;
+  font-size:12.5px; color:#334155;
+}
+.cust-preview-item .cpv-sym {
+  font-weight:800; color:#1e293b;
+  font-family:'Fira Code','Courier New',monospace; font-size:13px;
+}
+.cust-preview-item .cpv-arrow { color:#6366f1; font-size:11px; font-weight:700; }
+.cust-result-bar {
+  background:linear-gradient(135deg,#f0fdf4,#dcfce7);
+  border:1.5px solid #86efac; border-radius:12px;
+  padding:13px 16px; margin-bottom:16px; display:none;
+}
+.cust-result-bar.visible { display:block; }
+.cust-result-title {
+  font-size:10.5px; font-weight:800; text-transform:uppercase;
+  letter-spacing:1.2px; color:#15803d; margin-bottom:7px;
+}
+.cust-result-values {
+  font-size:14px; font-weight:700; color:#14532d;
+  font-family:'Fira Code','Courier New',monospace;
+}
+.cust-error-bar {
+  background:#fef2f2; border:1.5px solid #fecaca;
+  border-radius:10px; padding:10px 14px;
+  font-size:12.5px; color:#b91c1c; font-weight:600;
+  margin-bottom:14px; display:none;
+}
+.cust-error-bar.visible { display:block; }
+.cust-footer {
+  display:flex; gap:10px; justify-content:flex-end;
+  padding:16px 22px; border-top:1px solid #f1f5f9;
+  background:#fafbff; flex-shrink:0;
+}
+.cust-btn-reset {
+  padding:10px 20px; border-radius:10px; border:1.5px solid #e2e8f0;
+  background:#fff; color:#64748b; font-size:13px; font-weight:700;
+  font-family:inherit; cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.cust-btn-reset:hover { background:#f8fafc; border-color:#94a3b8; color:#334155; }
+.cust-btn-apply {
+  padding:10px 24px; border-radius:10px; border:none;
+  background:linear-gradient(135deg,#4f46e5,#6366f1);
+  color:#fff; font-size:13px; font-weight:700; font-family:inherit;
+  cursor:pointer; box-shadow:0 3px 12px rgba(99,102,241,.35);
+  transition:background .15s,transform .12s,box-shadow .15s;
+}
+.cust-btn-apply:hover {
+  background:linear-gradient(135deg,#4338ca,#4f46e5);
+  transform:translateY(-1px); box-shadow:0 5px 18px rgba(99,102,241,.42);
+}
+.cust-btn-apply:active { transform:translateY(0); }
+@keyframes cust-pulse-ring {
+  0%   { box-shadow:0 0 0 0 rgba(99,102,241,.5); }
+  70%  { box-shadow:0 0 0 8px rgba(99,102,241,0); }
+  100% { box-shadow:0 0 0 0 rgba(99,102,241,0); }
+}
+.cust-applied-ring { animation:cust-pulse-ring .7s ease-out; }
+</style>
+"""
 
 
 def _selfcheck_customize_js(customize_html: str) -> None:
@@ -2872,53 +4046,6 @@ def _build_customize_html(sol: dict, scene: dict) -> str:
     Returns the combined CSS + panel HTML + JS string.
     """
     import re as _re_cust
-
-    # CSS for the customize panel — shared by all return paths (including fallbacks).
-    _CUSTOMIZE_CSS = """<style id="qanim-css-customize">
-#customize-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;opacity:0;pointer-events:none;transition:opacity .25s}
-#customize-backdrop.open{opacity:1;pointer-events:auto}
-#customize-panel{position:fixed;top:50%;right:-420px;transform:translateY(-50%);width:min(400px,96vw);max-height:88vh;background:#1e293b;border-radius:16px;box-shadow:0 24px 64px rgba(0,0,0,.55);z-index:9999;display:flex;flex-direction:column;transition:right .3s cubic-bezier(.4,0,.2,1);overflow:hidden}
-#customize-panel.open{right:50%;transform:translate(50%,-50%)}
-.cust-header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;background:linear-gradient(135deg,#0f172a,#1e293b);border-bottom:1px solid rgba(255,255,255,.08)}
-.cust-header-title{font-size:15px;font-weight:700;color:#f1f5f9;display:flex;align-items:center;gap:8px}
-.cust-header-badge{font-size:10px;font-weight:600;background:linear-gradient(90deg,#0ea5e9,#6366f1);color:#fff;padding:2px 8px;border-radius:20px;letter-spacing:.5px}
-.cust-close-btn{background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;line-height:1;padding:4px 6px;border-radius:6px;transition:color .2s,background .2s}
-.cust-close-btn:hover{color:#f1f5f9;background:rgba(255,255,255,.08)}
-.cust-body{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px}
-.cust-field{display:flex;flex-direction:column;gap:5px}
-.cust-field label{font-size:12.5px;color:#94a3b8;font-weight:600;letter-spacing:.3px}
-.cust-sym{color:#0ea5e9;font-style:italic;margin-right:4px}
-.cust-field input[type=number]{background:#0f172a;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#f1f5f9;font-size:14px;padding:8px 12px;outline:none;transition:border-color .2s;width:100%;box-sizing:border-box}
-.cust-field input[type=number]:focus{border-color:#0ea5e9}
-.cust-unit{font-size:11px;color:#64748b}
-.cust-preview{background:#0f172a;border-radius:10px;padding:14px 16px;border:1px solid rgba(255,255,255,.07)}
-.cust-preview-label{font-size:11px;color:#64748b;margin-bottom:6px;font-weight:600;letter-spacing:.5px;text-transform:uppercase}
-.cust-answer-display{font-size:22px;font-weight:800;color:#0ea5e9}
-.cust-answer-unit{font-size:14px;color:#94a3b8;margin-left:4px}
-.cust-error-bar{display:none;background:#7f1d1d;color:#fca5a5;font-size:12px;padding:8px 14px;border-radius:8px;margin-top:4px}
-.cust-error-bar.visible{display:block}
-.cust-footer{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid rgba(255,255,255,.08);background:#0f172a}
-.cust-btn-apply{background:linear-gradient(90deg,#0ea5e9,#6366f1);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;padding:9px 22px;cursor:pointer;transition:opacity .2s,transform .15s}
-.cust-btn-apply:hover{opacity:.88;transform:translateY(-1px)}
-.cust-btn-reset{background:rgba(255,255,255,.07);color:#94a3b8;border:none;border-radius:8px;font-size:13px;font-weight:600;padding:9px 18px;cursor:pointer;transition:background .2s,color .2s}
-.cust-btn-reset:hover{background:rgba(255,255,255,.13);color:#f1f5f9}
-@keyframes custAppliedRing{0%{box-shadow:0 0 0 0 rgba(14,165,233,.7)}70%{box-shadow:0 0 0 8px rgba(14,165,233,0)}100%{box-shadow:0 0 0 0 rgba(14,165,233,0)}}
-.cust-applied-ring{animation:custAppliedRing .8s ease-out}
-.cust-section-title{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px}
-.cust-field-grid{display:flex;flex-direction:column;gap:10px}
-.cust-preview-box{background:#0f172a;border-radius:10px;padding:12px 14px;border:1px solid rgba(255,255,255,.07)}
-.cust-preview-title{font-size:11px;color:#64748b;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px}
-.cust-preview-grid{display:flex;flex-direction:column;gap:6px}
-.cust-preview-item{display:flex;align-items:center;gap:6px;font-size:13px;color:#94a3b8}
-.cpv-sym{font-weight:700;color:#0ea5e9;font-style:italic;min-width:36px}
-.cpv-arrow{color:#475569}
-.cust-result-bar{display:none;background:rgba(14,165,233,.1);border:1px solid rgba(14,165,233,.3);border-radius:8px;padding:8px 14px;margin-top:2px}
-.cust-result-bar.visible{display:block}
-.cust-result-title{font-size:11px;font-weight:700;color:#0ea5e9;margin-bottom:2px}
-.cust-result-values{font-size:13px;color:#f1f5f9;font-weight:600}
-.s6info-sym{color:#0ea5e9;font-style:italic;font-weight:600}
-</style>
-"""
 
     # Robust parsing of customize block (Gemini sometimes returns a string, list, or omits it)
     cust_raw = sol.get("customize")
@@ -3917,560 +5044,6 @@ def _build_step6_panel_html(sol: dict, scene: dict) -> str:
 </div>"""
 
 
-# ── Answer Box JS template ──────────────────────────────────────────────────
-# {{TARGETS_JSON}} is replaced at runtime with the JSON-serialised targets list.
-_ANSWERBOX_JS_TMPL = """\
-<script id="qanim-answer-targets" type="application/json" style="display:none">
-{{TARGETS_JSON}}
-</script>
-<script id="qanim-answerbox-js">
-(function () {
-  'use strict';
-
-  // ── State ─────────────────────────────────────────────────────────────────
-  var _targets = null;   // array of {label, value, unit, insight}
-  var _idx     = 0;      // current target index
-  var _done    = [];     // booleans – which targets are answered correctly
-
-  // ── Read targets from the hidden JSON element ─────────────────────────────
-  function _loadTargets() {
-    try {
-      var el  = document.getElementById('__answer_targets__');
-      var src = el ? el.textContent : null;
-      if (!src) {
-        // Fall back to the static <script> tag written by Python
-        var st = document.getElementById('qanim-answer-targets');
-        src = st ? st.textContent : '{}';
-      }
-      var obj = JSON.parse(src || '{}');
-      _targets = Array.isArray(obj.answer_targets) ? obj.answer_targets : [];
-    } catch (e) {
-      console.warn('[QAnim] AnswerBox: could not parse targets', e);
-      _targets = [];
-    }
-    _idx  = 0;
-    _done = (_targets || []).map(function () { return false; });
-  }
-
-  // ── Reset hook (called by __qanimSetAnswerTargets after recompute) ─────────
-  window.__qanimAnswerBoxReset = function () {
-    _targets = null;   // force re-read on next open
-    _idx     = 0;
-    _done    = [];
-  };
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  function _norm(s) {
-    return String(s || '').toLowerCase().replace(/\\s+/g, '').replace(/,/g, '.');
-  }
-
-  function _isClose(userStr, expected) {
-    var u = parseFloat(_norm(userStr));
-    var e = parseFloat(_norm(String(expected)));
-    if (isNaN(u) || isNaN(e)) return false;
-    if (e === 0) return Math.abs(u) < 1e-9;
-    return Math.abs((u - e) / e) < 0.02;   // 2 % tolerance
-  }
-
-  function _check(userStr, target) {
-    var n  = _norm(userStr);
-    var ev = _norm(String(target.value || ''));
-    var eu = _norm(String(target.unit  || ''));
-    if (n === ev) return true;
-    if (eu && n === ev + eu) return true;
-    if (_isClose(userStr, target.value)) return true;
-    return false;
-  }
-
-  // ── Render the progress dots ──────────────────────────────────────────────
-  function _renderDots() {
-    var dotsEl = document.getElementById('ab-progress-dots');
-    var labelEl = document.getElementById('ab-progress-label');
-    if (!dotsEl || !_targets) return;
-    dotsEl.innerHTML = '';
-    _targets.forEach(function (t, i) {
-      var d = document.createElement('span');
-      d.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 3px;';
-      d.style.background = _done[i] ? '#16a34a' : (i === _idx ? 'var(--c-primary,#0369a1)' : '#cbd5e1');
-      dotsEl.appendChild(d);
-    });
-    if (labelEl) {
-      labelEl.textContent = 'Question ' + (_idx + 1) + ' of ' + _targets.length;
-    }
-  }
-
-  // ── Load one target into the UI ───────────────────────────────────────────
-  function _loadTarget(i) {
-    if (!_targets || !_targets[i]) return;
-    var t = _targets[i];
-    _idx = i;
-
-    var findEl    = document.getElementById('ab-find-text');
-    var inputEl   = document.getElementById('ab-user-input');
-    var feedbackEl = document.getElementById('ab-feedback');
-    var actionEl  = document.getElementById('ab-action-row');
-    var alldoneEl = document.getElementById('ab-alldone-card');
-
-    if (findEl)    findEl.textContent  = t.label + (t.unit ? ' (' + t.unit + ')' : '');
-    if (inputEl)   { inputEl.value = ''; inputEl.disabled = false; inputEl.focus(); }
-    if (feedbackEl) feedbackEl.style.display = 'none';
-    if (actionEl)   actionEl.style.display   = 'none';
-    if (alldoneEl)  alldoneEl.style.display  = 'none';
-
-    _renderDots();
-  }
-
-  // ── Show feedback ─────────────────────────────────────────────────────────
-  function _showFeedback(correct, target) {
-    var feedbackEl  = document.getElementById('ab-feedback');
-    var iconEl      = document.getElementById('ab-feedback-icon');
-    var verdictEl   = document.getElementById('ab-feedback-verdict');
-    var insightEl   = document.getElementById('ab-insight-text');
-    var actionEl    = document.getElementById('ab-action-row');
-    var retryBtn    = document.getElementById('ab-retry-btn');
-    var nextBtn     = document.getElementById('ab-next-target-btn');
-    var alldoneEl   = document.getElementById('ab-alldone-card');
-    var inputEl     = document.getElementById('ab-user-input');
-
-    if (!feedbackEl) return;
-
-    feedbackEl.style.display = '';
-    if (iconEl)    iconEl.textContent    = correct ? '✅' : '❌';
-    if (verdictEl) verdictEl.textContent = correct ? 'Correct!' : 'Not quite — try again.';
-    if (insightEl) insightEl.textContent = target.insight || '';
-    feedbackEl.style.borderLeft = correct ? '4px solid #16a34a' : '4px solid #dc2626';
-
-    if (inputEl) inputEl.disabled = correct;
-
-    var allDone = _done.every(Boolean);
-
-    if (actionEl) {
-      actionEl.style.display = '';
-      if (retryBtn) retryBtn.style.display = correct ? 'none' : '';
-      if (nextBtn) {
-        if (correct && !allDone && _idx < _targets.length - 1) {
-          nextBtn.style.display = '';
-          nextBtn.textContent   = 'Next →';
-        } else {
-          nextBtn.style.display = 'none';
-        }
-      }
-    }
-
-    if (correct && allDone && alldoneEl) {
-      alldoneEl.style.display = '';
-    }
-  }
-
-  // ── Open / close the panel ────────────────────────────────────────────────
-  function openAnswerBox() {
-    if (!_targets) _loadTargets();
-
-    var backdrop = document.getElementById('answerbox-backdrop');
-    var panel    = document.getElementById('answerbox-panel');
-    if (backdrop) { backdrop.style.display = 'flex'; backdrop.removeAttribute('aria-hidden'); }
-    if (panel)    panel.removeAttribute('aria-hidden');
-
-    _loadTarget(_idx);
-  }
-  window.openAnswerBox = openAnswerBox;
-
-  function _closeAnswerBox() {
-    var backdrop = document.getElementById('answerbox-backdrop');
-    var panel    = document.getElementById('answerbox-panel');
-    if (backdrop) { backdrop.style.display = 'none'; backdrop.setAttribute('aria-hidden', 'true'); }
-    if (panel)    panel.setAttribute('aria-hidden', 'true');
-  }
-
-  // ── Wire up buttons after DOM ready ──────────────────────────────────────
-  document.addEventListener('DOMContentLoaded', function () {
-
-    // Open button (controls bar)
-    var ctrlBtn = document.getElementById('answerbox-ctrl-btn');
-    if (ctrlBtn) ctrlBtn.addEventListener('click', openAnswerBox);
-
-    // Close (×) button
-    var closeBtn = document.getElementById('ab-close-btn');
-    if (closeBtn) closeBtn.addEventListener('click', _closeAnswerBox);
-
-    // Backdrop click dismisses
-    var backdrop = document.getElementById('answerbox-backdrop');
-    if (backdrop) {
-      backdrop.addEventListener('click', function (e) {
-        if (e.target === backdrop) _closeAnswerBox();
-      });
-    }
-
-    // Submit button
-    var submitBtn = document.getElementById('ab-submit-btn');
-    if (submitBtn) {
-      submitBtn.addEventListener('click', function () {
-        if (!_targets || !_targets[_idx]) return;
-        var inputEl = document.getElementById('ab-user-input');
-        var userVal = inputEl ? inputEl.value.trim() : '';
-        if (!userVal) { inputEl && inputEl.focus(); return; }
-        var correct = _check(userVal, _targets[_idx]);
-        if (correct) _done[_idx] = true;
-        _renderDots();
-        _showFeedback(correct, _targets[_idx]);
-      });
-    }
-
-    // Enter key on textarea also submits
-    var inputEl = document.getElementById('ab-user-input');
-    if (inputEl) {
-      inputEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          var btn = document.getElementById('ab-submit-btn');
-          if (btn) btn.click();
-        }
-      });
-    }
-
-    // Retry button
-    var retryBtn = document.getElementById('ab-retry-btn');
-    if (retryBtn) {
-      retryBtn.addEventListener('click', function () {
-        var inputEl    = document.getElementById('ab-user-input');
-        var feedbackEl = document.getElementById('ab-feedback');
-        var actionEl   = document.getElementById('ab-action-row');
-        if (inputEl)    { inputEl.value = ''; inputEl.disabled = false; inputEl.focus(); }
-        if (feedbackEl) feedbackEl.style.display = 'none';
-        if (actionEl)   actionEl.style.display   = 'none';
-      });
-    }
-
-    // Next target button
-    var nextBtn = document.getElementById('ab-next-target-btn');
-    if (nextBtn) {
-      nextBtn.addEventListener('click', function () {
-        if (_idx < (_targets || []).length - 1) {
-          _loadTarget(_idx + 1);
-        }
-      });
-    }
-  });
-
-})();
-</script>"""
-
-# ── Module-level CSS/JS constants ────────────────────────────────────────────
-# These are injected verbatim into the assembled HTML by assemble_html().
-# They must be plain strings (no f-string) — no runtime values substituted here.
-
-_BASE_CSS = """
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Inter',system-ui,sans-serif;background:#f1f5f9;color:#1e293b;min-height:100vh}
-:root{
-  --c-primary:#0369a1;--c-primary-mid:#0891b2;--c-primary-dim:#0e7490;--c-primary-rgb:3,105,161;
-  --c-accent:#38bdf8;--c-accent-soft:rgba(56,189,248,.13);
-  --c-orange:#d97706;--c-green:#16a34a;--c-purple:#7c3aed;
-  --radius:14px;--shadow:0 4px 24px rgba(0,0,0,.10);
-}
-/* Page header */
-.page-header{display:flex;align-items:center;gap:12px;padding:18px 28px 0}
-.page-chip{font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;
-  background:var(--c-primary);color:#fff;padding:4px 14px;border-radius:20px}
-/* Dashboard */
-.dashboard{max-width:1100px;margin:18px auto 28px;padding:0 16px;display:flex;flex-direction:column;gap:16px}
-.question-banner{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 28px;border-left:4px solid var(--c-primary)}
-.q-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--c-primary);margin-bottom:6px}
-.q-text{font-size:16px;font-weight:600;color:#1e293b;line-height:1.55}
-/* SVG container */
-.svg-container{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;position:relative;aspect-ratio:16/9}
-.svg-container svg{width:100%;height:100%;display:block}
-/* Control panel */
-.control-panel{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 24px;display:flex;flex-direction:column;gap:14px}
-/* Step dots row */
-.step-indicator{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
-.step-dot{font-size:12px;font-weight:600;padding:7px 12px;border-radius:20px;background:#f1f5f9;color:#64748b;cursor:pointer;transition:all .2s;user-select:none;border:1.5px solid transparent}
-.step-dot.active{background:var(--c-primary);color:#fff;border-color:var(--c-primary);box-shadow:0 2px 10px rgba(var(--c-primary-rgb),.35)}
-.step-dot.done{background:var(--c-accent-soft);color:var(--c-primary);border-color:var(--c-accent)}
-.step-connector{width:12px;height:2px;background:#cbd5e1;border-radius:2px;flex-shrink:0}
-.step-label{font-size:11px;color:#94a3b8;font-weight:600;margin-left:6px;white-space:nowrap}
-/* Progress bar */
-.step-progress-wrap{background:#e2e8f0;border-radius:6px;height:6px;overflow:hidden}
-.step-progress-bar{height:100%;background:linear-gradient(90deg,var(--c-primary),var(--c-accent));border-radius:6px;width:11.1%;transition:width .4s ease}
-/* Info box */
-.info-box{background:var(--c-accent-soft);border-radius:10px;padding:16px 18px;border:1.5px solid var(--c-accent)}
-.info-box h3{font-size:15px;font-weight:700;color:var(--c-primary-dim);margin-bottom:6px}
-.badges{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px}
-.badge{font-size:12px;font-weight:700;padding:4px 12px;border-radius:20px;background:var(--c-primary);color:#fff}
-.info-desc{font-size:13.5px;color:#475569;line-height:1.6}
-/* Action buttons */
-.actions{display:flex;gap:10px;flex-wrap:wrap}
-.btn-primary{background:linear-gradient(90deg,var(--c-primary),var(--c-primary-mid));color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;padding:10px 22px;cursor:pointer;transition:opacity .2s,transform .15s}
-.btn-primary:hover{opacity:.88;transform:translateY(-1px)}
-.btn-secondary{background:#f1f5f9;color:#475569;border:1.5px solid #cbd5e1;border-radius:10px;font-size:13px;font-weight:600;padding:10px 18px;cursor:pointer;transition:background .2s,color .2s,border-color .2s}
-.btn-secondary:hover{background:#e2e8f0;border-color:#94a3b8;color:#1e293b}
-.btn-secondary:disabled,.btn-secondary[disabled]{opacity:.4;pointer-events:none}
-/* Color legend */
-.step-color-legend{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0}
-.step-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:#64748b;font-weight:500}
-.step-legend-dot{width:12px;height:12px;border-radius:50%;display:inline-block;flex-shrink:0}
-/* Controls bar (glossary/customize buttons) */
-.qanim-ctrl-sep{width:1px;height:24px;background:#e2e8f0;margin:0 4px}
-.qanim-ctrl-btn{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#475569;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:7px 13px;cursor:pointer;transition:all .2s;white-space:nowrap}
-.qanim-ctrl-btn:hover{background:#e0f2fe;border-color:var(--c-accent);color:var(--c-primary)}
-.ctrl-label{font-size:12px}
-.glossary-ctrl-badge{font-size:10px;font-weight:700;background:var(--c-primary);color:#fff;border-radius:20px;padding:1px 6px;margin-left:2px}
-/* Scene modal backdrop */
-#qanim-scene-modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:1000;display:none;backdrop-filter:blur(3px)}
-#qanim-scene-modal-backdrop.open{display:block}
-/* Fullscreen button */
-#qanim-fullscreen-btn{position:fixed;bottom:22px;right:22px;z-index:990;display:flex;align-items:center;gap:7px;background:#1e293b;color:#f1f5f9;border:none;border-radius:10px;font-size:13px;font-weight:600;padding:10px 18px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:all .2s}
-#qanim-fullscreen-btn:hover{background:#0f172a}
-.fs-icon{font-size:16px}
-/* Answerbox backdrop */
-#answerbox-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:2000;display:none}
-#answerbox-backdrop.open{display:flex;align-items:center;justify-content:center}
-#answerbox-panel{background:#fff;border-radius:18px;width:min(480px,95vw);max-height:90vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.3);display:flex;flex-direction:column}
-.ab-header{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #e2e8f0}
-.ab-header-title{font-size:16px;font-weight:700;color:#1e293b}
-.ab-close-btn{background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;padding:4px 8px;border-radius:6px;transition:color .2s}
-.ab-close-btn:hover{color:#1e293b}
-.ab-progress-row{display:flex;align-items:center;gap:10px;padding:12px 22px;border-bottom:1px solid #f1f5f9}
-.ab-progress-label{font-size:12px;color:#64748b;font-weight:600}
-.ab-progress-dots{display:flex;gap:6px}
-.ab-progress-dot{width:10px;height:10px;border-radius:50%;background:#e2e8f0}
-.ab-progress-dot.done{background:var(--c-green)}
-.ab-progress-dot.current{background:var(--c-primary)}
-.ab-body{padding:20px 22px;display:flex;flex-direction:column;gap:14px}
-.ab-find-chip{display:flex;align-items:flex-start;gap:10px;background:var(--c-accent-soft);border-radius:10px;padding:12px 14px;border:1.5px solid var(--c-accent)}
-.ab-find-icon{font-size:20px;flex-shrink:0}
-.ab-find-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--c-primary);margin-bottom:2px}
-.ab-find-text{font-size:14px;font-weight:700;color:#1e293b}
-.ab-instruction{font-size:13px;color:#64748b;line-height:1.5}
-#ab-user-input{width:100%;border:2px solid #e2e8f0;border-radius:10px;font-size:15px;padding:12px 14px;resize:vertical;min-height:56px;font-family:inherit;transition:border-color .2s}
-#ab-user-input:focus{outline:none;border-color:var(--c-primary)}
-#ab-submit-btn{background:linear-gradient(90deg,var(--c-primary),var(--c-primary-mid));color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;padding:12px;width:100%;cursor:pointer;transition:opacity .2s}
-#ab-submit-btn:hover{opacity:.88}
-#ab-feedback{display:none;background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;padding:14px}
-#ab-feedback.wrong{background:#fef2f2;border-color:#fca5a5}
-.ab-feedback-top{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.ab-feedback-icon{font-size:22px}
-.ab-feedback-verdict{font-size:15px;font-weight:700;color:#16a34a}
-#ab-feedback.wrong .ab-feedback-verdict{color:#dc2626}
-.ab-feedback-insight{background:#fff;border-radius:8px;padding:10px 12px}
-.ab-insight-label{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.ab-insight-text{font-size:13px;color:#334155;line-height:1.55}
-.ab-action-row{display:none;gap:10px}
-#ab-retry-btn,#ab-next-target-btn{flex:1;padding:10px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:none;transition:opacity .2s}
-#ab-retry-btn{background:#f1f5f9;color:#475569}
-#ab-next-target-btn{background:var(--c-primary);color:#fff}
-#ab-alldone-card{display:none;text-align:center;padding:20px}
-.ab-alldone-emoji{font-size:40px;display:block;margin-bottom:10px}
-.ab-alldone-title{font-size:18px;font-weight:800;color:#16a34a;margin-bottom:6px}
-.ab-alldone-sub{font-size:13px;color:#64748b}
-/* Blur shield */
-#blur-shield{position:absolute;inset:0;backdrop-filter:blur(4px);background:rgba(255,255,255,.1);pointer-events:none;opacity:0;transition:opacity .4s;border-radius:var(--radius)}
-"""
-
-_SCENE6_CSS = """
-#qanim-scene6-overlay{position:fixed;inset:0;z-index:1100;display:none;align-items:center;justify-content:center;padding:20px}
-#qanim-scene6-overlay.open{display:flex}
-.s6-card{background:#fff;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.22);width:min(760px,98vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
-.s6-title-bar{background:linear-gradient(135deg,var(--c-primary-dim),var(--c-primary));padding:20px 28px;color:#fff}
-.s6-title-bar h2{font-size:18px;font-weight:800;margin:0}
-.s6-body{flex:1;overflow-y:auto;padding:26px 28px;display:flex;flex-direction:column;gap:18px}
-.s6-phase-progress{font-size:12px;font-weight:700;color:var(--c-primary);letter-spacing:.4px}
-.s6-phase-caption{font-size:13.5px;color:#64748b;line-height:1.55}
-.s6-formula-box{background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:2px solid var(--c-accent);border-radius:14px;padding:22px 26px;text-align:center}
-.s6-formula-badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--c-primary);margin-bottom:8px}
-.s6-formula-main{font-size:26px;font-weight:800;color:var(--c-primary-dim);line-height:1.4;overflow-wrap:anywhere}
-.s6-formula-sublabel{font-size:13px;color:#64748b;margin-top:8px}
-.s6-vars-row{display:flex;flex-wrap:wrap;gap:12px}
-.s6-var-box{position:relative;border-radius:12px;padding:14px 16px;min-width:140px;flex:1;display:flex;flex-direction:column;gap:4px;border:2px solid transparent}
-.s6v-blue{background:#eff6ff;border-color:#bfdbfe}
-.s6v-green{background:#f0fdf4;border-color:#bbf7d0}
-.s6v-orange{background:#fff7ed;border-color:#fed7aa}
-.s6v-red{background:#fef2f2;border-color:#fecaca}
-.s6v-purple{background:#faf5ff;border-color:#e9d5ff}
-.s6v-teal{background:#f0fdfa;border-color:#99f6e4}
-.s6-var-sym{font-size:22px;font-weight:800;color:var(--c-primary-dim)}
-.s6-var-name{font-size:11px;color:#64748b;font-weight:500;line-height:1.4}
-.s6-var-val{font-size:13px;font-weight:700;color:#1e293b;margin-top:2px}
-.s6-note-bar{background:#fff9e6;border:1.5px solid #fde68a;border-radius:10px;padding:10px 14px;display:flex;align-items:flex-start;gap:8px}
-.s6-note-icon{font-size:16px;flex-shrink:0}
-.s6-note-text{font-size:13px;color:#78350f;line-height:1.55}
-.s6-nav-row{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-top:1px solid #f1f5f9;gap:12px}
-.s6-var-arrow{position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-bottom:10px solid currentColor;opacity:.35}
-"""
-
-_SCENE7_CSS = """
-#qanim-scene7-overlay{position:fixed;inset:0;z-index:1100;display:none;align-items:center;justify-content:center;padding:20px}
-#qanim-scene7-overlay.open{display:flex}
-.s7-card{background:#fff;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.22);width:min(900px,98vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
-.s7-title-bar{background:linear-gradient(135deg,#1e3a5f,#1d4ed8);padding:18px 28px;color:#fff}
-.s7-title-bar h2{font-size:17px;font-weight:800;margin:0}
-.s7-body-cols{display:grid;grid-template-columns:1fr 1fr;flex:1;overflow:hidden;min-height:0}
-.s7-left-col{border-right:1px solid #f1f5f9;overflow-y:auto;padding:22px 24px;display:flex;flex-direction:column;gap:14px}
-.s7-right-col{overflow-y:auto;padding:22px 24px;display:flex;flex-direction:column;gap:12px}
-.s7-system-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748b}
-.s7-system-visual{background:#f8fafc;border-radius:12px;padding:14px 16px;border:1px solid #e2e8f0;text-align:center}
-.s7-system-visual-title{font-size:15px;font-weight:700;color:#1e293b;margin-bottom:6px}
-.s7-system-arrows{font-size:18px;color:#94a3b8;letter-spacing:4px;margin:6px 0}
-.s7-system-label2{font-size:12px;color:#64748b}
-.s7-given-section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#64748b;margin-top:4px}
-.s7-given-list{display:flex;flex-direction:column;gap:4px}
-.s7-given-item{font-size:13.5px;color:#334155;padding:3px 0;border-bottom:1px solid #f1f5f9}
-.s7-formula-result-bar{background:linear-gradient(90deg,#eff6ff,#e0f2fe);border:1.5px solid #bfdbfe;border-radius:10px;padding:10px 14px;margin-top:6px}
-.s7-formula-result-text{font-size:15px;font-weight:700;color:#1d4ed8;overflow-wrap:anywhere}
-.s7-approach-section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748b;margin-bottom:4px}
-.s7-approach-list{display:flex;flex-direction:column;gap:8px}
-.s7-approach-step{display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;font-size:13.5px;color:#334155;line-height:1.6}
-.s7-approach-step-num{background:var(--c-primary);color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;margin-top:1px}
-.s8-result-row{padding:12px 0;border-top:1px solid #e2e8f0;margin-top:8px}
-.s8-result-value{font-size:20px;font-weight:800;color:var(--c-green)}
-.s7-nav-row{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-top:1px solid #f1f5f9;gap:12px;flex-shrink:0}
-"""
-
-_SCENE9_CSS = """
-#qanim-scene9-overlay{position:fixed;inset:0;z-index:1100;display:none;align-items:center;justify-content:center;padding:20px}
-#qanim-scene9-overlay.open{display:flex}
-.s9-card{background:#fff;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.22);width:min(840px,98vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
-.s9-title-bar{background:linear-gradient(135deg,#064e3b,#065f46);padding:18px 28px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
-.s9-title-bar h2{font-size:17px;font-weight:800;margin:0}
-#s9-at-angle{font-size:12px;color:#a7f3d0;font-style:italic;margin:0}
-.s9-body{flex:1;overflow-y:auto;padding:22px 28px;display:flex;flex-direction:column;gap:18px}
-.s9-formula-recap{background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:12px;padding:14px 18px}
-.s9-formula-recap-label{font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-.s9-formula-recap-eq{font-size:18px;font-weight:800;color:#166534;overflow-wrap:anywhere}
-.s9-sub-chain{display:flex;flex-direction:column;gap:8px}
-.s9-sub-row{display:flex;align-items:flex-start;gap:12px;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;animation:s9fadeIn .4s ease both}
-@keyframes s9fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.s9-sub-num{background:var(--c-primary);color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;margin-top:2px}
-.s9-sub-eq{font-size:14.5px;color:#1e293b;font-weight:600;overflow-wrap:anywhere;line-height:1.6}
-.s9-step-lbl{font-size:11px;color:#94a3b8;font-weight:500;margin-right:4px}
-.s9-insight-bar{background:#fffbeb;border:1.5px solid #fde68a;border-radius:10px;padding:12px 16px;display:flex;align-items:flex-start;gap:10px}
-.s9-insight-icon{font-size:18px;flex-shrink:0}
-.s9-insight-text{font-size:13.5px;color:#78350f;line-height:1.6}
-.s9-nav-row{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-top:1px solid #f1f5f9;gap:12px;flex-shrink:0}
-/* Scene 9 answer grid */
-.lesson-answer-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
-#s9-final-value{font-size:28px;font-weight:800;color:#065f46}
-.s9-highlight{color:var(--c-green)}
-#s9-final-unit{font-size:13px;color:#64748b;margin-top:4px}
-"""
-
-_CONTROLS_CSS = """
-/* Step-6 to-find badge (right side of svg-container) */
-#step6-info-panel{position:absolute;top:12px;right:12px;z-index:10;pointer-events:none}
-.s6tofind-badge{background:rgba(255,255,255,.92);border:2px solid var(--c-accent);border-radius:12px;padding:12px 16px;min-width:120px;box-shadow:0 4px 18px rgba(0,0,0,.10);backdrop-filter:blur(4px)}
-.s6tofind-heading{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--c-primary);margin-bottom:6px}
-.s6tofind-item{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:#1e293b;margin-bottom:4px}
-.s6tofind-icon{font-size:16px}
-.s6tofind-label{color:var(--c-primary-dim)}
-.s6tofind-hint{font-size:10.5px;color:#94a3b8;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:5px}
-/* given list in s7 */
-#s7-given-list{display:flex;flex-direction:column;gap:4px}
-/* qanim prev button */
-.qanim-prev-btn:disabled,.qanim-prev-btn[disabled]{opacity:.38;pointer-events:none}
-"""
-
-_SCENE6_JS = """<script id="qanim-js-scene6">
-(function(){
-  'use strict';
-  var backdrop=document.getElementById('qanim-scene-modal-backdrop');
-  function openBackdrop(){if(backdrop)backdrop.classList.add('open');}
-  function closeBackdrop(){if(backdrop)backdrop.classList.remove('open');}
-
-  window.qanim_showScene6=function(){
-    var ov=document.getElementById('qanim-scene6-overlay');
-    if(ov){ov.classList.add('open');openBackdrop();}
-  };
-  window.qanim_hideScene6=function(){
-    var ov=document.getElementById('qanim-scene6-overlay');
-    if(ov){ov.classList.remove('open');}
-    closeBackdrop();
-  };
-  window.qanim_showScene7=function(){
-    window.qanim_hideScene6();
-    var ov=document.getElementById('qanim-scene7-overlay');
-    if(ov){ov.classList.add('open');openBackdrop();}
-  };
-  window.qanim_showScene9=function(){
-    var ov9=document.getElementById('qanim-scene9-overlay');
-    if(ov9){ov9.classList.add('open');openBackdrop();}
-  };
-  window.qanim_hideScene9=function(){
-    var ov=document.getElementById('qanim-scene9-overlay');
-    if(ov)ov.classList.remove('open');
-    closeBackdrop();
-  };
-  window.qanim_goToPrevScene=function(){
-    window.qanim_hideScene6();
-  };
-  window.qanim_s6Advance=function(){
-    window.qanim_showScene7();
-  };
-
-  // Backdrop click closes current open overlay
-  if(backdrop){
-    backdrop.addEventListener('click',function(){
-      ['qanim-scene6-overlay','qanim-scene7-overlay','qanim-scene9-overlay'].forEach(function(id){
-        var ov=document.getElementById(id);
-        if(ov)ov.classList.remove('open');
-      });
-      closeBackdrop();
-    });
-  }
-})();
-</script>"""
-
-_SCENE7_JS = """<script id="qanim-js-scene7">
-(function(){
-  'use strict';
-  window.qanim_hideScene7=function(){
-    var ov=document.getElementById('qanim-scene7-overlay');
-    if(ov)ov.classList.remove('open');
-    var backdrop=document.getElementById('qanim-scene-modal-backdrop');
-    if(backdrop)backdrop.classList.remove('open');
-  };
-})();
-</script>"""
-
-_SCENE9_JS = """<script id="qanim-js-scene9">
-(function(){
-  'use strict';
-  window.qanim_hideScene9=window.qanim_hideScene9||function(){
-    var ov=document.getElementById('qanim-scene9-overlay');
-    if(ov)ov.classList.remove('open');
-    var backdrop=document.getElementById('qanim-scene-modal-backdrop');
-    if(backdrop)backdrop.classList.remove('open');
-  };
-})();
-</script>"""
-
-_GLOSSARY_JS = """<script id="qanim-js-glossary">
-(function(){
-  'use strict';
-  var panel=document.getElementById('qanim-glossary-panel');
-  var backdrop=document.getElementById('qanim-glossary-backdrop');
-  function open(){
-    if(panel){panel.classList.add('open');panel.setAttribute('aria-hidden','false');}
-    if(backdrop)backdrop.classList.add('open');
-  }
-  function close(){
-    if(panel){panel.classList.remove('open');panel.setAttribute('aria-hidden','true');}
-    if(backdrop)backdrop.classList.remove('open');
-  }
-  function onReady(fn){
-    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fn);
-    else setTimeout(fn,0);
-  }
-  onReady(function(){
-    var openBtn=document.getElementById('glossary-ctrl-btn');
-    if(openBtn)openBtn.addEventListener('click',open);
-    var closeBtn=document.getElementById('glossary-close-btn');
-    if(closeBtn)closeBtn.addEventListener('click',close);
-    if(backdrop)backdrop.addEventListener('click',close);
-    document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
-  });
-})();
-</script>"""
-
 # ── Topic-adaptive accent palette ───────────────────────────────────────────
 # A small, hand-picked set of accessible, professionally-balanced palettes.
 # Each entry supplies every token the CSS references via --c-primary* /
@@ -4540,30 +5113,13 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     to_find = scene.get("to_find", ["The unknown quantity"])
     glossary = scene.get("glossary", [])
 
-    # FIX 4 — Build one answer target per green variable (multi-unknown support)
-    green_vars = [v for v in sol.get("variables", []) if v.get("color") == "green"]
-    if green_vars:
-        answer_targets = []
-        for gv in green_vars:
-            sym  = gv.get("symbol") or gv.get("sym") or "?"
-            val  = gv.get("value", "?")
-            unit = gv.get("unit", "")
-            # Replace "? (to find)" placeholder with actual answer_value for the primary unknown
-            if "?" in str(val) or "to find" in str(val).lower():
-                val = sol.get("answer_value", "?")
-            answer_targets.append({
-                "label":   sym,
-                "value":   str(val),
-                "unit":    unit,
-                "insight": sol.get("key_insight", "Apply the governing formula."),
-            })
-    else:
-        answer_targets = [{
-            "label":   to_find[0] if to_find else "Final Answer",
-            "value":   sol.get("answer_value", "?"),
-            "unit":    sol.get("answer_unit", ""),
-            "insight": sol.get("key_insight", "Apply the governing formula."),
-        }]
+    # Answer targets for AnswerBox
+    answer_targets = [{
+        "label": to_find[0] if to_find else "Final Answer",
+        "value": sol.get("answer_value", "?"),
+        "unit": sol.get("answer_unit", ""),
+        "insight": sol.get("key_insight", "Apply the governing formula."),
+    }]
     targets_json = json.dumps({"answer_targets": answer_targets}, ensure_ascii=False)
 
     # Step-6 given/to-find panel
@@ -4858,26 +5414,6 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
   </style>
   <style id="qanim-controls-styles">
 {_CONTROLS_CSS}
-  </style>
-  <style id="lesson-conditions-style">
-#qanim-scene6-overlay .lesson-formula-grid,#qanim-scene9-overlay .lesson-answer-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}}
-#qanim-scene6-overlay .lesson-formula{{background:#fff;border:1.5px solid #bfdbfe;border-radius:14px;padding:18px;}}
-#qanim-scene6-overlay .lesson-formula-eq{{font-size:19px;font-weight:800;color:#1d4ed8;line-height:1.5;overflow-wrap:anywhere;}}
-#qanim-scene6-overlay .lesson-why{{font-size:14px;color:#334155;line-height:1.5;margin-top:9px;}}
-#qanim-scene6-overlay .lesson-key{{font-size:12px;color:#64748b;line-height:1.5;margin-top:6px;}}
-#qanim-scene7-overlay .lesson-targets{{display:flex;flex-wrap:wrap;gap:7px;padding:16px 26px;background:#fff;border-bottom:1px solid #e8eef8;}}
-#qanim-scene7-overlay .lesson-target{{font-family:inherit;font-size:12px;font-weight:700;border:1px solid #cbd5e1;border-radius:20px;background:#f8fafc;color:#475569;padding:7px 12px;cursor:pointer;}}
-#qanim-scene7-overlay .lesson-target.is-current{{color:#fff;background:#0891b2;border-color:#0891b2;}}
-#qanim-scene7-overlay .lesson-target:focus-visible{{outline:3px solid #38bdf8;outline-offset:2px;}}
-#qanim-scene7-overlay .s7-approach-step-eq{{font-size:14px;line-height:1.65;padding:8px 10px;}}
-#qanim-scene7-overlay .s7-right-col{{min-width:0;}}
-#qanim-scene9-overlay .lesson-answer{{background:#edf9f6;border:1px solid #bce7de;border-radius:15px;padding:20px;}}
-#qanim-scene9-overlay .lesson-answer h3{{color:#00858d;font-size:12px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;line-height:1.5;margin:0;}}
-#qanim-scene9-overlay .lesson-answer-number{{color:#00858d;font-size:36px;font-weight:800;line-height:1.3;margin:16px 0 10px;overflow-wrap:anywhere;}}
-#qanim-scene9-overlay .lesson-answer-number span{{font-size:18px;font-weight:600;margin-left:7px;}}
-#qanim-scene9-overlay .lesson-answer p{{font-size:13px;color:#476d82;line-height:1.5;margin:0;}}
-#qanim-scene9-overlay .lesson-answer:last-child:nth-child(odd){{grid-column:1/-1;}}
-@media(max-width:600px){{#qanim-scene6-overlay .lesson-formula-grid,#qanim-scene9-overlay .lesson-answer-grid{{grid-template-columns:1fr;}}#qanim-scene6-overlay .s6-body,#qanim-scene9-overlay .s9-body{{padding:20px;}}#qanim-scene7-overlay .s7-left-col{{min-width:0;}}#qanim-scene7-overlay .s7-nav-row{{flex-wrap:wrap;}}}}
   </style>
 {topic_accent_style}
   <style id="qanim-responsive-fixes">
