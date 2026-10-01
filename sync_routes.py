@@ -87,14 +87,15 @@ def _parse_iso(s: Optional[str]) -> str:
 
 
 def _sb(user: dict):
-    """Return a user-scoped Supabase client (anon key + user JWT)."""
+    """Return a Supabase client authenticated with the user's token."""
     return get_supabase(user.get("token"))
 
 
 def _sb_admin():
     """Return a service-role Supabase client (bypasses RLS).
-    Only use for routes that read shared/public data, not user-owned rows."""
-    return get_supabase()
+    Use for all backend write operations — avoids the anon-key+JWT
+    conflict that causes 401 / 502 errors on Python 3.14."""
+    return get_supabase()   # no token → service-role
 
 
 # ════════════════════════════════════════════════════════════════
@@ -105,104 +106,128 @@ def _sb_admin():
 @router.get("/all", status_code=200)
 def get_all_user_data(current_user: dict = Depends(get_current_user)):
     """
-    Returns saved items + subjects tree + vault entries + file_mode rows
-    in one round-trip.  Replaces the three separate pull calls that existed in v2.
-    v6.1: added file_mode data (replaces subject_units / unit_lessons).
+    Returns saved items + subjects tree + vault entries in one round-trip.
+    Replaces the three separate pull calls that existed in v2.
     """
-    # Fix #5: Wrap all DB calls in try/except so a Supabase 401 / connection
-    # error returns a clean 502 instead of propagating as an unhandled 500
-    # that floods Railway with 500+ log lines/sec and triggers the rate limiter.
-    try:
-        supabase = _sb(current_user)
-        user_id  = current_user["id"]
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
 
-        # ── 1. Generated items (is_saved=True only) ──────────────────
-        # Wrapped in its own try/except: if the table doesn't exist yet
-        # (migration not yet run), return [] instead of crashing the
-        # entire endpoint and leaving the user with a blank screen.
-        try:
-            items_res = (
-                supabase.table("generated_items")
-                .select("id, item_type, title, prompt, explanation, html_code, playlist, is_saved, source_topic, source_subtopic, source_pdf_name, created_at, updated_at, unit_id")
-                .eq("user_id", user_id)
-                .eq("is_saved", True)
-                .is_("deleted_at", "null")
-                .order("created_at", desc=True)
-                .execute()
-            )
-            items = items_res.data or []
-        except Exception as items_err:
-            print(f"[SYNC] /all — generated_items query failed with unit_id: {items_err}")
-            try:
-                # Fallback: table exists but unit_id column might be missing
-                items_fallback = (
-                    supabase.table("generated_items")
-                    .select("id, item_type, title, prompt, explanation, html_code, playlist, is_saved, source_topic, source_subtopic, source_pdf_name, created_at, updated_at")
-                    .eq("user_id", user_id)
-                    .eq("is_saved", True)
-                    .is_("deleted_at", "null")
-                    .order("created_at", desc=True)
-                    .execute()
-                )
-                items = items_fallback.data or []
-                # Fill missing unit_id with None
-                for item in items:
-                    item["unit_id"] = None
-            except Exception as items_err_2:
-                print(f"[SYNC] /all — fallback generated_items query also failed: {items_err_2}")
-                items = []
+    # ── 1. Generated items (is_saved=True only) ──────────────────
+    items_res = (
+        supabase.table("generated_items")
+        .select("id, item_type, title, prompt, explanation, html_code, playlist, is_saved, source_topic, source_subtopic, source_pdf_name, created_at, updated_at")
+        .eq("user_id", user_id)
+        .eq("is_saved", True)
+        .is_("deleted_at", "null")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    items = items_res.data or []
 
-        # 🎓 2. Subjects tree (deprecated, returning empty)
-        subjects_tree = []
+    # ── 2. Subjects tree ─────────────────────────────────────────
+    subjects_res = (
+        supabase.table("engineering_subjects")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("sort_order")
+        .execute()
+    )
+    subjects = subjects_res.data or []
+    subject_ids = [s["id"] for s in subjects]
 
-        # ── 3. Vault entries ─────────────────────────────────────────
-        # Wrapped in try/except: if video_vault table doesn't exist yet,
-        # return [] instead of crashing the entire /sync/all endpoint.
-        try:
-            vault_res = (
-                supabase.table("video_vault")
-                .select("id, name, file_name, file_size, public_url, storage_path, mime_type, created_at")
-                .eq("user_id", user_id)
-                .is_("deleted_at", "null")
-                .order("created_at", desc=True)
-                .execute()
-            )
-            vault = vault_res.data or []
-        except Exception as vault_err:
-            print(f"[SYNC] /all — video_vault query failed: {vault_err}")
-            vault = []
-
-        # ── 4. File Mode rows (new consolidated table) ───────────────
-        # Wrapped in try/except: if file_mode table doesn't exist yet
-        # (migration not yet run), return [] instead of crashing the endpoint.
-        try:
-            fm_res = (
-                supabase.table("file_mode")
-                .select("id, user_id, user_email, user_name, subject, unit, topics, contents, created_at, updated_at")
-                .eq("user_id", user_id)
-                .order("created_at", desc=True)
-                .execute()
-            )
-            file_mode_rows = fm_res.data or []
-        except Exception as fm_err:
-            print(f"[SYNC] /all — file_mode query failed: {fm_err}")
-            file_mode_rows = []
-
-        return {
-            "items":     items,
-            "subjects":  subjects_tree,
-            "vault":     vault,
-            "file_mode": file_mode_rows,
-        }
-
-    except HTTPException:
-        raise  # re-raise 401/403 from get_current_user unchanged
-    except Exception as exc:
-        print(f"[SYNC] /all ERROR for user={current_user.get('email')!r}: {exc}")
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to load user data. Please try again.",
+    cos, topics = [], []
+    if subject_ids:
+        cos_res = (
+            supabase.table("course_outcomes")
+            .select("*")
+            .in_("subject_id", subject_ids)
+            .order("sort_order")
+            .execute()
         )
+        cos = cos_res.data or []
+        co_ids = [c["id"] for c in cos]
+        if co_ids:
+            topics_res = (
+                supabase.table("course_topics")
+                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
+                .in_("co_id", co_ids)
+                .order("sort_order")
+                .execute()
+            )
+            topics = topics_res.data or []
+
+    # Build nested engineeringCourses-compatible structure
+    topics_by_co = {}
+    for t in topics:
+        html_cache   = t.get("html_code_cache")
+        db_type      = t.get("topic_type") or "animation"
+        # Derive display type: prefer DB value, fall back to content sniffing
+        if db_type == "ppt_upload":
+            display_type = "ppt_upload"
+        elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
+            display_type = "html_upload"
+        else:
+            display_type = "animation"
+        topics_by_co.setdefault(t["co_id"], []).append({
+            "id":               t["id"],
+            "name":             t["name"],
+            "description":      t.get("description", ""),
+            "prompt":           t.get("prompt", ""),
+            # animCode and html_code carry HTML for animation/html_upload topics
+            "animCode":         html_cache,
+            "html_code":        html_cache,
+            # PPT-specific fields
+            "type":             display_type,
+            "pptUrl":           t.get("ppt_public_url"),
+            "pptStoragePath":   t.get("ppt_storage_path"),
+            "fileName":         t.get("ppt_file_name"),
+            "created_at":       t["created_at"],
+            "generated_item_id": t.get("generated_item_id"),
+        })
+
+    cos_by_subject = {}
+    for co in cos:
+        cos_by_subject.setdefault(co["subject_id"], []).append({
+            "id":          co["id"],
+            "coNum":       co["co_num"],
+            "name":        co.get("description", ""),   # ✅ frontend reads co.name
+            "description": co.get("description", ""),
+            "topics":      topics_by_co.get(co["id"], []),
+        })
+
+
+    subjects_tree = [
+        {
+            "id":          s["id"],
+            "name":        s["name"],
+            "description": s.get("description", ""),
+            "share_token": s.get("share_token"),
+            "cos":         cos_by_subject.get(s["id"], []),
+            "syllabus": {
+                "pdf_name": s.get("syllabus_pdf_name"),
+                "units":    s.get("syllabus_units"),
+            } if s.get("syllabus_pdf_name") else None,
+        }
+        for s in subjects
+    ]
+
+    # ── 3. Vault entries ─────────────────────────────────────────
+    vault_res = (
+        supabase.table("video_vault")
+        .select("id, name, file_name, file_size, public_url, storage_path, mime_type, created_at")
+        .eq("user_id", user_id)
+        .is_("deleted_at", "null")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    vault = vault_res.data or []
+
+    print(f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, {len(vault)} vault — user={current_user['email']!r}")
+    return {
+        "items":    items,
+        "subjects": subjects_tree,
+        "vault":    vault,
+    }
 
 
 # ════════════════════════════════════════════════════════════════
@@ -268,8 +293,12 @@ def save_item(
         "created_at":      _parse_iso(body.created_at),
     }
 
-    res = supabase.table("generated_items").insert(row).execute()
-    item_id = res.data[0]["id"] if res.data else None
+    try:
+        res = _sb_admin().table("generated_items").insert(row).execute()
+        item_id = res.data[0]["id"] if res.data else None
+    except Exception as exc:
+        print(f"[SYNC] ❌ save_item INSERT failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
     print(f"[SYNC] ✅ Item saved: type={body.item_type} title={body.title!r} user={current_user['email']!r}")
     return {"success": True, "id": item_id, "message": "Saved."}
 
@@ -350,84 +379,366 @@ def delete_item(
 
 
 # ════════════════════════════════════════════════════════════════
-# SAVE-TO-UNIT  —  POST /sync/save-to-unit
-# Called by the "Save in File" modal in Create-with-AI / Teacher mode.
-# Saves the generated HTML to a specific unit inside generated_items.
+# ENGINEERING SUBJECTS
 # ════════════════════════════════════════════════════════════════
 
-class SaveToUnitPayload(BaseModel):
-    unit_id:      str
-    subject_id:   str
-    title:        str   = "Untitled"
-    html:         str   = ""
-    prompt:       str   = ""
-    explanation:  str   = ""
-    content_type: str   = "ai_creator"   # ai_creator | simulation | question_anim
+class SubjectCreate(BaseModel):
+    name:        str = Field(..., min_length=1, max_length=200)
+    description: str = Field(default="")
+    sort_order:  int = Field(default=0)
 
 
-@router.post("/save-to-unit", status_code=200)
-def save_to_unit(
-    body:         SaveToUnitPayload,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Save a generated HTML item (animation / simulation / question) to a
-    specific unit chosen in the 'Save in File' modal.
+class SubjectUpdate(BaseModel):
+    name:              Optional[str]  = None
+    description:       Optional[str]  = None
+    sort_order:        Optional[int]  = None
+    syllabus_pdf_name: Optional[str]  = None
+    syllabus_text:     Optional[str]  = None
+    syllabus_units:    Optional[dict] = None
 
-    The row is inserted into generated_items with:
-      - playlist  = '__file_unit__'   (sentinel that marks file-mode items)
-      - unit_id   = the chosen unit UUID
-      - is_saved  = True
 
-    Returns: { success: True, id: <new-row-uuid> }
-    """
-    # Normalise content_type to a valid item_type enum value.
-    # NOTE: The generated_items table CHECK constraint only allows:
-    #   ai_creator | book_mode | question_anim | topic_content
-    # 'simulation' from the frontend must be mapped to 'ai_creator'.
-    _type_map = {
-        "ai_creator":    "ai_creator",
-        "simulation":    "ai_creator",   # simulation saves as ai_creator
-        "question_anim": "question_anim",
-        "book_mode":     "book_mode",
-        "topic_content": "topic_content",
-    }
-    item_type = _type_map.get(body.content_type, "ai_creator")
-
-    html = body.html.strip()
-    if not html:
-        raise HTTPException(status_code=400, detail="No HTML content provided.")
-
-    # Ensure the user row exists before writing child rows (FK guard)
-    _ensure_user_row(current_user)
-
+@router.get("/subjects", status_code=200)
+def get_subjects(current_user: dict = Depends(get_current_user)):
+    """Return all subjects with their COs and topics nested inside."""
     supabase = _sb(current_user)
     user_id  = current_user["id"]
 
-    row = {
-        "user_id":     user_id,
-        "item_type":   item_type,
-        "title":       (body.title or "Untitled").strip()[:500],
-        "prompt":      body.prompt or "",
-        "explanation": body.explanation or "",
-        "html_code":   html,
-        "playlist":    "__file_unit__",
-        "is_saved":    True,
-        "unit_id":     body.unit_id,
-        "created_at":  _now(),
-    }
+    subjects_res = (
+        supabase.table("engineering_subjects")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("sort_order")
+        .execute()
+    )
+    subjects    = subjects_res.data or []
+    subject_ids = [s["id"] for s in subjects]
 
-    try:
-        res = supabase.table("generated_items").insert(row).execute()
-        new_id = res.data[0]["id"] if res.data else None
-        print(
-            f"[SYNC] ✅ save-to-unit: type={item_type} title={body.title!r} "
-            f"unit={body.unit_id!r} user={current_user['email']!r}"
+    cos, topics = [], []
+    if subject_ids:
+        cos_res = (
+            supabase.table("course_outcomes")
+            .select("*")
+            .in_("subject_id", subject_ids)
+            .order("sort_order")
+            .execute()
         )
-        return {"success": True, "id": new_id}
+        cos    = cos_res.data or []
+        co_ids = [c["id"] for c in cos]
+        if co_ids:
+            topics_res = (
+                supabase.table("course_topics")
+                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
+                .in_("co_id", co_ids)
+                .order("sort_order")
+                .execute()
+            )
+            topics = topics_res.data or []
+
+    topics_by_co = {}
+    for t in topics:
+        html_cache   = t.get("html_code_cache")
+        db_type      = t.get("topic_type") or "animation"
+        if db_type == "ppt_upload":
+            display_type = "ppt_upload"
+        elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
+            display_type = "html_upload"
+        else:
+            display_type = "animation"
+        topics_by_co.setdefault(t["co_id"], []).append({
+            "id":                t["id"],
+            "name":              t["name"],
+            "description":       t.get("description", ""),
+            "prompt":            t.get("prompt", ""),
+            "animCode":          html_cache,
+            "type":              display_type,
+            "pptUrl":            t.get("ppt_public_url"),
+            "pptStoragePath":    t.get("ppt_storage_path"),
+            "fileName":          t.get("ppt_file_name"),
+            "created_at":        t["created_at"],
+            "generated_item_id": t.get("generated_item_id"),
+        })
+
+    cos_by_subject = {}
+    for co in cos:
+        cos_by_subject.setdefault(co["subject_id"], []).append({
+            "id":          co["id"],
+            "coNum":       co["co_num"],
+            "description": co.get("description", ""),
+            "topics":      topics_by_co.get(co["id"], []),
+        })
+
+    result = [
+        {
+            "id":          s["id"],
+            "name":        s["name"],
+            "description": s.get("description", ""),
+            "share_token": s.get("share_token"),
+            "cos":         cos_by_subject.get(s["id"], []),
+            "syllabus": {
+                "pdf_name": s.get("syllabus_pdf_name"),
+                "units":    s.get("syllabus_units"),
+            } if s.get("syllabus_pdf_name") else None,
+        }
+        for s in subjects
+    ]
+
+    print(f"[SYNC] ↓ {len(result)} subjects user={current_user['email']!r}")
+    return {"subjects": result}
+
+
+@router.post("/subjects", status_code=201)
+def create_subject(
+    body:         SubjectCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    # ✅ Use service-role client to insert user row (bypasses RLS on users table)
+    _ensure_user_row(current_user)
+    # Generate a URL-safe share token (10 chars, ~60 bits of entropy).
+    # Stored in engineering_subjects.share_token (UNIQUE column).
+    share_token = secrets.token_urlsafe(8)  # e.g. "aB3xQ7mNpL"
+    row = {
+        "user_id":     current_user["id"],
+        "name":        body.name.strip(),
+        "description": body.description or "",
+        "sort_order":  body.sort_order,
+        "share_token": share_token,
+    }
+    try:
+        res = _sb_admin().table("engineering_subjects").insert(row).execute()
+        subject = res.data[0] if res.data else {}
     except Exception as exc:
-        print(f"[SYNC] ❌ save-to-unit INSERT failed: {exc}")
-        raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
+        print(f"[SYNC] ❌ create_subject INSERT failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to create subject: {exc}")
+    # Always echo share_token even if the DB row didn't return it
+    if "share_token" not in subject:
+        subject["share_token"] = share_token
+    print(f"[SYNC] ✅ Subject created: {body.name!r} share_token={share_token!r} user={current_user['email']!r}")
+    return {"success": True, "subject": subject}
+
+
+@router.put("/subjects/{subject_id}", status_code=200)
+def update_subject(
+    subject_id:   str,
+    body:         SubjectUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = _sb(current_user)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        return {"success": True}
+    res = (
+        supabase.table("engineering_subjects")
+        .update(patch)
+        .eq("id", subject_id)
+        .eq("user_id", current_user["id"])
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Subject not found.")
+    return {"success": True, "subject": res.data[0]}
+
+
+@router.delete("/subjects/{subject_id}", status_code=200)
+def delete_subject(
+    subject_id:   str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete subject. COs and topics cascade-delete automatically via FK."""
+    supabase = _sb(current_user)
+    supabase.table("engineering_subjects").delete().eq("id", subject_id).eq("user_id", current_user["id"]).execute()
+    print(f"[SYNC] 🗑 Subject deleted: {subject_id} user={current_user['email']!r}")
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════
+# COURSE OUTCOMES
+# ════════════════════════════════════════════════════════════════
+
+class COCreate(BaseModel):
+    subject_id:  str
+    co_num:      str = Field(..., min_length=1, max_length=20)
+    description: str = Field(default="")
+    sort_order:  int = Field(default=0)
+
+
+class COUpdate(BaseModel):
+    co_num:      Optional[str] = None
+    description: Optional[str] = None
+    sort_order:  Optional[int] = None
+
+
+@router.post("/cos", status_code=201)
+def create_co(
+    body:         COCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    # ✅ Use service-role client to insert user row (bypasses RLS on users table)
+    _ensure_user_row(current_user)
+    row = {
+        "subject_id":  body.subject_id,
+        "user_id":     current_user["id"],
+        "co_num":      body.co_num.strip(),
+        "description": body.description or "",
+        "sort_order":  body.sort_order,
+    }
+    try:
+        res = _sb_admin().table("course_outcomes").insert(row).execute()
+        co = res.data[0] if res.data else {}
+    except Exception as exc:
+        print(f"[SYNC] ❌ create_co INSERT failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to create CO: {exc}")
+    print(f"[SYNC] ✅ CO created: {body.co_num!r} subject={body.subject_id!r}")
+    return {"success": True, "co": co}
+
+
+@router.put("/cos/{co_id}", status_code=200)
+def update_co(
+    co_id:        str,
+    body:         COUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = _sb(current_user)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        return {"success": True}
+    res = (
+        supabase.table("course_outcomes")
+        .update(patch)
+        .eq("id", co_id)
+        .eq("user_id", current_user["id"])
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="CO not found.")
+    return {"success": True}
+
+
+@router.delete("/cos/{co_id}", status_code=200)
+def delete_co(
+    co_id:        str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete CO. Topics under it cascade-delete automatically."""
+    supabase = _sb(current_user)
+    supabase.table("course_outcomes").delete().eq("id", co_id).eq("user_id", current_user["id"]).execute()
+    print(f"[SYNC] 🗑 CO deleted: {co_id} user={current_user['email']!r}")
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════
+# COURSE TOPICS
+# ════════════════════════════════════════════════════════════════
+
+class TopicCreate(BaseModel):
+    co_id:             str
+    subject_id:        str
+    name:              str   = Field(..., min_length=1, max_length=300)
+    description:       str   = Field(default="")
+    prompt:            str   = Field(default="")
+    sort_order:        int   = Field(default=0)
+    generated_item_id: Optional[str] = None
+    html_code:         Optional[str] = None  # fills html_code_cache
+    topic_type:        str            = Field(default="animation")
+    ppt_storage_path:  Optional[str] = None
+    ppt_public_url:    Optional[str] = None
+    ppt_file_name:     Optional[str] = None
+
+
+class TopicUpdate(BaseModel):
+    name:              Optional[str] = None
+    description:       Optional[str] = None
+    prompt:            Optional[str] = None
+    sort_order:        Optional[int] = None
+    generated_item_id: Optional[str] = None
+    html_code_cache:   Optional[str] = None
+    topic_type:        Optional[str] = None
+    ppt_storage_path:  Optional[str] = None
+    ppt_public_url:    Optional[str] = None
+    ppt_file_name:     Optional[str] = None
+
+
+@router.post("/topics", status_code=201)
+def create_topic(
+    body:         TopicCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    # ✅ Ensure user row exists (prevents FK 23503 on course_topics.user_id_fkey)
+    _ensure_user_row(current_user)
+
+    row = {
+        "co_id":             body.co_id,
+        "subject_id":        body.subject_id,
+        "user_id":           current_user["id"],
+        "name":              body.name.strip(),
+        "description":       body.description or "",
+        "prompt":            body.prompt or "",
+        "sort_order":        body.sort_order,
+        "generated_item_id": body.generated_item_id,
+        "html_code_cache":   body.html_code,
+        "topic_type":        body.topic_type or "animation",
+        "ppt_storage_path":  body.ppt_storage_path,
+        "ppt_public_url":    body.ppt_public_url,
+        "ppt_file_name":     body.ppt_file_name,
+    }
+    try:
+        res   = _sb_admin().table("course_topics").insert(row).execute()
+        topic = res.data[0] if res.data else {}
+    except Exception as exc:
+        print(f"[SYNC] ❌ create_topic INSERT failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to create topic: {exc}")
+    print(f"[SYNC] ✅ Topic created: {body.name!r} type={body.topic_type!r} co={body.co_id!r}")
+    return {"success": True, "topic": topic}
+
+
+@router.put("/topics/{topic_id}", status_code=200)
+def update_topic(
+    topic_id:     str,
+    body:         TopicUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = _sb(current_user)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        return {"success": True}
+    res = (
+        supabase.table("course_topics")
+        .update(patch)
+        .eq("id", topic_id)
+        .eq("user_id", current_user["id"])
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Topic not found.")
+    return {"success": True}
+
+
+@router.delete("/topics/{topic_id}", status_code=200)
+def delete_topic(
+    topic_id:     str,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    # Fetch ppt_storage_path before deleting row so we can clean up Storage
+    row_res = (
+        supabase.table("course_topics")
+        .select("ppt_storage_path, topic_type")
+        .eq("id", topic_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if row_res and row_res.data:
+        ppt_path = row_res.data.get("ppt_storage_path")
+        if ppt_path and row_res.data.get("topic_type") == "ppt_upload":
+            try:
+                supabase.storage.from_("ppt-files").remove([ppt_path])
+                print(f"[PPT] 🗑 Storage file deleted: {ppt_path}")
+            except Exception as e:
+                print(f"[PPT] ⚠ Storage delete failed for {topic_id}: {e}")
+    supabase.table("course_topics").delete().eq("id", topic_id).eq("user_id", user_id).execute()
+    print(f"[SYNC] 🗑 Topic deleted: {topic_id} user={current_user['email']!r}")
+    return {"success": True}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -740,8 +1051,12 @@ def get_shared_subject(token: str):
 
 
 # ════════════════════════════════════════════════════════════════
-# USER-ROW HELPER  (used by /subjects, /items, /topics, /units …)
+# LEGACY ENDPOINTS  (backward compat — remove in v7.0)
 # ════════════════════════════════════════════════════════════════
+
+_ENG_COURSES_SENTINEL = "__eng_courses__"
+_VAULT_SENTINEL       = "__vault__"
+
 
 def _ensure_user_row(user: dict) -> None:
     """
@@ -772,6 +1087,318 @@ def _ensure_user_row(user: dict) -> None:
         print(f"[SYNC] ❌ _ensure_user_row FAILED (will cause FK 23503!): {e}")
 
 
+def _legacy_upsert_contents(supabase, user_id: str, anim_id: str, row: dict):
+    # Fix: .maybe_single() returns None (not an object with .data) when no row
+    # is found in some supabase-py versions.  Guard both cases.
+    try:
+        result = (
+            supabase.table("contents")
+            .select("id")
+            .eq("user_id", user_id)
+            .contains("body", {"anim_id": anim_id})
+            .maybe_single()
+            .execute()
+        )
+        existing_data = result.data if result is not None else None
+    except Exception:
+        existing_data = None
+
+    if existing_data:
+        row.pop("created_at", None)
+        supabase.table("contents").update(row).eq("id", existing_data["id"]).execute()
+        return "updated"
+    else:
+        supabase.table("contents").insert(row).execute()
+        return "inserted"
+
+
+class _LegacyAnimPayload(BaseModel):
+    id:             str
+    filename:       Optional[str] = None
+    title:          str = "Untitled"
+    prompt:         Optional[str] = ""
+    explanation:    Optional[str] = ""
+    animation_code: Optional[str] = ""
+    playlist:       Optional[str] = "General"
+    created_at:     Optional[str] = None
+
+
+@router.post("/animations", status_code=200)
+def legacy_sync_animation(
+    payload:      _LegacyAnimPayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """LEGACY — use POST /sync/items instead."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    anim_id  = payload.id.strip()
+    title    = (payload.filename or payload.title or "Untitled").strip()
+    row = {
+        "user_id":  user_id,
+        "title":    title,
+        "prompt":   payload.prompt or "",
+        "playlist": payload.playlist or "General",
+        "body": {
+            "anim_id":        anim_id,
+            "filename":       title,
+            "explanation":    payload.explanation or "",
+            "animation_code": payload.animation_code or "",
+        },
+        "created_at": _parse_iso(payload.created_at),
+    }
+    _legacy_upsert_contents(supabase, user_id, anim_id, row)
+    return {"success": True, "anim_id": anim_id, "message": "Saved (legacy)."}
+
+
+@router.get("/animations", status_code=200)
+def legacy_get_animations(current_user: dict = Depends(get_current_user)):
+    """LEGACY — use GET /sync/items instead."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    res = (
+        supabase.table("contents")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    rows = [
+        r for r in (res.data or [])
+        if r.get("body", {}).get("anim_id") not in (_ENG_COURSES_SENTINEL, _VAULT_SENTINEL)
+    ]
+    animations = [
+        {
+            "id":             r["body"].get("anim_id", r["id"]),
+            "filename":       r["body"].get("filename") or r["title"],
+            "title":          r["title"],
+            "prompt":         r["prompt"],
+            "explanation":    r["body"].get("explanation", ""),
+            "animation_code": r["body"].get("animation_code", ""),
+            "playlist":       r["playlist"],
+            "created_at":     r["created_at"],
+        }
+        for r in rows
+    ]
+    return {"user_id": user_id, "count": len(animations), "animations": animations}
+
+
+@router.delete("/animations/{anim_id}", status_code=200)
+def legacy_delete_animation(
+    anim_id:      str,
+    current_user: dict = Depends(get_current_user),
+):
+    """LEGACY — use DELETE /sync/items/{id} instead."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    existing = (
+        supabase.table("contents")
+        .select("id")
+        .eq("user_id", user_id)
+        .contains("body", {"anim_id": anim_id})
+        .limit(1)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail=f"Item '{anim_id}' not found.")
+    supabase.table("contents").delete().eq("id", existing.data[0]["id"]).execute()
+    return {"success": True, "anim_id": anim_id, "message": "Deleted (legacy)."}
+
+
+class _CoursesPayload(BaseModel):
+    courses: list
+
+
+@router.put("/courses", status_code=200)
+def legacy_save_courses(
+    body:         _CoursesPayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """LEGACY — use POST /sync/subjects (and /cos, /topics) instead."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    row = {
+        "user_id":    user_id,
+        "title":      "__Engineering Courses__",
+        "prompt":     "",
+        "playlist":   "__system__",
+        "body":       {"anim_id": _ENG_COURSES_SENTINEL, "courses": body.courses},
+        "updated_at": _now(),
+    }
+    all_ex = (
+        supabase.table("contents")
+        .select("id, created_at")
+        .eq("user_id", user_id)
+        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
+        .order("created_at", desc=True)
+        .execute()
+    )
+    rows = all_ex.data or []
+    # Dedup: remove stale duplicate rows from old INSERT-only bug
+    if len(rows) > 1:
+        for r in rows[1:]:
+            supabase.table("contents").delete().eq("id", r["id"]).execute()
+    if rows:
+        row.pop("created_at", None)
+        supabase.table("contents").update(row).eq("id", rows[0]["id"]).execute()
+    else:
+        row["created_at"] = _now()
+        supabase.table("contents").insert(row).execute()
+    return {"success": True, "message": "Courses saved (legacy)."}
+
+
+@router.get("/courses", status_code=200)
+def legacy_get_courses(current_user: dict = Depends(get_current_user)):
+    """LEGACY — use GET /sync/subjects instead."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    res = (
+        supabase.table("contents")
+        .select("body")
+        .eq("user_id", user_id)
+        .contains("body", {"anim_id": _ENG_COURSES_SENTINEL})
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if res.data and res.data[0].get("body"):
+        return {"courses": res.data[0]["body"].get("courses") or []}
+    return {"courses": []}
+
+
+class _VaultBlobPayload(BaseModel):
+    entries: list
+
+
+@router.put("/vault", status_code=200)
+def legacy_save_vault(
+    body:         _VaultBlobPayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """LEGACY — use POST /sync/vault/entries instead."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    row = {
+        "user_id":    user_id,
+        "title":      "__Video Vault__",
+        "prompt":     "",
+        "playlist":   "__system__",
+        "body":       {"anim_id": _VAULT_SENTINEL, "entries": body.entries},
+        "updated_at": _now(),
+    }
+    all_ex = (
+        supabase.table("contents")
+        .select("id, created_at")
+        .eq("user_id", user_id)
+        .contains("body", {"anim_id": _VAULT_SENTINEL})
+        .order("created_at", desc=True)
+        .execute()
+    )
+    rows = all_ex.data or []
+    if len(rows) > 1:
+        for r in rows[1:]:
+            supabase.table("contents").delete().eq("id", r["id"]).execute()
+    if rows:
+        supabase.table("contents").update(row).eq("id", rows[0]["id"]).execute()
+    else:
+        row["created_at"] = _now()
+        supabase.table("contents").insert(row).execute()
+    return {"success": True, "message": "Vault saved (legacy)."}
+
+
+@router.get("/vault", status_code=200)
+def legacy_get_vault(current_user: dict = Depends(get_current_user)):
+    """LEGACY — use GET /sync/vault/entries instead."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    res = (
+        supabase.table("contents")
+        .select("body")
+        .eq("user_id", user_id)
+        .contains("body", {"anim_id": _VAULT_SENTINEL})
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if res.data and res.data[0].get("body"):
+        return {"entries": res.data[0]["body"].get("entries") or []}
+    return {"entries": []}
+
+
+class _SaveHtmlRequest(BaseModel):
+    filename:    str   = Field(..., min_length=1, max_length=200)
+    html:        str   = Field(..., min_length=1)
+    prompt:      Optional[str] = ""
+    explanation: Optional[str] = ""
+    playlist:    Optional[str] = "General"
+    client_id:   Optional[str] = None
+
+
+@router.post("/animations/save-html", status_code=200)
+def legacy_save_html(
+    body:         _SaveHtmlRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """LEGACY — proxied to /sync/items internally."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    filename = body.filename.strip()
+    anim_id  = body.client_id or f"html_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+    row = {
+        "user_id":  user_id,
+        "title":    filename,
+        "prompt":   body.prompt or "",
+        "playlist": body.playlist or "General",
+        "body": {
+            "anim_id":        anim_id,
+            "filename":       filename,
+            "explanation":    body.explanation or "",
+            "animation_code": body.html,
+        },
+        "created_at": _now(),
+    }
+    _legacy_upsert_contents(supabase, user_id, anim_id, row)
+    return {"success": True, "anim_id": anim_id, "filename": filename, "message": f'"{filename}" saved.'}
+
+
+class _BatchSyncRequest(BaseModel):
+    animations: List[_LegacyAnimPayload]
+
+
+@router.post("/animations/batch", status_code=200)
+def legacy_batch_sync(
+    body:         _BatchSyncRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """LEGACY bulk upsert — kept for migration window."""
+    supabase = _sb(current_user)
+    user_id  = current_user["id"]
+    synced = failed = 0
+    for payload in body.animations:
+        try:
+            anim_id = (payload.id or "").strip()
+            if not anim_id:
+                failed += 1
+                continue
+            title = (payload.filename or payload.title or "Untitled").strip()
+            row = {
+                "user_id":  user_id,
+                "title":    title,
+                "prompt":   payload.prompt or "",
+                "playlist": payload.playlist or "General",
+                "body": {
+                    "anim_id":        anim_id,
+                    "filename":       title,
+                    "explanation":    payload.explanation or "",
+                    "animation_code": payload.animation_code or "",
+                },
+                "created_at": _parse_iso(payload.created_at),
+            }
+            _legacy_upsert_contents(supabase, user_id, anim_id, row)
+            synced += 1
+        except Exception as e:
+            failed += 1
+            print(f"[SYNC] ⚠ Batch item failed: {e}")
+    return {"success": failed == 0, "synced": synced, "failed": failed, "message": f"Synced {synced}. {failed} failed."}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -938,9 +1565,6 @@ async def upload_lesson_file(
 
 class LessonCreate(BaseModel):
     title:             str           = Field(..., min_length=1, max_length=200)
-    subject:           Optional[str] = 'science'   # 'science' | 'social' | 'maths'
-    class_name:        Optional[str] = None         # 'Class 9' | 'Class 10' | ...
-    content_type:      Optional[str] = 'mixed'
     thumbnail_url:     Optional[str] = None
     theory_url:        Optional[str] = None
     animation_url:     Optional[str] = None
@@ -954,9 +1578,6 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
     service_sb = _get_service_client()
     row = {
         "title":            payload.title.strip(),
-        "subject":          (payload.subject      or 'science').strip().lower(),
-        "class_name":       (payload.class_name   or '').strip() or None,
-        "content_type":     (payload.content_type or 'mixed').strip(),
         "thumbnail_url":    payload.thumbnail_url    or None,
         "theory_url":       payload.theory_url       or None,
         "animation_url":    payload.animation_url    or None,
@@ -967,7 +1588,7 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
     try:
         res     = service_sb.table("lessons").insert(row).execute()
         created = (res.data or [{}])[0]
-        print(f"[LESSONS] Created lesson '{payload.title}' (subject={row['subject']}) -> id={created.get('id')}")
+        print(f"[LESSONS] Created lesson '{payload.title}' -> id={created.get('id')}")
         return {"success": True, "lesson": created}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create lesson: {e}")
@@ -975,27 +1596,16 @@ def create_lesson(payload: LessonCreate, current_user: dict = Depends(get_curren
 
 @router.get("/lessons", status_code=200)
 def list_lessons(current_user: dict = Depends(get_current_user)):
-    """All authenticated users: list all lessons ordered by created_at asc.
-
-    Uses the service-role client to bypass RLS.
-    The route is still protected — get_current_user() rejects unauthenticated
-    requests before this function is ever called.
-
-    NOTE: Previously used _sb(current_user) (user JWT passed to service-key client),
-    but that makes auth.role() = 'service_role' from Supabase's perspective,
-    which does NOT satisfy the RLS SELECT policy USING (auth.role() = 'authenticated').
-    The service-role client bypasses RLS entirely and returns all rows correctly.
-    """
+    """All authenticated users: list all lessons ordered by created_at asc."""
     service_sb = _get_service_client()
     try:
         res = (
             service_sb.table("lessons")
-            .select("*")
+            .select("id, title, thumbnail_url, theory_url, animation_url, realworld_images, created_at")
             .order("created_at", desc=False)
             .execute()
         )
         lessons = res.data or []
-        print(f"[LESSONS] Listed {len(lessons)} lesson(s).")
         return {"lessons": lessons, "count": len(lessons)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list lessons: {e}")
@@ -1039,1054 +1649,3 @@ def delete_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)
         return {"success": True, "message": f"Lesson {lesson_id} deleted."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete lesson: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# MATHS TOPICS — Library Mode: Mathematics subject
-# ════════════════════════════════════════════════════════════════
-
-MATHS_TOPIC_BUCKETS = {
-    "thumbnail":  "maths-thumbnails",
-    "animation":  "maths-videos",
-    "realworld":  "maths-realworld",
-    "html":       "maths-html",      # theory HTML files
-}
-
-SOCIAL_TOPIC_BUCKETS = {
-    "thumbnail":  "social-thumbnails",
-    "animation":  "social-videos",
-    "realworld":  "social-realworld",
-    "html":       "social-html",      # theory HTML files
-}
-
-
-@router.post("/maths-topics/upload-file", status_code=200)
-async def upload_maths_topic_file(
-    file: UploadFile = File(...),
-    file_type: str = Form(...),
-    current_user: dict = Depends(get_current_user),
-):
-    """Admin-only: upload thumbnail/video/realworld to Supabase Storage for maths topics."""
-    _require_admin(current_user)
-    if file_type not in MATHS_TOPIC_BUCKETS:
-        raise HTTPException(status_code=400, detail=f"file_type must be one of: {list(MATHS_TOPIC_BUCKETS.keys())}")
-    bucket = MATHS_TOPIC_BUCKETS[file_type]
-    import uuid as _uuid
-    safe_name   = (file.filename or "file").replace(" ", "_")
-    unique_name = f"{_uuid.uuid4().hex}_{safe_name}"
-    data = await file.read()
-    service_sb = _get_service_client()
-    try:
-        service_sb.storage.from_(bucket).upload(
-            unique_name, data,
-            file_options={"content-type": file.content_type or "application/octet-stream"},
-        )
-        supa_url   = os.getenv("SUPABASE_URL", "")
-        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
-        return {"public_url": public_url, "storage_path": unique_name, "bucket": bucket}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
-
-
-class MathsTopicCreate(BaseModel):
-    title:             str           = Field(..., min_length=1, max_length=200)
-    thumbnail_url:     Optional[str] = None
-    theory_url:        Optional[str] = None   # URL of uploaded theory HTML file
-    animation_url:     Optional[str] = None
-    realworld_images:  list          = Field(default_factory=list)  # array of image URLs (jsonb)
-
-
-@router.post("/maths-topics", status_code=201)
-def create_maths_topic(payload: MathsTopicCreate, current_user: dict = Depends(get_current_user)):
-    """Admin-only: insert a new maths topic row."""
-    _require_admin(current_user)
-    service_sb = _get_service_client()
-    row = {
-        "title":            payload.title.strip(),
-        "thumbnail_url":    payload.thumbnail_url  or None,
-        "theory_url":       payload.theory_url     or None,
-        "animation_url":    payload.animation_url  or None,
-        "realworld_images": payload.realworld_images,   # jsonb array — mirrors lessons table
-        "created_at":       _now(),
-        "updated_at":       _now(),
-    }
-    try:
-        res     = service_sb.table("maths_topics").insert(row).execute()
-        created = (res.data or [{}])[0]
-        return {"success": True, "topic": created}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create maths topic: {e}")
-
-
-@router.get("/maths-topics", status_code=200)
-def list_maths_topics(current_user: dict = Depends(get_current_user)):
-    """All authenticated users: list all maths topics.
-    Uses service-role client to bypass RLS (route is still auth-protected).
-    """
-    service_sb = _get_service_client()
-    try:
-        res = (
-            service_sb.table("maths_topics")
-            .select("*")
-            .order("created_at", desc=False)
-            .execute()
-        )
-        topics = res.data or []
-        print(f"[MATHS_TOPICS] Listed {len(topics)} topic(s).")
-        return {"topics": topics, "count": len(topics)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list maths topics: {e}")
-
-
-@router.delete("/maths-topics/{topic_id}", status_code=200)
-def delete_maths_topic(topic_id: str, current_user: dict = Depends(get_current_user)):
-    """Admin-only: delete a maths topic and its storage files."""
-    _require_admin(current_user)
-    service_sb = _get_service_client()
-    try:
-        row_res = service_sb.table("maths_topics").select("*").eq("id", topic_id).execute()
-        rows = row_res.data or []
-        if not rows:
-            raise HTTPException(status_code=404, detail=f"Maths topic {topic_id} not found.")
-        topic = rows[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch maths topic: {e}")
-
-    def _del_storage_maths(bucket: str, url):
-        if not url:
-            return
-        try:
-            filename = url.split(f"/{bucket}/")[-1]
-            service_sb.storage.from_(bucket).remove([filename])
-        except Exception as se:
-            print(f"[MATHS_TOPICS] Could not delete {bucket}/{filename}: {se}")
-
-    _del_storage_maths("maths-thumbnails", topic.get("thumbnail_url"))
-    _del_storage_maths("maths-videos",     topic.get("animation_url"))
-    _del_storage_maths("maths-html",       topic.get("theory_url"))  # theory HTML file
-    # Delete all real-world application images (jsonb array — mirrors lessons delete logic)
-    for img_url in (topic.get("realworld_images") or []):
-        _del_storage_maths("maths-realworld", img_url)
-
-    try:
-        service_sb.table("maths_topics").delete().eq("id", topic_id).execute()
-        return {"success": True, "message": f"Maths topic {topic_id} deleted."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete maths topic: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# SOCIAL TOPICS — Library Mode: Social Science subject
-# ════════════════════════════════════════════════════════════════
-
-@router.post("/social-topics/upload-file", status_code=200)
-async def upload_social_topic_file(
-    file: UploadFile = File(...),
-    file_type: str = Form(...),
-    current_user: dict = Depends(get_current_user),
-):
-    """Admin-only: upload thumbnail/video/realworld to Supabase Storage for social topics."""
-    _require_admin(current_user)
-    if file_type not in SOCIAL_TOPIC_BUCKETS:
-        raise HTTPException(status_code=400, detail=f"file_type must be one of: {list(SOCIAL_TOPIC_BUCKETS.keys())}")
-    bucket = SOCIAL_TOPIC_BUCKETS[file_type]
-    import uuid as _uuid
-    safe_name   = (file.filename or "file").replace(" ", "_")
-    unique_name = f"{_uuid.uuid4().hex}_{safe_name}"
-    data = await file.read()
-    service_sb = _get_service_client()
-    try:
-        service_sb.storage.from_(bucket).upload(
-            unique_name, data,
-            file_options={"content-type": file.content_type or "application/octet-stream"},
-        )
-        supa_url   = os.getenv("SUPABASE_URL", "")
-        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
-        return {"public_url": public_url, "storage_path": unique_name, "bucket": bucket}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
-
-
-class SocialTopicCreate(BaseModel):
-    title:             str           = Field(..., min_length=1, max_length=200)
-    thumbnail_url:     Optional[str] = None
-    theory_url:        Optional[str] = None   # URL of uploaded theory HTML file
-    animation_url:     Optional[str] = None
-    realworld_images:  list          = Field(default_factory=list)  # array of image URLs (jsonb)
-
-
-@router.post("/social-topics", status_code=201)
-def create_social_topic(payload: SocialTopicCreate, current_user: dict = Depends(get_current_user)):
-    """Admin-only: insert a new social science topic row."""
-    _require_admin(current_user)
-    service_sb = _get_service_client()
-    row = {
-        "title":            payload.title.strip(),
-        "thumbnail_url":    payload.thumbnail_url  or None,
-        "theory_url":       payload.theory_url     or None,
-        "animation_url":    payload.animation_url  or None,
-        "realworld_images": payload.realworld_images,   # jsonb array — mirrors lessons table
-        "created_at":       _now(),
-        "updated_at":       _now(),
-    }
-    try:
-        res     = service_sb.table("social_topics").insert(row).execute()
-        created = (res.data or [{}])[0]
-        return {"success": True, "topic": created}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create social topic: {e}")
-
-
-@router.get("/social-topics", status_code=200)
-def list_social_topics(current_user: dict = Depends(get_current_user)):
-    """All authenticated users: list all social science topics.
-    Uses service-role client to bypass RLS (route is still auth-protected).
-    """
-    service_sb = _get_service_client()
-    try:
-        res = (
-            service_sb.table("social_topics")
-            .select("*")
-            .order("created_at", desc=False)
-            .execute()
-        )
-        topics = res.data or []
-        print(f"[SOCIAL_TOPICS] Listed {len(topics)} topic(s).")
-        return {"topics": topics, "count": len(topics)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list social topics: {e}")
-
-
-@router.delete("/social-topics/{topic_id}", status_code=200)
-def delete_social_topic(topic_id: str, current_user: dict = Depends(get_current_user)):
-    """Admin-only: delete a social topic and its storage files."""
-    _require_admin(current_user)
-    service_sb = _get_service_client()
-    try:
-        row_res = service_sb.table("social_topics").select("*").eq("id", topic_id).execute()
-        rows = row_res.data or []
-        if not rows:
-            raise HTTPException(status_code=404, detail=f"Social topic {topic_id} not found.")
-        topic = rows[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch social topic: {e}")
-
-    def _del_storage_social(bucket: str, url):
-        if not url:
-            return
-        try:
-            filename = url.split(f"/{bucket}/")[-1]
-            service_sb.storage.from_(bucket).remove([filename])
-        except Exception as se:
-            print(f"[SOCIAL_TOPICS] Could not delete {bucket}/{filename}: {se}")
-
-    _del_storage_social("social-thumbnails", topic.get("thumbnail_url"))
-    _del_storage_social("social-videos",     topic.get("animation_url"))
-    _del_storage_social("social-html",       topic.get("theory_url"))  # theory HTML file
-    # Delete all real-world application images (jsonb array — mirrors lessons delete logic)
-    for img_url in (topic.get("realworld_images") or []):
-        _del_storage_social("social-realworld", img_url)
-
-    try:
-        service_sb.table("social_topics").delete().eq("id", topic_id).execute()
-        return {"success": True, "message": f"Social topic {topic_id} deleted."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete social topic: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# ASSESSMENT — Science, Maths, Social Science
-# Each table: topic_title (unique key) + assessment_1..10 (HTML)
-# ════════════════════════════════════════════════════════════════
-
-ASSESSMENT_TABLES = {
-    "science": "science_assessment",
-    "maths":   "maths_assessment",
-    "social":  "social_assessment",
-}
-
-# Supabase Storage buckets for assessment HTML files
-ASSESSMENT_BUCKETS = {
-    "science": "science-assessment",
-    "maths":   "maths-assessment",
-    "social":  "social-assessment",
-}
-
-
-class AssessmentSave(BaseModel):
-    topic_title:      str           = Field(..., min_length=1, max_length=300)
-    # assessment_N stores the public URL of the uploaded HTML file
-    assessment_1:     Optional[str] = None
-    assessment_2:     Optional[str] = None
-    assessment_3:     Optional[str] = None
-    assessment_4:     Optional[str] = None
-    assessment_5:     Optional[str] = None
-    assessment_6:     Optional[str] = None
-    assessment_7:     Optional[str] = None
-    assessment_8:     Optional[str] = None
-    assessment_9:     Optional[str] = None
-    assessment_10:    Optional[str] = None
-    # thumbnail_url_N stores the public URL of the thumbnail image
-    thumbnail_url_1:  Optional[str] = None
-    thumbnail_url_2:  Optional[str] = None
-    thumbnail_url_3:  Optional[str] = None
-    thumbnail_url_4:  Optional[str] = None
-    thumbnail_url_5:  Optional[str] = None
-    thumbnail_url_6:  Optional[str] = None
-    thumbnail_url_7:  Optional[str] = None
-    thumbnail_url_8:  Optional[str] = None
-    thumbnail_url_9:  Optional[str] = None
-    thumbnail_url_10: Optional[str] = None
-
-
-def _get_assessment_table(subject: str) -> str:
-    tbl = ASSESSMENT_TABLES.get(subject)
-    if not tbl:
-        raise HTTPException(status_code=400, detail=f"subject must be one of: {list(ASSESSMENT_TABLES.keys())}")
-    return tbl
-
-
-@router.post("/assessment/{subject}/upload-file", status_code=200)
-async def upload_assessment_file(
-    subject: str,
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    """Admin-only: upload an assessment HTML file to the subject-specific bucket.
-    Returns { public_url, storage_path, bucket }.
-    """
-    _require_admin(current_user)
-    bucket = ASSESSMENT_BUCKETS.get(subject)
-    if not bucket:
-        raise HTTPException(
-            status_code=400,
-            detail=f"subject must be one of: {list(ASSESSMENT_BUCKETS.keys())}",
-        )
-    import uuid as _uuid
-    safe_name   = (file.filename or "assessment.html").replace(" ", "_")
-    unique_name = f"{_uuid.uuid4().hex}_{safe_name}"
-    data        = await file.read()
-    service_sb  = _get_service_client()
-    try:
-        service_sb.storage.from_(bucket).upload(
-            unique_name, data,
-            # Always force text/html — the browser often reports application/octet-stream
-            # for .html files, which causes Supabase to serve them as plain text and the
-            # iframe displays raw source code instead of rendering the quiz/content.
-            file_options={"content-type": "text/html; charset=utf-8"},
-        )
-        supa_url   = os.getenv("SUPABASE_URL", "")
-        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{unique_name}"
-        print(f"[ASSESSMENT_UPLOAD] Uploaded {safe_name} → {bucket}/{unique_name}")
-        return {"public_url": public_url, "storage_path": unique_name, "bucket": bucket}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Assessment file upload failed: {e}")
-
-
-@router.get("/assessment/{subject}", status_code=200)
-def list_assessments(subject: str, current_user: dict = Depends(get_current_user)):
-    """All authenticated users: list all assessment rows for a subject.
-
-    Uses the service-role client for SELECT so that RLS is bypassed correctly.
-    The user-scoped client (_sb) inadvertently presents as service_role to
-    Supabase RLS (because create_client() is called with the service key even
-    when a user JWT is supplied), causing the 'authenticated'-role SELECT
-    policy to evaluate to FALSE and return 0 rows.
-    """
-    tbl = _get_assessment_table(subject)
-    service_sb = _get_service_client()
-    try:
-        res = (
-            service_sb.table(tbl)
-            .select("*")
-            .order("topic_title", desc=False)
-            .execute()
-        )
-        rows = res.data or []
-        return {"assessments": rows, "count": len(rows)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list {subject} assessments: {e}")
-
-
-@router.post("/assessment/{subject}", status_code=200)
-def save_assessment(subject: str, payload: AssessmentSave, current_user: dict = Depends(get_current_user)):
-    """Admin-only: upsert assessment row for a topic (insert or update on topic_title conflict)."""
-    _require_admin(current_user)
-    tbl = _get_assessment_table(subject)
-    service_sb = _get_service_client()
-    row = {
-        "topic_title":      payload.topic_title.strip(),
-        # assessment_N: public URL of the uploaded HTML file
-        "assessment_1":     payload.assessment_1,
-        "assessment_2":     payload.assessment_2,
-        "assessment_3":     payload.assessment_3,
-        "assessment_4":     payload.assessment_4,
-        "assessment_5":     payload.assessment_5,
-        "assessment_6":     payload.assessment_6,
-        "assessment_7":     payload.assessment_7,
-        "assessment_8":     payload.assessment_8,
-        "assessment_9":     payload.assessment_9,
-        "assessment_10":    payload.assessment_10,
-        # thumbnail_url_N: public URL of the thumbnail image
-        "thumbnail_url_1":  payload.thumbnail_url_1,
-        "thumbnail_url_2":  payload.thumbnail_url_2,
-        "thumbnail_url_3":  payload.thumbnail_url_3,
-        "thumbnail_url_4":  payload.thumbnail_url_4,
-        "thumbnail_url_5":  payload.thumbnail_url_5,
-        "thumbnail_url_6":  payload.thumbnail_url_6,
-        "thumbnail_url_7":  payload.thumbnail_url_7,
-        "thumbnail_url_8":  payload.thumbnail_url_8,
-        "thumbnail_url_9":  payload.thumbnail_url_9,
-        "thumbnail_url_10": payload.thumbnail_url_10,
-        "updated_at":       _now(),
-    }
-    try:
-        res = (
-            service_sb.table(tbl)
-            .upsert(row, on_conflict="topic_title")
-            .execute()
-        )
-        saved = (res.data or [{}])[0]
-        return {"success": True, "assessment": saved}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save {subject} assessment: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# STUDENT LEARN MODE TOPICS  —  GET /sync/student-topics/{subject}
-# ════════════════════════════════════════════════════════════════
-# Tables:
-#   students_science   — Science topics for Learn Mode
-#   students_maths     — Maths topics for Learn Mode
-#   students_social    — Social topics for Learn Mode
-#
-# Endpoints:
-#   GET /sync/student-topics/{subject}         — fetch all topics (JWT required)
-#   GET /sync/student-topics/{subject}/count   — fetch topic count (JWT required)
-#
-# Uses service-role client so RLS is bypassed — the Haezet JWT is used
-# only for platform auth, not as a Supabase Auth session.
-# ════════════════════════════════════════════════════════════════
-
-STUDENT_SUBJECT_TABLE_MAP = {
-    "science": "students_science",
-    "maths":   "students_maths",
-    "social":  "students_social",
-}
-
-
-@router.get("/student-topics/{subject}", status_code=200)
-def get_student_topics(subject: str, current_user: dict = Depends(get_current_user)):
-    """
-    Returns all rows from students_{subject} ordered by id.
-    Uses the service-role client (bypasses RLS) so the Haezet JWT
-    mismatch with Supabase Auth does not block the query.
-    """
-    table = STUDENT_SUBJECT_TABLE_MAP.get(subject)
-    if not table:
-        raise HTTPException(status_code=400, detail=f"Unknown subject '{subject}'. Must be science, maths, or social.")
-
-    try:
-        svc = _sb_admin()   # service-role — bypasses all RLS
-        res = svc.table(table).select("*").order("id", desc=False).execute()
-        return res.data or []
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch {table}: {e}")
-
-
-@router.get("/student-topics/{subject}/count", status_code=200)
-def get_student_topics_count(subject: str, current_user: dict = Depends(get_current_user)):
-    """
-    Returns the row count for students_{subject}.
-    Used by the student dashboard chip badges.
-    """
-    table = STUDENT_SUBJECT_TABLE_MAP.get(subject)
-    if not table:
-        raise HTTPException(status_code=400, detail=f"Unknown subject '{subject}'. Must be science, maths, or social.")
-
-    try:
-        svc = _sb_admin()
-        res = svc.table(table).select("*", count="exact").execute()
-        return {"count": res.count or 0}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to count {table}: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# ASSESSMENT SHARE SESSIONS  —  Teacher PIN/URL generation
-# ════════════════════════════════════════════════════════════════
-# Tables:
-#   assessment_sessions        — teacher-created sessions (PIN + slug)
-#   assessment_session_joins   — student join events per session
-#
-# Endpoints:
-#   POST /sync/assessment-session/create          — teacher creates session
-#   GET  /sync/assessment-session/by-pin/{pin}    — student/teacher look up by PIN
-#   GET  /sync/assessment-session/by-slug/{slug}  — student joins via shareable URL
-#   POST /sync/assessment-session/{sid}/join      — student records join
-# ════════════════════════════════════════════════════════════════
-
-from datetime import timedelta
-
-
-class SessionCreate(BaseModel):
-    subject:        str   = Field(..., min_length=1, max_length=50)
-    topic_title:    str   = Field(..., min_length=1, max_length=300)
-    assessment_num: int   = Field(..., ge=1, le=10)
-    assessment_url: Optional[str] = None
-    thumbnail_url:  Optional[str] = None
-
-
-class SessionJoin(BaseModel):
-    student_email: Optional[str] = None
-    nickname:      Optional[str] = None
-
-
-def _generate_unique_pin(service_sb) -> str:
-    """Generate a unique 6-digit PIN not already in use by a non-expired session."""
-    for _ in range(20):
-        pin = f"{secrets.randbelow(1_000_000):06d}"
-        # Check uniqueness among non-expired sessions only
-        res = (
-            service_sb.table("assessment_sessions")
-            .select("id")
-            .eq("pin", pin)
-            .gt("expires_at", datetime.now(timezone.utc).isoformat())
-            .execute()
-        )
-        if not (res.data or []):
-            return pin
-    raise HTTPException(status_code=500, detail="Could not generate a unique PIN — try again")
-
-
-@router.post("/assessment-session/create", status_code=201)
-def create_assessment_session(
-    payload: SessionCreate,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Teacher creates a share session for a specific assessment.
-    Returns: { session_id, pin, slug, share_url, expires_at }
-    PIN is valid for 10 hours from creation.
-    """
-    service_sb = _get_service_client()
-
-    pin  = _generate_unique_pin(service_sb)
-    slug = secrets.token_hex(8)   # 16-char hex slug for shareable URL
-
-    now        = datetime.now(timezone.utc)
-    expires_at = (now + timedelta(hours=10)).isoformat()
-
-    row = {
-        "pin":            pin,
-        "slug":           slug,
-        "subject":        payload.subject,
-        "topic_title":    payload.topic_title,
-        "assessment_num": payload.assessment_num,
-        "assessment_url": payload.assessment_url,
-        "thumbnail_url":  payload.thumbnail_url,
-        "teacher_id":     current_user.get("sub") or current_user.get("id"),
-        "teacher_email":  current_user.get("email"),
-        "expires_at":     expires_at,
-    }
-
-    try:
-        res = service_sb.table("assessment_sessions").insert(row).execute()
-        saved = (res.data or [{}])[0]
-        return {
-            "session_id": saved.get("id"),
-            "pin":        pin,
-            "slug":       slug,
-            "expires_at": expires_at,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
-
-
-@router.get("/assessment-session/by-pin/{pin}", status_code=200)
-def get_session_by_pin(pin: str):
-    """
-    Public endpoint — no JWT required.
-    Student enters a 6-digit PIN; returns session details if valid and non-expired.
-    """
-    service_sb = _get_service_client()
-    now = datetime.now(timezone.utc).isoformat()
-
-    try:
-        res = (
-            service_sb.table("assessment_sessions")
-            .select("*")
-            .eq("pin", pin.strip())
-            .eq("is_expired", False)
-            .gt("expires_at", now)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        if not rows:
-            raise HTTPException(status_code=404, detail="PIN not found or expired")
-        session = rows[0]
-        # Count joins
-        joins_res = (
-            service_sb.table("assessment_session_joins")
-            .select("id", count="exact")
-            .eq("session_id", session["id"])
-            .execute()
-        )
-        join_count = joins_res.count or 0
-        return {**session, "join_count": join_count}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PIN lookup failed: {e}")
-
-
-@router.get("/assessment-session/by-slug/{slug}", status_code=200)
-def get_session_by_slug(slug: str):
-    """
-    Public endpoint — no JWT required.
-    Student visits shareable URL ?session=<slug>; returns session details if valid.
-    """
-    service_sb = _get_service_client()
-    now = datetime.now(timezone.utc).isoformat()
-
-    try:
-        res = (
-            service_sb.table("assessment_sessions")
-            .select("*")
-            .eq("slug", slug.strip())
-            .eq("is_expired", False)
-            .gt("expires_at", now)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        if not rows:
-            raise HTTPException(status_code=404, detail="Session not found or expired")
-        session = rows[0]
-        joins_res = (
-            service_sb.table("assessment_session_joins")
-            .select("id", count="exact")
-            .eq("session_id", session["id"])
-            .execute()
-        )
-        join_count = joins_res.count or 0
-        return {**session, "join_count": join_count}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Slug lookup failed: {e}")
-
-
-@router.post("/assessment-session/{session_id}/join", status_code=201)
-def join_assessment_session(
-    session_id: str,
-    body: SessionJoin = SessionJoin(),
-):
-    """
-    Public endpoint — no JWT required.
-    Records a student join event for analytics / participant count.
-    """
-    service_sb = _get_service_client()
-
-    row = {
-        "session_id":    session_id,
-        "student_email": body.student_email,
-        "nickname":      body.nickname,
-    }
-
-    try:
-        res = service_sb.table("assessment_session_joins").insert(row).execute()
-        saved = (res.data or [{}])[0]
-        return {"joined": True, "join_id": saved.get("id")}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Join failed: {e}")
-
-
-@router.get("/assessment-session/{session_id}/join-count", status_code=200)
-def get_session_join_count(session_id: str):
-    """
-    Public endpoint - no JWT required.
-    Returns the current participant (join) count for a session.
-    Polled by the student lobby screen every few seconds to show live join counts.
-    """
-    service_sb = _get_service_client()
-    try:
-        res = (
-            service_sb.table("assessment_session_joins")
-            .select("id", count="exact")
-            .eq("session_id", session_id)
-            .execute()
-        )
-        return {"session_id": session_id, "count": res.count or 0}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Join count failed: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# TEST STUDENTS  —  Student registration + result tracking
-# ════════════════════════════════════════════════════════════════
-# Table: test_students
-#
-# Endpoints:
-#   POST  /sync/test-students/register                   — public, student registers before assessment
-#   PATCH /sync/test-students/{record_id}/result         — public, save score after submission
-#   GET   /sync/test-students/by-session/{session_id}    — teacher-auth required, view results
-#   GET   /sync/test-students/by-pin/{pin}               — teacher-auth required, view results by PIN
-#   GET   /sync/test-students/by-assessment              — teacher-auth fallback (by subject+topic+num)
-# ════════════════════════════════════════════════════════════════
-
-
-class StudentRegister(BaseModel):
-    session_id:        Optional[str] = None
-    pin_code:          str           = Field(..., min_length=1, max_length=10)
-    student_name:      str           = Field(..., min_length=1, max_length=120)
-    roll_number:       str           = Field(..., min_length=1, max_length=50)
-    user_id:           Optional[str] = None   # email or nickname
-    subject:           Optional[str] = None
-    topic:             Optional[str] = None
-    assessment_number: Optional[int] = None
-
-
-class StudentResult(BaseModel):
-    result: str = Field(..., min_length=1, max_length=50)   # e.g. "70%"
-
-
-@router.post("/test-students/register", status_code=201)
-def register_test_student(payload: StudentRegister):
-    """
-    Public endpoint — no JWT required.
-    Called when the student clicks 'Start Assessment' after filling the registration form.
-    Inserts a row in test_students and returns the record id (used later to update result).
-    """
-    service_sb = _get_service_client()
-
-    row = {
-        "pin_code":          payload.pin_code,
-        "student_name":      payload.student_name,
-        "roll_number":       payload.roll_number,
-        "user_id":           payload.user_id,
-        "subject":           payload.subject,
-        "topic":             payload.topic,
-        "assessment_number": payload.assessment_number,
-        "result":            "Pending",
-    }
-    if payload.session_id:
-        row["session_id"] = payload.session_id
-
-    try:
-        res = service_sb.table("test_students").insert(row).execute()
-        saved = (res.data or [{}])[0]
-        return {"registered": True, "record_id": saved.get("id")}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Registration failed: {e}")
-
-
-@router.patch("/test-students/{record_id}/result", status_code=200)
-def update_student_result(record_id: str, body: StudentResult):
-    """
-    Public endpoint — no JWT required.
-    Called (via postMessage relay from assessment iframe) when student submits the assessment.
-    Updates the result column for the student's registration record.
-    """
-    service_sb = _get_service_client()
-
-    try:
-        res = (
-            service_sb.table("test_students")
-            .update({"result": body.result})
-            .eq("id", record_id)
-            .execute()
-        )
-        updated = res.data or []
-        if not updated:
-            raise HTTPException(status_code=404, detail="Student record not found")
-        return {"updated": True, "record_id": record_id, "result": body.result}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Result update failed: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# QUIZ RESULTS  —  Detailed score storage per student
-# ════════════════════════════════════════════════════════════════
-# Workflow:
-#   Student submits quiz → iframe posts { type:'ASSESSMENT_RESULT', score, total, percentage }
-#   student.html catches it → POST /sync/quiz-results
-#   Backend inserts into quiz_results AND updates test_students.result
-#   Teacher clicks "View Results" → GET endpoint returns students + quiz_results joined
-# ════════════════════════════════════════════════════════════════
-
-class QuizResultSubmit(BaseModel):
-    test_student_id:  Optional[str] = None   # FK to test_students.id
-    session_id:       Optional[str] = None   # FK to assessment_sessions.id
-    pin_code:         str           = Field(..., min_length=1, max_length=10)
-    student_name:     str           = Field(..., min_length=1, max_length=120)
-    roll_number:      str           = Field(..., min_length=1, max_length=50)
-    score:            int           = Field(..., ge=0)          # correct answers e.g. 7
-    total_questions:  int           = Field(..., ge=1)          # total questions  e.g. 10
-    percentage:       float         = Field(..., ge=0, le=100)  # e.g. 70.0
-
-
-@router.post("/quiz-results", status_code=201)
-def submit_quiz_result(payload: QuizResultSubmit):
-    """
-    Public endpoint — no JWT required.
-    Called by student.html when the assessment iframe posts an ASSESSMENT_RESULT message.
-
-    Steps:
-      1. Inserts a row into quiz_results (score, total_questions, percentage).
-      2. Updates test_students.result to a human-readable string  e.g. '7/10 (70.00%)'.
-
-    Returns the new quiz_result id so the frontend can reference it.
-    """
-    service_sb = _get_service_client()
-
-    # Build a readable result string that will show in test_students.result
-    pct_str    = f"{payload.percentage:.2f}"
-    result_str = f"{payload.score}/{payload.total_questions} ({pct_str}%)"
-
-    # 1. Insert into quiz_results
-    qr_row = {
-        "pin_code":         payload.pin_code,
-        "student_name":     payload.student_name,
-        "roll_number":      payload.roll_number,
-        "score":            payload.score,
-        "total_questions":  payload.total_questions,
-        "percentage":       round(payload.percentage, 2),
-    }
-    if payload.test_student_id:
-        qr_row["test_student_id"] = payload.test_student_id
-    if payload.session_id:
-        qr_row["session_id"] = payload.session_id
-
-    try:
-        qr_res = service_sb.table("quiz_results").insert(qr_row).execute()
-        saved  = (qr_res.data or [{}])[0]
-        quiz_result_id = saved.get("id")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"quiz_results insert failed: {e}")
-
-    # 2. Update test_students.result (best-effort — don't fail if record not found)
-    if payload.test_student_id:
-        try:
-            service_sb.table("test_students") \
-                .update({"result": result_str}) \
-                .eq("id", payload.test_student_id) \
-                .execute()
-        except Exception as e:
-            print(f"[QUIZ] Warning: could not update test_students result: {e}")
-
-    print(f"[QUIZ] ✅ Quiz result saved: {result_str} student={payload.student_name!r} pin={payload.pin_code!r}")
-    return {"saved": True, "quiz_result_id": quiz_result_id, "result": result_str}
-
-
-def _attach_quiz_results(service_sb, students: list) -> list:
-    """
-    Helper: given a list of test_students rows, look up their quiz_results
-    and attach score, total_questions, percentage to each row.
-    Matches on test_student_id (preferred) or pin_code+student_name (fallback).
-    """
-    if not students:
-        return students
-
-    # Collect all test_student ids that are not None
-    ts_ids = [s["id"] for s in students if s.get("id")]
-    if not ts_ids:
-        return students
-
-    try:
-        qr_res = (
-            service_sb.table("quiz_results")
-            .select("test_student_id, score, total_questions, percentage, submitted_at")
-            .in_("test_student_id", ts_ids)
-            .order("submitted_at", desc=True)
-            .execute()
-        )
-        quiz_rows = qr_res.data or []
-    except Exception:
-        # Non-fatal — just return students without quiz data
-        return students
-
-    # Build a map: test_student_id → quiz_result row (keep latest)
-    qr_map: dict = {}
-    for qr in quiz_rows:
-        tid = qr.get("test_student_id")
-        if tid and tid not in qr_map:
-            qr_map[tid] = qr
-
-    # Attach quiz result fields to each student row
-    for s in students:
-        qr = qr_map.get(s.get("id"))
-        if qr:
-            s["quiz_score"]       = qr["score"]
-            s["quiz_total"]       = qr["total_questions"]
-            s["quiz_percentage"]  = float(qr["percentage"] or 0)
-            s["quiz_submitted_at"]= qr["submitted_at"]
-        else:
-            s["quiz_score"]       = None
-            s["quiz_total"]       = None
-            s["quiz_percentage"]  = None
-            s["quiz_submitted_at"]= None
-
-    return students
-
-
-@router.get("/test-students/by-session/{session_id}", status_code=200)
-def get_results_by_session(
-    session_id: str,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Teacher-authenticated endpoint.
-    Returns all student registrations for the given assessment session.
-    Verifies the requesting teacher owns the session.
-    """
-    service_sb = _get_service_client()
-    teacher_id    = current_user.get("sub") or current_user.get("id")
-    teacher_email = current_user.get("email")
-
-    # Verify teacher owns this session
-    try:
-        sess_res = (
-            service_sb.table("assessment_sessions")
-            .select("id, teacher_id, teacher_email")
-            .eq("id", session_id)
-            .limit(1)
-            .execute()
-        )
-        rows = sess_res.data or []
-        if not rows:
-            raise HTTPException(status_code=404, detail="Session not found")
-        sess = rows[0]
-        if sess.get("teacher_id") != teacher_id and sess.get("teacher_email") != teacher_email:
-            raise HTTPException(status_code=403, detail="You do not own this session")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Session lookup failed: {e}")
-
-    # Fetch student rows + quiz_results
-    try:
-        res = (
-            service_sb.table("test_students")
-            .select("*")
-            .eq("session_id", session_id)
-            .order("timestamp", desc=False)
-            .execute()
-        )
-        students = _attach_quiz_results(service_sb, res.data or [])
-        return {"students": students, "count": len(students)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
-
-
-@router.get("/test-students/by-pin/{pin}", status_code=200)
-def get_results_by_pin(
-    pin: str,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Teacher-authenticated endpoint.
-    Looks up the most recent session by PIN (must belong to calling teacher),
-    then returns all student rows for it.
-    """
-    service_sb = _get_service_client()
-    teacher_id    = current_user.get("sub") or current_user.get("id")
-    teacher_email = current_user.get("email")
-
-    # Find session owned by this teacher
-    try:
-        sess_res = (
-            service_sb.table("assessment_sessions")
-            .select("id, teacher_id, teacher_email, created_at")
-            .eq("pin", pin.strip())
-            .order("created_at", desc=True)
-            .limit(10)
-            .execute()
-        )
-        rows = sess_res.data or []
-        if not rows:
-            raise HTTPException(status_code=404, detail="No session found for this PIN")
-        owned = [r for r in rows if r.get("teacher_id") == teacher_id or r.get("teacher_email") == teacher_email]
-        if not owned:
-            raise HTTPException(status_code=403, detail="You do not own this session")
-        session_id = owned[0]["id"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PIN session lookup failed: {e}")
-
-    # Fetch student rows + quiz_results
-    try:
-        res = (
-            service_sb.table("test_students")
-            .select("*")
-            .eq("session_id", session_id)
-            .order("timestamp", desc=False)
-            .execute()
-        )
-        students = _attach_quiz_results(service_sb, res.data or [])
-        return {"session_id": session_id, "students": students, "count": len(students)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
-
-
-@router.get("/test-students/by-assessment", status_code=200)
-def get_results_by_assessment(
-    subject: str,
-    topic_title: str,
-    assessment_num: int,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Teacher-authenticated endpoint (fallback).
-    Finds the most recent session matching subject+topic+assessment_num owned by this teacher,
-    then returns all student rows for it.
-    Used when 'View Results' is clicked before any specific PIN has been cached in the UI.
-    """
-    service_sb = _get_service_client()
-    teacher_id    = current_user.get("sub") or current_user.get("id")
-    teacher_email = current_user.get("email")
-
-    # Find most recent matching session owned by this teacher
-    try:
-        sess_res = (
-            service_sb.table("assessment_sessions")
-            .select("id, teacher_id, teacher_email, created_at")
-            .eq("subject", subject.strip())
-            .eq("topic_title", topic_title.strip())
-            .eq("assessment_num", assessment_num)
-            .order("created_at", desc=True)
-            .limit(20)
-            .execute()
-        )
-        rows = sess_res.data or []
-        owned = [r for r in rows if r.get("teacher_id") == teacher_id or r.get("teacher_email") == teacher_email]
-        if not owned:
-            return {
-                "session_id": None, "students": [], "count": 0,
-                "message": "No shared session found — share this assessment first to see student results"
-            }
-        session_id = owned[0]["id"]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Assessment session lookup failed: {e}")
-
-    # Fetch student rows + quiz_results
-    try:
-        res = (
-            service_sb.table("test_students")
-            .select("*")
-            .eq("session_id", session_id)
-            .order("timestamp", desc=False)
-            .execute()
-        )
-        students = _attach_quiz_results(service_sb, res.data or [])
-        return {"session_id": session_id, "students": students, "count": len(students)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Results fetch failed: {e}")
