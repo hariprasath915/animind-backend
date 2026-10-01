@@ -61,9 +61,9 @@ from google.genai import types as _genai_types
 # Client + model routing  (v2.1.5 — self-healing model ID)
 # ---------------------------------------------------------------------------
 
-CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "300"))
+CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "85"))
 CLIENT_MAX_RETRIES       = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "0"))
-PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "310"))
+PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "90"))
 
 # BUG FIX: Cap MAX_TOK to prevent excessive timeouts, but allow enough tokens
 # for very complex simulations (which can exceed 15k tokens).
