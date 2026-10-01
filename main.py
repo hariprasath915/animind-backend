@@ -35,6 +35,16 @@ import asyncio
 import json
 from pathlib import Path
 
+# ── Load .env for local development ───────────────────────────────────────────
+# Must happen BEFORE any module that calls os.getenv() at import time
+# (auth_utils, sync_routes).  override=False means Railway's real env vars
+# always win — .env only fills in what's missing locally.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=False)
+except ImportError:
+    pass   # python-dotenv not installed — Railway sets vars directly
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
