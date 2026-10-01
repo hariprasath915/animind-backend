@@ -2530,31 +2530,16 @@ async def _run_generation_pipeline(topic: str) -> dict:
     system_text, user_content = _build_prompt(topic, category, image_refs)
 
     # Step 4: Generate via Gemini (mirrors q_animation._call_gemini pattern exactly)
+    # NOTE: Do NOT set thinking_config / thinking_budget here.
+    # Models like gemini-3.1-pro-preview are thinking-only and reject budget=0
+    # (INVALID_ARGUMENT: "Budget 0 is invalid. This model only works in thinking mode.")
+    # Omitting thinking_config lets the model use its default thinking behaviour.
     try:
-        try:
-            # Try thinking_budget (used in older google-genai SDK versions)
-            config = _genai_types.GenerateContentConfig(
-                system_instruction=system_text,
-                temperature=0.7,
-                max_output_tokens=MAX_TOK,
-                thinking_config=_genai_types.ThinkingConfig(thinking_budget=0),
-            )
-        except TypeError:
-            try:
-                # Try thinking_level (used in newer google-genai SDK versions)
-                config = _genai_types.GenerateContentConfig(
-                    system_instruction=system_text,
-                    temperature=0.7,
-                    max_output_tokens=MAX_TOK,
-                    thinking_config=_genai_types.ThinkingConfig(thinking_level="medium"),
-                )
-            except Exception:
-                # ThinkingConfig not supported on this SDK version — use minimal config
-                config = _genai_types.GenerateContentConfig(
-                    system_instruction=system_text,
-                    temperature=0.7,
-                    max_output_tokens=MAX_TOK,
-                )
+        config = _genai_types.GenerateContentConfig(
+            system_instruction=system_text,
+            temperature=0.7,
+            max_output_tokens=MAX_TOK,
+        )
         response = await _gemini_client.aio.models.generate_content(
             model=SIM_MODEL,
             contents=user_content,
