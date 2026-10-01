@@ -1506,6 +1506,215 @@ async def _classify_topic(topic: str) -> str:
 #  MODULE 7 -- Prompt System
 # ===========================================================================
 
+RENDERING_QUALITY_GUIDE = """
+════════════════════════════════════════════════════════
+  REFERENCE-QUALITY VISUAL BAR  (mandatory — not optional)
+════════════════════════════════════════════════════════
+Every simulation must match the visual quality of a hand-crafted professional
+virtual-lab page. The two canonical benchmarks are:
+  • Newton Dynamics Lab  — realistic parallax road/sky, particle exhaust, 3D car
+  • J.J. Thomson CRT Lab — phosphor glow, hardware console UI, Orbitron font, LCD displays
+
+══ TYPOGRAPHY ══
+Load Google Fonts in the <head> with a @import statement tailored to the topic:
+  • Engineering / Physics / Circuits → Orbitron (headers) + Roboto (body) + Share Tech Mono (values)
+  • Biology / Chemistry / Life-science → Roboto + Roboto Mono
+  • Mathematics / CS Algorithms → IBM Plex Sans + IBM Plex Mono
+  • Earth / Environment / Economics → Inter + JetBrains Mono
+Always pair a display/headline font with a monospace font for numeric readouts.
+Never use the browser's default system font as the main UI typeface.
+
+══ SIDEBAR WIDTH & LAYOUT ══
+Increase the sidebar to 420–500px (not 260px). Wide enough to host:
+  - A prominent header with 2-level hierarchy (topic title + subtitle/tagline)
+  - Hardware-style panels with titled sections and ruled dividers
+  - Sliders that have BOTH a label AND an LCD-style value readout box
+  - A telemetry grid (2-column for 4+ metrics, 1-column for tall displays)
+  - Optional educational context box (law statement, formula highlight, or insight)
+
+Sidebar should sit on the RIGHT (not left) for physics / instrument topics.
+Canvas workspace gets flex:1 on the LEFT, sidebar fixed-width on the RIGHT.
+
+══ SIDEBAR VISUAL STYLE — pick one of these two tiers ══
+
+TIER 1 — Hardware Console (physics, circuits, instruments, chemistry):
+  --panel-bg: #111316 or #0D0F14;
+  --panel-border: #2A2D34;
+  Panels: background:#0D0F12; border:1px solid var(--panel-border);
+          box-shadow: inset 0 2px 10px rgba(0,0,0,.5), 0 2px 0 rgba(255,255,255,.05);
+  Panel title: Orbitron font; font-size:0.7rem; letter-spacing:2px;
+               border-bottom ruled line (::after pseudo with flex:1 height:1px background:var(--panel-border))
+  Slider thumb: radial-gradient(circle at 50% 30%, #E2E8F0, #828A9A) — 3D metallic knob look
+  Slider track: background:#1A1D24; box-shadow: inset 0 1px 3px rgba(0,0,0,.8)
+
+TIER 2 — Clean Lab (biology, math, earth science, economics):
+  #1E1E1E / #2D2D2D surfaces, Roboto font, standard flat panels with subtle borders
+
+══ LCD VALUE READOUTS ══
+Every slider must have a paired LCD-style value display — not a plain span:
+  .lcd-display { background:#050A0F; border:2px solid #1A2229; border-radius:6px;
+    padding:12px 16px; box-shadow: inset 0 0 15px rgba(0,229,255,.05); }
+  .lcd-value { font-family:'Share Tech Mono',monospace; font-size:1.3–1.6rem;
+    color: <topic-accent>; text-shadow: 0 0 10px rgba(<rgb>,0.4); }
+Positive/negative values: prefix "+" for positive with formatStr helper:
+  const fmt = (v, unit) => (v >= 0 ? '+' : '') + v.toFixed(2) + ' ' + unit;
+
+══ TELEMETRY GRID ══
+Sidebar telemetry rows must look like instrument readouts, not plain text:
+  .tel-row { background:#080A0C; border:1px solid var(--panel-border);
+    padding:12px 16px; border-radius:4px;
+    display:flex; justify-content:space-between; align-items:center; }
+  Labels: .lcd-label — uppercase, 0.7rem, letter-spacing:1px, muted color
+  Values: font-family:'Share Tech Mono'; font-size:1.1–1.3rem; topic-accent color
+
+══ STATUS / INSIGHT BOX ══
+Include a dynamic status/insight panel that changes its content, border-color and
+background tint based on the current physics state. Examples:
+  - "BEAM BALANCED" (green) when F_E cancels F_B exactly
+  - "Net Force = 0: Uniform Motion" (blue) vs "Net Force ≠ 0: Accelerating" (red)
+  - "RESONANCE" (amber) when LC circuit hits ω₀
+Use a colored dot (status-light) and Orbitron title:
+  .status-box { padding:16px; border-radius:6px; border:1px solid <state-color>;
+    background: rgba(<rgb>,0.05); font-size:0.85rem; line-height:1.5; }
+  .status-light { display:inline-block; width:10px; height:10px; border-radius:50%;
+    margin-right:8px; box-shadow:0 0 10px currentColor; }
+
+══ CANVAS BACKGROUND — TOPIC-SPECIFIC SCENES ══
+The canvas must be a RICH VISUAL SCENE, never a plain colored rectangle.
+Apply one of these approaches matched to the topic:
+
+  ATMOSPHERE / SKY (mechanics, rocketry, projectile):
+    Sky gradient: createLinearGradient top→ground (#59A5D8 → #E0F6FF daytime,
+                  or #0a0c18 → #1a1a3e night).
+    Parallax layers: mountains at 15% scroll speed, clouds at 5% speed.
+    Ground: asphalt #333 with yellow dashed road lines (offset by cameraOffset % 120),
+            grass strip #4ADE80 at road edge.
+    Atmosphere-to-space transition: interpolate RGB(89,165,216) → RGB(0,0,0) by altitude ratio.
+    Stars: pre-generate 150–200 {x,y,size,brightness} objects; fade in above 20% altitude.
+
+  SCIENTIFIC INSTRUMENT INTERIOR (optics, EM, CRT, microscopy):
+    Dark background: radial-gradient(circle at center, #1A1D24 0%, #050505 100%)
+    Subtle grid: repeating-linear-gradient 20px spacing at rgba(255,255,255,0.02)
+    Scanline overlay on #workspace::after:
+      background: linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,.1) 50%);
+      background-size: 100% 4px; pointer-events:none; z-index:5;
+    Equipment: draw the physical apparatus in canvas (glass tubes, metal mounts,
+      deflection plates, coils) using layered fills + gradients.
+
+  LABORATORY BENCH (chemistry, biology):
+    Bench texture: #2a1f0e with wood-grain lines drawn in canvas.
+    Glassware: bezier-curve bottles, beakers, flasks with specular highlights.
+    Liquid: animated fill with animated wave (sin-based) at surface.
+    Background wall: #1a1a2e with tile pattern.
+
+  SPACE / COSMIC (planetary, orbital, nuclear):
+    Deep space: #000005 with 300+ tiny star dots, 3–5 larger star clusters.
+    Grid: faint perspective grid (horizon lines converging to center).
+    Planets: radial gradients with atmospheric haze rings.
+
+  CLASSROOM / WHITEBOARD (math, algorithms):
+    Background: #1a1a2a (dark chalkboard) or #f8f9fa (light paper).
+    Grid lines: 40px spacing, low-alpha for coordinate planes.
+    Axes: bold lines with proper arrow tips and numeric tick labels.
+
+══ CANVAS DRAWING QUALITY RULES ══
+1. GRADIENT FILLS — never use flat fillStyle for large objects. Use:
+   - createLinearGradient for skies, metals, surfaces
+   - createRadialGradient for glows, planets, light sources, impact flares
+   - Gradient stops with 3+ stops for realism
+
+2. GLOW EFFECTS — for beams, forces, energy:
+   ctx.shadowBlur = 15–30; ctx.shadowColor = '<accent-rgba>';
+   Draw the glow pass first (thick, low-alpha stroke), then the core (thin, bright).
+   Use ctx.globalCompositeOperation = 'lighter' for additive light blending on beams.
+   Always reset: ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over';
+
+3. PARTICLE SYSTEMS — for any topic with energy transfer, motion, exhaust, reactions:
+   class Particle { constructor(x,y,vx,vy,color,size,life,type) {...}
+     update(dt) { this.x += this.vx*dt*60; this.y += this.vy*dt*60;
+                  if(smoke) { this.size += dt*15; this.vy -= dt*5; }
+                  else this.size *= 0.95; this.life -= dt*60; }
+     draw(ctx) { ctx.globalAlpha = Math.max(0, this.life/this.maxLife);
+                 ctx.fillStyle = this.color;
+                 ctx.beginPath(); ctx.arc(this.x,this.y,this.size,0,Math.PI*2); ctx.fill();
+                 ctx.globalAlpha = 1; } }
+   Spawn fire (orange/yellow, small, short-lived) + smoke (gray, expanding, rises).
+
+4. 3D-LOOKING OBJECTS — achieve without WebGL:
+   - Multi-pass drawing: draw shadow/base layer first, then main body, then highlight layer
+   - Car/rocket body: use multiple fillRect + arc + bezier passes with different gradient stops
+   - Metallic surfaces: createLinearGradient with #555 → #CCC → #555 pattern
+   - Specular highlights: thin light stroke or small white arc at top edge of rounded objects
+   - Coil/spring: draw back half first (dark gradient), then beam/content, then front half (bright gradient)
+
+5. FLOATING LEGEND (canvas overlay, NOT sidebar):
+   #legend { position:absolute; top:20px; left:20px; z-index:10;
+     background:rgba(10,12,16,0.85); backdrop-filter:blur(10px);
+     border:1px solid rgba(255,255,255,.1); border-radius:8px; padding:16px;
+     display:flex; flex-direction:column; gap:12px;
+     box-shadow:0 10px 30px rgba(0,0,0,.8); }
+   .leg-row { display:flex; align-items:center; gap:12px; font-size:0.8rem;
+     font-weight:700; color:#CCC; text-transform:uppercase; letter-spacing:1px; }
+   .leg-color { width:24px; height:4px; border-radius:2px;
+     box-shadow:0 0 8px <color>; }
+
+6. VECTOR / FORCE ARROWS with HUD labels:
+   Draw arrow shaft (ctx.lineTo), then arrowhead (filled triangle at tip).
+   Glow pass: shadowBlur=10, thick stroke, accent color.
+   Label: semi-transparent dark pill (roundRect fill + accent stroke) with white text.
+   ctx.font = 'bold 12px Share Tech Mono'; ctx.textAlign = 'center';
+
+7. ANIMATED DETAILS that run every frame (even when "paused" for UI):
+   - Road dashes offset by cameraOffset % lineSpacing
+   - Cloud positions drifting at parallax rate
+   - Pulse particles traveling along beam paths (index = (time*speed) % path.length)
+   - Electrode glow pulsing via Math.sin(performance.now()*0.003) * 0.3 + 0.7
+
+══ BUTTONS ══
+Play/Pause button: distinct color per state.
+  Playing → background: <accel-green> or primary accent; color:#000; text "Pause"
+  Paused  → background: <surface-alt>; color: primary text; text "Play"
+Both states: font-weight:700; text-transform:uppercase; border-radius:6px; padding:12px;
+Reset button: background:var(--ui-surface-alt); color:var(--text-primary);
+Hover transitions: transition:0.2s; background shifts 10% lighter/darker.
+Button row: display:flex; gap:12px; width:100% (flex:1 each so they fill the row).
+
+══ EDUCATIONAL CONTEXT PANELS ══
+For physics/chemistry topics, include 1–3 "law boxes" or "formula cards":
+  .law-box { background: rgba(<accent-rgb>, 0.05);
+    border-left: 4px solid <accent>;
+    padding:16px; border-radius:0 6px 6px 0; margin-bottom:16px; }
+  .law-title { font-weight:900; font-size:1rem; margin-bottom:8px; }
+  .law-desc { font-size:0.85rem; line-height:1.5; color:#CCC; }
+Show/hide law-boxes based on the current active scenario.
+
+══ FLOATING CANVAS OVERLAYS ══
+Use position:absolute elements inside #workspace for non-canvas UI:
+  - #legend (top-left): color key for vectors/beams
+  - #tip or formula display (bottom-center): current active formula with live values
+    e.g. "F = ma = 1500 × 2.34 = 3510 N" updated every physics tick
+  - Scenario-switch buttons (top-right overlay) if using canvas-side switching
+
+══ WHAT THE REFERENCE FILES DO THAT THE DEFAULT DOES NOT ══
+The following specific techniques MUST be included (adapt to the topic):
+
+1. Wider sidebar (450–480px) with per-panel box-shadow depth
+2. Orbitron or equivalent display font for headers (loaded from Google Fonts)
+3. Share Tech Mono or Roboto Mono for ALL numeric readouts
+4. LCD-box slider value displays with colored glow text-shadow
+5. Hardware-panel box-shadows: inset 0 2px 10px rgba(0,0,0,.5), 0 2px 0 rgba(255,255,255,.05)
+6. Telemetry rows as bordered data boxes (NOT plain metric-strip)
+7. Dynamic status box with colored status-light dot and state-aware text
+8. Canvas background with parallax / gradient / texture scene (not plain #bg color)
+9. At least one particle system OR glow/beam rendering with globalCompositeOperation:'lighter'
+10. Educational context box (law or formula panel) visible in sidebar
+11. Floating legend on canvas with glow swatches
+12. ctx.shadowBlur for at least one major canvas element (glows, beams, icons)
+13. 3D-looking objects via multi-pass gradient drawing (metallic / glass effects)
+14. Animated detail that runs continuously (not only when "playing")
+15. Google Fonts @import in <head> with topic-appropriate font pairing
+"""
+
 DESIGN_SYSTEM = """
 ════════════════════════════════════════════════════════
   REQUIRED PAGE ARCHITECTURE
@@ -1876,7 +2085,7 @@ selects, toggles) that drive a real-time canvas (or SVG) visualization, with
 a metrics strip showing live computed values. This is a HANDS-ON LAB, not a
 narrated slideshow. Everything updates instantly as the learner adjusts controls.
 
-""" + DESIGN_SYSTEM + """
+""" + RENDERING_QUALITY_GUIDE + "\n" + DESIGN_SYSTEM + """
 
 ════════════════════════════════════════════════════════
   REQUIRED OUTPUT FORMAT
@@ -1913,58 +2122,100 @@ Return ONLY raw JSON (no markdown, no code fences, no commentary):
 
 STRATEGY_TEMPLATES = {
     "PHYSICS_MECHANICS":
-        "Canvas MUST draw a physical, visual scene (e.g. pendulums swinging, blocks sliding, "
-        "springs bouncing, planets orbiting) rather than just a graph. "
+        "Canvas MUST draw a physical scene with parallax background (sky gradient, scrolling "
+        "ground, mountains at 15% parallax speed, clouds at 5%). Draw the moving object as a "
+        "multi-pass 3D-looking shape (car: body gradient + wheel arcs + windows; pendulum: metal "
+        "rod + sphere with radial gradient; rocket: fuselage + fins + exhaust nozzle). Spawn "
+        "fire+smoke particles from engine/exhaust when thrust > 0. Use ctx.shadowBlur on the "
+        "object body. Draw force/velocity vector arrows with glowing HUD labels. Show a floating "
+        "legend and a bottom-center formula bar with live substituted values. "
         "REQUIRED equations: Newton's 2nd law F=ma, energy E=KE+PE. "
         "Metrics: period T, velocity, current KE, current PE, total E.",
 
     "PHYSICS_WAVES_OPTICS":
-        "Canvas MUST draw physical optical components (lenses, mirrors, prisms) and visual "
-        "light rays/wavefronts on a dark background. "
+        "Canvas MUST draw a scientific instrument interior: dark radial-gradient background "
+        "(#1A1D24 → #050505), subtle 20px grid overlay at rgba(255,255,255,0.02), and a scanline "
+        "CSS overlay on #canvas-area. Draw physical optical apparatus (lenses, mirrors, prisms, "
+        "gratings) with metallic mounts using multi-pass gradients. Render light beams with "
+        "globalCompositeOperation='lighter' and ctx.shadowBlur=20 for phosphor-glow effect. "
+        "Animate wavefront pulses traveling along beam paths each frame. Add a floating legend "
+        "with glow swatches and a formula bar showing live angle/distance values. "
         "REQUIRED equations: Snell's law; lens/mirror equations. "
         "Metrics: angles θ₁/θ₂, image distance, magnification, critical angle.",
 
     "ELECTRICITY_CIRCUITS":
-        "Canvas MUST draw a visual, interactive circuit diagram (resistors, capacitors, batteries) "
-        "with animated particles or arrows showing current flow. "
+        "Canvas MUST draw a hardware-console interior: dark background with faint circuit-board "
+        "grid (PCB green traces at rgba(0,255,120,0.04)). Draw component bodies with 3D metallic "
+        "gradients (resistors: ceramic band stripes; capacitors: cylindrical radial gradient; "
+        "inductors: coil drawn front+back half). Animate current-carrier particles (bright dots "
+        "with glow trails) flowing along wires using globalCompositeOperation='lighter'. "
+        "Pulse voltage/current arrows with ctx.shadowBlur. Show a floating legend and live "
+        "formula bar ('V = IR = 5 × 2.3 = 11.5 V'). "
         "REQUIRED equations: Ohm's V=IR; RC/RLC dynamics. "
         "Metrics: current I, charge Q, time constant τ, power P=V²/R.",
 
     "CHEMISTRY":
-        "Canvas MUST draw a visual laboratory setup (e.g. flasks, beakers, burettes, burners) "
-        "with animated liquid colors, bubbles, or particles. Do NOT just draw a graph. If a "
-        "titration curve or reaction plot is needed, draw it alongside the physical beaker/flask. "
+        "Canvas MUST draw a laboratory bench scene: wood-texture bench (#2a1f0e with grain lines), "
+        "tiled wall background (#1a1a2e). Draw glassware (beakers, flasks, burettes) using bezier "
+        "curves with specular highlights. Animate liquid fill with a sin-wave surface. Add bubble "
+        "particles rising through liquid using a particle system (spawn rate proportional to "
+        "reaction rate). Use ctx.shadowBlur for glow on heated burners. Add a floating formula "
+        "panel with live substituted values. Include a law-box in the sidebar. "
         "REQUIRED equations: rate laws, equilibrium, Henderson-Hasselbalch, Nernst. "
         "Metrics: rate constant k, pH, concentration, cell potential.",
 
     "BIOLOGY":
-        "Canvas MUST draw visual biological structures (cells dividing, DNA strands, bacteria in a petri dish, "
-        "ecosystem agents). Do NOT just draw a population graph. "
+        "Canvas MUST draw visual biological structures on a microscope-slide or petri-dish scene: "
+        "dark circular vignette frame (radial-gradient, rgba(0,0,0,0.6) at edges), subtle cell "
+        "membrane texture. Draw cells/organisms with radial-gradient fills and animated membrane "
+        "pulsing. Use a particle system for molecules/nutrients diffusing across the scene. "
+        "Animate cell division with scaling bezier shapes. Show a floating legend with glow "
+        "swatches and formula bar with live values. Include an educational law-box in sidebar. "
         "REQUIRED equations: logistic growth, Michaelis-Menten. "
         "Metrics: population count, growth rate, substrate concentration.",
 
     "MATH_GEOMETRY":
-        "Canvas MUST draw interactive geometric shapes, curves, or fractals on a coordinate plane. "
+        "Canvas MUST draw on a dark chalkboard (#1a1a2a) or dark grid background with 40px "
+        "coordinate grid lines (rgba(255,255,255,0.06)). Draw axes with bold strokes, arrowheads, "
+        "and numeric tick labels in IBM Plex Mono. Render curves/shapes with gradient strokes "
+        "and ctx.shadowBlur glow. Animate construction steps: each geometric operation sweeps in "
+        "with an arc-draw animation. Show key points as glowing dots with coordinate labels. "
+        "Add a floating formula panel and a law-box in the sidebar with the theorem statement. "
         "Metrics: area, perimeter, roots, extrema, period.",
 
     "CS_ALGORITHMS":
-        "Canvas MUST draw visual data structures (nodes, trees, arrays) with animated highlights "
-        "showing the algorithm's progress step-by-step. "
+        "Canvas MUST draw data structures on a dark (#0d1117) code-editor-style background with "
+        "subtle scanlines. Draw nodes as rounded rectangles with gradient fills; edges as curved "
+        "bezier arcs with directional arrows. Highlight the currently active node/element with "
+        "ctx.shadowBlur glow (accent color). Animate algorithm steps frame-by-frame with a "
+        "step-speed slider. Use a particle 'comparison flash' effect at each comparison point. "
+        "Show a floating legend with color meanings and a sidebar law-box explaining the algorithm. "
         "Metrics: comparisons count, swaps count, elapsed steps.",
 
     "EARTH_ENV_SCIENCE":
-        "Canvas MUST draw a visual cross-section of the earth, atmosphere, or environment "
-        "(e.g. clouds, ice caps, tectonic plates) rather than just a time-series plot. "
+        "Canvas MUST draw a layered cross-section scene: sky gradient (#59A5D8 → #E0F6FF), "
+        "atmosphere layers with labeled altitude bands, cloud particles drifting at parallax speed. "
+        "Draw Earth surface features (ocean, ice caps, land) with gradient fills. Animate rising "
+        "CO2 particles (red/orange dots) and heat-wave shimmer effects using ctx.globalAlpha pulses. "
+        "Show a floating legend and formula bar. Include an educational law-box in sidebar. "
         "Metrics: projected temperature, CO2 concentration, sea level.",
 
     "ECONOMICS_SOCIAL":
-        "Canvas drawing supply-demand curves or market agents. "
+        "Canvas MUST draw on a clean light (#f8f9fa) or dark (#1a1a2e) coordinate plane with "
+        "40px grid. Draw supply and demand curves as smooth bezier paths with gradient strokes. "
+        "Animate the equilibrium intersection point with a pulsing glow ring. Show consumer/producer "
+        "surplus as gradient-filled areas (green/red with low alpha). Highlight the equilibrium "
+        "point with a ctx.shadowBlur halo and a floating HUD label showing P* and Q*. "
         "Metrics: equilibrium price, quantity, consumer/producer surplus.",
 
     "GENERAL_PROCESS":
-        "Canvas MUST draw a highly visual, physical representation of the process "
-        "(e.g. machines, agents, fluid flow) alongside any necessary data plots. "
-        "Show a metrics strip with the most informative derived values.",
+        "Canvas MUST draw a rich visual scene specific to the process: identify the physical "
+        "domain (machine, fluid, agent-based, network) and draw the apparatus with multi-pass "
+        "gradient fills and 3D-looking objects. Include a particle system or animated flow "
+        "indicator (arrows, dots, pulses) using globalCompositeOperation='lighter' for energy "
+        "visualization. Add a floating legend, ctx.shadowBlur glow on active elements, and a "
+        "bottom-center formula bar with live substituted values. Include an educational law-box "
+        "in the sidebar. Show a metrics strip with the most informative derived values.",
 }
 
 
@@ -2013,6 +2264,23 @@ def _build_prompt(topic: str, category: str, image_refs: List[dict]) -> tuple:
         "- REQUIRED: include the <script type=\"application/json\" id=\"tut-config\"> block "
         "(title, intro, 4-8 steps whose selectors are #ids that exist in your page). Do NOT write "
         "any tutorial markup, CSS or JS -- the platform injects and owns the tutorial UI.",
+        # ── Visual quality reminders (RENDERING_QUALITY_GUIDE enforcement) ──
+        "- VISUAL QUALITY IS MANDATORY: Load Google Fonts in <head> via @import; use Orbitron/Share Tech Mono "
+        "for instrument/physics topics. Sidebar must be 420–500px wide with hardware-console "
+        "panel styling (inset box-shadows, LCD value readouts, metallic slider thumbs).",
+        "- Canvas background must be a RICH SCENE (parallax sky+ground, instrument interior, "
+        "lab bench, or cosmic backdrop) — never a plain solid color fill.",
+        "- Include a particle system OR glow/beam with globalCompositeOperation:'lighter' for "
+        "energy-transfer visualization.",
+        "- All numeric outputs must use Share Tech Mono / Roboto Mono with colored text-shadow glows.",
+        "- Include a dynamic status/insight box in the sidebar that changes color and text "
+        "based on the current physics state.",
+        "- Draw at least one 3D-looking object using multi-pass gradient fills (metallic/glass).",
+        "- Add a floating legend overlay on the canvas (position:absolute, backdrop-filter:blur).",
+        "- Animate at least one ambient detail every frame (parallax, pulse, drift, scanline) "
+        "that runs even when the simulation is 'paused'.",
+        "- Educational law/formula panel in sidebar: show the governing equation with live "
+        "substituted values (e.g. 'F = ma = 1500 × 2.34 = 3510 N') updated each physics tick.",
         "\nReturn ONLY raw JSON. simulation_code must be a complete "
         "<!DOCTYPE html>...</html> document as a properly escaped JSON string.",
     ]
@@ -2264,19 +2532,29 @@ async def _run_generation_pipeline(topic: str) -> dict:
     # Step 4: Generate via Gemini (mirrors q_animation._call_gemini pattern exactly)
     try:
         try:
+            # Try thinking_budget (used in older google-genai SDK versions)
             config = _genai_types.GenerateContentConfig(
                 system_instruction=system_text,
                 temperature=0.7,
                 max_output_tokens=MAX_TOK,
-                thinking_config=_genai_types.ThinkingConfig(thinking_level="low"),
+                thinking_config=_genai_types.ThinkingConfig(thinking_budget=0),
             )
-        except Exception:
-            # ThinkingConfig not supported on this SDK version — use minimal config
-            config = _genai_types.GenerateContentConfig(
-                system_instruction=system_text,
-                temperature=0.7,
-                max_output_tokens=MAX_TOK,
-            )
+        except TypeError:
+            try:
+                # Try thinking_level (used in newer google-genai SDK versions)
+                config = _genai_types.GenerateContentConfig(
+                    system_instruction=system_text,
+                    temperature=0.7,
+                    max_output_tokens=MAX_TOK,
+                    thinking_config=_genai_types.ThinkingConfig(thinking_level="medium"),
+                )
+            except Exception:
+                # ThinkingConfig not supported on this SDK version — use minimal config
+                config = _genai_types.GenerateContentConfig(
+                    system_instruction=system_text,
+                    temperature=0.7,
+                    max_output_tokens=MAX_TOK,
+                )
         response = await _gemini_client.aio.models.generate_content(
             model=SIM_MODEL,
             contents=user_content,
@@ -2451,7 +2729,7 @@ async def generate_simulation_stream(topic: str):
                 system_instruction=system_text,
                 temperature=0.7,
                 max_output_tokens=MAX_TOK,
-                thinking_config=_genai_types.ThinkingConfig(thinking_level="low"),
+                thinking_config=_genai_types.ThinkingConfig(thinking_budget=1024),
             )
         except Exception:
             stream_config = _genai_types.GenerateContentConfig(
