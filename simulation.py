@@ -65,10 +65,10 @@ CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "8
 CLIENT_MAX_RETRIES       = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "0"))
 PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "90"))
 
-# BUG FIX: Cap MAX_TOK to prevent excessive timeouts, but allow enough tokens
-# for very complex simulations (which can exceed 15k tokens).
-_MAX_TOK_HARD_CAP = 32768
-_max_tok_raw = int(os.environ.get("SIM_MAX_TOKENS", "32768"))
+# Reduce MAX_TOK hard cap: gemini-3.1-pro-preview with 32k output tokens causes
+# 504 DEADLINE_EXCEEDED. 16k tokens is more than enough for a full simulation.
+_MAX_TOK_HARD_CAP = 16384
+_max_tok_raw = int(os.environ.get("SIM_MAX_TOKENS", "16384"))
 if _max_tok_raw > _MAX_TOK_HARD_CAP:
     print(
         f"[SimEngine] ⚠  SIM_MAX_TOKENS={_max_tok_raw} exceeds hard cap of {_MAX_TOK_HARD_CAP}. "
@@ -76,6 +76,10 @@ if _max_tok_raw > _MAX_TOK_HARD_CAP:
     )
 MAX_TOK             = min(_max_tok_raw, _MAX_TOK_HARD_CAP)
 MAX_TOK_CLASSIFIER  = 20
+# Thinking budget: cap internal reasoning so the model doesn't burn its entire
+# deadline on "thinking" before producing output tokens.
+# gemini-3.1-pro-preview requires budget >= 1 (budget=0 is rejected).
+THINKING_BUDGET = int(os.environ.get("SIM_THINKING_BUDGET", "1024"))
 
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
@@ -2535,15 +2539,28 @@ async def _run_generation_pipeline(topic: str) -> dict:
     # (INVALID_ARGUMENT: "Budget 0 is invalid. This model only works in thinking mode.")
     # Omitting thinking_config lets the model use its default thinking behaviour.
     _MAX_ATTEMPTS  = 3
-    _RETRY_DELAYS  = [5, 15, 45]   # seconds between attempts (exponential-ish backoff)
+    _RETRY_DELAYS  = [5, 15, 30]   # seconds between attempts
     _TRANSIENT_MARKERS = ("502", "503", "500", "UNAVAILABLE", "INTERNAL",
-                          "wsarecv", "connection", "reset", "timeout", "aborted")
+                          "wsarecv", "connection", "reset", "timeout", "aborted",
+                          "504", "DEADLINE_EXCEEDED")  # added: treat deadline as transient
 
     config = _genai_types.GenerateContentConfig(
         system_instruction=system_text,
         temperature=0.7,
         max_output_tokens=MAX_TOK,
     )
+    # Add thinking budget to cap internal reasoning time.
+    # gemini-3.1-pro-preview is a thinking-only model — budget=0 is rejected,
+    # but a capped budget prevents 504 DEADLINE_EXCEEDED on long topics.
+    try:
+        config = _genai_types.GenerateContentConfig(
+            system_instruction=system_text,
+            temperature=0.7,
+            max_output_tokens=MAX_TOK,
+            thinking_config=_genai_types.ThinkingConfig(thinking_budget=THINKING_BUDGET),
+        )
+    except Exception:
+        pass  # SDK too old to support ThinkingConfig — use the config built above
 
     raw = ""
     last_exc: Exception | None = None
@@ -2746,7 +2763,7 @@ async def generate_simulation_stream(topic: str):
                 system_instruction=system_text,
                 temperature=0.7,
                 max_output_tokens=MAX_TOK,
-                thinking_config=_genai_types.ThinkingConfig(thinking_budget=1024),
+                thinking_config=_genai_types.ThinkingConfig(thinking_budget=THINKING_BUDGET),
             )
         except Exception:
             stream_config = _genai_types.GenerateContentConfig(
