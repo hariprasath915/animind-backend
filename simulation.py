@@ -2529,27 +2529,59 @@ async def _run_generation_pipeline(topic: str) -> dict:
     # Step 3: Build prompt
     system_text, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate via Gemini (mirrors q_animation._call_gemini pattern exactly)
+    # Step 4: Generate via Gemini — with retry on transient 502/503/connection errors.
     # NOTE: Do NOT set thinking_config / thinking_budget here.
     # Models like gemini-3.1-pro-preview are thinking-only and reject budget=0
     # (INVALID_ARGUMENT: "Budget 0 is invalid. This model only works in thinking mode.")
     # Omitting thinking_config lets the model use its default thinking behaviour.
+    _MAX_ATTEMPTS  = 3
+    _RETRY_DELAYS  = [5, 15, 45]   # seconds between attempts (exponential-ish backoff)
+    _TRANSIENT_MARKERS = ("502", "503", "500", "UNAVAILABLE", "INTERNAL",
+                          "wsarecv", "connection", "reset", "timeout", "aborted")
+
+    config = _genai_types.GenerateContentConfig(
+        system_instruction=system_text,
+        temperature=0.7,
+        max_output_tokens=MAX_TOK,
+    )
+
+    raw = ""
+    last_exc: Exception | None = None
     try:
-        config = _genai_types.GenerateContentConfig(
-            system_instruction=system_text,
-            temperature=0.7,
-            max_output_tokens=MAX_TOK,
-        )
-        response = await _gemini_client.aio.models.generate_content(
-            model=SIM_MODEL,
-            contents=user_content,
-            config=config,
-        )
-        raw    = (response.text or "").strip()
-        finish = getattr(response.candidates[0], 'finish_reason', 'unknown') if response.candidates else 'unknown'
-        SimLogger.info("GenerationAI", f"model={SIM_MODEL}  finish_reason={finish}  len={len(raw)}")
-        if finish in ('MAX_TOKENS', 'max_tokens', 2):
-            SimLogger.warn("GenerationAI", "Hit max_output_tokens -- output may be truncated!")
+        for _attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                SimLogger.info("GenerationAI",
+                               f"Attempt {_attempt}/{_MAX_ATTEMPTS} — model={SIM_MODEL}")
+                response = await _gemini_client.aio.models.generate_content(
+                    model=SIM_MODEL,
+                    contents=user_content,
+                    config=config,
+                )
+                raw    = (response.text or "").strip()
+                finish = getattr(response.candidates[0], 'finish_reason', 'unknown') if response.candidates else 'unknown'
+                SimLogger.info("GenerationAI",
+                               f"model={SIM_MODEL}  finish_reason={finish}  len={len(raw)}")
+                if finish in ('MAX_TOKENS', 'max_tokens', 2):
+                    SimLogger.warn("GenerationAI", "Hit max_output_tokens -- output may be truncated!")
+                last_exc = None
+                break   # ✅ success — exit retry loop
+
+            except Exception as attempt_exc:
+                err_s = str(attempt_exc)
+                is_transient = any(m in err_s for m in _TRANSIENT_MARKERS)
+                if is_transient and _attempt < _MAX_ATTEMPTS:
+                    wait = _RETRY_DELAYS[_attempt - 1]
+                    SimLogger.warn("GenerationAI",
+                                   f"Transient error on attempt {_attempt} "
+                                   f"(retrying in {wait}s): {err_s[:200]}")
+                    await asyncio.sleep(wait)
+                    last_exc = attempt_exc
+                else:
+                    # Non-transient error OR final attempt — re-raise for outer handler
+                    raise
+
+        if last_exc is not None:
+            raise last_exc
 
     except Exception as e:
         err_str = str(e)
