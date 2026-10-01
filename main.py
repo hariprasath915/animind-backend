@@ -1166,42 +1166,69 @@ async def create_simulation(request: SimulationRequest):
     """
     Generate a complete, self-contained interactive HTML5 simulation.
 
-    Flow:
-      1. Normalise the topic string.
-      2. Search `simulation_experiments/` for a pre-built HTML file whose
-         filename (sans extension) matches the topic (case-insensitive,
-         whitespace-normalised, substring match).
-      3. If found → return the cached HTML immediately (no AI call).
-      4. If not found → call generate_simulation from simulation.py.
+    Returns an SSE stream so Railway's proxy timeout never fires:
+      - status events  → progress messages (keep-alive)
+      - chunk events   → raw model tokens as they arrive
+      - done event     → final result JSON (same shape as the old blocking response)
+      - error event    → failure result JSON
+
+    The frontend reads the stream and extracts the final result from the
+    'done' or 'error' event.
     """
+    import json as _json
+    from fastapi.responses import StreamingResponse
+    from simulation import generate_simulation_stream
+
     topic = (request.topic or "").strip()
     if not topic:
         raise HTTPException(status_code=400, detail="'topic' field cannot be empty")
     if len(topic) > 2000:
         raise HTTPException(status_code=400, detail="Topic too long (max 2000 chars)")
 
-    # ── Step 1: Check the experiment cache ───────────────────────────────────
+    # ── Step 1: Check the experiment cache (instant, no stream needed) ────────
     cached_html = _find_cached_simulation(topic)
     if cached_html:
-        return {
-            "title":             topic,
-            "category":          "cached",
-            "summary":           f"Pre-built experiment loaded for: {topic}",
-            "controls_overview": [],
-            "key_formula":       "",
-            "learning_notes":    [],
-            "image_refs":        [],
-            "html":              cached_html,
-            "engine_version":    "cache",
-            "render_status":     "ok",
-            "source":            "cache",
-        }
+        async def _cached_stream():
+            payload = {
+                "title":             topic,
+                "category":          "cached",
+                "summary":           f"Pre-built experiment loaded for: {topic}",
+                "controls_overview": [],
+                "key_formula":       "",
+                "learning_notes":    [],
+                "image_refs":        [],
+                "html":              cached_html,
+                "engine_version":    "cache",
+                "render_status":     "ok",
+                "source":            "cache",
+            }
+            yield f"data: {_json.dumps({'type': 'done', 'result': payload})}\n\n"
+        return StreamingResponse(_cached_stream(), media_type="text/event-stream")
 
-    # ── Step 2: Generate via AI pipeline ─────────────────────────────────────
-    result = await generate_simulation(topic)
-    result["source"] = "generated"
-    # generate_simulation never raises — on failure render_status == "error"
-    return result
+    # ── Step 2: Stream AI generation — keeps Railway proxy alive ──────────────
+    async def _ai_stream():
+        try:
+            async for event in generate_simulation_stream(topic):
+                etype = event.get("type", "status")
+                if etype == "chunk":
+                    # Skip raw chunks to the frontend — only send status + final result
+                    # (chunks can be very large; the frontend doesn't render them)
+                    continue
+                elif etype == "done":
+                    result = event.get("result", {})
+                    result["source"] = "generated"
+                    yield f"data: {_json.dumps({'type': 'done', 'result': result})}\n\n"
+                elif etype == "error":
+                    yield f"data: {_json.dumps({'type': 'error', 'result': event.get('result', {})})}\n\n"
+                else:
+                    # status events — keep-alive + progress to frontend
+                    yield f"data: {_json.dumps(event)}\n\n"
+        except Exception as exc:
+            from simulation import _build_failure_result
+            err = _build_failure_result(topic, str(exc))
+            yield f"data: {_json.dumps({'type': 'error', 'result': err})}\n\n"
+
+    return StreamingResponse(_ai_stream(), media_type="text/event-stream")
 
 
 @app.post("/generate-topic-content")
