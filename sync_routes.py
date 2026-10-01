@@ -152,98 +152,8 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
                 print(f"[SYNC] /all — fallback generated_items query also failed: {items_err_2}")
                 items = []
 
-        # ── 2. Subjects tree ─────────────────────────────────────────
-        # Wrapped in try/except: if engineering_subjects / course_outcomes /
-        # course_topics tables don't exist yet (migration not run), return []
-        # instead of crashing the entire /sync/all endpoint with a 502.
-        try:
-            subjects_res = (
-                supabase.table("engineering_subjects")
-                .select("*")
-                .eq("user_id", user_id)
-                .order("sort_order")
-                .execute()
-            )
-            subjects = subjects_res.data or []
-            subject_ids = [s["id"] for s in subjects]
-
-            cos, topics = [], []
-            if subject_ids:
-                cos_res = (
-                    supabase.table("course_outcomes")
-                    .select("*")
-                    .in_("subject_id", subject_ids)
-                    .order("sort_order")
-                    .execute()
-                )
-                cos = cos_res.data or []
-                co_ids = [c["id"] for c in cos]
-                if co_ids:
-                    topics_res = (
-                        supabase.table("course_topics")
-                        .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
-                        .in_("co_id", co_ids)
-                        .order("sort_order")
-                        .execute()
-                    )
-                    topics = topics_res.data or []
-        except Exception as subj_err:
-            print(f"[SYNC] /all — subjects/cos/topics query failed: {subj_err}")
-            subjects, cos, topics = [], [], []
-
-        # Build nested engineeringCourses-compatible structure
-        topics_by_co = {}
-        for t in topics:
-            html_cache   = t.get("html_code_cache")
-            db_type      = t.get("topic_type") or "animation"
-            # Derive display type: prefer DB value, fall back to content sniffing
-            if db_type == "ppt_upload":
-                display_type = "ppt_upload"
-            elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
-                display_type = "html_upload"
-            else:
-                display_type = "animation"
-            topics_by_co.setdefault(t["co_id"], []).append({
-                "id":               t["id"],
-                "name":             t["name"],
-                "description":      t.get("description", ""),
-                "prompt":           t.get("prompt", ""),
-                # animCode and html_code carry HTML for animation/html_upload topics
-                "animCode":         html_cache,
-                "html_code":        html_cache,
-                # PPT-specific fields
-                "type":             display_type,
-                "pptUrl":           t.get("ppt_public_url"),
-                "pptStoragePath":   t.get("ppt_storage_path"),
-                "fileName":         t.get("ppt_file_name"),
-                "created_at":       t["created_at"],
-                "generated_item_id": t.get("generated_item_id"),
-            })
-
-        cos_by_subject = {}
-        for co in cos:
-            cos_by_subject.setdefault(co["subject_id"], []).append({
-                "id":          co["id"],
-                "coNum":       co["co_num"],
-                "name":        co.get("description", ""),   # ✅ frontend reads co.name
-                "description": co.get("description", ""),
-                "topics":      topics_by_co.get(co["id"], []),
-            })
-
-        subjects_tree = [
-            {
-                "id":          s["id"],
-                "name":        s["name"],
-                "description": s.get("description", ""),
-                "share_token": s.get("share_token"),
-                "cos":         cos_by_subject.get(s["id"], []),
-                "syllabus": {
-                    "pdf_name": s.get("syllabus_pdf_name"),
-                    "units":    s.get("syllabus_units"),
-                } if s.get("syllabus_pdf_name") else None,
-            }
-            for s in subjects
-        ]
+        # 🎓 2. Subjects tree (deprecated, returning empty)
+        subjects_tree = []
 
         # ── 3. Vault entries ─────────────────────────────────────────
         # Wrapped in try/except: if video_vault table doesn't exist yet,
@@ -278,16 +188,6 @@ def get_all_user_data(current_user: dict = Depends(get_current_user)):
             print(f"[SYNC] /all — file_mode query failed: {fm_err}")
             file_mode_rows = []
 
-        # For backward-compat: keep subjects_tree units as empty list
-        # (subject_units table has been dropped by migration)
-        for s in subjects_tree:
-            s.setdefault("units", [])
-
-        print(
-            f"[SYNC] /all → {len(items)} items, {len(subjects_tree)} subjects, "
-            f"{len(file_mode_rows)} file_mode rows, {len(vault)} vault "
-            f"— user={current_user['email']!r}"
-        )
         return {
             "items":     items,
             "subjects":  subjects_tree,
@@ -450,786 +350,84 @@ def delete_item(
 
 
 # ════════════════════════════════════════════════════════════════
-# ENGINEERING SUBJECTS
+# SAVE-TO-UNIT  —  POST /sync/save-to-unit
+# Called by the "Save in File" modal in Create-with-AI / Teacher mode.
+# Saves the generated HTML to a specific unit inside generated_items.
 # ════════════════════════════════════════════════════════════════
 
-class SubjectCreate(BaseModel):
-    name:        str = Field(..., min_length=1, max_length=200)
-    description: str = Field(default="")
-    sort_order:  int = Field(default=0)
-
-
-class SubjectUpdate(BaseModel):
-    name:              Optional[str]  = None
-    description:       Optional[str]  = None
-    sort_order:        Optional[int]  = None
-    syllabus_pdf_name: Optional[str]  = None
-    syllabus_text:     Optional[str]  = None
-    syllabus_units:    Optional[dict] = None
-
-
-@router.get("/subjects", status_code=200)
-def get_subjects(current_user: dict = Depends(get_current_user)):
-    """Return all subjects with their COs and topics nested inside."""
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-
-    subjects_res = (
-        supabase.table("engineering_subjects")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("sort_order")
-        .execute()
-    )
-    subjects    = subjects_res.data or []
-    subject_ids = [s["id"] for s in subjects]
-
-    cos, topics = [], []
-    if subject_ids:
-        cos_res = (
-            supabase.table("course_outcomes")
-            .select("*")
-            .in_("subject_id", subject_ids)
-            .order("sort_order")
-            .execute()
-        )
-        cos    = cos_res.data or []
-        co_ids = [c["id"] for c in cos]
-        if co_ids:
-            topics_res = (
-                supabase.table("course_topics")
-                .select("id, co_id, subject_id, name, description, prompt, sort_order, generated_item_id, html_code_cache, topic_type, ppt_storage_path, ppt_public_url, ppt_file_name, created_at")
-                .in_("co_id", co_ids)
-                .order("sort_order")
-                .execute()
-            )
-            topics = topics_res.data or []
-
-    topics_by_co = {}
-    for t in topics:
-        html_cache   = t.get("html_code_cache")
-        db_type      = t.get("topic_type") or "animation"
-        if db_type == "ppt_upload":
-            display_type = "ppt_upload"
-        elif db_type == "html_upload" or (html_cache and html_cache.strip().startswith("<!DOCTYPE")):
-            display_type = "html_upload"
-        else:
-            display_type = "animation"
-        topics_by_co.setdefault(t["co_id"], []).append({
-            "id":                t["id"],
-            "name":              t["name"],
-            "description":       t.get("description", ""),
-            "prompt":            t.get("prompt", ""),
-            "animCode":          html_cache,
-            "type":              display_type,
-            "pptUrl":            t.get("ppt_public_url"),
-            "pptStoragePath":    t.get("ppt_storage_path"),
-            "fileName":          t.get("ppt_file_name"),
-            "created_at":        t["created_at"],
-            "generated_item_id": t.get("generated_item_id"),
-        })
-
-    cos_by_subject = {}
-    for co in cos:
-        cos_by_subject.setdefault(co["subject_id"], []).append({
-            "id":          co["id"],
-            "coNum":       co["co_num"],
-            "description": co.get("description", ""),
-            "topics":      topics_by_co.get(co["id"], []),
-        })
-
-    result = [
-        {
-            "id":          s["id"],
-            "name":        s["name"],
-            "description": s.get("description", ""),
-            "share_token": s.get("share_token"),
-            "cos":         cos_by_subject.get(s["id"], []),
-            "syllabus": {
-                "pdf_name": s.get("syllabus_pdf_name"),
-                "units":    s.get("syllabus_units"),
-            } if s.get("syllabus_pdf_name") else None,
-        }
-        for s in subjects
-    ]
-
-    print(f"[SYNC] ↓ {len(result)} subjects user={current_user['email']!r}")
-    return {"subjects": result}
-
-
-@router.post("/subjects", status_code=201)
-def create_subject(
-    body:         SubjectCreate,
-    current_user: dict = Depends(get_current_user),
-):
-    # ✅ Use service-role client to insert user row (bypasses RLS on users table)
-    _ensure_user_row(current_user)
-    supabase = _sb(current_user)
-    # Generate a URL-safe share token (10 chars, ~60 bits of entropy).
-    # Stored in engineering_subjects.share_token (UNIQUE column).
-    share_token = secrets.token_urlsafe(8)  # e.g. "aB3xQ7mNpL"
-    row = {
-        "user_id":     current_user["id"],
-        "name":        body.name.strip(),
-        "description": body.description or "",
-        "sort_order":  body.sort_order,
-        "share_token": share_token,
-    }
-    res = supabase.table("engineering_subjects").insert(row).execute()
-    subject = res.data[0] if res.data else {}
-    # Always echo share_token even if the DB row didn't return it
-    if "share_token" not in subject:
-        subject["share_token"] = share_token
-    print(f"[SYNC] ✅ Subject created: {body.name!r} share_token={share_token!r} user={current_user['email']!r}")
-    return {"success": True, "subject": subject}
-
-
-@router.put("/subjects/{subject_id}", status_code=200)
-def update_subject(
-    subject_id:   str,
-    body:         SubjectUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    supabase = _sb(current_user)
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not patch:
-        return {"success": True}
-    res = (
-        supabase.table("engineering_subjects")
-        .update(patch)
-        .eq("id", subject_id)
-        .eq("user_id", current_user["id"])
-        .execute()
-    )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Subject not found.")
-    return {"success": True, "subject": res.data[0]}
-
-
-@router.delete("/subjects/{subject_id}", status_code=200)
-def delete_subject(
-    subject_id:   str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Delete subject. COs and topics cascade-delete automatically via FK."""
-    supabase = _sb(current_user)
-    supabase.table("engineering_subjects").delete().eq("id", subject_id).eq("user_id", current_user["id"]).execute()
-    print(f"[SYNC] 🗑 Subject deleted: {subject_id} user={current_user['email']!r}")
-    return {"success": True}
-
-
-# ════════════════════════════════════════════════════════════════
-# COURSE OUTCOMES
-# ════════════════════════════════════════════════════════════════
-
-class COCreate(BaseModel):
-    subject_id:  str
-    co_num:      str = Field(..., min_length=1, max_length=20)
-    description: str = Field(default="")
-    sort_order:  int = Field(default=0)
-
-
-class COUpdate(BaseModel):
-    co_num:      Optional[str] = None
-    description: Optional[str] = None
-    sort_order:  Optional[int] = None
-
-
-@router.post("/cos", status_code=201)
-def create_co(
-    body:         COCreate,
-    current_user: dict = Depends(get_current_user),
-):
-    # ✅ Use service-role client to insert user row (bypasses RLS on users table)
-    _ensure_user_row(current_user)
-    supabase = _sb(current_user)
-    row = {
-        "subject_id":  body.subject_id,
-        "user_id":     current_user["id"],
-        "co_num":      body.co_num.strip(),
-        "description": body.description or "",
-        "sort_order":  body.sort_order,
-    }
-    res = supabase.table("course_outcomes").insert(row).execute()
-    co = res.data[0] if res.data else {}
-    print(f"[SYNC] ✅ CO created: {body.co_num!r} subject={body.subject_id!r}")
-    return {"success": True, "co": co}
-
-
-@router.put("/cos/{co_id}", status_code=200)
-def update_co(
-    co_id:        str,
-    body:         COUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    supabase = _sb(current_user)
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not patch:
-        return {"success": True}
-    res = (
-        supabase.table("course_outcomes")
-        .update(patch)
-        .eq("id", co_id)
-        .eq("user_id", current_user["id"])
-        .execute()
-    )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="CO not found.")
-    return {"success": True}
-
-
-@router.delete("/cos/{co_id}", status_code=200)
-def delete_co(
-    co_id:        str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Delete CO. Topics under it cascade-delete automatically."""
-    supabase = _sb(current_user)
-    supabase.table("course_outcomes").delete().eq("id", co_id).eq("user_id", current_user["id"]).execute()
-    print(f"[SYNC] 🗑 CO deleted: {co_id} user={current_user['email']!r}")
-    return {"success": True}
-
-
-# ════════════════════════════════════════════════════════════════
-# SUBJECT UNITS  —  Unit/Lesson containers inside a Subject Folder
-# ════════════════════════════════════════════════════════════════
-
-class UnitCreate(BaseModel):
-    subject_id:  str
-    unit_type:   str = Field(default="unit", pattern="^(unit|lesson)$")
-    unit_number: int = Field(default=1, ge=1)
-    name:        str = Field(..., min_length=1, max_length=100)
-    sort_order:  int = Field(default=0)
-
-
-class UnitUpdate(BaseModel):
-    name:        Optional[str] = None
-    unit_type:   Optional[str] = None
-    unit_number: Optional[int] = None
-    sort_order:  Optional[int] = None
-
-
-@router.get("/units", status_code=200)
-def get_units(
-    subject_id:   str,
-    current_user: dict = Depends(get_current_user),
-):
-    """List all units for a given subject_id, ordered by sort_order."""
-    supabase = _sb(current_user)
-    res = (
-        supabase.table("subject_units")
-        .select("id, subject_id, unit_type, unit_number, name, sort_order, created_at")
-        .eq("subject_id", subject_id)
-        .eq("user_id", current_user["id"])
-        .order("sort_order")
-        .execute()
-    )
-    units = res.data or []
-    return {"units": units}
-
-
-@router.post("/units", status_code=201)
-def create_unit(
-    body:         UnitCreate,
-    current_user: dict = Depends(get_current_user),
-):
-    """Create a Unit or Lesson container inside a Subject Folder."""
-    _ensure_user_row(current_user)
-    supabase = _sb(current_user)
-    row = {
-        "subject_id":  body.subject_id,
-        "user_id":     current_user["id"],
-        "unit_type":   body.unit_type,
-        "unit_number": body.unit_number,
-        "name":        body.name.strip(),
-        "sort_order":  body.sort_order,
-    }
-    res  = supabase.table("subject_units").insert(row).execute()
-    unit = res.data[0] if res.data else {}
-    print(f"[SYNC] ✅ Unit created: {body.name!r} subject={body.subject_id!r} user={current_user['email']!r}")
-    return {"success": True, "unit": unit}
-
-
-@router.put("/units/{unit_id}", status_code=200)
-def update_unit(
-    unit_id:      str,
-    body:         UnitUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    supabase = _sb(current_user)
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not patch:
-        return {"success": True}
-    res = (
-        supabase.table("subject_units")
-        .update(patch)
-        .eq("id", unit_id)
-        .eq("user_id", current_user["id"])
-        .execute()
-    )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Unit not found.")
-    return {"success": True, "unit": res.data[0]}
-
-
-@router.delete("/units/{unit_id}", status_code=200)
-def delete_unit(
-    unit_id:      str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Delete unit. unit_lessons rows cascade-delete automatically."""
-    supabase = _sb(current_user)
-    supabase.table("subject_units").delete().eq("id", unit_id).eq("user_id", current_user["id"]).execute()
-    print(f"[SYNC] 🗑 Unit deleted: {unit_id} user={current_user['email']!r}")
-    return {"success": True}
-
-
-# ════════════════════════════════════════════════════════════════
-# UNIT LESSONS  —  library lesson IDs linked to a Unit
-# ════════════════════════════════════════════════════════════════
-
-class UnitLessonsSave(BaseModel):
-    unit_id:    str
-    lesson_ids: List[str]   # full replacement: old links not in list are removed
-
-
-@router.get("/unit-lessons/{unit_id}", status_code=200)
-def get_unit_lessons(
-    unit_id:      str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Return all lesson IDs saved to a given unit."""
-    supabase = _sb(current_user)
-    res = (
-        supabase.table("unit_lessons")
-        .select("id, lesson_id, sort_order")
-        .eq("unit_id", unit_id)
-        .eq("user_id", current_user["id"])
-        .order("sort_order")
-        .execute()
-    )
-    rows = res.data or []
-    return {"unit_id": unit_id, "lesson_ids": [r["lesson_id"] for r in rows], "rows": rows}
-
-
-@router.post("/unit-lessons", status_code=200)
-def save_unit_lessons(
-    body:         UnitLessonsSave,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Replace all lesson links for a unit with the supplied lesson_ids list.
-    Deletes rows not in the list, inserts missing ones (upsert-by-replace).
-    """
-    _ensure_user_row(current_user)
-    supabase  = _sb(current_user)
-    user_id   = current_user["id"]
-    unit_id   = body.unit_id
-    lesson_ids = body.lesson_ids
-
-    # 1. Fetch current links
-    current_res = (
-        supabase.table("unit_lessons")
-        .select("id, lesson_id")
-        .eq("unit_id", unit_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-    current_rows = current_res.data or []
-    current_ids  = {r["lesson_id"] for r in current_rows}
-    new_ids      = set(lesson_ids)
-
-    # 2. Delete removed lessons
-    to_delete = current_ids - new_ids
-    if to_delete:
-        supabase.table("unit_lessons").delete()\
-            .eq("unit_id", unit_id)\
-            .eq("user_id", user_id)\
-            .in_("lesson_id", list(to_delete))\
-            .execute()
-
-    # 3. Insert new lessons
-    to_insert = new_ids - current_ids
-    if to_insert:
-        rows = [
-            {"unit_id": unit_id, "lesson_id": lid, "user_id": user_id, "sort_order": lesson_ids.index(lid)}
-            for lid in to_insert
-        ]
-        supabase.table("unit_lessons").insert(rows).execute()
-
-    print(f"[SYNC] ✅ Unit lessons saved: unit={unit_id} count={len(new_ids)} user={current_user['email']!r}")
-    return {"success": True, "unit_id": unit_id, "count": len(new_ids)}
-
-
-# ════════════════════════════════════════════════════════════════
-# FILE MODE  —  Consolidated Subject / Unit / Topics / Contents
-# ════════════════════════════════════════════════════════════════
-# One flat row per subject+unit owned by a user.
-# Replaces the old subject_units + unit_lessons two-table design.
-#
-# Endpoints:
-#   GET    /sync/file-mode                 → list all rows for current user
-#   POST   /sync/file-mode                 → create a new row
-#   PUT    /sync/file-mode/{id}            → update topics / contents / unit / subject
-#   DELETE /sync/file-mode/{id}            → hard-delete the row
-# ════════════════════════════════════════════════════════════════
-
-class FileModeCreate(BaseModel):
-    subject:  str         = Field(default="", max_length=300)
-    unit:     str         = Field(default="", max_length=300)
-    topics:   List[str]   = Field(default_factory=list)
-    contents: str         = Field(default="")
-
-
-class FileModeUpdate(BaseModel):
-    subject:  Optional[str]       = None
-    unit:     Optional[str]       = None
-    topics:   Optional[List[str]] = None
-    contents: Optional[str]       = None
-
-
-@router.get("/file-mode", status_code=200)
-def list_file_mode(current_user: dict = Depends(get_current_user)):
-    """
-    Return all file_mode rows for the authenticated user,
-    ordered newest first.  Called on login via /sync/all;
-    also callable individually for targeted refreshes.
-    """
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-    try:
-        res = (
-            supabase.table("file_mode")
-            .select("id, user_id, user_email, user_name, subject, unit, topics, contents, created_at, updated_at")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .execute()
-        )
-        rows = res.data or []
-        print(f"[FILE_MODE] ↓ {len(rows)} rows user={current_user['email']!r}")
-        return {"count": len(rows), "file_mode": rows}
-    except Exception as e:
-        print(f"[FILE_MODE] GET ERROR: {e}")
-        raise HTTPException(status_code=502, detail=f"Could not load file_mode data: {e}")
-
-
-@router.post("/file-mode", status_code=201)
-def create_file_mode(
-    body:         FileModeCreate,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Create a new file_mode row.
-    Stores subject, unit, topics (JSON array), and optional AI-generated contents.
-    user_id / user_email / user_name are filled from the verified JWT automatically.
-    """
-    _ensure_user_row(current_user)
-    supabase = _sb(current_user)
-
-    import json as _json
-    row = {
-        "user_id":    current_user["id"],
-        "user_email": current_user.get("email", ""),
-        "user_name":  current_user.get("name", ""),
-        "subject":    (body.subject or "").strip(),
-        "unit":       (body.unit or "").strip(),
-        "topics":     body.topics,          # Supabase SDK serialises list → jsonb
-        "contents":   body.contents or "",
-    }
-    try:
-        res = supabase.table("file_mode").insert(row).execute()
-        created = res.data[0] if res.data else {}
-        print(
-            f"[FILE_MODE] ✅ Created: subject={body.subject!r} unit={body.unit!r} "
-            f"topics={len(body.topics)} user={current_user['email']!r}"
-        )
-        return {"success": True, "file_mode": created}
-    except Exception as e:
-        print(f"[FILE_MODE] CREATE ERROR: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create file_mode row: {e}")
-
-
-@router.put("/file-mode/{record_id}", status_code=200)
-def update_file_mode(
-    record_id:    str,
-    body:         FileModeUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Update a file_mode row's subject, unit, topics, and/or contents.
-    Only the authenticated user's own rows can be updated (enforced by
-    the .eq('user_id', ...) filter AND the RLS policy).
-    """
-    supabase = _sb(current_user)
-    patch: dict = {}
-    if body.subject  is not None: patch["subject"]  = body.subject.strip()
-    if body.unit     is not None: patch["unit"]      = body.unit.strip()
-    if body.topics   is not None: patch["topics"]    = body.topics
-    if body.contents is not None: patch["contents"]  = body.contents
-
-    if not patch:
-        return {"success": True, "message": "Nothing to update."}
-
-    try:
-        res = (
-            supabase.table("file_mode")
-            .update(patch)
-            .eq("id", record_id)
-            .eq("user_id", current_user["id"])
-            .execute()
-        )
-        if not res.data:
-            raise HTTPException(status_code=404, detail="file_mode record not found or not owned by user.")
-        print(f"[FILE_MODE] ✅ Updated: id={record_id} fields={list(patch)} user={current_user['email']!r}")
-        return {"success": True, "file_mode": res.data[0]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[FILE_MODE] UPDATE ERROR id={record_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to update file_mode row: {e}")
-
-
-@router.delete("/file-mode/{record_id}", status_code=200)
-def delete_file_mode(
-    record_id:    str,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Hard-delete a file_mode row.
-    Only the authenticated user's own rows can be deleted.
-    """
-    supabase = _sb(current_user)
-    try:
-        supabase.table("file_mode").delete()\
-            .eq("id", record_id)\
-            .eq("user_id", current_user["id"])\
-            .execute()
-        print(f"[FILE_MODE] 🗑 Deleted: id={record_id} user={current_user['email']!r}")
-        return {"success": True, "id": record_id}
-    except Exception as e:
-        print(f"[FILE_MODE] DELETE ERROR id={record_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete file_mode row: {e}")
-
-
-# ════════════════════════════════════════════════════════════════
-# SAVE TO UNIT  —  "Save in File" from Creator with AI
-# ════════════════════════════════════════════════════════════════
-
-
-class SaveToUnitRequest(BaseModel):
+class SaveToUnitPayload(BaseModel):
     unit_id:      str
     subject_id:   str
-    title:        str   = Field(default="Untitled", max_length=500)
-    html:         str   = Field(default="")
-    prompt:       str   = Field(default="")
-    explanation:  str   = Field(default="")
-    content_type: str   = Field(default="animation")  # 'animation' | 'notes' | 'simulation'
+    title:        str   = "Untitled"
+    html:         str   = ""
+    prompt:       str   = ""
+    explanation:  str   = ""
+    content_type: str   = "ai_creator"   # ai_creator | simulation | question_anim
 
 
-@router.post("/save-to-unit", status_code=201)
+@router.post("/save-to-unit", status_code=200)
 def save_to_unit(
-    body:         SaveToUnitRequest,
+    body:         SaveToUnitPayload,
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Save an AI-generated output (animation / notes / simulation) directly
-    into a File-Mode unit.
+    Save a generated HTML item (animation / simulation / question) to a
+    specific unit chosen in the 'Save in File' modal.
 
-    Steps:
-      1. Insert a row into `generated_items` with unit_id set.
-      2. Insert a row into `unit_lessons` linking that item to the unit.
-      3. Return the new item's id, title, and unit_id.
+    The row is inserted into generated_items with:
+      - playlist  = '__file_unit__'   (sentinel that marks file-mode items)
+      - unit_id   = the chosen unit UUID
+      - is_saved  = True
+
+    Returns: { success: True, id: <new-row-uuid> }
     """
+    # Normalise content_type to a valid item_type enum value.
+    # NOTE: The generated_items table CHECK constraint only allows:
+    #   ai_creator | book_mode | question_anim | topic_content
+    # 'simulation' from the frontend must be mapped to 'ai_creator'.
+    _type_map = {
+        "ai_creator":    "ai_creator",
+        "simulation":    "ai_creator",   # simulation saves as ai_creator
+        "question_anim": "question_anim",
+        "book_mode":     "book_mode",
+        "topic_content": "topic_content",
+    }
+    item_type = _type_map.get(body.content_type, "ai_creator")
+
+    html = body.html.strip()
+    if not html:
+        raise HTTPException(status_code=400, detail="No HTML content provided.")
+
+    # Ensure the user row exists before writing child rows (FK guard)
     _ensure_user_row(current_user)
+
     supabase = _sb(current_user)
     user_id  = current_user["id"]
 
-    # Map content_type → item_type used by generated_items table
-    type_map = {
-        "animation":  "ai_creator",
-        "notes":      "ai_creator",
-        "simulation": "ai_creator",
-    }
-    item_type = type_map.get(body.content_type, "ai_creator")
-
-    # 1. Insert into generated_items (with unit_id)
     row = {
         "user_id":     user_id,
         "item_type":   item_type,
-        "title":       (body.title or "Untitled").strip(),
+        "title":       (body.title or "Untitled").strip()[:500],
         "prompt":      body.prompt or "",
         "explanation": body.explanation or "",
-        "html_code":   body.html or "",
-        "playlist":    "__file_unit__",   # sentinel so Library hides it
+        "html_code":   html,
+        "playlist":    "__file_unit__",
         "is_saved":    True,
         "unit_id":     body.unit_id,
         "created_at":  _now(),
     }
-    res     = supabase.table("generated_items").insert(row).execute()
-    item_id = res.data[0]["id"] if res.data else None
 
-    if not item_id:
-        raise HTTPException(status_code=500, detail="Failed to save item to database.")
-
-    # 2. Insert into unit_lessons to link the item to the unit
-    ul_row = {
-        "unit_id":    body.unit_id,
-        "lesson_id":  item_id,
-        "user_id":    user_id,
-        "sort_order": 0,
-    }
-    supabase.table("unit_lessons").insert(ul_row).execute()
-
-    print(
-        f"[SYNC] ✅ Saved to unit: item={item_id} unit={body.unit_id} "
-        f"type={body.content_type} title={body.title!r} user={current_user['email']!r}"
-    )
-    return {
-        "success":  True,
-        "id":       item_id,
-        "title":    body.title,
-        "unit_id":  body.unit_id,
-        "item_type": item_type,
-    }
-
-
-@router.get("/unit-ai-items/{unit_id}", status_code=200)
-def get_unit_ai_items(
-    unit_id:      str,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Return all AI-generated items (generated_items) that are saved
-    to a specific File-Mode unit, ordered by creation date descending.
-    """
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-
-    res = (
-        supabase.table("generated_items")
-        .select("id, item_type, title, prompt, explanation, html_code, playlist, created_at, unit_id")
-        .eq("user_id",  user_id)
-        .eq("unit_id",  unit_id)
-        .eq("is_saved", True)
-        .is_("deleted_at", "null")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    items = res.data or []
-    return {"unit_id": unit_id, "items": items, "count": len(items)}
-
-
-# ════════════════════════════════════════════════════════════════
-# COURSE TOPICS
-# ════════════════════════════════════════════════════════════════
-
-class TopicCreate(BaseModel):
-    co_id:             str
-    subject_id:        str
-    name:              str   = Field(..., min_length=1, max_length=300)
-    description:       str   = Field(default="")
-    prompt:            str   = Field(default="")
-    sort_order:        int   = Field(default=0)
-    generated_item_id: Optional[str] = None
-    html_code:         Optional[str] = None  # fills html_code_cache
-    topic_type:        str            = Field(default="animation")
-    ppt_storage_path:  Optional[str] = None
-    ppt_public_url:    Optional[str] = None
-    ppt_file_name:     Optional[str] = None
-
-
-class TopicUpdate(BaseModel):
-    name:              Optional[str] = None
-    description:       Optional[str] = None
-    prompt:            Optional[str] = None
-    sort_order:        Optional[int] = None
-    generated_item_id: Optional[str] = None
-    html_code_cache:   Optional[str] = None
-    topic_type:        Optional[str] = None
-    ppt_storage_path:  Optional[str] = None
-    ppt_public_url:    Optional[str] = None
-    ppt_file_name:     Optional[str] = None
-
-
-@router.post("/topics", status_code=201)
-def create_topic(
-    body:         TopicCreate,
-    current_user: dict = Depends(get_current_user),
-):
-    # ✅ Ensure user row exists (prevents FK 23503 on course_topics.user_id_fkey)
-    _ensure_user_row(current_user)
-    supabase = _sb(current_user)
-
-    row = {
-        "co_id":             body.co_id,
-        "subject_id":        body.subject_id,
-        "user_id":           current_user["id"],
-        "name":              body.name.strip(),
-        "description":       body.description or "",
-        "prompt":            body.prompt or "",
-        "sort_order":        body.sort_order,
-        "generated_item_id": body.generated_item_id,
-        "html_code_cache":   body.html_code,
-        "topic_type":        body.topic_type or "animation",
-        "ppt_storage_path":  body.ppt_storage_path,
-        "ppt_public_url":    body.ppt_public_url,
-        "ppt_file_name":     body.ppt_file_name,
-    }
-    res   = supabase.table("course_topics").insert(row).execute()
-    topic = res.data[0] if res.data else {}
-    print(f"[SYNC] ✅ Topic created: {body.name!r} type={body.topic_type!r} co={body.co_id!r}")
-    return {"success": True, "topic": topic}
-
-
-@router.put("/topics/{topic_id}", status_code=200)
-def update_topic(
-    topic_id:     str,
-    body:         TopicUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    supabase = _sb(current_user)
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not patch:
-        return {"success": True}
-    res = (
-        supabase.table("course_topics")
-        .update(patch)
-        .eq("id", topic_id)
-        .eq("user_id", current_user["id"])
-        .execute()
-    )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Topic not found.")
-    return {"success": True}
-
-
-@router.delete("/topics/{topic_id}", status_code=200)
-def delete_topic(
-    topic_id:     str,
-    current_user: dict = Depends(get_current_user),
-):
-    supabase = _sb(current_user)
-    user_id  = current_user["id"]
-    # Fetch ppt_storage_path before deleting row so we can clean up Storage
-    row_res = (
-        supabase.table("course_topics")
-        .select("ppt_storage_path, topic_type")
-        .eq("id", topic_id)
-        .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
-    )
-    if row_res and row_res.data:
-        ppt_path = row_res.data.get("ppt_storage_path")
-        if ppt_path and row_res.data.get("topic_type") == "ppt_upload":
-            try:
-                supabase.storage.from_("ppt-files").remove([ppt_path])
-                print(f"[PPT] 🗑 Storage file deleted: {ppt_path}")
-            except Exception as e:
-                print(f"[PPT] ⚠ Storage delete failed for {topic_id}: {e}")
-    supabase.table("course_topics").delete().eq("id", topic_id).eq("user_id", user_id).execute()
-    print(f"[SYNC] 🗑 Topic deleted: {topic_id} user={current_user['email']!r}")
-    return {"success": True}
+    try:
+        res = supabase.table("generated_items").insert(row).execute()
+        new_id = res.data[0]["id"] if res.data else None
+        print(
+            f"[SYNC] ✅ save-to-unit: type={item_type} title={body.title!r} "
+            f"unit={body.unit_id!r} user={current_user['email']!r}"
+        )
+        return {"success": True, "id": new_id}
+    except Exception as exc:
+        print(f"[SYNC] ❌ save-to-unit INSERT failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
 
 
 # ════════════════════════════════════════════════════════════════
