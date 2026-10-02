@@ -142,15 +142,66 @@ CLASSIFIER_MODEL = _sanitize_model_id(
 )
 print(f"[SimEngine] Model configured: SIM_MODEL='{SIM_MODEL}', CLASSIFIER='{CLASSIFIER_MODEL}'")
 
-# Gemini async client.
-# NOTE: Do NOT set api_version here — the SDK default (v1beta) supports
-# gemini-3.1-pro-preview and all current Gemini models on Google AI Studio API keys.
-_gemini_client = _google_genai.Client(
-    api_key=os.environ.get("GEMINI_API_KEY") or GOOGLE_API_KEY,
-    http_options=_genai_types.HttpOptions(
-        timeout=int(CLIENT_TIMEOUT_SECONDS * 1000),
-    ),
-)
+# ── Gemini client init  (matches q_animation.py's defensive pattern) ─────────
+# FIX: Three bugs vs q_animation.py (which works):
+#   1. No guard for empty GEMINI_API_KEY  → client created with "" key, every
+#      call silently returns 401/Invalid API key.
+#   2. No IPv4 socket patch               → large streaming responses killed
+#      mid-stream on dual-stack Railway / Indian-ISP networks (wsarecv error).
+#   3. No try/except around client init   → any init failure crashes import.
+
+_GEMINI_DISABLED_REASON: str | None = None
+
+_gkey = (os.environ.get("GEMINI_API_KEY") or GOOGLE_API_KEY or "").strip()
+if not _gkey:
+    _GEMINI_DISABLED_REASON = "GEMINI_API_KEY not set"
+    _gemini_client = None   # type: ignore[assignment]
+    print("[SimEngine] ⚠  GEMINI_API_KEY not set — simulation generation disabled")
+else:
+    try:
+        # ── Layer 1: force IPv4 DNS resolution (same fix as q_animation.py) ──
+        # On Railway (Linux dual-stack) and Indian ISPs, DNS resolves
+        # generativelanguage.googleapis.com to IPv6.  Large streaming responses
+        # over IPv6 get killed mid-stream (wsarecv / connection reset).
+        # Monkey-patching getaddrinfo forces AF_INET (IPv4) for all DNS lookups.
+        try:
+            import socket as _socket_mod
+            _orig_getaddrinfo = _socket_mod.getaddrinfo
+            def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+                return _orig_getaddrinfo(host, port, _socket_mod.AF_INET, type, proto, flags)
+            _socket_mod.getaddrinfo = _ipv4_only_getaddrinfo
+            print("[SimEngine] socket.getaddrinfo patched → IPv4-only DNS (stream-kill fix)")
+        except Exception as _sock_e:
+            print(f"[SimEngine] socket patch skipped: {_sock_e}")
+
+        # ── Layer 2: httpx IPv4 transport + HTTP/1.1 (disables h2 stream mux) ─
+        try:
+            import httpx as _httpx
+            _ipv4_transport = _httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+            _ipv4_http_client = _httpx.AsyncClient(
+                transport=_ipv4_transport,
+                http2=False,
+            )
+            _gemini_client = _google_genai.Client(
+                api_key=_gkey,
+                http_options=_genai_types.HttpOptions(
+                    timeout=int(CLIENT_TIMEOUT_SECONDS * 1000),
+                ),
+            )
+            print(f"[SimEngine] Gemini ready (IPv4-patched, model={SIM_MODEL})")
+        except Exception:
+            # httpx not available — socket patch above still protects IPv4 resolution
+            _gemini_client = _google_genai.Client(
+                api_key=_gkey,
+                http_options=_genai_types.HttpOptions(
+                    timeout=int(CLIENT_TIMEOUT_SECONDS * 1000),
+                ),
+            )
+            print(f"[SimEngine] Gemini ready (socket-IPv4, model={SIM_MODEL})")
+    except Exception as _init_e:
+        _GEMINI_DISABLED_REASON = repr(_init_e)
+        _gemini_client = None   # type: ignore[assignment]
+        print(f"[SimEngine] ⚠  Gemini client init failed: {_init_e}")
 
 
 # ===========================================================================
@@ -2768,6 +2819,13 @@ async def generate_simulation_stream(topic: str):
         yield {"type": "error", "result": _build_failure_result("", "Topic cannot be empty")}
         return
 
+    # Guard: client not initialised (GEMINI_API_KEY missing) — matches q_animation.py
+    if _gemini_client is None:
+        reason = _GEMINI_DISABLED_REASON or "GEMINI_API_KEY not set"
+        yield {"type": "error", "result": _build_failure_result(
+            topic, f"Simulation engine unavailable: {reason}")}
+        return
+
     short_topic = topic[:80] + ("..." if len(topic) > 80 else "")
     SimLogger.info("Pipeline", f"START (stream) v2.1 -- '{short_topic}'")
 
@@ -2805,7 +2863,11 @@ async def generate_simulation_stream(topic: str):
 
         async def _iter_with_timeout():
             """Iterate the Gemini stream, raising TimeoutError on chunk stalls."""
-            stream = _gemini_client.aio.models.generate_content_stream(
+            # FIX: generate_content_stream() is a coroutine — must be awaited
+            # before iterating. Without 'await' the stream variable holds a raw
+            # coroutine object (no __aiter__), causing:
+            #   'async for' requires an object with __aiter__ method, got coroutine
+            stream = await _gemini_client.aio.models.generate_content_stream(
                 model=SIM_MODEL,
                 contents=user_content,
                 config=stream_config,
