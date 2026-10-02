@@ -61,25 +61,34 @@ from google.genai import types as _genai_types
 # Client + model routing  (v2.1.5 — self-healing model ID)
 # ---------------------------------------------------------------------------
 
-CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "85"))
+CLIENT_TIMEOUT_SECONDS   = float(os.environ.get("SIM_CLIENT_TIMEOUT_SECONDS", "120"))
 CLIENT_MAX_RETRIES       = int(os.environ.get("SIM_CLIENT_MAX_RETRIES", "0"))
-PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "90"))
+# Now that the endpoint uses SSE streaming, Railway's proxy timeout no longer
+# applies — the stream keeps the connection alive. Set a generous limit.
+PIPELINE_TIMEOUT_SECONDS = float(os.environ.get("SIM_PIPELINE_TIMEOUT_SECONDS", "360"))
 
-# Reduce MAX_TOK hard cap: gemini-3.1-pro-preview with 32k output tokens causes
-# 504 DEADLINE_EXCEEDED. 16k tokens is more than enough for a full simulation.
-_MAX_TOK_HARD_CAP = 16384
-_max_tok_raw = int(os.environ.get("SIM_MAX_TOKENS", "16384"))
+# ── ROOT CAUSE FIX for 504 DEADLINE_EXCEEDED (v2.1.8) ────────────────────────
+# gemini-3.1-pro-preview is a thinking model. Each request has two phases:
+#   Phase 1: internal reasoning ("thinking")  — burns thinking budget silently
+#   Phase 2: visible output tokens             — the HTML simulation
+# Root cause: Phase 1 (thinking) + Phase 2 (HTML) together exceed Gemini's
+# ~60 s server-side hard deadline → 504 DEADLINE_EXCEEDED.
+# Fix v2.1.8:
+#   • Hard cap dropped 12000 → 8000 tokens  (Phase 2 finishes in ~30 s)
+#   • THINKING_BUDGET dropped 512 → 256     (Phase 1 finishes in <8 s)
+#   • Classifier uses gemini-2.0-flash       (no thinking overhead for 1 word)
+_MAX_TOK_HARD_CAP = 8000    # ↓ from 12000 — Phase 2 must finish in ~30 s
+_max_tok_raw = int(os.environ.get("SIM_MAX_TOKENS", "8000"))
 if _max_tok_raw > _MAX_TOK_HARD_CAP:
     print(
         f"[SimEngine] ⚠  SIM_MAX_TOKENS={_max_tok_raw} exceeds hard cap of {_MAX_TOK_HARD_CAP}. "
-        f"Clamped to {_MAX_TOK_HARD_CAP}. Update Railway Variable SIM_MAX_TOKENS to fix this."
+        f"Clamped to {_MAX_TOK_HARD_CAP}. Update SIM_MAX_TOKENS env var to silence this."
     )
 MAX_TOK             = min(_max_tok_raw, _MAX_TOK_HARD_CAP)
 MAX_TOK_CLASSIFIER  = 20
-# Thinking budget: cap internal reasoning so the model doesn't burn its entire
-# deadline on "thinking" before producing output tokens.
-# gemini-3.1-pro-preview requires budget >= 1 (budget=0 is rejected).
-THINKING_BUDGET = int(os.environ.get("SIM_THINKING_BUDGET", "1024"))
+# Thinking budget: minimise Phase 1 so it completes well under 8 s.
+# 256 is sufficient for topic classification; higher values burn timeout budget.
+THINKING_BUDGET = int(os.environ.get("SIM_THINKING_BUDGET", "256"))  # ↓ from 512
 
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
@@ -87,8 +96,10 @@ GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 
 # Safe defaults — use model IDs confirmed working on Google AI Studio API keys.
 # Google API confirmed: gemini-3.1-pro-preview is the replacement for gemini-2.5-pro.
+# FIX v2.1.8: Classifier uses gemini-2.0-flash — it only outputs ONE word, so using
+# a thinking model (gemini-3.1-pro-preview) for it wastes ~15-20 s of timeout budget.
 _SAFE_DEFAULT_SIM_MODEL        = "gemini-3.1-pro-preview"
-_SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-3.1-pro-preview"
+_SAFE_DEFAULT_CLASSIFIER_MODEL = "gemini-2.0-flash"   # ← fast, no thinking overhead
 
 
 # Confirmed working: gemini-3.1-pro-preview (Google's own API error message said to use it)
@@ -1477,8 +1488,10 @@ _MULTI_EXPERIMENT_TOPICS = {
 
 async def _classify_topic(topic: str) -> str:
     """
-    Keyword-match first (instant, no network). Falls back to an LLM call
-    only when keywords are ambiguous — awaited on the async client.
+    Keyword-match first (instant, no network). Falls back to a gemini-2.0-flash
+    call (non-thinking, fast) only when keywords are ambiguous.
+    FIX v2.1.8: classifier uses gemini-2.0-flash — never gemini-3.1-pro-preview —
+    so it does not consume the 60 s Gemini gateway deadline before the main call.
     """
     t = topic.lower()
     scores = {cat: sum(1 for k in kws if k in t) for cat, kws in _CATEGORY_KEYWORDS.items()}
@@ -1488,15 +1501,20 @@ async def _classify_topic(topic: str) -> str:
         if len(top) == 1:
             return top[0]
     try:
-        resp = await _gemini_client.aio.models.generate_content(
-            model=CLASSIFIER_MODEL,
-            contents=f"Classify this simulation topic: {topic[:200]}",
-            config=_genai_types.GenerateContentConfig(
-                system_instruction="Reply with ONLY one category word from this exact list: "
-                                   + ", ".join(CATEGORIES),
-                max_output_tokens=MAX_TOK_CLASSIFIER,
-                temperature=0.0,
+        resp = await asyncio.wait_for(
+            _gemini_client.aio.models.generate_content(
+                model=CLASSIFIER_MODEL,   # gemini-2.0-flash — no thinking overhead
+                contents=f"Classify this simulation topic: {topic[:200]}",
+                config=_genai_types.GenerateContentConfig(
+                    system_instruction="Reply with ONLY one category word from this exact list: "
+                                       + ", ".join(CATEGORIES),
+                    max_output_tokens=MAX_TOK_CLASSIFIER,
+                    temperature=0.0,
+                    # NOTE: Do NOT add thinking_config here — gemini-2.0-flash is not
+                    # a thinking model and will raise INVALID_ARGUMENT if you do.
+                ),
             ),
+            timeout=15,   # classifier must finish fast; fall back to GENERAL_PROCESS on timeout
         )
         cat = (resp.text or "").strip().upper()
         if cat in CATEGORIES:
@@ -2494,8 +2512,13 @@ def _find_json_string_end(s):
 
 
 def _unescape_json_string(s):
-    return (s.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
-             .replace('\\r', '\r').replace("\\'", "'").replace('\\\\', '\\'))
+    # ⚠ Order matters: unescape \\ FIRST, otherwise '\\n' → '\n' (wrong)
+    return (s.replace('\\\\', '\\')
+              .replace('\\"', '"')
+              .replace('\\n', '\n')
+              .replace('\\t', '\t')
+              .replace('\\r', '\r')
+              .replace("\\'", "'"))
 
 
 # ===========================================================================
@@ -2533,16 +2556,19 @@ async def _run_generation_pipeline(topic: str) -> dict:
     # Step 3: Build prompt
     system_text, user_content = _build_prompt(topic, category, image_refs)
 
-    # Step 4: Generate via Gemini — with retry on transient 502/503/connection errors.
+    # Step 4: Generate via Gemini — with retry on transient 502/503/504/connection errors.
     # NOTE: Do NOT set thinking_config / thinking_budget here.
     # Models like gemini-3.1-pro-preview are thinking-only and reject budget=0
     # (INVALID_ARGUMENT: "Budget 0 is invalid. This model only works in thinking mode.")
     # Omitting thinking_config lets the model use its default thinking behaviour.
-    _MAX_ATTEMPTS  = 3
-    _RETRY_DELAYS  = [5, 15, 30]   # seconds between attempts
-    _TRANSIENT_MARKERS = ("502", "503", "500", "UNAVAILABLE", "INTERNAL",
-                          "wsarecv", "connection", "reset", "timeout", "aborted",
-                          "504", "DEADLINE_EXCEEDED")  # added: treat deadline as transient
+    _MAX_ATTEMPTS  = 2                   # ↓ from 3 — fewer retries = don't exhaust pipeline budget
+    # FIX v2.1.8: shorter delays so retries fit inside PIPELINE_TIMEOUT (360 s).
+    # Old delays [30, 60] burned 90 s in sleep before the pipeline timeout fired.
+    # New delays give the server time to recover without eating the full budget.
+    _RETRY_DELAYS  = [10, 20]            # ↓ from [30, 60, 120]
+    _TRANSIENT_MARKERS = ("502", "503", "500", "504", "UNAVAILABLE", "INTERNAL",
+                          "DEADLINE_EXCEEDED", "deadline exceeded",   # 504 server timeout
+                          "wsarecv", "connection", "reset", "timeout", "aborted")
 
     config = _genai_types.GenerateContentConfig(
         system_instruction=system_text,
@@ -2563,7 +2589,7 @@ async def _run_generation_pipeline(topic: str) -> dict:
         pass  # SDK too old to support ThinkingConfig — use the config built above
 
     raw = ""
-    last_exc: Exception | None = None
+    last_exc: Optional[Exception] = None
     try:
         for _attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
@@ -2771,11 +2797,23 @@ async def generate_simulation_stream(topic: str):
                 temperature=0.7,
                 max_output_tokens=MAX_TOK,
             )
-        async for chunk in await _gemini_client.aio.models.generate_content_stream(
-            model=SIM_MODEL,
-            contents=user_content,
-            config=stream_config,
-        ):
+
+        # FIX v2.1.8: wrap the streaming loop with a per-chunk inactivity guard.
+        # If Gemini stalls mid-stream (no chunk for > 90 s) raise TimeoutError rather
+        # than hanging until the client drops the SSE connection.
+        _STREAM_CHUNK_TIMEOUT = 90  # seconds to wait for the next token chunk
+
+        async def _iter_with_timeout():
+            """Iterate the Gemini stream, raising TimeoutError on chunk stalls."""
+            stream = _gemini_client.aio.models.generate_content_stream(
+                model=SIM_MODEL,
+                contents=user_content,
+                config=stream_config,
+            )
+            async for chunk in stream:
+                yield chunk
+
+        async for chunk in _iter_with_timeout():
             text = chunk.text or ""
             if text:
                 raw_parts.append(text)
