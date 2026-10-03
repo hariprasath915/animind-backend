@@ -3488,6 +3488,12 @@ _CONTROLS_CSS = """
 #btn-prev.qanim-prev-btn{background:#fff;color:#64748b;border:1.5px solid #cbd5e1;padding:11px 20px;border-radius:10px;font-size:13.5px;font-weight:700;font-family:inherit;cursor:pointer;margin-right:auto;box-shadow:0 1px 3px rgba(15,23,42,.06);}
 #btn-prev.qanim-prev-btn:hover:not(:disabled){background:#f8fafc;color:#1e293b;border-color:#94a3b8;box-shadow:0 2px 8px rgba(15,23,42,.10);transform:translateY(-1px);}
 #btn-prev.qanim-prev-btn:disabled{opacity:.38;cursor:not-allowed;}
+/* Prev/Next overlaid at bottom-right of the animation */
+.svg-container>.qanim-nav-overlay{position:absolute;right:14px;bottom:12px;z-index:12;display:flex;align-items:center;gap:8px;margin:0;max-width:calc(100% - 28px);}
+.qanim-nav-overlay #btn-prev.qanim-prev-btn{margin-right:0;padding:8px 14px;font-size:12.5px;box-shadow:0 2px 8px rgba(15,23,42,.18);}
+.qanim-nav-overlay .btn-primary{padding:8px 16px;font-size:12.5px;}
+.svg-container>#step6-info-panel{bottom:64px;}
+@media(max-width:600px){.svg-container>.qanim-nav-overlay{right:8px;bottom:8px;gap:6px;}.qanim-nav-overlay #btn-prev.qanim-prev-btn,.qanim-nav-overlay .btn-primary{padding:5px 9px;font-size:10.5px;}.svg-container>#step6-info-panel{bottom:44px;right:8px;}}
 #qanim-glossary-backdrop{position:fixed;inset:0;z-index:7150;background:rgba(15,23,42,.28);opacity:0;pointer-events:none;transition:opacity .22s;}
 #qanim-glossary-backdrop.open{opacity:1;pointer-events:auto;}
 #qanim-glossary-panel{position:fixed;top:0;right:0;z-index:7300;width:340px;max-width:88vw;height:100vh;background:#fff;border-left:1px solid #e2e8f0;box-shadow:-8px 0 32px rgba(0,0,0,.14);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform .26s cubic-bezier(.16,1,.3,1);}
@@ -5546,6 +5552,11 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
       {svg_layers}
     </svg>
     {step6_panel_html}
+    <!-- Prev/Next overlaid at the bottom-right of the animation (same ids/handlers as before) -->
+    <div class="qanim-nav-overlay">
+      <button class="btn-secondary qanim-prev-btn" id="btn-prev" onclick="qanim_previousStep()" disabled>&#x25C0; Previous Step</button>
+      <button class="btn-primary" id="btn-next" onclick="qanim_nextStep()">Next Step &#x25B6;</button>
+    </div>
   </div>
 
   <div class="control-panel">
@@ -5564,8 +5575,6 @@ def assemble_html(question: str, scene: dict, sol: dict, svg_data: dict) -> str:
     </div>
     <div class="actions">
       <button class="btn-secondary" onclick="resetAnim()">&#x21BA; Restart</button>
-      <button class="btn-secondary qanim-prev-btn" id="btn-prev" onclick="qanim_previousStep()" disabled>&#x25C0; Previous Step</button>
-      <button class="btn-primary" id="btn-next" onclick="qanim_nextStep()">Next Step &#x25B6;</button>
     </div>
   </div>
 </div>
